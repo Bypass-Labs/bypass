@@ -1,6 +1,7 @@
 // One catalog drives strict CLI parsing, help, and the command reference.
 const command=(usage,description,flags='',extra={})=>({usage,description,flags:flags.split(' ').filter(Boolean),...extra});
 export const commands={
+  demo:command('demo','Guided local walkthrough: prove, fix, retest, and catch a regression.','dir'),
   onboard:command('onboard [path]','Guided QuickStart, resumable app verification, or local demo.','repo dir flow'),
   init:command('init [path]','Connect a repository and configure a project.','repo dir config name'),
   'repo show':command('repo show','Inspect the connected repository.'),
@@ -12,7 +13,7 @@ export const commands={
   'auth login':command('auth login','Use local mode or launch official Muse account login.','provider device'),
   'auth status':command('auth status','Show local mode and Muse account integration status.'),
   'auth logout':command('auth logout','Clear Bypass-local account metadata; Muse account is separate.'),
-  'integrate muse':command('integrate muse','Build and install the native Muse plugin.','scope install'),
+  'integrate muse':command('integrate muse','Reuse an existing Muse plugin or install the bundled plugin.','scope install'),
   'integrate status':command('integrate status','Inspect the Muse plugin installation.'),
   'integrate remove':command('integrate remove <muse>','Remove the native Muse plugin.'),
   'target add':command('target add <name>','Add a local or HTTPS deployed target.','url environment'),
@@ -98,5 +99,5 @@ export function help(key){
   const selected=commands[key];
   if(selected)return `bypass ${selected.usage}\n\n${selected.description}\n\nOptions: ${selected.flags.map(x=>'--'+x).join(', ')||'(none)'}\nGlobal: --project <path>, --json, --non-interactive, --help\n`;
   const entries=Object.entries(commands).filter(([k,v])=>!v.hidden&&(!key||k.startsWith(key+' ')));
-  return `BYPASS  /  security checks that stay with your code\n\nRunnable skeleton · analysis engines are MOCKED\n\n${entries.map(([,v])=>`  ${v.usage.padEnd(38)} ${v.description}`).join('\n')}\n\nGet started: bypass onboard\nGlobal: --project <path>, --json, --non-interactive, --help, --version\nExit codes: 0 success · 1 failed regression · 2 usage/config · 3 blocked/incomplete · 130 cancelled\n`;
+  return `BYPASS  /  security checks that stay with your code\n\nStart here: ./bypass demo — complete guided walkthrough; no DNS or login needed.\nYour project: ./bypass onboard — connect a repository and preview a review.\n\nRunnable skeleton · analysis engines are MOCKED\n\n${entries.map(([,v])=>`  ${v.usage.padEnd(38)} ${v.description}`).join('\n')}\n\nGlobal: --project <path>, --json, --non-interactive, --help, --version\nExit codes: 0 success · 1 failed regression · 2 usage/config · 3 blocked/incomplete (including mock scan results) · 130 cancelled\n`;
 }

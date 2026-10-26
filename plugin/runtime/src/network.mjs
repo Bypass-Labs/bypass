@@ -6,6 +6,13 @@ import { randomBytes } from 'node:crypto';
 import { need, Fault, now, duration, delay, hash, abortable, abortFault } from './util.mjs';
 
 export const loopback = h => ['localhost','127.0.0.1','::1','[::1]'].includes(h.toLowerCase());
+export function appOriginInput(value) {
+  const text=value.trim().replace(/^\[[^\]\n]*\]\(([^)\n]+)\)$/,'$1');
+  const candidate=/^[a-z][a-z0-9+.-]*:\/\//i.test(text)?text:`${/^(localhost|127\.0\.0\.1|\[::1\])(?::\d+)?(?:\/|$)/i.test(text)?'http':'https'}://${text}`;
+  let url;try{url=new URL(candidate);}catch{throw new Fault('Enter a domain such as job-radar.app, or a local URL such as http://localhost:3000.');}
+  need(url.hostname.includes('.')||loopback(url.hostname),'Enter a complete domain, such as job-radar.app.');
+  return targetURL(url.href,loopback(url.hostname)?'local':'staging');
+}
 export function publicIP(address) {
   if (net.isIP(address) === 4) {
     const [a,b,c] = address.split('.').map(Number);

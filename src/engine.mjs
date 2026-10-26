@@ -32,7 +32,7 @@ function mockCandidate(state,inv,targetName){
   const fixture=!!state.demo&&targetName===state.demo.target;
   const exportRoute=fixture&&state.demo.exportEnabled;
   return {id:id('finding'),fingerprint:`mock:${targetName||'code'}:${exportRoute?'invoice-export':'invoice-read'}`,
-    title:exportRoute?'Invoice export needs an account-boundary check':'Invoice read needs an account-boundary check',
+    title:!fixture?'Example: a resource needs an account-boundary check':exportRoute?'Invoice export needs an account-boundary check':'Invoice read needs an account-boundary check',
     severity:'high',status:'simulated_unproven',simulation:true,fixture,target:targetName||null,
     sourceEvidence:{kind:'mock',message:'Scenario supplied by the mock engine; not a detected code vulnerability.',filesInspected:inv.sourceFileCount},
     hypothesis:'A second account may be able to read a resource belonging to the first account.',

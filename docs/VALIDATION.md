@@ -2,7 +2,19 @@
 
 Validated locally on 2026-10-26 with Node v22.14.0 and Muse Code 1.4.13.
 
-## Latest: model connection recovery
+## Latest: a complete guided journey
+
+The simplified experience passed **40 tests, 0 failures**, with syntax checks for **31 modules**. The Muse plugin runtime was rebuilt and native validation returned `valid: true` with no diagnostics.
+
+New coverage follows the default onboarding recommendation through all six walkthrough stages using Enter, including real local HTTP proof, a verified fixture fix, independent Node test pass/fail, saved replay, a due scheduler tick, recorded context, final restoration, and server shutdown. It also covers leaving early, refusing occupied demo directories, bare-domain normalization, retrying an invalid app address in place, default DNS deferral, results-first navigation, command help, preserving scripted mock exit codes, and displaying failed saved checks. Fake native Muse commands verify that an existing installation is reused without reinstalling or approving it, and that installation failures expose the native reason.
+
+A real terminal rehearsal completed `./bypass demo` with six presses of Enter and exited 0. Actual owner/other-account/anonymous controls changed from 200/200/401 to 200/403/401. Both exported Node execution and Bypass replay caught the deliberate regression. The scheduler recorded the regression for next-session context. The fixture ended fixed with one saved check, its schedule paused, and its server stopped.
+
+Opening the existing customer project displayed three home choices and immediately opened its existing result on Enter, despite pending DNS. No new customer scan or DNS request was needed. A native plugin check correctly recognized Bypass already installed from a different checkout and returned success without reinstalling it or changing capability approval. The user's supplied terminal transcript had already shown a successful Muse model connection in 7.8 seconds; this update made no additional model requests.
+
+Repository previews remain explicitly simulated and do not constitute discovered or verified customer vulnerabilities. Scripted mock scans still return incomplete exit code 3; the interactive screen explains completion of the preview separately from a security verdict. The guided scheduler demonstration is one real due tick, not an always-on hosted service.
+
+## Previous: model connection recovery
 
 The connection and onboarding update passed **31 integration tests, 0 failures**, with syntax checks for **28 modules**. New coverage includes completed Muse replies versus echoed prompts, progress feedback, login and allowance diagnostics without raw provider output, an unavailable CLI, failed retests superseding old success in readiness, cancellation of a running process, a hard timeout for a process ignoring SIGTERM, DNS lookup timeout, cancellation of a local HTTP request, and explicit selection of a local checkout with a different origin. Fake Muse executables exercise failure paths without provider requests.
 

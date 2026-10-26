@@ -1,53 +1,59 @@
 # Bypass for Muse
 
-Find a security issue, verify the fix, and keep a regression test that runs without a model.
+Prove a security issue, verify the fix, and keep a regression test that runs without a model.
 
-**Runnable skeleton:** onboarding, the local demo, exported tests, and monitoring work. White-box discovery and black-box investigation are mocked.
+**Working prototype:** repository setup, model connection checks, DNS ownership, local HTTP proof, exported tests, and local scheduling work. Discovery and deployed-app investigation are mocked. A preview of your repository is not a security verdict.
 
-## Get started
+## Start here: the complete walkthrough
 
-You need **Node 22+**, Git, and access to this repository. No dependency installation is needed.
+Requires **Node 22+** and Git. No dependency installation, model login, DNS, or plugin is needed for this walkthrough.
 
 ```bash
 git clone https://github.com/Bypass-Labs/bypass-for-muse.git
 cd bypass-for-muse
+./bypass demo
+```
+
+**Press Enter at each of six steps.** Bypass creates a separate local app, prints its browser URL, and guides you through:
+
+1. **Review** — see a clearly labeled example access-control issue.
+2. **Prove** — real HTTP requests show another account can read the owner's invoice.
+3. **Fix and retest** — apply the fixture fix, verify access is denied, and save a regression test.
+4. **Export** — execute the test with ordinary Node, without Bypass or a model.
+5. **Catch a regression** — bring the bug back and watch both tests catch it.
+6. **Remember** — execute one local scheduler tick and save the result for the next session.
+
+It finishes with the fixture fixed, the test and evidence saved, and the demo server stopped. It does not change your connected app. Type `q` at a step to leave early.
+
+## Connect your own project
+
+From this Bypass checkout:
+
+```bash
 ./bypass onboard
 ```
 
-Choose **QuickStart** to connect your project, or **Try the demo** to explore with a local app.
-
-```text
-BYPASS / Get started
-
-  1  QuickStart (recommended) — connect your project
-  2  Try the demo — a local app with two test accounts
-  3  Advanced setup — more configuration choices
-```
-
-The wizard walks you through:
-
-1. **Repository** — use a local checkout or clone a Git URL.
-2. **Model** — use your Muse Code subscription, a compatible local Muse/local model, or your own self-hosted endpoint.
-3. **App** — enter its URL, copy the generated DNS TXT record, and verify it right there. Review and authorize the paths to test.
-4. **Optional connections** — add test-account references and install the Muse plugin now or later.
-
-For a Git URL, the wizard suggests a folder such as `~/Projects/job-finder`. **Press Enter to accept it.** If you enter an occupied parent folder like `~/Projects`, it suggests a new subfolder and keeps your repository URL.
-
-The optional model check shows progress and waits up to 45 seconds. **Press Enter during the check to skip it and continue.** If it fails, the wizard explains the next step and lets you continue, retry, or choose another model.
-
-Then open Bypass and choose **Run a review**. If you skipped the app, the menu defaults to code-only review. DNS still pending? Your progress is saved; rerun onboarding with the same repository to continue.
+Choose **2 → Connect my repository**. The wizard takes you through the repository, model choice, optional app connection, and first review. You can also open an existing checkout directly:
 
 ```bash
 ./bypass onboard /path/to/your/app
 ```
 
-## Try the full demo
+- **Repository:** paste a Git URL or local folder. Press Enter for the suggested clone folder. Existing files are kept; a matching checkout can be reused.
+- **Model:** choose your Muse Code subscription, a compatible local Muse/local model server, or your own self-hosted endpoint. The optional connection check shows progress; press Enter to skip it.
+- **App:** enter a domain such as `job-radar.app` or a full URL. Bypass supplies HTTPS for deployed domains and prints the DNS TXT record. **Press Enter to continue while DNS is pending.** Live testing stays disabled until ownership and testing scope are authorized.
+- **Plugin:** optional. An existing Muse installation is reused. Capability approval stays in Muse.
 
-Choose **Try the demo** in onboarding, open the URL it prints, and keep the terminal beside the browser.
+On the project home screen, **press Enter to run the first preview and open its result**. The preview inventories source locally and shows a simulated scenario. Its next step offers the complete local walkthrough because deployed-app investigation is not built yet.
 
-**Review → prove the invoice issue → fix → retest → export the test → reintroduce the bug → catch it without a model.**
+```text
+  1  Run my first review preview  ← Enter
+  2  Walk through prove → fix → retest → regression
+  3  Settings & optional connections
+  0  Exit
+```
 
-The [short walkthrough](docs/WALKTHROUGH.md) explains the wizard and demo menu. The [detailed presenter script](docs/ADVANCED_WALKTHROUGH.md#4-begin-the-proof-demo-one-ledger-app-two-accounts) includes the scheduled catch and a second saved check.
+Type `?` for commands, `app` to resume verification, `models` for connections, or `q` to exit. After a preview, action 1 becomes **Open review results**. Resume with `./bypass --project /path/to/your/app`.
 
 ## Model choice and privacy
 
@@ -57,15 +63,15 @@ The [short walkthrough](docs/WALKTHROUGH.md) explains the wizard and demo menu. 
 | Local Muse / local model | A compatible running server and model ID | This machine; no cloud fallback |
 | Self-hosted model | Your compatible HTTPS endpoint and optional credential reference | Your infrastructure |
 
-No model weights are bundled. Model testing is optional and sends only a synthetic prompt. The mock analysis engine does not call the selected model. A local Bypass profile does not change the provider of a separate Muse session. Evidence stays local; real credentials are referenced by environment-variable name.
+No weights are bundled. Connection checks send only a synthetic prompt and may use your provider allowance. Mock analysis and saved-test replay make zero model calls. A local Bypass profile does not change a separate Muse session's provider. Evidence stays local; real credentials are referenced by environment-variable name.
 
-For Muse, select plugin installation in the wizard, review and approve its native capabilities, then start a new session in your repository and run **`/bypass:review`**.
+For the plugin, review its capabilities in Muse, start a new Muse session in your connected repository, and run **`/bypass:review`**.
 
 ## More detail
 
-- [Onboarding and short walkthrough](docs/WALKTHROUGH.md)
-- [Manual commands and full demo script](docs/ADVANCED_WALKTHROUGH.md)
-- [Command reference](docs/COMMANDS.md)
+- [Walkthrough and app connection](docs/WALKTHROUGH.md)
+- [Interactive commands and full CLI reference](docs/COMMANDS.md)
+- [Advanced presenter script](docs/ADVANCED_WALKTHROUGH.md)
 - [Architecture and current boundaries](docs/ARCHITECTURE.md)
 - [Verification record](docs/VALIDATION.md)
 

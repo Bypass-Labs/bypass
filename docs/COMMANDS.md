@@ -4,9 +4,19 @@ Generated from the parser catalog. Add --help to any command. Values are require
 
 Global: --project <path>, --json, --non-interactive, --help, --version.
 
+## Interactive shortcuts
+
+Run `./bypass --project /path/to/your/app` to open the project screen. Press Enter for the first recommended action. Type `?` to show shortcuts: `review`, `results`, `demo`, `tests`, `app`, `models`, `plugin`, `settings`, `back`, and `q`. These shortcuts belong to the interactive screen; shell commands use the catalog below. `help all` shows the complete catalog inside the screen.
+
+## demo
+
+Run the complete guided local walkthrough. Press Enter through review, HTTP proof, fix/retest, independent Node export, deliberate regression, and a local scheduler tick. Discovery is simulated; proof and replay are real fixture requests. No model, DNS, or plugin is needed. Creates a fresh isolated fixture, saves evidence, and stops its server on completion or when you leave. `--dir` must name an empty directory. Interactive only; use `demo start` for scripts.
+
+Options: --dir.
+
 ## onboard [path]
 
-Guided QuickStart, resumable app verification, or local demo. Requires an interactive terminal. `--flow quickstart`, `--flow advanced`, or `--flow demo` skips the opening choice. Existing settings and evidence are retained. For automation, use `init --non-interactive` and explicit commands below.
+Guided local walkthrough (recommended opening choice), repository setup, or advanced setup. Requires an interactive terminal. `--flow quickstart`, `--flow advanced`, or `--flow demo` skips the opening choice. Supplying a repository path, `--repo`, or `--project` defaults to QuickStart. Existing settings and evidence are retained. App fields accept bare domains; pending DNS defaults to continuing the review preview. For automation, use `init --non-interactive` and explicit commands below.
 
 Options: --repo, --dir, --flow.
 
@@ -58,7 +68,7 @@ Clear Bypass-local account metadata; Muse account is separate.
 
 ## integrate muse
 
-Build and install the native Muse plugin.
+Reuse an existing valid Muse plugin, including one from another checkout, or install the bundled native plugin if missing. Does not approve capabilities or change the existing installation source. Refresh an existing installation with `muse plugins update bypass`. Native installation failures include their diagnostic reason.
 
 Options: --scope, --install.
 
@@ -162,7 +172,7 @@ Remove a model profile.
 
 ## scan
 
-Replay saved checks, then run simulated analysis.
+Replay saved checks, then run simulated analysis. Human-readable output calls a completed mock scan a review preview and explicitly marks the example as unverified. Scripted exit code 3 is retained because mocked discovery provides no real security verdict. Saved-check failures remain visible separately.
 
 Options: --mode, --target, --base, --full, --plan, --detach.
 

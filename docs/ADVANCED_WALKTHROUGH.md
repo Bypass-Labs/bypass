@@ -1,6 +1,6 @@
 # Advanced reference: manual setup and full demo script
 
-For a first run, use **`./bypass onboard`** and the [short walkthrough](WALKTHROUGH.md). This page is the detailed command reference and presenter rehearsal, not required reading for setup.
+For a first run, use **`./bypass demo`** and the [short walkthrough](WALKTHROUGH.md). Use `./bypass onboard` to connect your own repository. This page is the detailed command reference and presenter rehearsal, not required reading for setup.
 
 **Start with an unconnected repository. End with two security regression tests owned by the team, a returning bug caught without a model, and the result waiting in the next Muse session.**
 

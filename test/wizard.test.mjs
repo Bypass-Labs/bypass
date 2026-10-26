@@ -92,22 +92,26 @@ test('wizard can configure account references and does not store or request toke
   assert.match(result.output,/Credential not tested/);
 });
 
-test('demo onboarding creates a real runnable fixture without replacing an existing project',async t=>{
+test('demo onboarding refuses to replace existing project or unrelated files',async()=>{
   const connected=temp();await execute('init',[connected]);
   const previous=fs.readFileSync(path.join(connected,'.bypass/state.json'),'utf8');
-  await assert.rejects(wizard(connected,[],{flow:'demo',dir:connected}),/connected project, not a demo/);
+  await assert.rejects(wizard(connected,[],{flow:'demo',dir:connected}),/empty directory/);
   assert.equal(fs.readFileSync(path.join(connected,'.bypass/state.json'),'utf8'),previous);
   const occupied=temp();fs.writeFileSync(path.join(occupied,'README.md'),'keep this content');
-  await assert.rejects(wizard(occupied,[],{flow:'demo',dir:occupied}),/empty demo directory/);
+  await assert.rejects(wizard(occupied,[],{flow:'demo',dir:occupied}),/empty directory/);
   assert.equal(fs.readFileSync(path.join(occupied,'README.md'),'utf8'),'keep this content');
+});
+
+test('wizard accepts a bare domain directly after a typo and defers DNS on Enter',async t=>{
+  t.mock.method(dns,'resolveTxt',async()=>assert.fail('Default continuation must not request DNS'));
   const root=temp();
-  t.after(async()=>{try{await execute('demo stop',[],{project:root});}catch{}});
-  const result=await wizard(root,['n'],{flow:'demo',dir:root});
-  assert.equal(result.result.root,root);
-  assert.ok(read(root).demo);
-  assert.equal(result.result.readiness.ready.liveTesting,true);
-  assert.equal(read(root).models[0].lastTest,undefined);
-  assert.match(result.output,/Open that address in your browser/);
+  const result=await wizard(root,['1','n','bad input','job-radar.app','2','','n','n'],{flow:undefined});
+  assert.equal(read(root).targets[0].url,'https://job-radar.app');
+  assert.equal(read(root).targets[0].environment,'production');
+  assert.equal(read(root).targets[0].ownership.status,'pending');
+  assert.equal(result.prompts.filter(p=>p.startsWith('App domain')).length,2);
+  assert.equal(result.prompts.some(p=>p.startsWith('Try again')),false);
+  assert.match(result.output,/review preview and the local walkthrough are ready/);
 });
 
 test('wizard invalid flow and noninteractive invocation fail before writing setup',async()=>{

@@ -13,9 +13,9 @@ try{
   else if(!key){if(process.stdin.isTTY&&process.stdout.isTTY&&!options['non-interactive']&&!json)await terminal(options);else {const result=await execute('status',[],options).catch(()=>null);if(result)json?console.log(JSON.stringify(redact(result))):printResult(result);else console.log(json?JSON.stringify({schemaVersion:SCHEMA,status:'not-initialized',next:'bypass init',exitCode:0}):help());}}
   else {
     const interactive=process.stdin.isTTY&&process.stdout.isTTY&&!options['non-interactive']&&!json;
-    if(key==='onboard')need(interactive,'onboard needs an interactive terminal. For scripts, use init --non-interactive and explicit model/target commands.');
+    if(key==='onboard'||key==='demo')need(interactive,`${key} needs an interactive terminal. For scripts, use init --non-interactive or demo start.`);
     const modelFeedback=key==='model test'&&!json;
-    const result=['init','onboard'].includes(key)&&interactive?await initWizard({...options,...(key==='init'?{flow:'quickstart'}:{})},args):modelFeedback?await modelTestWizard(options.project||process.cwd(),args[0],{interactive}):await execute(key,args,options);
+    const result=['init','onboard','demo'].includes(key)&&interactive?await initWizard({...options,...(key==='init'?{flow:'quickstart'}:key==='demo'?{flow:'demo'}:{})},args):modelFeedback?await modelTestWizard(options.project||process.cwd(),args[0],{interactive}):await execute(key,args,options);
     if(result?.interactive){if(result.openDashboard)await terminal({project:result.root});process.exitCode=result.exitCode||0;}
     else if(result){if(json)console.log(JSON.stringify(redact(result)));else if(!modelFeedback)printResult(result);process.exitCode=result.skipped?130:result.exitCode||0;}
   }

@@ -1,15 +1,11 @@
-import fs from 'node:fs';
-import path from 'node:path';
-import os from 'node:os';
-import net from 'node:net';
-import { execute, readiness, PACKAGE_ROOT } from './service.mjs';
+import { execute, readiness } from './service.mjs';
 import { connectProject } from './onboarding-repository.mjs';
 import { checkModelConnection } from './model-check.mjs';
+import { guidedDemo } from './guided-demo.mjs';
 import { read } from './store.mjs';
-import { scopeReady, loopback } from './network.mjs';
-import { cleanText, redact, execFile, Fault, need, outcome } from './util.mjs';
+import { scopeReady, loopback, appOriginInput } from './network.mjs';
+import { cleanText, redact, Fault, need, outcome } from './util.mjs';
 
-const expand = value => value === '~' ? os.homedir() : value.startsWith('~/') ? path.join(os.homedir(), value.slice(2)) : value;
 const unique = (base, entries) => { let name=base, n=2; while(entries.some(x=>x.name===name)) name=base+n++; return name; };
 const verified = target => target?.ownership?.status==='verified' && Date.parse(target.ownership.expiresAt)>Date.now();
 const authorized = target => { try { scopeReady(target); return true; } catch { return false; } };
@@ -31,35 +27,20 @@ export async function onboard(options={}, args=[], io={}) {
   const recover = async (work, {required=false}={}) => {
     while(true) { try{return await work();}catch(e){if(e.code===130||e.name==='AbortError')throw e;say(`\n${e.message}`);if(!await yes(required?'Try again?':'Try again now?')){if(required)throw new Fault('Setup stopped. Saved choices are retained.',130);return null;}} }
   };
-  const call = (root,key,argv=[],flags={}) => execute(key,argv,{...flags,project:root});
+  const call = (root,key,argv=[],flags={}) => execute(key,argv,{...flags,project:root},{signal:io.signal});
   say('\nBYPASS / Get started\nReal setup and saved checks. Analysis engines are mocked.');
-  say('Four steps: repository → model → running app → finish.\nPress Enter to accept a suggested answer. Optional steps can wait; your choices are saved as you go.');
-  const flow=options.flow||(await pick('How would you like to start?',[
-    {label:'QuickStart (recommended) — connect your project',id:'quickstart'},
-    {label:'Try the demo — a local app with two test accounts',id:'demo'},
+  say('Press Enter for the recommended next action. Your progress is saved.');
+  const flow=options.flow||((options.repo||options.project||args[0])?'quickstart':(await pick('How would you like to start?',[
+    {label:'See the full walkthrough (recommended) — no login or DNS needed',id:'demo'},
+    {label:'Connect my repository — preview the workflow on my project',id:'quickstart'},
     {label:'Advanced setup — more configuration choices',id:'advanced'}
-  ])).id;
+  ])).id);
   const advanced=flow==='advanced';
   let root, museInstalled=false;
   if(flow==='demo') {
-    let dir=path.resolve(expand(options.dir||path.join(PACKAGE_ROOT,'.demo/ledger')));
-    if(fs.existsSync(path.join(dir,'.bypass/state.json'))){
-      need(read(dir).demo,'This directory is a connected project, not a demo. Choose an empty demo directory; the project is unchanged.');
-      const action=await pick('A saved demo already exists.',[{label:'Continue the existing demo',id:'resume'},{label:'Start a fresh demo; keep the old one',id:'fresh'}]);
-      if(action.id==='fresh')dir=path.join(path.dirname(dir),`ledger-${Date.now()}`);
-    }else need(!fs.existsSync(dir)||(fs.statSync(dir).isDirectory()&&fs.readdirSync(dir).length===0),'Choose an empty demo directory. Existing files are left unchanged.');
-    const result=await recover(async()=>{
-      // A free local port avoids colliding with a previous rehearsal.
-      const server=net.createServer();
-      await new Promise((resolve,reject)=>{server.once('error',reject);server.listen(0,'127.0.0.1',resolve);});
-      const port=server.address().port;await new Promise(resolve=>server.close(resolve));
-      return execute('demo start',[],{dir,port});
-    },{required:true});
-    root=result.root;
-    say(`\nDemo running: ${result.url}\nOpen that address in your browser.\nPublic fixture accounts and local testing scope are ready.\nMuse profile is configured; no model was called.`);
-    say('Next: choose Run a review in the terminal, then Findings to verify the invoice.');
-    return finish();
+    return {...await guidedDemo(options,io),interactive:true,openDashboard:false};
   }
+  say('Repository → model → optional app connection → first review.\nDNS, test accounts, and the Muse plugin can all be finished later.');
 
   say('\nStep 1 of 4 / Connect your repository');
   const initial=await connectProject(options,args,{ask,say,yes,pick});
@@ -112,16 +93,18 @@ export async function onboard(options={}, args=[], io={}) {
   let state=read(root), target=state.targets.find(t=>t.name===state.activeTarget);
   if(!target&&state.targets.length){target=state.targets[0];await call(root,'target use',[target.name]);}
   if(target)say(`Continuing ${target.name}: ${target.url}`);
-  else await recover(async()=>{
-    const url=await ask('App URL (Enter to add later)');if(!url)return;
-    let parsed;try{parsed=new URL(url);}catch{throw new Fault('Enter an origin such as https://staging.example.com.');}
+  else while(!target){
+    const input=await ask('App domain or URL (Enter to add later)');if(!input)break;
+    let url;try{url=appOriginInput(input);}catch(error){say(`${error.message}\nTry the address again, or press Enter to continue without an app.`);continue;}
+    if(url!==input)say(`Using ${url}`);
+    const parsed=new URL(url);
     const environment=loopback(parsed.hostname)?'local':(await pick('Which environment is this?',[
       {label:'Staging / preview',id:'staging'},{label:'Production',id:'production'}
     ])).id;
     const name=advanced?await ask('Target name',environment):unique(environment,read(root).targets);
     target=(await call(root,'target add',[name],{url,environment})).target;
     await call(root,'target use',[target.name]);
-  });
+  }
   if(target){await connectApp();target=read(root).targets.find(t=>t.name===target.name);}
 
   say('\nStep 4 of 4 / Finish setup');
@@ -143,12 +126,15 @@ export async function onboard(options={}, args=[], io={}) {
       say('Load those variables in your terminal before testing accounts or starting Muse. Test the connections in Targets & identities.');
     });
   }else say('Test accounts can be added after app verification in Targets & identities.');
-  if(await yes('Install the Muse Code plugin for this repository?'))await recover(async()=>{
-    await execFile('muse',['--version']);
-    await call(root,'integrate muse',[],{scope:'project'});museInstalled=true;
-    say('✓ Muse plugin installed. Native capability approval is still required.');
+  say('The CLI works on its own. The Muse plugin is optional.');
+  if(await yes('Connect the Muse Code plugin now?'))try{
+    say('Checking the existing Muse plugin installation…');
+    const integration=await call(root,'integrate muse',[],{scope:'project'});museInstalled=true;
+    say(integration.message);
+    if(integration.next)say(integration.next);
+    say('Native capability review stays in Muse.');
     say(`In ${root}, run:\n  muse plugins inspect bypass\n  muse plugins approve bypass\nThen start a new Muse session and run /bypass:review.`);
-  });
+  }catch(error){if(error.code===130)throw error;say(`Plugin setup can wait. ${error.message}\nContinue in the CLI; choose Settings → Muse plugin to return later.`);}
   return finish();
 
   async function connectApp(){
@@ -159,17 +145,18 @@ export async function onboard(options={}, args=[], io={}) {
       }else{
         if(Date.parse(target.challenge?.expiresAt||0)<=Date.now())target=(await call(root,'target verify',[target.name],{renew:true})).target;
         say(`\nVerify this app in your DNS provider:\n  Type    TXT\n  Name    ${target.challenge.record}\n  Value   ${target.challenge.token}\n  TTL     Auto / provider default\n\nCopy the complete generated value. Keep unrelated DNS records.`);
+        say('If your DNS provider appends the zone name, omit that suffix from the record name.\nExample: for staging.example.com in the example.com zone, enter _bypass-verification.staging.\nYou can preview this project and run the complete local walkthrough while DNS is pending.');
         while(!verified(target)){
-          const choices=[{label:"I've added the record — check DNS",method:'dns'},{label:'Do this later — save and continue',method:null}];
+          const choices=[{label:"I've added the record — check DNS",method:'dns'},{label:'Continue to my review — verify DNS later (recommended)',method:null}];
           if(advanced)choices.push({label:'Use the HTTPS challenge instead',method:'http'});
-          const selection=await pick('Verify ownership',choices);
-          if(!selection.method){say('DNS pending. Setup is saved; live testing stays blocked.');return;}
+          const selection=await pick('Optional: verify ownership now',choices,1);
+          if(!selection.method){say('DNS pending — saved for later. Your review preview and the local walkthrough are ready. Live requests to this app remain disabled.');return;}
           if(selection.method==='http'){
             say(`Serve ${target.challenge.token} at:\n${target.url}${target.challenge.httpPath}`);
             if(!await yes('Is that HTTPS challenge published?'))continue;
           }
           try{target=(await call(root,'target verify',[target.name],{method:selection.method})).target;}
-          catch(e){if(e.code===130)throw e;say(`Not verified yet: ${e.message}\nYou can retry or come back later.`);}
+          catch(e){if(e.code===130)throw e;say(`Not verified yet: ${selection.method==='dns'?'the matching TXT value is not visible. Check the DNS host/name and allow propagation.':e.message}\nPress Enter to continue your review now; your record is saved.`);}
         }
       }
     }
@@ -191,9 +178,8 @@ export async function onboard(options={}, args=[], io={}) {
     say('\nSetup saved\n');
     say(`  Repository    ${root}\n  Model         ${info.model?`${info.model.name} · ${info.model.connection}`:'add later'}\n  App           ${info.target?`${info.target.url} · ${info.target.authorized?'verified and authorized':info.target.ownership==='verified'?'scope required':'verification pending'}`:'add later; code-only review available'}\n  Test accounts ${read(root).identities.length} references\n  Muse plugin   ${museInstalled?'installed; approve in Muse':'optional'}`);
     say('\nAnalysis is simulated. Fixture proof and saved-test replay are real.');
-    if(info.target&&!info.target.authorized)say(`Resume verification with: ./bypass onboard ${JSON.stringify(root)}`);
-    else if(!info.target)say('You can add an app later by running onboarding again.');
-    const openDashboard=io.inDashboard||await yes('Open Bypass now?','y');
+    say('Ready: your review preview. Press Enter on the next screen to continue.\nApp verification and plugin setup are available later in Settings.');
+    const openDashboard=io.inDashboard||await yes('Open my project?','y');
     return outcome({root,interactive:true,openDashboard,readiness:info});
   }
 }
