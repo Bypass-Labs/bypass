@@ -31,6 +31,8 @@ The wizard walks you through:
 3. **App** — enter its URL, copy the generated DNS TXT record, and verify it right there. Review and authorize the paths to test.
 4. **Optional connections** — add test-account references and install the Muse plugin now or later.
 
+For a Git URL, the wizard suggests a folder such as `~/Projects/job-finder`. **Press Enter to accept it.** If you enter an occupied parent folder like `~/Projects`, it suggests a new subfolder and keeps your repository URL.
+
 Then open Bypass and choose **Run a review**. If you skipped the app, the menu defaults to code-only review. DNS still pending? Your progress is saved; rerun onboarding with the same repository to continue.
 
 ```bash

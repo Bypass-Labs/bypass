@@ -3,6 +3,7 @@ import path from 'node:path';
 import os from 'node:os';
 import net from 'node:net';
 import { execute, readiness, PACKAGE_ROOT } from './service.mjs';
+import { connectProject } from './onboarding-repository.mjs';
 import { read } from './store.mjs';
 import { scopeReady, loopback } from './network.mjs';
 import { cleanText, redact, execFile, Fault, need, outcome } from './util.mjs';
@@ -59,17 +60,7 @@ export async function onboard(options={}, args=[], io={}) {
   }
 
   say('\n1 / Repository');
-  let location=options.repo||args[0]||options.project;
-  const initial=await recover(async()=>{
-    const current=process.cwd();
-    location=location||await ask('Repository directory or Git URL',current===PACKAGE_ROOT?'':current);
-    need(location,'Enter the path to your app repository, or its Git URL.');
-    const selected=expand(location);location=null;
-    const remote=/^(https:|ssh:|git@)/.test(selected);
-    const dir=options.dir||(remote?expand(await ask('Clone into directory')):undefined);
-    if(remote)need(dir,'Choose an empty directory for the clone.');
-    return execute('init',[selected],{...options,repo:undefined,dir,'non-interactive':true});
-  },{required:true});
+  const initial=await connectProject(options,args,{ask,say,yes,pick});
   root=initial.root;
   say(`✓ Repository connected: ${root}${initial.resumed?' · resuming saved setup':''}`);
 

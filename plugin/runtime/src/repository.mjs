@@ -7,7 +7,7 @@ export async function connectRepository(location, destination) {
     if (location.startsWith('https://')) { const u=new URL(location); need(!u.username&&!u.password, 'Use your Git credential helper; do not put credentials in a repository URL.'); }
     need(destination, '--dir is required when cloning a repository.');
     const dir=path.resolve(destination);
-    need(!fs.existsSync(dir) || fs.readdirSync(dir).length===0, 'Clone destination must be empty.');
+    need(!fs.existsSync(dir) || (fs.statSync(dir).isDirectory() && fs.readdirSync(dir).length===0), `Clone destination must be a new or empty folder: ${dir}`);
     const r=await execFile('git',['-c','core.hooksPath=/dev/null','clone','--no-recurse-submodules','--',location,dir],{timeout:120000});
     need(r.code===0, 'Git clone failed. Check the URL and your existing Git credentials.',3);
     return {root:dir,repository:await repositoryInfo(dir)};

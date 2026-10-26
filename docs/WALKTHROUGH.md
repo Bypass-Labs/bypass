@@ -14,6 +14,13 @@ Choose **QuickStart** for your app or **Try the demo** for a ready-to-use local 
 
 Enter a local directory or a Git URL. Bypass clones remote repositories using your existing Git credentials. It keeps existing source edits and does not run your application's code during setup.
 
+```text
+Repository directory or Git URL: https://github.com/Bypass-Labs/job-finder
+Clone into folder [~/Projects/job-finder]:
+```
+
+**Press Enter at the folder prompt.** Bypass creates the suggested folder. To save it elsewhere, enter a new folder such as `~/Work/job-finder`. If you enter an occupied parent folder, the wizard suggests a subfolder without asking for the URL again. If that repository is already checked out, it offers to use it and keep its files. Type `back` at the folder prompt to change the repository.
+
 ### 2. Choose a model
 
 Pick your **Muse Code subscription**, a **local Muse/local model server**, or a **self-hosted endpoint**. Local and self-hosted choices need a compatible server and its model ID. A local Muse deployment must be supplied by you; Bypass does not download weights.

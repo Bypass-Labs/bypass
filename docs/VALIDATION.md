@@ -2,7 +2,13 @@
 
 Validated locally on 2026-10-26 with Node v22.14.0 and Muse Code 1.4.13.
 
-## Latest: guided onboarding
+## Latest: repository folder guidance
+
+The clone-folder fix passed **21 integration tests, 0 failures**, including seven new repository-wizard checks. These use real Git clones from temporary local fixtures through controlled Git URL rewrites; they do not contact GitHub. They cover accepting the suggested folder, entering an occupied parent, avoiding occupied folders/files, reusing a matching checkout without losing edits or saved setup, SSH URLs, tilde expansion, pasted Markdown links, returning to repository selection, and failed-clone retry/cancellation. Noninteractive init still refuses an occupied destination.
+
+Syntax checks passed for **26 modules**, and the rebuilt Muse plugin validated successfully. A real terminal session showed `~/Projects/job-finder` for the supplied GitHub URL, suggested a child folder after an occupied parent was entered, and exited cleanly with Ctrl+C. No customer repository was cloned during this check. The full suite required permission to bind its loopback fixture servers; the first sandboxed run could not start those servers.
+
+## Previous: guided onboarding
 
 The simplified `onboard` experience passed **14 integration tests, 0 failures**: the seven existing workflow checks below plus seven new wizard checks. The new checks cover pending DNS and resumption without duplicate settings, separate ownership/scope consent, explicit production acknowledgment, recovery from a failed model test, account credential references, a real local demo, and rejection of invalid/noninteractive onboarding before state is written.
 
@@ -69,4 +75,4 @@ These IDs are specific to this prepared walkthrough. A newly created demo genera
 
 ## Not claimed by this verification
 
-No customer repository or deployed-app URL was supplied during implementation. No customer domain was verified, external repository cloned, or production target scanned. A local/self-hosted real model server was not supplied; its supported HTTP contract was exercised against a controlled server. White-box and black-box engines remain mocked. Hosted account/device auth, cloud scheduling, and deployment attestation remain unconfigured and return explicit incomplete outcomes.
+No customer domain was verified, external repository cloned, or production target scanned. The supplied `job-finder` GitHub URL was used to check the interactive folder prompt without starting a clone. A local/self-hosted real model server was not supplied; its supported HTTP contract was exercised against a controlled server. White-box and black-box engines remain mocked. Hosted account/device auth, cloud scheduling, and deployment attestation remain unconfigured and return explicit incomplete outcomes.
