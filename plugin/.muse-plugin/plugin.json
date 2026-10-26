@@ -1,0 +1,14 @@
+{
+  "schemaVersion": 1,
+  "name": "bypass",
+  "displayName": "Bypass",
+  "version": "0.1.0",
+  "description": "Review, prove, retest, and keep security checks with your code. Skeleton with explicit mock-engine labels.",
+  "compat": { "source": "native", "manifestDir": ".muse-plugin" },
+  "capabilities": {
+    "skills": [{ "id": "bypass", "path": "skills/bypass/SKILL.md", "enabledDefault": true }],
+    "commands": [{ "id": "review", "path": "commands/review.md" }, { "id": "context", "path": "commands/context.md" }],
+    "mcpServers": [{ "id": "security", "transport": "stdio", "command": ["node", "mcp/server.mjs"] }],
+    "hooks": [{ "id": "session-context", "event": "SessionStart", "command": ["node", "mcp/context-hook.mjs"], "timeoutMs": 3000, "statusMessage": "Reading local Bypass evidence" }]
+  }
+}

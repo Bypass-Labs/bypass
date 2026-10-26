@@ -1,0 +1,6 @@
+{
+  "paths": ["/api"],
+  "methods": ["GET", "HEAD"],
+  "maxRequestsPerSecond": 2,
+  "productionAcknowledged": false
+}

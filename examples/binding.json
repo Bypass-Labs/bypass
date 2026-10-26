@@ -1,0 +1,7 @@
+{
+  "resourcePath": "/api/invoices/YOUR_TEST_INVOICE_ID",
+  "resourceId": "YOUR_TEST_INVOICE_ID",
+  "idField": "id",
+  "owner": "staging-owner",
+  "outsider": "staging-outsider"
+}

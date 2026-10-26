@@ -1,0 +1,101 @@
+// One catalog drives strict CLI parsing, help, and the command reference.
+const command=(usage,description,flags='',extra={})=>({usage,description,flags:flags.split(' ').filter(Boolean),...extra});
+export const commands={
+  init:command('init [path]','Connect a repository and configure a project.','repo dir config name'),
+  'repo show':command('repo show','Inspect the connected repository.'),
+  'repo connect':command('repo connect <path-or-url>','Connect or clone a repository.','dir name'),
+  status:command('status','Show project readiness, results, and next actions.'),
+  doctor:command('doctor','Check Node, Git, Muse, configuration, and worker health.'),
+  'config show':command('config show','Show nonsecret project configuration.'),
+  'config set':command('config set <key> <value>','Set autoSave, requestTimeoutMs, or project.name.'),
+  'auth login':command('auth login','Use local mode or launch official Muse account login.','provider device'),
+  'auth status':command('auth status','Show local mode and Muse account integration status.'),
+  'auth logout':command('auth logout','Clear Bypass-local account metadata; Muse account is separate.'),
+  'integrate muse':command('integrate muse','Build and install the native Muse plugin.','scope install'),
+  'integrate status':command('integrate status','Inspect the Muse plugin installation.'),
+  'integrate remove':command('integrate remove <muse>','Remove the native Muse plugin.'),
+  'target add':command('target add <name>','Add a local or HTTPS deployed target.','url environment'),
+  'target list':command('target list','List targets and ownership state.'),
+  'target show':command('target show [name]','Show target, challenge, and scope.'),
+  'target use':command('target use <name>','Select an active target.'),
+  'target verify':command('target verify [name]','Check DNS/HTTP control, or acknowledge local ownership.','method wait renew'),
+  'target authorize':command('target authorize [name]','Record explicit, expiring testing scope.','scope-file paths accept production'),
+  'target revoke':command('target revoke <name>','Revoke testing and pause target monitors.'),
+  'target remove':command('target remove <name>','Disconnect a target while retaining historical evidence.'),
+  'identity add':command('identity add <name>','Reference a bearer token, cookie, or header in an environment variable.','target type secret-env header check-path'),
+  'identity list':command('identity list','List credential references, never values.','target'),
+  'identity test':command('identity test <name>','Make one authorized request to the configured identity-check path.'),
+  'identity update':command('identity update <name>','Update a credential reference.','secret-env check-path'),
+  'identity remove':command('identity remove <name>','Remove an identity reference; dependent tests become blocked.'),
+  'model add':command('model add <name>','Add local, self-hosted endpoint, or Muse Code provider.','provider base-url model secret-env allow-private'),
+  'model list':command('model list','List model profiles and inference destinations.'),
+  'model use':command('model use <name>','Select the model profile.'),
+  'model test':command('model test [name]','Send a synthetic smoke prompt, without repository content.'),
+  'model remove':command('model remove <name>','Remove a model profile.'),
+  scan:command('scan','Replay saved checks, then run simulated analysis.','mode target base full plan detach'),
+  'finding list':command('finding list','List findings, with simulation and evidence labels.','target run status severity'),
+  'finding show':command('finding show <id>','Show evidence, history, and remediation context.'),
+  verify:command('verify <finding-id>','Verify a fixture candidate; deployed-app engine remains mocked.','target'),
+  retest:command('retest <finding-id>','Check a deployed fix and save a standalone regression.','target build'),
+  'test list':command('test list','List saved regression checks.','target'),
+  'test show':command('test show <id>','Show a check and environment bindings.'),
+  'test save':command('test save <finding-id>','Save a regression after a verified fixture fix.'),
+  'test run':command('test run [id]','Replay deterministic checks with zero model calls.','all target detach'),
+  'test bind':command('test bind [id]','Bind a saved check to an authorized environment.','all target file'),
+  'test export':command('test export [id]','Write ordinary Node tests with no Bypass dependency.','all target out force'),
+  'test disable':command('test disable <id>','Disable a saved check with an audit reason.','reason'),
+  'test enable':command('test enable <id>','Enable a saved check.'),
+  coverage:command('coverage','Show behavior-level checks, gaps, stale, and blocked evidence.'),
+  context:command('context','Show history and monitor results for the next coding session.','finding'),
+  report:command('report','Export a run as JSON or Markdown.','run format out'),
+  'run list':command('run list','List durable runs.'),
+  'run show':command('run show <id>','Inspect one run.'),
+  'run watch':command('run watch <id>','Wait for completion and return the final exit code.','timeout'),
+  'run stop':command('run stop <id>','Request cancellation of a running worker.'),
+  'monitor add':command('monitor add <name>','Schedule saved regression replay.','target every runner'),
+  'monitor list':command('monitor list','Show schedules and local worker health.'),
+  'monitor run':command('monitor run <name>','Run a schedule immediately.'),
+  'monitor pause':command('monitor pause <name>','Pause a monitor.'),
+  'monitor resume':command('monitor resume <name>','Resume a monitor.'),
+  'monitor remove':command('monitor remove <name>','Remove a monitor; retain run evidence.'),
+  'monitor worker':command('monitor worker','Run the real local scheduler (machine must remain awake).','detach once stop'),
+  'ci init':command('ci init','Generate a GitHub Actions workflow for exported Node tests.','provider target force'),
+  'mcp serve':command('mcp serve','Start the typed stdio MCP server.'),
+  'demo start':command('demo start','Create the Ledger Git fixture and start its HTTP server.','dir port'),
+  'demo status':command('demo status','Show the fixture state.'),
+  'demo fix':command('demo fix','Enable ownership enforcement in the local fixture.'),
+  'demo regress':command('demo regress','Reintroduce the local fixture defect.'),
+  'demo add-route':command('demo add-route','Add an uncovered export route to the fixture.'),
+  'demo reset':command('demo reset','Reset fixture behavior while retaining evidence.'),
+  'demo stop':command('demo stop','Stop the local fixture server.'),
+  _run:command('_run <id>','Internal detached run entry point.','',{hidden:true}),
+  '_demo-serve':command('_demo-serve','Internal fixture server.','',{hidden:true})
+};
+export const booleanFlags=new Set(['json','help','version','non-interactive','plan','full','detach','all','force','accept','production','renew','once','stop','device','install','allow-private']);
+export const globalFlags=['project','json','help','version','non-interactive'];
+export function parse(argv){
+  const options={},words=[];
+  for(let i=0;i<argv.length;i++){
+    const token=argv[i];
+    if(token==='-h'){options.help=true;continue;}
+    if(token==='-v'){options.version=true;continue;}
+    if(token.startsWith('--')){
+      const equal=token.indexOf('='),key=token.slice(2,equal<0?undefined:equal);
+      if(booleanFlags.has(key)){if(equal>=0)throw new Error(`--${key} does not take a value.`);options[key]=true;}
+      else {const value=equal>=0?token.slice(equal+1):argv[++i];if(!value||value.startsWith('--'))throw new Error(`--${key} requires a value.`);options[key]=value;}
+    }else words.push(token);
+  }
+  const key=commands[words.slice(0,2).join(' ')]?words.splice(0,2).join(' '):words.shift()||'';
+  if(key&&commands[key]){
+    const allowed=new Set([...globalFlags,...commands[key].flags]);for(const flag of Object.keys(options))if(!allowed.has(flag))throw new Error(`Unknown option --${flag} for ${key}.`);
+    if(!options.help){const required=(commands[key].usage.match(/<[^>]+>/g)||[]).length,optional=(commands[key].usage.match(/\[[^\]]+\]/g)||[]).length;if(words.length<required||words.length>required+optional)throw new Error(`Usage: bypass ${commands[key].usage}`);}
+  }else if(key&&!options.help)throw new Error(`Unknown command '${key}'. Run bypass --help.`);
+  if(!key)for(const flag of Object.keys(options))if(!globalFlags.includes(flag))throw new Error(`Unknown global option --${flag}.`);
+  return {key,args:words,options};
+}
+export function help(key){
+  const selected=commands[key];
+  if(selected)return `bypass ${selected.usage}\n\n${selected.description}\n\nOptions: ${selected.flags.map(x=>'--'+x).join(', ')||'(none)'}\nGlobal: --project <path>, --json, --non-interactive, --help\n`;
+  const entries=Object.entries(commands).filter(([k,v])=>!v.hidden&&(!key||k.startsWith(key+' ')));
+  return `BYPASS  /  security checks that stay with your code\n\nRunnable skeleton · analysis engines are MOCKED\n\n${entries.map(([,v])=>`  ${v.usage.padEnd(38)} ${v.description}`).join('\n')}\n\nQuick start: bypass demo start\nGlobal: --project <path>, --json, --non-interactive, --help, --version\nExit codes: 0 success · 1 failed regression · 2 usage/config · 3 blocked/incomplete · 130 cancelled\n`;
+}

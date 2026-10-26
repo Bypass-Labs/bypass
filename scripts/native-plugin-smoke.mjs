@@ -1,0 +1,13 @@
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import { execFile, need } from '../src/util.mjs';
+const root=path.resolve(process.argv[2]||'.demo/ledger');
+const inspected=await execFile('muse',['plugins','inspect','bypass','--json'],{cwd:root});
+need(inspected.code===0,'Native plugin inspection failed.');
+const info=JSON.parse(inspected.stdout);
+const fixture=path.join(fs.mkdtempSync(path.join(os.tmpdir(),'bypass-hook-')),'session-start.json');
+fs.writeFileSync(fixture,JSON.stringify({event:'SessionStart',stdin:{hook_event_name:'SessionStart',session_id:'bypass-smoke',cwd:root,source:'startup',permission_mode:'on-request',model:'echo',model_provider:'echo'}}));
+const tested=await execFile('muse',['plugins','hook','test','bypass:session-context','--fixture',fixture,'--json'],{cwd:root});
+need(tested.code===0,'Native hook test failed.',3,{output:tested.stdout||tested.stderr});
+console.log(JSON.stringify({nativeValid:info.valid,runtimeCapabilities:info.runtime_capabilities,hookTest:JSON.parse(tested.stdout)},null,2));

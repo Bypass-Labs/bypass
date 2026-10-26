@@ -1,0 +1,30 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { spawn } from 'node:child_process';
+import readline from 'node:readline';
+import { temp } from './helpers.mjs';
+import { CLI } from '../src/demo.mjs';
+import { execute } from '../src/service.mjs';
+import { toolDefinitions } from '../src/mcp.mjs';
+
+test('MCP negotiates, validates typed tools, shares CLI state, and closes cleanly',async t=>{
+  const root=temp();await execute('init',[root]);
+  const child=spawn(process.execPath,[CLI,'mcp','serve','--project',root],{stdio:['pipe','pipe','pipe']});
+  t.after(()=>child.kill());let sequence=0;const waiting=new Map();const notifications=[];
+  const lines=readline.createInterface({input:child.stdout});const protocolErrors=[];
+  lines.on('line',line=>{const m=JSON.parse(line);if(m.id===null){protocolErrors.push(m);}else if(m.id!==undefined){const pending=waiting.get(m.id);if(pending){clearTimeout(pending.timer);pending.resolve(m);waiting.delete(m.id);}}else notifications.push(m);});
+  const request=(method,params={})=>new Promise((resolve,reject)=>{const id=++sequence;const timer=setTimeout(()=>reject(new Error('MCP request timeout')),8000);waiting.set(id,{resolve,timer});child.stdin.write(JSON.stringify({jsonrpc:'2.0',id,method,params})+'\n');});
+  const init=await request('initialize',{protocolVersion:'2025-11-25',capabilities:{},clientInfo:{name:'test',version:'1'}});assert.equal(init.result.protocolVersion,'2025-11-25');
+  child.stdin.write(JSON.stringify({jsonrpc:'2.0',method:'notifications/initialized'})+'\n');
+  const listed=await request('tools/list');assert.equal(listed.result.tools.length,toolDefinitions.length);assert.ok(listed.result.tools.find(t=>t.name==='bypass_status').annotations.readOnlyHint);
+  const status=await request('tools/call',{name:'bypass_status',arguments:{},_meta:{progressToken:'status-1'}});assert.equal(status.result.isError,false);assert.equal(JSON.parse(status.result.content[0].text).engine.mode,'mock');
+  assert.equal(notifications.filter(n=>n.method==='notifications/progress').length,2);
+  const invalid=await request('tools/call',{name:'bypass_add_target',arguments:{name:'app',url:'http://127.0.0.1:4444',environment:'local',evil:'ignored?'}});assert.equal(invalid.error.code,-32602);
+  const added=await request('tools/call',{name:'bypass_add_target',arguments:{name:'app',url:'http://127.0.0.1:4444',environment:'local'}});assert.equal(added.result.isError,false);
+  assert.equal((await execute('target list',[],{project:root})).targets.length,1);
+  const resource=await request('resources/read',{uri:'bypass://context'});assert.match(resource.result.contents[0].text,/mock/);
+  const prompt=await request('prompts/get',{name:'bypass_review'});assert.equal(prompt.result.messages[0].role,'user');
+  const unknown=await request('does/not/exist');assert.equal(unknown.error.code,-32601);
+  child.stdin.write('null\nnot-json\n[]\n');await request('ping');assert.deepEqual(protocolErrors.map(e=>e.error.code),[-32600,-32700,-32600]);
+  child.stdin.end();const code=await new Promise(res=>child.once('close',res));assert.equal(code,0);
+});
