@@ -34,7 +34,20 @@ The exported regression was separately executed from the walkthrough repository 
 - Source editing is covered by the automated journey: changing `enforceOwnership` in `app.mjs` changes live HTTP behavior without restarting the fixture server.
 - Started the local monitor worker detached. Its first scheduled check passed, was persisted, and appeared in the native Muse context hook.
 
-## Current handoff state
+## Full walkthrough rehearsal
+
+The expanded customer journey and presenter script were checked on 2026-10-26:
+
+- All 36 Bash blocks passed shell syntax checks; 88 CLI examples matched the actual command parser; eight relative documentation links resolved.
+- A fresh temporary Git repository was connected through the CLI. Adding a staging origin generated its unique TXT challenge. The review plan and scope authorization correctly remained blocked before ownership verification. No public DNS record was published or changed.
+- The DNS ownership integration test passed again, including exact/split TXT values, expiry, renewal, and production acknowledgment. Its DNS responses were controlled test doubles.
+- A separate fresh Ledger rehearsal proved the invoice issue, fixed it through source editing, saved one regression, and ran its exported Node test independently.
+- The real detached worker first recorded a scheduled pass, then automatically caught a deliberate regression on a later scheduled run with zero model calls. The failed result appeared in a new CLI context read, and the standalone test also failed. No manual `monitor run` was substituted for the scheduled catch.
+- After adding the export route, the original standalone HTTP assertions still passed while Bypass marked source evidence stale. The export issue was proved and fixed, both findings were retested, and the library finished with two passing saved checks and two independently passing Node tests.
+
+Temporary rehearsal workers and apps were stopped. The prior Muse integration and provider checks above were not repeated for this documentation update. Presentation timings in the walkthrough are a run sheet, not a performance benchmark.
+
+## Original local handoff snapshot
 
 - Demo repository: `.demo/ledger`
 - App: `http://127.0.0.1:4317`

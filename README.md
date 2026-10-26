@@ -6,11 +6,33 @@ Connect a repository and a running app, review a security candidate, verify a fi
 
 Node 22 or newer is the only runtime dependency. There is no npm dependency installation step.
 
-## Start today's walkthrough
+## Start with the full customer journey
+
+**[Open the full walkthrough and presenter script](docs/WALKTHROUGH.md).** It starts with a fresh repository connection and the exact DNS TXT record the customer must publish, then covers scope, all three model options, test accounts, CLI/Muse usage, and the complete proof → fix → saved test → scheduled regression → second test demo.
+
+```text
+Connect repository → Add app → Verify DNS TXT → Authorize scope
+→ Choose model → Connect test accounts → Review and prove
+→ Fix and retest → Export test → Catch regression → Grow the library
+```
+
+Quick start for your own repository (replace the path; the wizard asks for the app origin):
 
 ```bash
 git clone https://github.com/Bypass-Labs/bypass-for-muse.git
 cd bypass-for-muse
+./bypass init /absolute/path/to/your/app-repository
+```
+
+The wizard connects the repository, asks for the model, and offers to add the app. For a deployed app it prints a real ownership challenge. Follow [the DNS verification steps](docs/WALKTHROUGH.md#2-connect-the-live-app-and-verify-its-dns-txt-record), publish the exact generated TXT value, verify ownership, and authorize scope before live requests. The walkthrough gives every explicit command and expected result, including the Muse plugin path.
+
+The setup works with your repository and live app. Actual proof/fix demonstrations use the separate local Ledger fixture while analysis engines are mocked.
+
+## Immediate fixture rehearsal
+
+This shortcut preconfigures a local app, accounts, and scope. Use the full walkthrough above to demonstrate customer onboarding first. From your Bypass checkout:
+
+```bash
 ./bypass demo start
 ./bypass --project .demo/ledger
 ```
@@ -36,11 +58,12 @@ Run these from the package directory. Replace IDs with those printed by the prec
 # Exit 3 is intentional: discovery is simulated, not a security verdict.
 
 ./bypass --project .demo/ledger finding list
-./bypass --project .demo/ledger verify <finding-id>
+FINDING_ID='finding_REPLACE_WITH_PRINTED_ID'
+./bypass --project .demo/ledger verify "$FINDING_ID"
 # Exit 1: a real HTTP request proves the local fixture exposes another account's invoice.
 
 ./bypass --project .demo/ledger demo fix
-./bypass --project .demo/ledger retest <finding-id> --build demo-fixed
+./bypass --project .demo/ledger retest "$FINDING_ID" --build demo-fixed
 # Owner still gets 200; the other account gets 403; anonymous requests get 401.
 # A saved regression is created automatically.
 
