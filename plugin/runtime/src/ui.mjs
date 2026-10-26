@@ -10,6 +10,7 @@ import { guidedDemo } from './guided-demo.mjs';
 import { homeActions, previewRun, quickCommands, reviewSummary } from './experience.mjs';
 import { appOriginInput } from './network.mjs';
 import { isBypassSource } from './project-selection.mjs';
+import { createTerminalSession } from './terminal-session.mjs';
 
 const color=!!process.stdout.isTTY&&!process.env.NO_COLOR;
 const paint=(n,s)=>color?`\x1b[${n}m${s}\x1b[0m`:s;
@@ -19,6 +20,9 @@ export function printResult(data){
   if(!data)return;
   const value=redact(data);
   if(value.error){console.error(paint('31',value.error));if(value.details&&Object.keys(value.details).length)console.error(JSON.stringify(value.details,null,2));return;}
+  if(value.models){console.log('\nModel connections');for(const m of value.models)console.log(`  ${m.name===value.active?'●':'○'} ${m.name} · ${m.provider} · ${m.lastAttempt?.status||m.lastTest?.status||'not tested'}\n    ${m.dataDestination}`);return;}
+  if(value.targets){console.log('\nConnected apps');for(const t of value.targets)console.log(`  ${t.name===value.active?'●':'○'} ${t.name} · ${t.url}\n    ${t.environment} · ownership ${t.ownership?.status||'pending'}`);if(!value.targets.length)console.log('  No app yet. Use /app to connect one.');return;}
+  if(value.project&&value.review){console.log('\n'+reviewSummary(value.review));console.log(`Model: ${value.model?.name||'not configured'} · ${value.model?.connection||'optional for the preview'}\nSaved tests: ${value.checks.enabled} · passed ${value.checks.passed} · failed ${value.checks.failed}\nNext: ${value.next}`);return;}
   if(value.plan){
     const p=value.plan;
     console.log(`\n${bold('Review plan')} · ${p.mode==='code'?'code only':p.mode}\n`);
@@ -58,6 +62,7 @@ export function tokenize(line){
   if(quote||escaped)throw new Fault('Unclosed quote or escape in command.');if(started)tokens.push(word);return tokens;
 }
 function createPrompt(){
+  if(process.stdin.isTTY&&process.stdout.isTTY&&process.env.TERM!=='dumb'&&process.env.BYPASS_PLAIN!=='1')return createTerminalSession();
   const rl=readline.createInterface({input:process.stdin,output:process.stdout});
   const controller=new AbortController();
   rl.once('SIGINT',()=>{controller.abort();rl.close();});
@@ -75,6 +80,7 @@ function createPrompt(){
   return {ask,run,signal:controller.signal,close:()=>rl.close()};
 }
 async function choose(ask,items,title){
+  if(ask.select&&items.length)return ask.select(title,items,{back:true});
   console.log(`\n${bold(title)}`);if(!items.length){console.log('Nothing here yet. Return to the home screen for the next step.');return null;}
   items.forEach((x,i)=>console.log(`  ${i+1}  ${x.label||x.name||x.id}`));console.log('  0  Back');
   while(true){const choice=await ask('Choose','1');if(['0','back','q'].includes(choice))return null;const item=items[Number(choice)-1];if(item)return item;console.log('Choose one of the numbers shown, or 0 to go back.');}
@@ -82,11 +88,27 @@ async function choose(ask,items,title){
 
 export async function initWizard(options={},args=[]){
   const prompt=createPrompt();
-  try{return await onboard(options,args,prompt);}finally{prompt.close();}
+  try{
+    let result;
+    try{result=await onboard(options,args,prompt);}
+    catch(error){
+      if(!prompt.rich||!error.details?.cancelled)throw error;
+      prompt.write(error.message);prompt.stopTasks();
+      result={root:prompt.state.context.repo,interactive:true,openDashboard:!!prompt.state.context.repo,exitCode:0};
+    }
+    if(prompt.rich&&result.openDashboard){await terminal({project:result.root},prompt);return {...result,openDashboard:false};}
+    if(prompt.rich){prompt.setNext('Evidence saved. Press Enter to close this session.');await prompt.ask(result.completed?'Walkthrough complete — Enter to finish':'Enter to finish');}
+    return result;
+  }finally{prompt.close();}
 }
 export async function modelTestWizard(root,name,{interactive=process.stdin.isTTY&&process.stdout.isTTY}={}){
   const prompt=interactive?createPrompt():null;
-  try{return await checkModelConnection(root,name,prompt||{write:message=>console.error(message)});}finally{prompt?.close();}
+  try{if(prompt?.rich)updateWorkspace(prompt,root);const result=await checkModelConnection(root,name,prompt||{write:message=>console.error(message)});if(prompt?.rich)await prompt.ask('Enter to finish');return result;}finally{prompt?.close();}
+}
+function updateWorkspace(prompt,root){
+  if(!prompt.setContext)return;
+  const info=readiness(root);
+  prompt.setContext({title:info.project.name,repo:root,branch:info.project.repository.branch,app:info.target?`${info.target.url} · ${info.target.authorized?'authorized':info.target.ownership==='verified'?'scope required':'DNS pending'}`:'not connected · code preview available',model:info.model?`${info.model.name} · ${info.model.provider} · ${info.model.connection}`:'not configured · optional for this preview'});
 }
 async function modelWizard(ask,root,io){
   const choice=await choose(ask,[{label:'Muse Code subscription',provider:'muse-code'},{label:'Local model · inference on this machine',provider:'local'},{label:'Your self-hosted compatible endpoint',provider:'endpoint'}],'Where should model inference run?');if(!choice)return;
@@ -127,14 +149,33 @@ export async function terminal(options={},io){
   try{root=rootFrom(root);}catch{const result=await initWizard(options);if(!result.openDashboard)return;root=result.root;}
   const prompt=io||createPrompt(),{ask,close}=prompt;
   let advanced=false;
-  const run=async(key,args=[],flags={})=>{if(key==='demo')return guidedDemo(flags,prompt);if(key==='model test')return checkModelConnection(flags.project||root,args[0],prompt);const result=await execute(key,args,{project:root,...flags},{signal:prompt.signal});printResult(result);return result;};
-  const tour=()=>guidedDemo({},prompt);
+  const run=async(key,args=[],flags={})=>{
+    if(key==='demo')return tour(flags);
+    if(key==='model test')return checkModelConnection(flags.project||root,args[0],prompt);
+    if(prompt.rich&&['auth login','mcp serve','_run','_demo-serve'].includes(key))throw new Fault('Run this process in a separate shell. Type /help for commands available in this workspace.');
+    if(prompt.rich&&key==='monitor worker'&&!flags.once&&!flags.stop&&!flags.detach)flags={...flags,detach:true};
+    let lastStage=-1;
+    if(key==='scan')prompt.setTasks?.('Review preview',['Saved checks / scope','Local source inventory','Simulated discovery']);
+    const work=async signal=>{
+      const result=await execute(key,args,{project:root,...flags},{signal,onProgress:step=>{
+        prompt.write?.(step.message);
+        if(key==='scan'){if(lastStage>=0)prompt.task?.(lastStage,'done');lastStage=['replay','inventory','mock-analysis'].indexOf(step.stage);prompt.task?.(lastStage,'running');}
+      }});
+      if(result.exitCode===130)throw new Fault('Run stopped. Partial evidence is saved.',130,{cancelled:true});
+      if(key==='scan'&&lastStage>=0)prompt.task?.(lastStage,previewRun(result.run)?'done':'attention');
+      return result;
+    };
+    const result=prompt.activity?await prompt.activity(key==='scan'?'Review repository · simulated discovery':key==='test run'?'Replay saved checks · no model':key,work,{verdict:r=>r.exitCode&&!(previewRun(r.run)&&r.exitCode===3)?'attention':'done'}):await work(prompt.signal);
+    printResult(result);return result;
+  };
+  const tour=async(flags={})=>{try{return await guidedDemo(flags,prompt);}finally{if(prompt.rich)updateWorkspace(prompt,root);}};
   const showResults=async()=>{
     const findings=read(root).findings;
     if(!findings.length){console.log('\nNo review results yet. Press Enter on the home screen to run the first preview.');return;}
     const finding=findings.length===1?findings[0]:await choose(ask,findings.map(f=>({...f,label:`${f.title} · ${label(f.status)}`})),'Review results');
     if(!finding)return;
     if(!finding.fixture){
+      prompt.setNext?.('Try the local walkthrough to prove the example and save a regression test');
       console.log(`\n${bold('Example scenario / account access')}\nCould another account read a resource owned by someone else?\n\nThis sample demonstrates how a finding will look. It was not discovered in your code.\nThe deployed-app investigation engine is not built yet; DNS verification will not turn this sample into a verified vulnerability.`);
       const action=await choose(ask,[{label:'See the full prove → fix → retest walkthrough in a local app',id:'demo'},{label:'Show saved scenario details',id:'details'}],'Next step');
       if(action?.id==='demo')await tour();else if(action?.id==='details')printResult({finding});
@@ -145,22 +186,32 @@ export async function terminal(options={},io){
     }
   };
   try{
+    updateWorkspace(prompt,root);
+    if(prompt.rich){const info=readiness(root);console.log(`\nProject ready · ${info.findings.total} saved result(s) · ${info.checks.enabled} regression test(s)\n${info.latestRun?`Last run: ${info.latestRun.kind} · ${info.latestRun.status}. `:''}Use /history for saved activity, /status for review scope.`);}
     if(isBypassSource(root)){
       console.log(`\nYou opened the Bypass tooling repository:\n${root}\nChoose your application source for white-box review.`);
       const action=await choose(ask,[{id:'repo',label:'Choose my application repository (recommended)'},{id:'demo',label:'Run the separate local walkthrough'},{id:'tool',label:'Intentionally review Bypass tooling itself'}],'What do you want to review?');
       if(!action)return;
-      if(action.id==='demo'){await tour();return;}
+      if(action.id==='demo'){await tour();if(prompt.rich)await ask('Walkthrough finished — Enter to close');return;}
       if(action.id==='repo'){const result=await onboard({flow:'quickstart'},[],{...prompt,inDashboard:true});root=result.root;}
     }
     while(true){
       let choice;
-      if(advanced){
+      if(advanced&&prompt.rich){
+        const action=await choose(ask,[{id:'1',label:'Resume setup'},{id:'2',label:'App ownership & test accounts'},{id:'3',label:'Models & privacy'},{id:'6',label:'Saved tests'},{id:'7',label:'Monitoring'},{id:'8',label:'Session context'},{id:'9',label:'Manual fixture controls'},{id:'10',label:'Muse plugin'}],'Settings');
+        advanced=false;if(!action)continue;choice=action.id;
+      }else if(advanced){
         dashboard(root);
         console.log('SETTINGS & ADVANCED\n  1  Resume setup                  6  Saved tests\n  2  App & test accounts           7  Monitoring\n  3  Models                        8  Session context\n  4  Review preview                9  Manual demo controls\n  5  Review results               10  Muse plugin\n  0  Back to project home\n');
         choice=await ask('Choose, or type a command','0');
         if(['0','back'].includes(choice)){advanced=false;continue;}
       }else{
         const state=read(root),info=readiness(root),actions=homeActions(state);
+        if(prompt.rich){
+          updateWorkspace(prompt,root);
+          prompt.setNext(`${actions[0].label} · /${actions[0].id}   |   /demo for the complete proof loop`);
+          choice=(await prompt.command(actions[0].id)).replace(/^\//,'');
+        }else{
         console.log(`\n${accent('━'.repeat(Math.min(66,process.stdout.columns||66)))}\n${bold(state.project.name)} / Bypass prototype\n${muted(root)}`);
         console.log(reviewSummary(info.review));
         console.log(`Model: ${info.model?.connection||'not configured; mock preview needs no model'} · ${info.findings.total} review result(s)`);
@@ -169,17 +220,37 @@ export async function terminal(options={},io){
         const selected=await ask('Choose or type a command','1');
         if(selected==='0')break;
         choice=/^[1-3]$/.test(selected)?actions[Number(selected)-1].id:selected;
+        }
       }
+      choice=choice.replace(/^\//,'');
       if(['q','quit','exit'].includes(choice))break;
       if(['?','help','commands'].includes(choice)){console.log('\n'+quickCommands);continue;}
       if(choice==='help all'){console.log(help());continue;}
       if(choice==='back'){advanced=false;continue;}
       if(choice==='settings'){advanced=true;continue;}
-      const aliases={review:'4',results:'5',tests:'6',app:'1',models:'3',plugin:'10'};
+      if(choice==='status'){console.log('\n'+reviewSummary(readiness(root).review));continue;}
+      if(choice==='history'){const s=read(root);console.log('\nSaved project activity\n'+(s.events.slice(-15).map(e=>`${e.at} · ${e.message}`).join('\n')||'No saved activity yet. Start with /review or /demo.'));continue;}
+      const aliases={review:'4',results:'5',tests:'6',app:prompt.rich?'app':'1',models:'3',plugin:'10'};
       choice=aliases[choice]||choice;
       try{
         if(choice==='demo'||choice==='walkthrough'){await tour();continue;}
         if(choice==='repo'){const result=await onboard({flow:'quickstart'},[],{...prompt,inDashboard:true});root=result.root;continue;}
+        if(choice==='app'){
+          const info=readiness(root),state=read(root);let target=state.targets.find(t=>t.name===state.activeTarget);
+          if(!target){await targetWizard(ask,root);continue;}
+          const ownershipValid=target.ownership?.status==='verified'&&Date.parse(target.ownership.expiresAt)>Date.now();
+          if(!ownershipValid&&Date.parse(target.challenge?.expiresAt||0)<=Date.now())target=(await run('target verify',[target.name],{renew:true})).target;
+          if(ownershipValid)console.log(`\n${target.url}\nOwnership verified · ${info.target.authorized?'testing scope authorized':'choose the paths you authorize for testing'}`);
+          else if(target.environment==='local')console.log(`\nConfirm you control the local app at ${target.url}.`);
+          else console.log(`\nPublish this DNS record:\n  Type   TXT · TTL Auto\n  Name   ${target.challenge.record}\n  Value  ${target.challenge.token}\n\nChoose the DNS check below when ready. Testing scope is authorized separately.`);
+          prompt.setNext?.(info.target.authorized?'This app is authorized. Return with Esc to continue your review.':ownershipValid?'Authorize the allowed testing paths':'Publish the TXT record, then choose Check the DNS TXT record');
+          const action=await choose(ask,[...(!info.target.authorized?[{id:ownershipValid?'authorize':'verify',label:ownershipValid?'Set the allowed testing scope':`Check ${target.environment==='local'?'local ownership':'the DNS TXT record'}`}]:[]),{id:'add',label:'Connect another app'},{id:'advanced',label:'All app settings & test accounts'}],'App connection');
+          if(action?.id==='verify')await run('target verify',[target.name],{method:target.environment==='local'?'local':'dns'});
+          else if(action?.id==='authorize')await authorizeWizard(ask,root,target.name);
+          else if(action?.id==='add')await targetWizard(ask,root);
+          else if(action?.id==='advanced'){advanced=true;}
+          continue;
+        }
         if(choice==='1'){const result=await onboard({project:root,flow:'quickstart'},[],{...prompt,inDashboard:true});root=result.root;}
         else if(choice==='2'){
           const state=read(root);const action=await choose(ask,[{label:'Add a target',id:'add'},{label:'Show targets / ownership challenges',id:'show'},{label:'Verify ownership',id:'verify'},{label:'Authorize testing scope',id:'authorize'},{label:'Select active target',id:'use'},{label:'Add test identity',id:'identity'},{label:'Test identity connection',id:'identity-test'},{label:'Revoke testing',id:'revoke'}],'Targets & identities');
@@ -218,7 +289,7 @@ export async function terminal(options={},io){
         }
         else if(choice==='10'){await run('integrate muse',[],{scope:'project'});}
         else if(choice){const tokens=tokenize(choice);if(['bypass','./bypass'].includes(tokens[0]))tokens.shift();const parsed=parse(tokens);if(parsed.options.help)console.log(help(parsed.key));else await run(parsed.key,parsed.args,parsed.options);}
-      }catch(e){if(e.code===130)throw e;console.log(`\n${paint('31','!')} ${cleanText(e.message)}`);if(e.details?.challenge)console.log(JSON.stringify(e.details.challenge,null,2));}
+      }catch(e){if(e.code===130&&!e.details?.cancelled)throw e;prompt.stopTasks?.(e.code===130?'cancelled':'failed');console.log(`\n${paint('31','!')} ${cleanText(e.message)}`);if(e.details?.challenge)console.log(JSON.stringify(e.details.challenge,null,2));}
     }
   }finally{close?.();}
   console.log(muted(`\nProject state saved. Reopen from the Bypass checkout with:\n  ./bypass --project ${JSON.stringify(root)}\n`));

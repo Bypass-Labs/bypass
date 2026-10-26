@@ -2,7 +2,19 @@
 
 Validated locally on 2026-10-26 with Node v22.14.0 and Muse Code 1.4.13.
 
-## Latest: choose the application before reviewing it
+## Latest: a persistent terminal workspace
+
+The terminal workspace update passed **51 tests, 0 failures**, with syntax checks for **34 modules**. The bundled Muse runtime was rebuilt and native plugin validation returned `valid: true`, with no diagnostics. No new runtime dependencies are required.
+
+A real PTY rehearsal completed application selection → model choice → deferred DNS → command palette → source preview → all six local walkthrough stages → clean exit. Setup history stayed in the same workspace. The walkthrough used real local HTTP controls, exported Node pass/fail, saved replay and a scheduler tick; its fixture finished fixed, with the schedule paused and server stopped. It did not send requests to the example deployed domain or call a model.
+
+Actual terminal output was rendered and visually inspected at 100×36 and 60×20. Frame tests cover 120×40, 80×24, 60×20 and 40×15. Checks cover slash filtering, arrows, Tab, history, editing long input, bracketed multiline paste, Unicode widths, control-sequence sanitization, detail expansion, scrolling, Escape, Ctrl+C and restoring the normal terminal. An early rehearsal exposed lost setup history and the default delayed Escape decoding; both were fixed before the successful rehearsal.
+
+A second PTY rehearsal used a deliberately waiting local model endpoint. Escape stopped its request, saved a skipped connection status and returned to an operable command bar. The model menu displayed the saved profile by name. `/app` opened the existing DNS record directly without repeating repository/model setup or making a DNS request. An invalid command recovered inside the workspace. JSON output remained valid and contained no terminal control sequences. Stopping a run watcher is tested to leave its background job intact.
+
+The real `job-finder-2` workspace was opened and its status read: `job-radar.app` remains DNS-pending and its Muse connection remains connected. Its `.bypass/state.json` was byte-for-byte unchanged by that check. The UI retains honest mock-engine labels. This work did not install a new native Muse package, change capability approvals, call an external model, or claim an end-to-end Muse conversation was retested. Muse continues to render its own interface.
+
+## Previous: choose the application before reviewing it
 
 The repository-selection update passed **43 tests, 0 failures**, with syntax checks for **32 modules**. The rebuilt plugin validated with no diagnostics. Checks also passed for 32 Bash blocks, 35 CLI examples, nine local documentation links, and exact source/runtime equality.
 

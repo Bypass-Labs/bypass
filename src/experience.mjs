@@ -11,7 +11,7 @@ export function previewRun(run) {return run?.kind==='scan'&&run.result?.simulati
 export function reviewSummary(plan){
   return `Repository: ${plan.repository.path}${plan.repository.branch?` (${plan.repository.branch})`:''}\nGit remote: ${plan.repository.remote||'local folder; no remote configured'}\nApp: ${plan.app?.url||'not connected; code preview is available'}\nWhite-box / code: ${plan.whiteBox.status}\nBlack-box / live app: ${plan.blackBox.status}\n${plan.blackBox.description}`;
 }
-export const quickCommands=`Commands you can type here (no IDs needed):
+export const quickCommands=`Commands you can type here (no IDs needed; / prefix optional):
   repo       Choose or change the application repository
   review     Run a review preview of this repository
   results    Open findings and their next step
@@ -20,9 +20,14 @@ export const quickCommands=`Commands you can type here (no IDs needed):
   app        Connect an app or resume DNS verification
   models     Manage model connections
   plugin     Check or install the Muse plugin
+  status     Show the source / app pairing and analysis scope
+  history    Read saved project activity
   settings   Open all configuration and advanced controls
   back       Return to the project home
   q          Exit with your progress saved
 
-Press Enter on the home screen to take action 1.
+Press Enter for the suggested next action. Type / to browse commands.
+↑↓ select or recall commands · Tab complete · Esc back / stop current action
+Ctrl+O expand details · PgUp/PgDn scroll · Ctrl+C exit
+Use BYPASS_PLAIN=1 ./bypass for a plain scrolling interface.
 Use help all for the full CLI command reference. You can also type raw commands such as target list or model test muse.`;

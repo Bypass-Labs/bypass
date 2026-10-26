@@ -22,13 +22,17 @@ export async function onboard(options={}, args=[], io={}) {
     while(true) { const value=(await ask(label+' (y/n)',fallback)).toLowerCase(); if(['y','yes'].includes(value))return true;if(['n','no'].includes(value))return false;say('Choose y or n.'); }
   };
   const pick = async (title, items, fallback=0) => {
+    if(io.select)return io.select(title,items,{fallback});
     say('\n'+title);items.forEach((item,i)=>say(`  ${i+1}  ${item.label}`));
     while(true){const number=Number(await ask('Choose',String(fallback+1)));if(Number.isInteger(number)&&items[number-1])return items[number-1];say('Choose one of the numbers above.');}
   };
   const recover = async (work, {required=false}={}) => {
     while(true) { try{return await work();}catch(e){if(e.code===130||e.name==='AbortError')throw e;say(`\n${e.message}`);if(!await yes(required?'Try again?':'Try again now?')){if(required)throw new Fault('Setup stopped. Saved choices are retained.',130);return null;}} }
   };
-  const call = (root,key,argv=[],flags={}) => execute(key,argv,{...flags,project:root},{signal:io.signal});
+  const call = (root,key,argv=[],flags={}) => {
+    const work=signal=>execute(key,argv,{...flags,project:root},{signal});
+    return io.activity?io.activity(key,work):work(io.signal);
+  };
   say('\nBYPASS / Get started\nReal setup and saved checks. Analysis engines are mocked.');
   say('Press Enter for the recommended next action. Your progress is saved.');
   const flow=options.flow||((options.repo||options.project||args[0])?'quickstart':(await pick('How would you like to start?',[
@@ -42,11 +46,15 @@ export async function onboard(options={}, args=[], io={}) {
     return {...await guidedDemo(options,io),interactive:true,openDashboard:false};
   }
   say('Repository → model → optional app connection → first review.\nDNS, test accounts, and the Muse plugin can all be finished later.');
+  io.setTasks?.('Setup',['Connect application source','Choose inference connection','Connect app / optional DNS','Save setup and open project']);
+  io.task?.(0,'running');io.setNext?.('Choose model → connect app → first review');
 
   say('\nStep 1 of 4 / Connect your repository');
   say('White-box uses this application source. Black-box uses its deployed app URL.\nChoose the application you want to review, not the Bypass CLI checkout.');
-  const initial=await connectProject(options,args,{ask,say,yes,pick});
+  const initial=await connectProject(options,args,{ask,say,yes,pick,activity:io.activity,signal:io.signal});
   root=initial.root;
+  io.setContext?.({title:read(root).project.name,repo:root,branch:read(root).project.repository.branch});
+  io.task?.(0,'done');io.task?.(1,'running');io.setNext?.('Connect your deployed app, or continue with a code preview');
   say(`✓ Repository connected: ${root}${initial.resumed?' · resuming saved setup':''}`);
 
   say('\nStep 2 of 4 / Choose your model connection');
@@ -68,6 +76,7 @@ export async function onboard(options={}, args=[], io={}) {
     }
     const name=advanced?await ask('Profile name',selection.name):unique(selection.name,read(root).models);
     const result=await call(root,'model add',[name],config);await call(root,'model use',[name]);model=result.model;
+    io.setContext?.({model:`${model.name} · ${model.provider} · not tested`});
     say(`✓ Model choice saved: ${model.name}\nModel runs through: ${model.dataDestination}\nConnection has not been checked yet.`);
     if(selection.provider==='muse-code')say('Uses the official Muse login. If needed, run muse login in your terminal.');
     else if(selection.provider==='local')say('Requires your running compatible local server. No weights are downloaded and there is no cloud fallback.');
@@ -90,6 +99,7 @@ export async function onboard(options={}, args=[], io={}) {
     }
   }
 
+  io.task?.(1,'done');io.task?.(2,'running');io.setNext?.('Save setup → open your project → run a review preview');
   say('\nStep 3 of 4 / Connect your running app');
   say('Have a deployed app? Enter its URL to verify ownership. Press Enter to add it later.');
   let state=read(root), target=state.targets.find(t=>t.name===state.activeTarget);
@@ -107,8 +117,10 @@ export async function onboard(options={}, args=[], io={}) {
     target=(await call(root,'target add',[name],{url,environment})).target;
     await call(root,'target use',[target.name]);
   }
+  if(target)io.setContext?.({app:`${target.url} · ${authorized(target)?'authorized':verified(target)?'scope required':'DNS pending'}`});
   if(target){await connectApp();target=read(root).targets.find(t=>t.name===target.name);}
 
+  io.task?.(2,'done');io.task?.(3,'running');
   say('\nStep 4 of 4 / Finish setup');
   if(advanced&&target&&authorized(target)){
     const identities=read(root).identities.filter(i=>i.target===target.name);
@@ -146,8 +158,8 @@ export async function onboard(options={}, args=[], io={}) {
         target=(await call(root,'target verify',[target.name],{method:'local'})).target;
       }else{
         if(Date.parse(target.challenge?.expiresAt||0)<=Date.now())target=(await call(root,'target verify',[target.name],{renew:true})).target;
-        say(`\nVerify this app in your DNS provider:\n  Type    TXT\n  Name    ${target.challenge.record}\n  Value   ${target.challenge.token}\n  TTL     Auto / provider default\n\nCopy the complete generated value. Keep unrelated DNS records.`);
         say('If your DNS provider appends the zone name, omit that suffix from the record name.\nExample: for staging.example.com in the example.com zone, enter _bypass-verification.staging.\nYou can preview this project and run the complete local walkthrough while DNS is pending.');
+        say(`\nAdd this DNS record (keep unrelated records):\n  Type    TXT · TTL Auto\n  Name    ${target.challenge.record}\n  Value   ${target.challenge.token}`);
         while(!verified(target)){
           const choices=[{label:"I've added the record — check DNS",method:'dns'},{label:'Continue to my review — verify DNS later (recommended)',method:null}];
           if(advanced)choices.push({label:'Use the HTTPS challenge instead',method:'http'});
@@ -177,12 +189,14 @@ export async function onboard(options={}, args=[], io={}) {
   }
   async function finish(){
     const info=readiness(root);
+    io.setContext?.({model:info.model?`${info.model.name} · ${info.model.provider} · ${info.model.connection}`:'optional for this preview',app:info.target?`${info.target.url} · ${info.target.authorized?'authorized':info.target.ownership==='verified'?'scope required':'DNS pending'}`:'not connected · code preview available'});
+    io.task?.(3,'done');io.setNext?.('Run a review preview, or /demo for the complete proof loop');
     say('\nSetup saved\n');
     say(`  Repository    ${root}\n  Model         ${info.model?`${info.model.name} · ${info.model.connection}`:'add later'}\n  App           ${info.target?`${info.target.url} · ${info.target.authorized?'verified and authorized':info.target.ownership==='verified'?'scope required':'verification pending'}`:'add later; code-only review available'}\n  Test accounts ${read(root).identities.length} references\n  Muse plugin   ${museInstalled?'installed; approve in Muse':'optional'}`);
     say('\nAnalysis is simulated. Fixture proof and saved-test replay are real.');
     say('\nYour review\n'+reviewSummary(info.review));
     say('Ready: your review preview. Press Enter on the next screen to continue.\nApp verification and plugin setup are available later in Settings.');
-    const openDashboard=io.inDashboard||await yes('Open my project?','y');
+    const openDashboard=io.inDashboard||io.rich||await yes('Open my project?','y');
     return outcome({root,interactive:true,openDashboard,readiness:info});
   }
 }

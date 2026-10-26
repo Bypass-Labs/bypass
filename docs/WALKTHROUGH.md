@@ -62,17 +62,17 @@ The Muse plugin is optional. If Bypass is already installed from another checkou
 
 ### 5. Your first preview
 
-Choose **Open my project**, then press Enter. Bypass inventories source locally, shows **Review preview complete**, and opens the result directly. No IDs or separate finding command are needed.
+Setup opens your workspace automatically; press Enter for **/review**. Bypass inventories source locally, shows **Review preview complete**, and opens the result directly. Setup history remains in the same timeline. No IDs or separate finding command are needed. The plain interface asks **Open my project** first.
 
 **The scenario is simulated; it is not a vulnerability discovered in your repository.** DNS verification does not change this boundary. Choose the offered local walkthrough to experience real HTTP proof, the fix, and saved-test replay now.
 
 ## Finding commands without memorizing them
 
-The home screen shows three choices. Press Enter for the first one; it changes from **Run my first review preview** to **Open review results**, then **Replay saved tests** when that project has saved tests.
+The command bar shows the recommended action. Press Enter; the suggestion changes from **/review** to **/results**, then **/tests** when that project has saved tests. Type **/** to open the command palette, type a few letters to filter it, and use arrows and Enter to choose.
 
-The home screen shows the exact source folder, Git remote, app origin, and both stage statuses. Type `repo` to change the selected application. Opening Bypass’s tooling checkout first asks which application you intended to review.
+The header keeps the selected source folder, app origin and ownership state, and model connection visible. `/status` shows the Git remote and both analysis stages. `/repo` changes the selected application. Opening Bypass’s tooling checkout first asks which application you intended to review.
 
-Type `?` for the short command menu:
+Use `/help` or `?` for keyboard controls. Ctrl+O expands operation details; PgUp/PgDn scroll the transcript; Esc goes back or stops the current operation. Use the shortcuts below with or without a `/` prefix:
 
 | Command inside the interactive screen | Purpose |
 | --- | --- |
@@ -82,11 +82,14 @@ Type `?` for the short command menu:
 | `tests` | Replay or export saved tests |
 | `app` | Resume app verification and setup |
 | `models` / `plugin` | Manage connections |
+| `status` / `history` | Review scope / saved project activity |
 | `settings` | Open all advanced controls |
 | `back` / `q` | Return home / exit |
 | `help all` | Show the full CLI reference |
 
 These are interactive shortcuts. For shell commands and automation flags, see the [CLI reference](COMMANDS.md). The program also accepts raw CLI commands inside its interactive screen.
+
+Setup and the six-step local walkthrough display a checklist with actual completed steps. No estimated percentage or simulated thinking indicator is shown. The timeline is saved under `.bypass/sessions/` on exit. `BYPASS_PLAIN=1 ./bypass` uses the original scrolling style for accessibility.
 
 To reopen a project later, run this from the Bypass checkout:
 

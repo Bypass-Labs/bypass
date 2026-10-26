@@ -11,7 +11,7 @@ Requires **Node 22+**, Git, and access to this repository. No dependency install
 ```bash
 git clone https://github.com/Bypass-Labs/bypass-for-muse.git
 cd bypass-for-muse
-./bypass onboard
+./bypass
 ```
 
 Press Enter for **Connect my application**, then:
@@ -19,7 +19,7 @@ Press Enter for **Connect my application**, then:
 1. **Choose the application repository.** Paste its local folder or Git URL. Bypass's own checkout is the tool, not automatically your application. Existing checkouts can be reused.
 2. **Choose your model.** Muse Code subscription, compatible local Muse/local model server, or your own self-hosted endpoint. Connection testing is optional.
 3. **Connect the app deployed from that repository.** Enter a domain such as `job-radar.app` or a full URL, and choose staging or production. Add its DNS TXT record now or press Enter to continue the code preview. Authorize live testing separately after verification.
-4. **Review the pairing and press Enter to preview.** Both analysis stages are shown explicitly; results open immediately.
+4. **Review the pairing and press Enter to preview.** Setup opens your workspace automatically. Both analysis stages are shown explicitly; results open immediately.
 
 ```text
 Repository: /Users/you/Projects/job-finder (main)
@@ -32,11 +32,19 @@ App investigation is deferred. Code preview can run now.
 
 When app ownership and scope are ready, the black-box stage changes to **simulated** and authorized saved checks can replay. Neither mocked engine claims to have tested your deployed app for new vulnerabilities.
 
-Type `repo` to change the application, `app` to resume verification, `?` to see commands, or `q` to exit. Reopen the exact selected application with:
+The interactive workspace keeps your repository, app, and model visible above a continuous activity timeline. Setup and the demo show completed steps, the current action, and what comes next. Operations show actual elapsed time; **Ctrl+O** expands their details.
+
+Type **`/`** to browse commands, use **↑↓** to choose, and press **Enter**. `/repo` changes the application, `/app` opens its DNS/ownership setup, `/history` shows saved activity, and `/quit` exits. **Esc** goes back or stops the current operation. **PgUp/PgDn** scroll through the timeline. Commands without `/` still work.
+
+Reopen the exact selected application with:
 
 ```bash
 ./bypass --project /path/to/your/application
 ```
+
+Sessions save a readable transcript in the selected project's `.bypass/sessions/` folder. Use `BYPASS_PLAIN=1 ./bypass` for a plain scrolling terminal or screen reader. `--json` and noninteractive commands keep their existing machine-readable behavior. No terminal UI dependencies are installed.
+
+[See the workspace and keyboard controls](docs/CLI_EXPERIENCE.md).
 
 ## Use the Muse plugin
 

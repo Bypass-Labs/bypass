@@ -36,7 +36,7 @@ export async function execute(key,args=[],o={},context={}){
   const working=path.resolve(o.project||context.cwd||process.cwd());
   if(key==='init'||key==='repo connect'){
     const config=o.config?loadJSON(o.config):null;
-    const {root,repository}=await connectRepository(o.repo||args[0]||config?.repo||working,o.dir||config?.dir);
+    const {root,repository}=await connectRepository(o.repo||args[0]||config?.repo||working,o.dir||config?.dir,context);
     const {resumed}=initStore(root,repository,o.name||config?.name);
     if(resumed)await change(root,s=>{s.project.repository=repository;s.project.root=root;});
     if(config){
@@ -57,7 +57,7 @@ export async function execute(key,args=[],o={},context={}){
     return outcome({mode:'local',accountRequired:false,message:'Local mode is ready. No Bypass account or cloud upload is required.'});
   }
   if(key==='mcp serve'){const {serveMCP}=await import('./mcp.mjs');await serveMCP(working);return null;}
-  if(key==='integrate muse'||key==='integrate status'||key==='integrate remove')return integrate(key,args,o,working);
+  if(key==='integrate muse'||key==='integrate status'||key==='integrate remove')return integrate(key,args,o,working,context.signal);
   const root=rootFrom(working);const s=read(root);const targetName=o.target||s.activeTarget;
   let result;
   switch(key){
@@ -140,7 +140,7 @@ export async function execute(key,args=[],o={},context={}){
     case 'model remove':result=await change(root,state=>{named(state.models,args[0],'Model');state.models=state.models.filter(m=>m.name!==args[0]);if(state.activeModel===args[0])state.activeModel=state.models[0]?.name||null;return {removed:args[0]};});break;
     case 'scan':{
       const plan=scanPlan(s,o);if(o.plan)return outcome({plan},plan.blockers.length?3:0);
-      return dispatchRun(root,'scan',{mode:o.mode||'combined',target:targetName,base:o.base,full:!!o.full},!!o.detach,context.signal);
+      return dispatchRun(root,'scan',{mode:o.mode||'combined',target:targetName,base:o.base,full:!!o.full},!!o.detach,context.signal,context.onProgress);
     }
     case 'finding list':result={findings:filter(s.findings,{...o,lastRunId:o.run},['target','status','severity','lastRunId'])};break;
     case 'finding show':result={finding:named(s.findings,args[0],'Finding')};break;
@@ -148,7 +148,7 @@ export async function execute(key,args=[],o={},context={}){
     case 'test list':result={checks:filter(s.checks,o,['target'])};break;
     case 'test show':result={check:named(s.checks,args[0],'Check')};break;
     case 'test save':result={check:await saveCheck(root,args[0])};break;
-    case 'test run':need(o.all||args[0],'Specify a check ID or --all.');need(!(o.all&&args[0]),'Choose a check ID or --all.');return dispatchRun(root,'tests',{checkId:args[0],target:targetName},!!o.detach,context.signal);
+    case 'test run':need(o.all||args[0],'Specify a check ID or --all.');need(!(o.all&&args[0]),'Choose a check ID or --all.');return dispatchRun(root,'tests',{checkId:args[0],target:targetName},!!o.detach,context.signal,context.onProgress);
     case 'test bind':need(o.all||args[0],'Specify a check ID or --all.');need(o.file&&o.target,'Supply --file <binding.json> and --target.');result=await bindCheck(root,o.all?'all':args[0],o.target,loadJSON(o.file));break;
     case 'test export':need(o.all||args[0],'Specify a check ID or --all.');result=exportChecks(root,{checkId:args[0],all:o.all,target:o.target,out:o.out,force:o.force});break;
     case 'test disable':case 'test enable':result=await change(root,state=>{const c=named(state.checks,args[0],'Check');if(key==='test disable')need(o.reason,'--reason is required.');c.enabled=key==='test enable';c.disabledReason=c.enabled?null:o.reason;event(state,'check-setting',`${c.id}: ${c.enabled?'enabled':'disabled'}`,{reason:c.disabledReason});return {check:c};});break;
@@ -163,17 +163,17 @@ export async function execute(key,args=[],o={},context={}){
     }
     case 'run list':result={runs:s.runs.map(({result,steps,...r})=>r)};break;
     case 'run show':result={run:named(s.runs,args[0],'Run')};break;
-    case 'run watch':return watchRun(root,args[0],o.timeout?duration(o.timeout):300000);
+    case 'run watch':return watchRun(root,args[0],o.timeout?duration(o.timeout):300000,context.signal);
     case 'run stop':result=await change(root,state=>{const r=named(state.runs,args[0],'Run');if(['queued','running'].includes(r.status))r.cancelRequested=true;return {runId:r.id,status:r.status,cancelRequested:r.cancelRequested};});break;
     case 'monitor add':{
       safeName(args[0]);need((o.runner||'local')==='local','Hosted cloud workers are not configured. Use --runner local.',3,{implemented:false});const everyMs=duration(o.every||'1h',10000);
       result=await change(root,state=>{const t=named(state.targets,targetName,'Target');scopeReady(t);need(!state.monitors.some(m=>m.name===args[0]),'Monitor name already exists.');const m={name:args[0],target:targetName,everyMs,runner:'local',enabled:true,createdAt:now(),nextRunAt:now()};state.monitors.push(m);return {monitor:m,worker:workerStatus(root),next:'bypass monitor worker --detach'};});break;
     }
     case 'monitor list':result={monitors:s.monitors,worker:workerStatus(root)};break;
-    case 'monitor run':return runMonitor(root,args[0]);
+    case 'monitor run':return runMonitor(root,args[0],context.signal);
     case 'monitor pause':case 'monitor resume':result=await change(root,state=>{const m=named(state.monitors,args[0],'Monitor');m.enabled=key==='monitor resume';if(m.enabled)scopeReady(named(state.targets,m.target,'Target'));return {monitor:m};});break;
     case 'monitor remove':result=await change(root,state=>{named(state.monitors,args[0],'Monitor');state.monitors=state.monitors.filter(m=>m.name!==args[0]);return {removed:args[0]};});break;
-    case 'monitor worker':return startWorker(root,{detach:o.detach,once:o.once,stop:o.stop});
+    case 'monitor worker':return startWorker(root,{detach:o.detach,once:o.once,stop:o.stop,signal:context.signal});
     case 'ci init':{
       need(!o.provider||o.provider==='github','Only GitHub Actions is supported.');named(s.targets,targetName,'Target');const file=path.join(root,'.github/workflows/bypass-security.yml');need(!fs.existsSync(file)||o.force,'Workflow exists; review before replacing with --force.');
       const exported=exportChecks(root,{all:true,target:targetName,force:o.force});
@@ -190,14 +190,15 @@ export async function execute(key,args=[],o={},context={}){
   return wrap(result);
 }
 
-async function integrate(key,args,o,working){
+async function integrate(key,args,o,working,signal){
+  const native=(...args)=>execFile('muse',args,{cwd:working,signal,killGroup:true});
   if(key==='integrate status'){
-    const r=await execFile('muse',['plugins','inspect','bypass','--json'],{cwd:working});let data;try{data=JSON.parse(r.stdout);}catch{data={message:r.stderr||r.stdout};}return outcome({integration:data},r.code===0?0:3);
+    const r=await native('plugins','inspect','bypass','--json');let data;try{data=JSON.parse(r.stdout);}catch{data={message:r.stderr||r.stdout};}return outcome({integration:data},r.code===0?0:3);
   }
   if(key==='integrate remove'){
-    need(args[0]==='muse','Only muse is supported.');const r=await execFile('muse',['plugins','remove','bypass','--json'],{cwd:working});return outcome({message:r.stdout||r.stderr},r.code===0?0:3);
+    need(args[0]==='muse','Only muse is supported.');const r=await native('plugins','remove','bypass','--json');return outcome({message:r.stdout||r.stderr},r.code===0?0:3);
   }
-  const inspected=await execFile('muse',['plugins','inspect','bypass','--json'],{cwd:working});
+  const inspected=await native('plugins','inspect','bypass','--json');
   let existing;try{existing=JSON.parse(inspected.stdout);}catch{}
   if(inspected.code===0&&existing?.valid&&existing.record?.id==='bypass'){
     return outcome({alreadyInstalled:true,installed:existing.record,active:!!existing.active,reviewRequired:true,
@@ -206,9 +207,9 @@ async function integrate(key,args,o,working){
   }
   const plugin=path.join(PACKAGE_ROOT,'plugin');
   need(fs.existsSync(path.join(plugin,'runtime/bin/bypass.mjs')),'The bundled Muse plugin runtime is missing. In the Bypass checkout, run npm run plugin:build, then retry.',3);
-  const validation=await execFile('muse',['plugins','validate',plugin,'--json'],{cwd:working});need(validation.code===0,'Muse rejected plugin validation.',3,{validation:validation.stdout});
+  const validation=await native('plugins','validate',plugin,'--json');need(validation.code===0,'Muse rejected plugin validation.',3,{validation:validation.stdout});
   const scope=o.scope||'project';need(['user','project'].includes(scope),'Scope must be user or project.');
-  const installed=await execFile('muse',['plugins','install',plugin,'--scope',scope,'--json'],{cwd:working});
+  const installed=await native('plugins','install',plugin,'--scope',scope,'--json');
   let diagnostic;try{diagnostic=JSON.parse(installed.stdout).error?.message;}catch{}
   need(installed.code===0,`Muse plugin installation did not finish: ${redact(String(diagnostic||installed.stderr||'Run muse plugins inspect bypass for details.')).replace(/[\x00-\x1f\x7f]/g,' ').slice(0,500)}`,3);
   return outcome({plugin,scope,installed:JSON.parse(installed.stdout),next:'Review with muse plugins inspect bypass, then muse plugins approve bypass. Start a new Muse session and use /bypass:review.',message:'Installation does not grant runtime trust. Muse’s native capability review remains visible.'});

@@ -6,7 +6,15 @@ Global: --project <path>, --json, --non-interactive, --help, --version.
 
 ## Interactive shortcuts
 
-Run `./bypass --project /path/to/your/app` to open the project screen. Press Enter for the first recommended action. Type `?` to show shortcuts: `repo`, `review`, `results`, `demo`, `tests`, `app`, `models`, `plugin`, `settings`, `back`, and `q`. These shortcuts belong to the interactive screen; shell commands use the catalog below. `help all` shows the complete catalog inside the screen.
+Run `./bypass --project /path/to/your/app` to open the persistent workspace. Press Enter for the suggested action. Type `/` for a searchable command list: `/repo`, `/review`, `/results`, `/demo`, `/tests`, `/app`, `/models`, `/status`, `/history`, `/plugin`, `/settings`, `/help`, and `/quit`. The slash is optional. `?`, `back`, and `q` still work. `/help all` shows the complete catalog.
+
+Use ↑↓ and Enter in menus, Tab to complete a slash command, ↑↓ on an empty command bar to recall session commands, Ctrl+O to expand operation details, PgUp/PgDn to scroll, and Esc to clear a draft, go back, or stop a running operation. Ctrl+C exits with saved project state retained. Enter skips a running model connection check. A local fixture startup finishes its short setup before cleanup; its footer says when it cannot be interrupted.
+
+`/app` opens the current app's ownership challenge and next action directly. DNS ownership and testing authorization remain separate. Expired challenges are renewed before presenting their record. `/history` reads persisted project events. Session transcripts are saved locally under `.bypass/sessions/` on exit; command recall is limited to the current session.
+
+These shortcuts belong to the interactive screen; shell commands use the catalog below. Raw catalog commands also work inside the workspace, except processes that need their own terminal (`auth login`, `mcp serve`, internal server commands). A foreground monitor worker requested in the workspace starts detached; `monitor worker --once` runs a single tick. Stopping `run watch` stops watching, not the background job; use `run stop <id>` to request job cancellation.
+
+For a scrolling interface or screen reader, use `BYPASS_PLAIN=1 ./bypass`. `TERM=dumb` also selects the plain interface. `NO_COLOR=1` disables color. JSON and noninteractive output never use the full-screen renderer.
 
 ## demo
 

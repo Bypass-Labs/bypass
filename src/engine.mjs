@@ -43,26 +43,28 @@ function mockCandidate(state,inv,targetName){
     binding:fixture?{resourcePath:exportRoute?'/api/exports/invoice-acme-001':'/api/invoices/invoice-acme-001',resourceId:'invoice-acme-001',owner:'demo-owner',outsider:'demo-outsider',idField:'id'}:null,
     sourceFingerprint:inv.fingerprint,createdAt:now(),history:[]};
 }
-export async function executeRun(root,runId,externalSignal){
+export async function executeRun(root,runId,externalSignal,onProgress){
   const controller=new AbortController();
+  const report=async(stage,message)=>{await progress(root,runId,stage,message);onProgress?.({stage,message});};
   const cancel=()=>controller.abort();externalSignal?.addEventListener('abort',cancel,{once:true});
+  if(externalSignal?.aborted)cancel();
   const timer=setInterval(()=>{try{if(named(read(root).runs,runId,'Run').cancelRequested)controller.abort();}catch{controller.abort();}},150);
   let result;
   try{
     await change(root,s=>{const r=named(s.runs,runId,'Run');r.status='running';r.startedAt=now();r.pid=process.pid;});
     const initial=read(root),run=named(initial.runs,runId,'Run'),options=run.options;
     if(run.kind==='tests'||run.kind==='monitor'){
-      await progress(root,runId,'replay','Running saved checks without a model.');
+      await report('replay','Running saved checks without a model.');
       result=await runChecks(root,{all:!options.checkId,checkId:options.checkId,target:options.target,signal:controller.signal,runId});
     }else{
       const plan=scanPlan(initial,options);
       need(!plan.blockers.length,plan.blockers.join(' '),3,{plan});
-      await progress(root,runId,'replay','Saved checks run before simulated investigation.');
+      await report('replay',plan.mode==='code'?'Code-only preview: saved HTTP checks deferred.':'Replaying saved checks before simulated investigation.');
       const regression=plan.mode==='code'?{results:[],exitCode:0,modelCalls:0}:await runChecks(root,{all:true,target:plan.target,signal:controller.signal,runId});
       if(controller.signal.aborted)throw Object.assign(new Error('Run cancelled.'),{code:130});
-      await progress(root,runId,'inventory','Hashing source locally; no repository content is sent to a model.');
+      await report('inventory',plan.mode==='live'?'Live-only mode: source inventory skipped.':'Hashing source locally; no repository content is sent to a model.');
       const inv=plan.mode==='live'?{fingerprint:null,files:[],sourceFileCount:0,routes:[],skipped:true}:await inventory(root,options.base);
-      await progress(root,runId,'mock-analysis','MOCK engine: creating a clearly labeled candidate for the product walkthrough.');
+      await report('mock-analysis','Simulated discovery: preparing an example, not a detected vulnerability.');
       // A small cancellable boundary also exercises the real detached-job lifecycle.
       await delay(100,undefined,{signal:controller.signal});
       const current=read(root);if(current.demo)Object.assign(current.demo,demoConfig(root));

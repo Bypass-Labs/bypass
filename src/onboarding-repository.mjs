@@ -32,11 +32,14 @@ function availableFolder(base) {
 }
 
 // Keep the source while correcting the destination; never merge into an occupied folder.
-export async function connectProject(options, args, {ask, say, yes, pick}) {
+export async function connectProject(options, args, {ask, say, yes, pick, activity, signal}) {
   let location=options.repo||args[0]||options.project;
   let fallback=process.cwd()===PACKAGE_ROOT||isBypassSource(process.cwd()) ? '' : process.cwd();
   let suppliedDirectory=options.dir;
-  const init=(source,dir) => execute('init',[source],{...options,repo:undefined,dir,'non-interactive':true});
+  const init=(source,dir) => {
+    const work=signal=>execute('init',[source],{...options,repo:undefined,dir,'non-interactive':true},{signal});
+    return activity?activity(isRemote(source)?'Clone application repository':'Connect application repository',work):work(signal);
+  };
 
   while(true) {
     location=unwrap(location || await ask('Repository directory or Git URL',fallback));

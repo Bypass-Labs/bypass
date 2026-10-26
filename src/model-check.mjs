@@ -13,7 +13,7 @@ export async function checkModelConnection(root, name, io={}) {
     say(`✓ Model replied successfully in ${(result.check.elapsedMs/1000).toFixed(1)}s. Connection verified.`);
     return result;
   } catch(error) {
-    if(error.details?.skipped){say('Connection check skipped. Your model profile is saved; you can test it later.');return {skipped:true};}
+    if(error.details?.skipped||io.rich&&error.details?.cancelled){say('Connection check skipped. Your model profile is saved; you can test it later.');return {skipped:true};}
     throw error;
   }
 }
