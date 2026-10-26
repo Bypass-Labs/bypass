@@ -20,7 +20,7 @@ export function readiness(root){
   const s=read(root),target=s.targets.find(t=>t.name===s.activeTarget),model=s.models.find(m=>m.name===s.activeModel);
   let liveReady=false;try{scopeReady(target||{});liveReady=true;}catch{}
   return {project:s.project,root,engine:{mode:'mock',analysisImplemented:false,label:'MOCK analysis · real setup and saved-test replay'},
-    model:model?{name:model.name,provider:model.provider,destination:model.dataDestination,connection:model.lastTest?.status||'not tested'}:null,
+    model:model?{name:model.name,provider:model.provider,destination:model.dataDestination,connection:model.lastAttempt?.status||model.lastTest?.status||'not tested'}:null,
     target:target?{name:target.name,url:target.url,environment:target.environment,ownership:target.ownership?.status||'pending',authorized:liveReady}:null,
     ready:{repository:true,model:!!model,target:!!target,liveTesting:liveReady},
     findings:{total:s.findings.length,fixtureConfirmed:s.findings.filter(f=>f.status==='confirmed_fixture').length,simulated:s.findings.filter(f=>f.status==='simulated_unproven').length,fixed:s.findings.filter(f=>f.status==='fixed_verified').length},
@@ -124,7 +124,16 @@ export async function execute(key,args=[],o={},context={}){
     case 'model list':result={models:s.models,active:s.activeModel,privacy:'Local inference is available with a compatible local server. A Muse-hosted session can still use its own remote provider.'};break;
     case 'model use':result=await change(root,state=>{state.activeModel=named(state.models,args[0],'Model').name;return {activeModel:state.activeModel};});break;
     case 'model test':{
-      const m=named(s.models,args[0]||s.activeModel,'Model');const check=await testModel(m,root);await change(root,state=>{named(state.models,m.name,'Model').lastTest=check;});result={model:m.name,check};break;
+      const m=named(s.models,args[0]||s.activeModel,'Model');
+      try {
+        const check=await testModel(m,root,context);
+        await change(root,state=>{const model=named(state.models,m.name,'Model');model.lastTest=check;model.lastAttempt=check;});
+        result={model:m.name,check};
+      } catch(error) {
+        await change(root,state=>{named(state.models,m.name,'Model').lastAttempt={status:error.code===130?'skipped':'failed',checkedAt:now(),reason:error.details?.reason||'connection_check',message:redact(error.message),repositorySent:false};});
+        throw error;
+      }
+      break;
     }
     case 'model remove':result=await change(root,state=>{named(state.models,args[0],'Model');state.models=state.models.filter(m=>m.name!==args[0]);if(state.activeModel===args[0])state.activeModel=state.models[0]?.name||null;return {removed:args[0]};});break;
     case 'scan':{

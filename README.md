@@ -33,6 +33,8 @@ The wizard walks you through:
 
 For a Git URL, the wizard suggests a folder such as `~/Projects/job-finder`. **Press Enter to accept it.** If you enter an occupied parent folder like `~/Projects`, it suggests a new subfolder and keeps your repository URL.
 
+The optional model check shows progress and waits up to 45 seconds. **Press Enter during the check to skip it and continue.** If it fails, the wizard explains the next step and lets you continue, retry, or choose another model.
+
 Then open Bypass and choose **Run a review**. If you skipped the app, the menu defaults to code-only review. DNS still pending? Your progress is saved; rerun onboarding with the same repository to continue.
 
 ```bash

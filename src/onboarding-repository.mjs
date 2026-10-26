@@ -78,6 +78,15 @@ export async function connectProject(options, args, {ask, say, yes, pick}) {
           if(origin?.code===0 && remoteKey(location) && remoteKey(origin.stdout)===remoteKey(location)) {
             say(`This repository is already checked out at ${display(directory)}.`);
             if(await yes('Use this existing checkout and keep its files?','y')) return await init(directory);
+          } else if(origin?.code===0 && remoteKey(origin.stdout)) {
+            say(`\n${display(directory)} contains a checkout of ${remoteKey(origin.stdout)}.\nYou requested ${remoteKey(location)||name}.`);
+            const choice=await pick('Which repository would you like to use?',[
+              {label:`Clone the requested repository into a new folder`,id:'clone'},
+              {label:`Use the existing local checkout (${remoteKey(origin.stdout)})`,id:'local'},
+              {label:'Enter another repository',id:'back'}
+            ]);
+            if(choice.id==='local')return await init(directory);
+            if(choice.id==='back'){location=null;fallback='';break;}
           } else say(`${display(directory)} ${isDirectory?'already contains files':'is a file'}. Choose a new folder for ${name}.`);
           const base=isDirectory && path.basename(directory)!==name ? path.join(directory,name) : path.join(path.dirname(directory),name);
           directory=availableFolder(base);

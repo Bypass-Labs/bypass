@@ -4,6 +4,7 @@ import os from 'node:os';
 import net from 'node:net';
 import { execute, readiness, PACKAGE_ROOT } from './service.mjs';
 import { connectProject } from './onboarding-repository.mjs';
+import { checkModelConnection } from './model-check.mjs';
 import { read } from './store.mjs';
 import { scopeReady, loopback } from './network.mjs';
 import { cleanText, redact, execFile, Fault, need, outcome } from './util.mjs';
@@ -32,6 +33,7 @@ export async function onboard(options={}, args=[], io={}) {
   };
   const call = (root,key,argv=[],flags={}) => execute(key,argv,{...flags,project:root});
   say('\nBYPASS / Get started\nReal setup and saved checks. Analysis engines are mocked.');
+  say('Four steps: repository → model → running app → finish.\nPress Enter to accept a suggested answer. Optional steps can wait; your choices are saved as you go.');
   const flow=options.flow||(await pick('How would you like to start?',[
     {label:'QuickStart (recommended) — connect your project',id:'quickstart'},
     {label:'Try the demo — a local app with two test accounts',id:'demo'},
@@ -59,16 +61,17 @@ export async function onboard(options={}, args=[], io={}) {
     return finish();
   }
 
-  say('\n1 / Repository');
+  say('\nStep 1 of 4 / Connect your repository');
   const initial=await connectProject(options,args,{ask,say,yes,pick});
   root=initial.root;
   say(`✓ Repository connected: ${root}${initial.resumed?' · resuming saved setup':''}`);
 
-  say('\n2 / Model');
+  say('\nStep 2 of 4 / Choose your model connection');
   let model=read(root).models.find(m=>m.name===read(root).activeModel);
-  if(model) say(`Keeping ${model.name} · ${model.provider} · ${model.lastTest?.status||'connection not tested'}. Change it later in Models & privacy.`);
-  else await recover(async()=>{
-    const selection=await pick('Where should inference run?',[
+  if(model) say(`Keeping ${model.name} · ${model.provider} · ${model.lastAttempt?.status||model.lastTest?.status||'connection not tested'}. Change it later in Models & privacy.`);
+  else await addModel();
+  async function addModel(){await recover(async()=>{
+    const selection=await pick('How would you like to connect to a model?',[
       {label:'Muse Code subscription — use your existing account',provider:'muse-code',name:'muse'},
       {label:'Local Muse / local model — compatible server on this machine',provider:'local',name:'local'},
       {label:'Self-hosted model — your compatible HTTPS endpoint',provider:'endpoint',name:'selfhosted'}
@@ -82,15 +85,30 @@ export async function onboard(options={}, args=[], io={}) {
     }
     const name=advanced?await ask('Profile name',selection.name):unique(selection.name,read(root).models);
     const result=await call(root,'model add',[name],config);await call(root,'model use',[name]);model=result.model;
-    say(`✓ Model configured: ${model.name}\nInference destination: ${model.dataDestination}`);
+    say(`✓ Model choice saved: ${model.name}\nModel runs through: ${model.dataDestination}\nConnection has not been checked yet.`);
     if(selection.provider==='muse-code')say('Uses the official Muse login. If needed, run muse login in your terminal.');
     else if(selection.provider==='local')say('Requires your running compatible local server. No weights are downloaded and there is no cloud fallback.');
-  });
-  if(model&&!model.lastTest&&await yes('Test the model connection? Sends a synthetic prompt; provider usage may apply.')){
-    await recover(async()=>{const result=await call(root,'model test',[model.name]);say(`✓ Model connection: ${result.check.status}. No repository content sent.`);});
+  });}
+  if(model&&(model.lastAttempt||model.lastTest)?.status!=='connected'){
+    say('Optional: send one small test prompt. Provider usage may apply. You can finish setup without this check.');
+    if(await yes('Check the connection now?'))while(true){
+      try{await checkModelConnection(root,model.name,{...io,write:say});break;}
+      catch(error){
+        if(error.code===130||error.name==='AbortError')throw error;
+        say(`\nConnection not verified. ${error.message}`);
+        const action=await pick('What would you like to do?',[
+          {label:'Continue setup — check the connection later',id:'continue'},
+          {label:'Retry the connection check',id:'retry'},
+          {label:'Choose another model connection',id:'change'}
+        ]);
+        if(action.id==='continue')break;
+        if(action.id==='change'){await addModel();break;}
+      }
+    }
   }
 
-  say('\n3 / Running app');
+  say('\nStep 3 of 4 / Connect your running app');
+  say('Have a deployed app? Enter its URL to verify ownership. Press Enter to add it later.');
   let state=read(root), target=state.targets.find(t=>t.name===state.activeTarget);
   if(!target&&state.targets.length){target=state.targets[0];await call(root,'target use',[target.name]);}
   if(target)say(`Continuing ${target.name}: ${target.url}`);
@@ -106,7 +124,7 @@ export async function onboard(options={}, args=[], io={}) {
   });
   if(target){await connectApp();target=read(root).targets.find(t=>t.name===target.name);}
 
-  say('\n4 / Optional connections');
+  say('\nStep 4 of 4 / Finish setup');
   if(target&&authorized(target)){
     const identities=read(root).identities.filter(i=>i.target===target.name);
     if(identities.length>=2)say(`Keeping ${identities.length} test-account references.`);

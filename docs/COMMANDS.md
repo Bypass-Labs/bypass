@@ -152,6 +152,10 @@ Select the model profile.
 
 Send a synthetic smoke prompt, without repository content.
 
+Human-readable mode shows progress and a 45-second limit. In an interactive terminal, press Enter to skip the check or Ctrl+C to exit; both stop the active check. Onboarding continues after a skip; a standalone skipped test exits with code 130. `--json` emits only the final machine-readable result. `--non-interactive` does not listen for keyboard input.
+
+Muse checks require a completed assistant response, not an echoed prompt. The latest failed or skipped attempt is shown in readiness even when an earlier test passed. Login, allowance, missing-CLI, and endpoint errors include recovery instructions without exposing provider output or credentials.
+
 ## model remove <name>
 
 Remove a model profile.

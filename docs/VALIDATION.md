@@ -2,7 +2,15 @@
 
 Validated locally on 2026-10-26 with Node v22.14.0 and Muse Code 1.4.13.
 
-## Latest: repository folder guidance
+## Latest: model connection recovery
+
+The connection and onboarding update passed **31 integration tests, 0 failures**, with syntax checks for **28 modules**. New coverage includes completed Muse replies versus echoed prompts, progress feedback, login and allowance diagnostics without raw provider output, an unavailable CLI, failed retests superseding old success in readiness, cancellation of a running process, a hard timeout for a process ignoring SIGTERM, DNS lookup timeout, cancellation of a local HTTP request, and explicit selection of a local checkout with a different origin. Fake Muse executables exercise failure paths without provider requests.
+
+A real Muse Code subscription check against an existing local project profile returned the expected assistant reply in **9.3 seconds** and saved a connected result. It used an empty temporary workspace, contributor mode off, no repository content, and no persisted Muse session log. An initial diagnostic call also completed successfully; the reported login failure was not reproduced. The confirmed UX defect was the old silent wait and generic error handling.
+
+Real terminal checks verified visible progress, Enter stopping a waiting check and continuing to app setup, and Ctrl+C cancelling an active check with exit 130. The README and walkthrough now explain optional checks, recovery, and resuming the exact local clone folder. The rebuilt native Muse plugin validated successfully.
+
+## Previous: repository folder guidance
 
 The clone-folder fix passed **21 integration tests, 0 failures**, including seven new repository-wizard checks. These use real Git clones from temporary local fixtures through controlled Git URL rewrites; they do not contact GitHub. They cover accepting the suggested folder, entering an occupied parent, avoiding occupied folders/files, reusing a matching checkout without losing edits or saved setup, SSH URLs, tilde expansion, pasted Markdown links, returning to repository selection, and failed-clone retry/cancellation. Noninteractive init still refuses an occupied destination.
 

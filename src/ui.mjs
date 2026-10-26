@@ -3,8 +3,9 @@ import path from 'node:path';
 import { read, rootFrom } from './store.mjs';
 import { execute, readiness } from './service.mjs';
 import { parse, help } from './catalog.mjs';
-import { cleanText, redact, Fault } from './util.mjs';
+import { cleanText, redact, Fault, abortFault } from './util.mjs';
 import { onboard } from './onboarding.mjs';
+import { checkModelConnection } from './model-check.mjs';
 
 const color=!!process.stdout.isTTY&&!process.env.NO_COLOR;
 const paint=(n,s)=>color?`\x1b[${n}m${s}\x1b[0m`:s;
@@ -49,21 +50,34 @@ function createPrompt(){
   rl.once('SIGINT',()=>{controller.abort();rl.close();});
   rl.once('close',()=>controller.abort());
   const ask=async(text,defaultValue='')=>{try{const result=await rl.question(`${text}${defaultValue?muted(` [${defaultValue}]`):''}: `,{signal:controller.signal});return result.trim()||defaultValue;}catch(e){if(e.name==='AbortError')throw new Fault('Setup stopped. Saved choices are retained.',130);throw e;}};
-  return {ask,close:()=>rl.close()};
+  const run=async work=>{
+    if(controller.signal.aborted)throw abortFault(controller.signal);
+    const operation=new AbortController();
+    const skip=()=>operation.abort(new Fault('Connection check skipped.',130,{skipped:true}));
+    const stop=()=>operation.abort(abortFault(controller.signal));
+    rl.on('line',skip);controller.signal.addEventListener('abort',stop,{once:true});
+    try{return await work(operation.signal);}
+    finally{rl.removeListener('line',skip);controller.signal.removeEventListener('abort',stop);}
+  };
+  return {ask,run,signal:controller.signal,close:()=>rl.close()};
 }
 async function choose(ask,items,title){console.log(`\n${bold(title)}`);items.forEach((x,i)=>console.log(`  ${i+1}  ${x.label||x.name||x.id}`));const choice=await ask('Choose','1');return items[Number(choice)-1]||null;}
 
 export async function initWizard(options={},args=[]){
   const prompt=createPrompt();
-  try{return await onboard(options,args,{ask:prompt.ask});}finally{prompt.close();}
+  try{return await onboard(options,args,prompt);}finally{prompt.close();}
 }
-async function modelWizard(ask,root){
+export async function modelTestWizard(root,name,{interactive=process.stdin.isTTY&&process.stdout.isTTY}={}){
+  const prompt=interactive?createPrompt():null;
+  try{return await checkModelConnection(root,name,prompt||{write:message=>console.error(message)});}finally{prompt?.close();}
+}
+async function modelWizard(ask,root,io){
   const choice=await choose(ask,[{label:'Muse Code subscription',provider:'muse-code'},{label:'Local model · inference on this machine',provider:'local'},{label:'Your self-hosted compatible endpoint',provider:'endpoint'}],'Where should model inference run?');if(!choice)return;
   const name=await ask('Profile name',choice.provider==='muse-code'?'muse':choice.provider==='local'?'local':'selfhosted');
   const options={project:root,provider:choice.provider};
   if(choice.provider!=='muse-code'){options['base-url']=await ask('Base URL',choice.provider==='local'?'http://127.0.0.1:1234/v1':'');options.model=await ask('Model ID');const env=await ask('Credential environment variable (leave blank if none)');if(env)options['secret-env']=env;}
   printResult(await execute('model add',[name],options));
-  if((await ask('Run a synthetic connection test now? (y/n)','n')).toLowerCase()==='y')printResult(await execute('model test',[name],{project:root}));
+  if((await ask('Check the model connection now? (y/n)','n')).toLowerCase()==='y')await checkModelConnection(root,name,io);
 }
 async function targetWizard(ask,root){
   const name=await ask('Target name','staging');const url=await ask('App origin URL');const environment=await ask('Environment: local / preview / staging / production',url.includes('localhost')||url.includes('127.0.0.1')?'local':'staging');
@@ -94,8 +108,8 @@ function dashboard(root){
 export async function terminal(options={}){
   let root=options.project?path.resolve(options.project):process.cwd();
   try{root=rootFrom(root);}catch{const result=await initWizard(options);if(!result.openDashboard)return;root=result.root;}
-  const {ask,close}=createPrompt();
-  const run=async(key,args=[],flags={})=>{const result=await execute(key,args,{project:root,...flags});printResult(result);return result;};
+  const prompt=createPrompt(),{ask,close}=prompt;
+  const run=async(key,args=[],flags={})=>{if(key==='model test')return checkModelConnection(flags.project||root,args[0],prompt);const result=await execute(key,args,{project:root,...flags});printResult(result);return result;};
   try{
     while(true){
       dashboard(root);
@@ -103,7 +117,7 @@ export async function terminal(options={}){
       console.log(muted('You can also type any Bypass command here. Type help for the command reference.'));
       const choice=await ask('bypass');if(['0','q','quit','exit'].includes(choice))break;
       try{
-        if(choice==='1'){const result=await onboard({project:root},[],{ask,inDashboard:true});root=result.root;}
+        if(choice==='1'){const result=await onboard({project:root},[],{...prompt,inDashboard:true});root=result.root;}
         else if(choice==='2'){
           const state=read(root);const action=await choose(ask,[{label:'Add a target',id:'add'},{label:'Show targets / ownership challenges',id:'show'},{label:'Verify ownership',id:'verify'},{label:'Authorize testing scope',id:'authorize'},{label:'Select active target',id:'use'},{label:'Add test identity',id:'identity'},{label:'Test identity connection',id:'identity-test'},{label:'Revoke testing',id:'revoke'}],'Targets & identities');
           if(action?.id==='add')await targetWizard(ask,root);
@@ -113,7 +127,7 @@ export async function terminal(options={}){
         }
         else if(choice==='3'){
           const action=await choose(ask,[{label:'Add model profile',id:'add'},{label:'Choose active model',id:'use'},{label:'Test connection with synthetic prompt',id:'test'},{label:'Show profiles and privacy',id:'list'}],'Models');
-          if(action?.id==='add')await modelWizard(ask,root);else if(action?.id==='list')await run('model list');else if(action){const model=await choose(ask,read(root).models,'Profile');if(model)await run(`model ${action.id}`,[model.name]);}
+          if(action?.id==='add')await modelWizard(ask,root,prompt);else if(action?.id==='list')await run('model list');else if(action){const model=await choose(ask,read(root).models,'Profile');if(model)await run(`model ${action.id}`,[model.name]);}
         }
         else if(choice==='4'){
           const ready=readiness(root).ready.liveTesting;
@@ -139,7 +153,7 @@ export async function terminal(options={}){
         }
         else if(choice==='help')console.log(help());
         else if(choice){const tokens=tokenize(choice);if(tokens[0]==='bypass')tokens.shift();const parsed=parse(tokens);if(parsed.options.help)console.log(help(parsed.key));else await run(parsed.key,parsed.args,parsed.options);}
-      }catch(e){console.log(`\n${paint('31','!')} ${cleanText(e.message)}`);if(e.details?.challenge)console.log(JSON.stringify(e.details.challenge,null,2));}
+      }catch(e){if(e.code===130)throw e;console.log(`\n${paint('31','!')} ${cleanText(e.message)}`);if(e.details?.challenge)console.log(JSON.stringify(e.details.challenge,null,2));}
       await ask('\nPress Enter to return');
     }
   }finally{close();}

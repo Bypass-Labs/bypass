@@ -21,11 +21,23 @@ Clone into folder [~/Projects/job-finder]:
 
 **Press Enter at the folder prompt.** Bypass creates the suggested folder. To save it elsewhere, enter a new folder such as `~/Work/job-finder`. If you enter an occupied parent folder, the wizard suggests a subfolder without asking for the URL again. If that repository is already checked out, it offers to use it and keep its files. Type `back` at the folder prompt to change the repository.
 
+If the folder contains a checkout with a different Git origin, Bypass shows both repository names. You can explicitly use that local checkout or clone the requested repository into a new folder.
+
 ### 2. Choose a model
 
 Pick your **Muse Code subscription**, a **local Muse/local model server**, or a **self-hosted endpoint**. Local and self-hosted choices need a compatible server and its model ID. A local Muse deployment must be supplied by you; Bypass does not download weights.
 
 You can test the connection now or later. A test sends a synthetic prompt and may use your provider allowance. An untested or failed connection is never shown as connected. Existing model settings are kept when you resume.
+
+The check displays progress immediately and every five seconds while waiting, with a 45-second limit. **Press Enter during the check to skip it and move to the app step.** Ctrl+C exits setup and keeps your saved choices. If the check fails, choose **Continue setup**, **Retry**, or **Choose another model connection**.
+
+For Muse, login errors point to `muse login`; allowance errors point to `muse usage`. A timeout means the check did not finish in time, not that your login is necessarily wrong. Local-model errors tell you to start the server, check the loaded model ID, or set the credential variable. Bypass never asks you to paste a secret token into the wizard.
+
+To resume, pass the local repository folder printed after cloning—use the exact folder, including any `-2` suffix. This keeps your model settings and avoids cloning again:
+
+```bash
+./bypass onboard --flow quickstart ~/Projects/job-finder
+```
 
 ### 3. Connect your running app
 

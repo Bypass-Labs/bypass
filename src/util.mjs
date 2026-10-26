@@ -11,6 +11,16 @@ export { delay };
 export class Fault extends Error {
   constructor(message, code = 2, details = {}) { super(message); this.code = code; this.details = details; }
 }
+export const abortFault = signal => signal?.reason instanceof Fault ? signal.reason : new Fault('Operation cancelled. Saved choices are retained.',130);
+export function abortable(promise, signal) {
+  if(!signal)return promise;
+  return new Promise((resolve,reject)=>{
+    const cancel=()=>reject(abortFault(signal));
+    signal.addEventListener('abort',cancel,{once:true});
+    promise.then(resolve,reject).finally(()=>signal.removeEventListener('abort',cancel));
+    if(signal.aborted)cancel();
+  });
+}
 export function need(value, message, code = 2, details = {}) { if (!value) throw new Fault(message, code, details); return value; }
 export function named(list, name, type) { return need(list.find(x => x.name === name || x.id === name), `${type} '${name}' not found.`); }
 export function safeName(value) { need(/^[a-zA-Z][a-zA-Z0-9_-]{0,63}$/.test(value ?? ''), 'Use a name starting with a letter, followed by up to 63 letters, numbers, _ or -.'); return value; }
@@ -31,13 +41,22 @@ export function redact(value) {
 }
 export function execFile(command, args = [], options = {}) {
   return new Promise((resolve, reject) => {
-    const child = spawn(command, args, { cwd: options.cwd, env: {...process.env, MUSE_NO_AUTO_UPDATE:'1', ...options.env}, stdio:['pipe','pipe','pipe'], shell:false });
-    let stdout = '', stderr = '', size = 0;
-    const timer = setTimeout(() => { child.kill('SIGTERM'); reject(new Fault(`${command} timed out.`, 3)); }, options.timeout ?? 20000);
-    const collect = (kind, data) => { size += data.length; if (size > 2_000_000) { child.kill('SIGTERM'); reject(new Fault(`${command} output exceeded the limit.`, 3)); } else if (kind === 'out') stdout += data; else stderr += data; };
+    if(options.signal?.aborted){reject(abortFault(options.signal));return;}
+    const group=!!options.killGroup && process.platform!=='win32';
+    const child = spawn(command, args, { cwd: options.cwd, env: {...process.env, MUSE_NO_AUTO_UPDATE:'1', ...options.env}, stdio:['pipe','pipe','pipe'], shell:false, detached:group });
+    let stdout = '', stderr = '', size = 0, failure=null, closed=false, killTimer;
+    const kill=signal=>{try{if(group&&child.pid)process.kill(-child.pid,signal);else child.kill(signal);}catch{/* already exited */}};
+    const stop=error=>{if(closed||failure)return;failure=error;kill('SIGTERM');killTimer=setTimeout(()=>kill('SIGKILL'),500);};
+    const cancel=()=>stop(abortFault(options.signal));
+    const timer = setTimeout(() => stop(new Fault(`${command} timed out.`,3,{reason:'timeout'})), options.timeout ?? 20000);
+    const cleanup=()=>{closed=true;clearTimeout(timer);clearTimeout(killTimer);options.signal?.removeEventListener('abort',cancel);};
+    const collect = (kind, data) => { size += data.length; if (size > 2_000_000) stop(new Fault(`${command} output exceeded the limit.`,3)); else if (kind === 'out') stdout += data; else stderr += data; };
     child.stdout.on('data', b => collect('out', b)); child.stderr.on('data', b => collect('err', b));
-    child.on('error', e => { clearTimeout(timer); reject(new Fault(`Cannot run ${command}: ${e.code ?? e.message}`, 3)); });
-    child.on('close', code => { clearTimeout(timer); resolve({code:code ?? 130, stdout:stdout.trim(), stderr:stderr.trim()}); });
+    child.on('error', e => { cleanup();reject(new Fault(`Cannot run ${command}: ${e.code ?? e.message}`,3,{causeCode:e.code})); });
+    child.on('close', code => { cleanup();if(failure)reject(failure);else resolve({code:code ?? 130, stdout:stdout.trim(), stderr:stderr.trim()}); });
+    child.stdin.on('error',()=>{}); // A child may exit before consuming stdin.
+    options.signal?.addEventListener('abort',cancel,{once:true});
+    if(options.signal?.aborted)cancel();
     child.stdin.end(options.input ?? '');
   });
 }

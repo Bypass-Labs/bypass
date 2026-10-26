@@ -3,7 +3,7 @@ import https from 'node:https';
 import dns from 'node:dns/promises';
 import net from 'node:net';
 import { randomBytes } from 'node:crypto';
-import { need, Fault, now, duration, delay, hash } from './util.mjs';
+import { need, Fault, now, duration, delay, hash, abortable, abortFault } from './util.mjs';
 
 export const loopback = h => ['localhost','127.0.0.1','::1','[::1]'].includes(h.toLowerCase());
 export function publicIP(address) {
@@ -42,6 +42,7 @@ export function scopeReady(target, pathname, method = 'GET') {
   return true;
 }
 export async function safeRequest(value, {allowLocal=false,allowPrivate=false,method='GET',headers={},body,timeout=8000,maxBytes=131072,signal} = {}) {
+  if(signal?.aborted)throw abortFault(signal);
   const url = new URL(value);
   need(!url.username && !url.password, 'URL credentials are not allowed.');
   const host = url.hostname.replace(/^\[|\]$/g,'');
@@ -49,8 +50,9 @@ export async function safeRequest(value, {allowLocal=false,allowPrivate=false,me
   const local = loopback(host);
   need((local && allowLocal) || (!local && url.protocol === 'https:'), 'Remote requests require HTTPS; local requests require explicit local scope.', 3);
   let addresses;
-  try { addresses = net.isIP(host) ? [{address:host,family:net.isIP(host)}] : await dns.lookup(host,{all:true}); }
-  catch { throw new Fault(`DNS lookup failed for ${host}.`,3); }
+  try { addresses = net.isIP(host) ? [{address:host,family:net.isIP(host)}] : await abortable(dns.lookup(host,{all:true}),signal); }
+  catch { if(signal?.aborted)throw abortFault(signal);throw new Fault(`DNS lookup failed for ${host}.`,3); }
+  if(signal?.aborted)throw abortFault(signal);
   need(addresses.length && addresses.every(a=>local ? loopback(a.address) : publicIP(a.address) || (allowPrivate && !loopback(a.address) && a.address!=='169.254.169.254')), 'Destination resolves to a blocked or private network address.', 3);
   const chosen = addresses[0];
   return new Promise((resolve,reject) => {

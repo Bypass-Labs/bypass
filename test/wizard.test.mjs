@@ -72,11 +72,13 @@ test('failed optional model smoke is recoverable and never shown as connected',a
   await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));
   t.after(()=>new Promise(resolve=>server.close(resolve)));
   const root=temp();
-  const result=await wizard(root,['2',`http://127.0.0.1:${server.address().port}/v1`,'test-model','','yes','n','','n','n']);
+  const result=await wizard(root,['2',`http://127.0.0.1:${server.address().port}/v1`,'test-model','','yes','1','','n','n']);
   assert.equal(requests,1);
   assert.equal(read(root).models[0].lastTest,undefined);
   assert.match(result.output,/HTTP 503/);
-  assert.match(result.output,/not tested/);
+  assert.equal(read(root).models[0].lastAttempt.status,'failed');
+  assert.match(result.output,/Connection not verified/);
+  assert.match(result.output,/Contacting your model server/);
   assert.equal(result.result.readiness.ready.target,false);
 });
 
