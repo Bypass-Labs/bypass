@@ -14,10 +14,10 @@ import { temp, cli } from './helpers.mjs';
 
 test('walkthrough advances on Enter through real proof, independent pass/fail, scheduler and cleanup',async()=>{
   const root=temp(),output=[],prompts=[];
-  const result=await onboard({dir:root},[],{
+  const result=await onboard({flow:'demo',dir:root},[],{
     write:text=>output.push(text),ask:async label=>{prompts.push(label);return '';}
   });
-  assert.equal(prompts.length,7); // Opening recommendation, then six walkthrough steps.
+  assert.equal(prompts.length,6);
   assert.equal(result.completed,true);assert.equal(result.openDashboard,false);
   const state=read(root),finding=state.findings[0];
   assert.deepEqual(finding.history.filter(h=>h.controls).map(h=>h.status),['failed','passed','failed','failed','passed']);
@@ -83,6 +83,15 @@ test('a successful preview never hides failed saved-check results',t=>{
   const output=[];t.mock.method(console,'log',text=>output.push(text));
   printResult({run:{kind:'scan',result:{simulation:true,inventory:{sourceFileCount:1},findings:[],regression:[{status:'failed',reason:'Account boundary regressed'}]}}});
   assert.match(output.join('\n'),/Saved check: failed/);
+});
+
+test('opening the tooling checkout asks for the application before any review',async t=>{
+  const root=temp();fs.writeFileSync(path.join(root,'package.json'),JSON.stringify({name:'@bypass-labs/cli-skeleton'}));
+  await execute('init',[root]);const before=fs.readFileSync(path.join(root,'.bypass/state.json'),'utf8'),output=[],prompts=[];
+  t.mock.method(console,'log',text=>output.push(text));
+  await terminal({project:root},{ask:async label=>{prompts.push(label);return '0';}});
+  assert.equal(prompts.length,1);assert.match(output.join('\n'),/Choose my application repository/);
+  assert.equal(fs.readFileSync(path.join(root,'.bypass/state.json'),'utf8'),before);
 });
 
 async function fakeMuse(t,scenario){

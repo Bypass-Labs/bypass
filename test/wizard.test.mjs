@@ -35,7 +35,7 @@ test('wizard defers failed DNS and resumes the same challenge through explicit s
   assert.equal(first.result.openDashboard,false);
   assert.equal(saved.models[0].lastTest,undefined);
   dns.resolveTxt.mock.mockImplementation(async record=>{assert.equal(record,challenge.record);return [[challenge.token]];});
-  const second=await wizard(root,['n','1','','yes','n','n','n']);
+  const second=await wizard(root,['n','1','','yes','n','n']);
   const resumed=read(root);
   assert.equal(resumed.project.id,saved.project.id);
   assert.equal(resumed.targets.length,1);assert.equal(resumed.models.length,1);
@@ -62,7 +62,7 @@ test('wizard production scope requires the separate production confirmation',asy
   t.mock.method(dns,'resolveTxt',async()=>[[read(root).targets[0].challenge.token]]);
   await wizard(root,['n','1','','yes','no','n','n']);
   assert.equal(read(root).targets[0].authorization,null);
-  await wizard(root,['n','','yes','production','n','n','n']);
+  await wizard(root,['n','','yes','production','n','n']);
   assert.equal(read(root).targets[0].authorization.productionAcknowledged,true);
 });
 
@@ -84,7 +84,7 @@ test('failed optional model smoke is recoverable and never shown as connected',a
 
 test('wizard can configure account references and does not store or request token values',async()=>{
   const root=temp();
-  const result=await wizard(root,['1','n','http://127.0.0.1:4317','yes','','yes','yes','BYPASS_OWNER_TOKEN','','BYPASS_OUTSIDER_TOKEN','','n','n']);
+  const result=await wizard(root,['1','','n','http://127.0.0.1:4317','','yes','','yes','yes','1','BYPASS_OWNER_TOKEN','','1','BYPASS_OUTSIDER_TOKEN','','n','n'],{flow:'advanced'});
   const identities=read(root).identities;
   assert.equal(identities.length,2);
   assert.deepEqual(identities.map(i=>i.secretEnv),['BYPASS_OWNER_TOKEN','BYPASS_OUTSIDER_TOKEN']);
@@ -121,4 +121,14 @@ test('wizard invalid flow and noninteractive invocation fail before writing setu
   assert.equal(called.code,2);
   assert.match(called.data.error,/interactive terminal/);
   assert.equal(fs.existsSync(path.join(root,'.bypass/state.json')),false);
+});
+
+test('repository setup redirects an accidental tooling checkout to the chosen application',async()=>{
+  const tooling=temp(),app=temp();fs.writeFileSync(path.join(tooling,'package.json'),JSON.stringify({name:'@bypass-labs/cli-skeleton'}));
+  const result=await wizard(app,['n',app,'1','n','','n','n'],{repo:tooling});
+  assert.equal(result.result.root,app);
+  assert.equal(fs.existsSync(path.join(tooling,'.bypass/state.json')),false);
+  assert.match(result.output,/Bypass’s own tooling source/);
+  assert.match(result.output,/White-box \/ code: simulated/);
+  assert.match(result.output,/Black-box \/ live app: deferred/);
 });

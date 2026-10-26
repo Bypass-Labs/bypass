@@ -2,7 +2,17 @@
 
 Validated locally on 2026-10-26 with Node v22.14.0 and Muse Code 1.4.13.
 
-## Latest: a complete guided journey
+## Latest: choose the application before reviewing it
+
+The repository-selection update passed **43 tests, 0 failures**, with syntax checks for **32 modules**. The rebuilt plugin validated with no diagnostics. Checks also passed for 32 Bash blocks, 35 CLI examples, nine local documentation links, and exact source/runtime equality.
+
+A real stdio MCP integration test starts from a Bypass tooling workspace, rejects implicit initialization and scans before selection, requires an explicit application path, and routes all later operations to that application. The resulting source inventory contains only the application's file; the host tooling state remains byte-for-byte unchanged. The test covers a relative repository path resolved against the host workspace, both stage statuses, a readable combined plan with pending ownership, successful code-only preview, selected-project context, and zero model calls. CLI tests cover the tooling-folder guard and choosing a different application without initializing the tooling folder. Live-only mode is verified to skip source inventory.
+
+A terminal check against the existing application displayed its exact folder, Git remote, app origin, and white-box/black-box statuses before any action. This check did not run another customer scan. Basic setup skips test-account questions; advanced setup retains them. Source fixes in Muse must use the selected application's editor workspace.
+
+Native `muse plugins update bypass` refreshed the installed package, and its cached skill, command, hook, and MCP runtime match the authored files. Native inspection reports the package valid and active, but the updated MCP capability is **modified** and requires native review because its definition hash changed. No capability was auto-approved. Start a new Muse session after reviewing and approving that changed capability. The deterministic MCP routing was tested; an end-to-end model-driven Muse conversation was not rerun.
+
+## Previous: a complete guided journey
 
 The simplified experience passed **40 tests, 0 failures**, with syntax checks for **31 modules**. The Muse plugin runtime was rebuilt and native validation returned `valid: true` with no diagnostics.
 

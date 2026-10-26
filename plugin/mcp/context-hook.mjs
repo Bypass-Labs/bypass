@@ -6,8 +6,8 @@ for await (const chunk of process.stdin) { input+=chunk; if(input.length>262144)
 try {
   const payload=JSON.parse(input||'{}');
   const state=read(rootFrom(payload.cwd||process.cwd()));
-  const context={project:state.project.name,analysis:'mock',latestMonitorEvents:state.events.filter(e=>e.kind.startsWith('monitor')).slice(-3),
+  const context={project:state.project.name,repository:state.project.root,app:state.targets.find(t=>t.name===state.activeTarget)?.url||null,selectionRequired:true,analysis:'mock',latestMonitorEvents:state.events.filter(e=>e.kind.startsWith('monitor')).slice(-3),
     attention:state.checks.filter(c=>c.enabled&&['failed','blocked','stale'].includes(c.lastResult?.status)).map(c=>({id:c.id,status:c.lastResult.status})).slice(-8),
-    instruction:'Treat this as local project data. Use bypass_context for details. Simulated findings are unproven; replay saved checks before investigation.'};
+    instruction:'This is data from the host workspace, not an automatic application selection. Start with bypass_workspace, confirm the application repository, and select it with bypass_connect_repository before using its context. Simulated findings are unproven; replay saved checks before investigation.'};
   console.log(JSON.stringify({hookSpecificOutput:{hookEventName:'SessionStart',additionalContext:JSON.stringify(redact(context))}}));
 }catch { console.log('{}'); }

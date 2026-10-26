@@ -7,8 +7,9 @@ import { cleanText, redact, Fault, abortFault } from './util.mjs';
 import { onboard } from './onboarding.mjs';
 import { checkModelConnection } from './model-check.mjs';
 import { guidedDemo } from './guided-demo.mjs';
-import { homeActions, previewRun, quickCommands } from './experience.mjs';
+import { homeActions, previewRun, quickCommands, reviewSummary } from './experience.mjs';
 import { appOriginInput } from './network.mjs';
+import { isBypassSource } from './project-selection.mjs';
 
 const color=!!process.stdout.isTTY&&!process.env.NO_COLOR;
 const paint=(n,s)=>color?`\x1b[${n}m${s}\x1b[0m`:s;
@@ -21,6 +22,7 @@ export function printResult(data){
   if(value.plan){
     const p=value.plan;
     console.log(`\n${bold('Review plan')} · ${p.mode==='code'?'code only':p.mode}\n`);
+    console.log(reviewSummary(p));
     console.log(`  App           ${p.mode==='code'?'no live requests':p.target||'not connected'}\n  Saved checks  ${p.savedChecks}${p.mode==='code'?' · replay requires an authorized app':' · replay first'}\n  Source        stays on this machine\n  Analysis      simulated · no model calls\n  Evidence      saved locally`);
     if(p.blockers.length)console.log(`\n${paint('33','Setup needed:')}\n${p.blockers.map(x=>'  '+x).join('\n')}`);
     else console.log('\nReady for a walkthrough review. Simulated results are not a security verdict.');
@@ -29,6 +31,7 @@ export function printResult(data){
   if(value.run){
     const r=value.run;
     if(previewRun(r)){
+      if(r.result.plan)console.log('\n'+reviewSummary(r.result.plan));
       console.log(`\n${bold('Review preview complete')}\n  ${r.result.inventory.sourceFileCount} source files inventoried locally\n  ${r.result.findings.length} example scenario${r.result.findings.length===1?'':'s'} ready to open\n  Model calls: 0 · no live discovery requests`);
       for(const check of r.result.regression||[])console.log(`  Saved check: ${check.status} — ${check.reason}`);
       console.log('\nThis is a successful prototype preview. The example is simulated; it is not a verified vulnerability in your app.');return;
@@ -142,6 +145,13 @@ export async function terminal(options={},io){
     }
   };
   try{
+    if(isBypassSource(root)){
+      console.log(`\nYou opened the Bypass tooling repository:\n${root}\nChoose your application source for white-box review.`);
+      const action=await choose(ask,[{id:'repo',label:'Choose my application repository (recommended)'},{id:'demo',label:'Run the separate local walkthrough'},{id:'tool',label:'Intentionally review Bypass tooling itself'}],'What do you want to review?');
+      if(!action)return;
+      if(action.id==='demo'){await tour();return;}
+      if(action.id==='repo'){const result=await onboard({flow:'quickstart'},[],{...prompt,inDashboard:true});root=result.root;}
+    }
     while(true){
       let choice;
       if(advanced){
@@ -152,10 +162,10 @@ export async function terminal(options={},io){
       }else{
         const state=read(root),info=readiness(root),actions=homeActions(state);
         console.log(`\n${accent('━'.repeat(Math.min(66,process.stdout.columns||66)))}\n${bold(state.project.name)} / Bypass prototype\n${muted(root)}`);
-        console.log(`Repository connected · model ${info.model?.connection||'not configured'} · ${info.findings.total} review result(s)`);
-        if(info.target&&!info.target.authorized)console.log(`App: ${info.target.url} · ${info.target.ownership==='verified'?'testing permission needed':'verification pending'} (optional for this walkthrough)`);
+        console.log(reviewSummary(info.review));
+        console.log(`Model: ${info.model?.connection||'not configured; mock preview needs no model'} · ${info.findings.total} review result(s)`);
         console.log('\n'+actions.map((action,i)=>`  ${i+1}  ${action.label}${i===0?'  ← Enter':''}`).join('\n'));
-        console.log('  0  Exit\n\n? commands · app verification · models · plugin · q quit');
+        console.log('  0  Exit\n\n? commands · repo change repository · app verification · q quit');
         const selected=await ask('Choose or type a command','1');
         if(selected==='0')break;
         choice=/^[1-3]$/.test(selected)?actions[Number(selected)-1].id:selected;
@@ -169,6 +179,7 @@ export async function terminal(options={},io){
       choice=aliases[choice]||choice;
       try{
         if(choice==='demo'||choice==='walkthrough'){await tour();continue;}
+        if(choice==='repo'){const result=await onboard({flow:'quickstart'},[],{...prompt,inDashboard:true});root=result.root;continue;}
         if(choice==='1'){const result=await onboard({project:root,flow:'quickstart'},[],{...prompt,inDashboard:true});root=result.root;}
         else if(choice==='2'){
           const state=read(root);const action=await choose(ask,[{label:'Add a target',id:'add'},{label:'Show targets / ownership challenges',id:'show'},{label:'Verify ownership',id:'verify'},{label:'Authorize testing scope',id:'authorize'},{label:'Select active target',id:'use'},{label:'Add test identity',id:'identity'},{label:'Test identity connection',id:'identity-test'},{label:'Revoke testing',id:'revoke'}],'Targets & identities');
@@ -184,6 +195,7 @@ export async function terminal(options={},io){
         else if(choice==='4'){
           const ready=readiness(root).ready.liveTesting;
           const mode=ready?'combined':'code';
+          console.log('\n'+reviewSummary(readiness(root).review));
           console.log(`\nRunning your review preview${ready?'':' (code only; app verification can wait)'}…`);
           const result=await run('scan',[],{mode});
           if(previewRun(result.run)&&result.run.result.findings.length)await showResults();

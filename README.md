@@ -1,59 +1,66 @@
 # Bypass for Muse
 
-Prove a security issue, verify the fix, and keep a regression test that runs without a model.
+Connect your application's source and running app, review both, and keep proven fixes as regression tests.
 
-**Working prototype:** repository setup, model connection checks, DNS ownership, local HTTP proof, exported tests, and local scheduling work. Discovery and deployed-app investigation are mocked. A preview of your repository is not a security verdict.
+**Working prototype:** repository connection, model checks, DNS ownership, local HTTP proof, exported tests, and local scheduling work. White-box discovery and black-box investigation are mocked. A preview is not a security verdict.
 
-## Start here: the complete walkthrough
+## Start with your application
 
-Requires **Node 22+** and Git. No dependency installation, model login, DNS, or plugin is needed for this walkthrough.
+Requires **Node 22+**, Git, and access to this repository. No dependency installation is needed.
 
 ```bash
 git clone https://github.com/Bypass-Labs/bypass-for-muse.git
 cd bypass-for-muse
-./bypass demo
-```
-
-**Press Enter at each of six steps.** Bypass creates a separate local app, prints its browser URL, and guides you through:
-
-1. **Review** — see a clearly labeled example access-control issue.
-2. **Prove** — real HTTP requests show another account can read the owner's invoice.
-3. **Fix and retest** — apply the fixture fix, verify access is denied, and save a regression test.
-4. **Export** — execute the test with ordinary Node, without Bypass or a model.
-5. **Catch a regression** — bring the bug back and watch both tests catch it.
-6. **Remember** — execute one local scheduler tick and save the result for the next session.
-
-It finishes with the fixture fixed, the test and evidence saved, and the demo server stopped. It does not change your connected app. Type `q` at a step to leave early.
-
-## Connect your own project
-
-From this Bypass checkout:
-
-```bash
 ./bypass onboard
 ```
 
-Choose **2 → Connect my repository**. The wizard takes you through the repository, model choice, optional app connection, and first review. You can also open an existing checkout directly:
+Press Enter for **Connect my application**, then:
 
-```bash
-./bypass onboard /path/to/your/app
-```
-
-- **Repository:** paste a Git URL or local folder. Press Enter for the suggested clone folder. Existing files are kept; a matching checkout can be reused.
-- **Model:** choose your Muse Code subscription, a compatible local Muse/local model server, or your own self-hosted endpoint. The optional connection check shows progress; press Enter to skip it.
-- **App:** enter a domain such as `job-radar.app` or a full URL. Bypass supplies HTTPS for deployed domains and prints the DNS TXT record. **Press Enter to continue while DNS is pending.** Live testing stays disabled until ownership and testing scope are authorized.
-- **Plugin:** optional. An existing Muse installation is reused. Capability approval stays in Muse.
-
-On the project home screen, **press Enter to run the first preview and open its result**. The preview inventories source locally and shows a simulated scenario. Its next step offers the complete local walkthrough because deployed-app investigation is not built yet.
+1. **Choose the application repository.** Paste its local folder or Git URL. Bypass's own checkout is the tool, not automatically your application. Existing checkouts can be reused.
+2. **Choose your model.** Muse Code subscription, compatible local Muse/local model server, or your own self-hosted endpoint. Connection testing is optional.
+3. **Connect the app deployed from that repository.** Enter a domain such as `job-radar.app` or a full URL, and choose staging or production. Add its DNS TXT record now or press Enter to continue the code preview. Authorize live testing separately after verification.
+4. **Review the pairing and press Enter to preview.** Both analysis stages are shown explicitly; results open immediately.
 
 ```text
-  1  Run my first review preview  ← Enter
-  2  Walk through prove → fix → retest → regression
-  3  Settings & optional connections
-  0  Exit
+Repository: /Users/you/Projects/job-finder (main)
+Git remote: https://github.com/your-org/job-finder.git
+App: https://your-app.example.com
+White-box / code: simulated
+Black-box / live app: deferred
+App investigation is deferred. Code preview can run now.
 ```
 
-Type `?` for commands, `app` to resume verification, `models` for connections, or `q` to exit. After a preview, action 1 becomes **Open review results**. Resume with `./bypass --project /path/to/your/app`.
+When app ownership and scope are ready, the black-box stage changes to **simulated** and authorized saved checks can replay. Neither mocked engine claims to have tested your deployed app for new vulnerabilities.
+
+Type `repo` to change the application, `app` to resume verification, `?` to see commands, or `q` to exit. Reopen the exact selected application with:
+
+```bash
+./bypass --project /path/to/your/application
+```
+
+## Use the Muse plugin
+
+Install or check it from the CLI's `plugin` shortcut, review its native capabilities in Muse, and start a new Muse session. Run **`/bypass:review`**.
+
+The plugin asks which application repository to use, then asks for its app if missing. It shows the same repository/app pairing and stage status. It uses your current Muse model/account; choosing a second standalone model is optional. Pending DNS leaves code preview available.
+
+If Muse was opened in the Bypass tooling folder, the plugin asks for your application's path or Git URL. Every Bypass tool then uses that selected application for this session. Source fixes still require opening Muse's editor in the application folder.
+
+After updating an existing installation, run `muse plugins update bypass` and start a **new Muse session**. A running session can retain old instructions and tools.
+
+If Muse reports that the MCP definition changed, review it with `muse plugins inspect bypass` and approve the changed capability with `muse plugins approve plugin:bypass:mcp_server:security` before starting that new session.
+
+## See the complete proof-to-regression loop
+
+```bash
+./bypass demo
+```
+
+Press Enter through six steps: **review → HTTP proof → fix/retest → independent test export → deliberate regression → monitor result**.
+
+This creates a separate local Ledger app. Discovery is seeded; proof, the fixture fix, exported Node test, and regression catch execute for real. No model login, DNS, plugin, or customer test accounts are needed. It finishes with the fixture fixed, evidence saved, and its server stopped. Type `q` at a step to leave early.
+
+The current deployed-app engine cannot prove a real customer finding. Account credentials do not unlock that missing engine. Basic setup therefore does not request test accounts; advanced settings retain that option for later integration work.
 
 ## Model choice and privacy
 
@@ -63,14 +70,12 @@ Type `?` for commands, `app` to resume verification, `models` for connections, o
 | Local Muse / local model | A compatible running server and model ID | This machine; no cloud fallback |
 | Self-hosted model | Your compatible HTTPS endpoint and optional credential reference | Your infrastructure |
 
-No weights are bundled. Connection checks send only a synthetic prompt and may use your provider allowance. Mock analysis and saved-test replay make zero model calls. A local Bypass profile does not change a separate Muse session's provider. Evidence stays local; real credentials are referenced by environment-variable name.
-
-For the plugin, review its capabilities in Muse, start a new Muse session in your connected repository, and run **`/bypass:review`**.
+No weights are bundled. Optional connection checks send only a synthetic prompt and may use your provider allowance. Mock analysis and saved-test replay make zero model calls. A Bypass profile does not change a separate Muse session's provider. Evidence stays local; credentials use environment-variable references.
 
 ## More detail
 
-- [Walkthrough and app connection](docs/WALKTHROUGH.md)
-- [Interactive commands and full CLI reference](docs/COMMANDS.md)
+- [Application setup and walkthrough](docs/WALKTHROUGH.md)
+- [Interactive commands and CLI reference](docs/COMMANDS.md)
 - [Advanced presenter script](docs/ADVANCED_WALKTHROUGH.md)
 - [Architecture and current boundaries](docs/ARCHITECTURE.md)
 - [Verification record](docs/VALIDATION.md)

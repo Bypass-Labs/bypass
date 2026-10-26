@@ -1,15 +1,19 @@
 import path from 'node:path';
 import { execute } from './service.mjs';
-import { SCHEMA, VERSION, redact, need } from './util.mjs';
+import { SCHEMA, VERSION, redact, need, outcome } from './util.mjs';
+import { workspaceInfo, isBypassSource, projectPath } from './project-selection.mjs';
 
 const str=(description,extra={})=>({type:'string',description,...extra});
 const bool=description=>({type:'boolean',description});
 const target=str('Configured target name');
 function tool(name,description,properties,required,command,makeArgs=()=>[],makeOptions=a=>a,readOnly=false){return {name,description,inputSchema:{type:'object',properties,required,additionalProperties:false},annotations:{readOnlyHint:readOnly,destructiveHint:!readOnly,idempotentHint:readOnly,openWorldHint:!readOnly},command,makeArgs,makeOptions};}
 const identityKey=str('Finding, check, or run ID');
+const repositorySelection={repository:str('Application repository: explicit local folder or Git URL selected by the user'),dir:str('Empty clone destination for a Git URL'),confirmed:bool('True only when the user has identified or confirmed this repository'),allowBypassSource:bool('Only true when the user specifically wants to review Bypass tooling itself'),name:str('Optional project display name')};
 export const toolDefinitions=[
+  tool('bypass_workspace','Inspect the Muse workspace and repository selection without initializing or scanning anything.',{},[],'workspace',undefined,undefined,true),
+  tool('bypass_connect_repository','Select the application repository for ALL subsequent Bypass calls in this Muse session. Reuse its existing setup or clone a Git URL into an explicit empty directory. Never executes repository code.',repositorySelection,['repository','confirmed'],'connect-session'),
   tool('bypass_status','Read readiness and the explicit mock-engine boundary.',{},[],'status',undefined,undefined,true),
-  tool('bypass_init','Initialize Bypass in this session’s repository. Does not execute repository code.',{name:str('Project display name')},[],'init'),
+  tool('bypass_init','Select and initialize an explicitly user-selected application repository. Never defaults to the Muse working directory.',repositorySelection,['repository','confirmed'],'connect-session'),
   tool('bypass_targets','List configured targets and their ownership/scope state.',{},[],'target list',undefined,undefined,true),
   tool('bypass_add_target','Connect a local or deployed app. Returns the DNS/HTTP ownership challenge.',{name:str('Target name'),url:str('Exact origin URL'),environment:str('Environment',{enum:['local','preview','staging','production']})},['name','url','environment'],'target add',a=>[a.name]),
   tool('bypass_verify_target','Check the published ownership challenge. This does not authorize security testing.',{name:str('Target name'),method:str('Challenge method',{enum:['dns','http','local']})},['name','method'],'target verify',a=>[a.name]),
@@ -49,7 +53,8 @@ function validate(schema,input){
 }
 const protocolVersions=['2026-07-28','2025-11-25','2025-06-18','2025-03-26','2024-11-05'];
 export async function serveMCP(cwd=process.cwd(),io={input:process.stdin,output:process.stdout}){
-  let initialized=false,buffer='';const pending=new Map(),tasks=new Set();
+  let initialized=false,buffer='',selectedRoot=null,selecting=false;const pending=new Map(),tasks=new Set();
+  const context=async()=>selectedRoot?execute('context',[],{project:selectedRoot,json:true,'non-interactive':true}):outcome(await workspaceInfo(cwd));
   const send=value=>io.output.write(JSON.stringify(redact(value))+'\n');
   const respond=(id,result)=>send({jsonrpc:'2.0',id,result});
   const error=(id,code,message)=>send({jsonrpc:'2.0',id,error:{code,message}});
@@ -61,17 +66,17 @@ export async function serveMCP(cwd=process.cwd(),io={input:process.stdin,output:
     if(method==='notifications/initialized')return;
     if(id===undefined)return;
     if(method==='initialize'){
-      initialized=true;respond(id,{protocolVersion:protocolVersions.includes(params.protocolVersion)?params.protocolVersion:'2025-11-25',capabilities:{tools:{listChanged:false},resources:{subscribe:false,listChanged:false},prompts:{listChanged:false}},serverInfo:{name:'bypass',version:VERSION},instructions:'Bypass skeleton: analysis engines are mocked. Read bypass_context first. Never describe simulated findings as verified. Saved tests and the local fixture proof loop are real.'});return;
+      initialized=true;respond(id,{protocolVersion:protocolVersions.includes(params.protocolVersion)?params.protocolVersion:'2025-11-25',capabilities:{tools:{listChanged:false},resources:{subscribe:false,listChanged:false},prompts:{listChanged:false}},serverInfo:{name:'bypass',version:VERSION},instructions:'Start with bypass_workspace. Ask which application repository to review, then select it with bypass_connect_repository. Never silently initialize the current folder. Show the chosen repository and app together before reviewing. White-box and black-box engines are mocked; do not collect identities as if they unlock deployed-app proof. Saved tests and local fixture proof are real.'});return;
     }
     if(method==='ping'){respond(id,{});return;}
     if(!initialized){error(id,-32002,'Initialize the server first.');return;}
     if(method==='tools/list'){respond(id,{tools:toolDefinitions.map(({command,makeArgs,makeOptions,...t})=>t)});return;}
     if(method==='resources/list'){respond(id,{resources:[{uri:'bypass://context',name:'Bypass session context',mimeType:'application/json',description:'Local evidence and monitor updates'}]});return;}
     if(method==='prompts/list'){respond(id,{prompts:[{name:'bypass_review',description:'Review the current repository with the Bypass proof-to-regression workflow.'}]});return;}
-    if(method==='prompts/get'){if(params.name!=='bypass_review'){error(id,-32602,'Unknown prompt');return;}respond(id,{messages:[{role:'user',content:{type:'text',text:'Read bypass_context, then bypass_prepare_scan. Explain any missing ownership/scope. Run saved checks before simulated investigation. Keep mock and fixture evidence labels visible. Guide me through findings, fixing in my editor, retest, standalone test export, and local monitoring.'}}]});return;}
+    if(method==='prompts/get'){if(params.name!=='bypass_review'){error(id,-32602,'Unknown prompt');return;}respond(id,{messages:[{role:'user',content:{type:'text',text:'Start with bypass_workspace. Confirm the application repository or ask for its local path/Git URL, then use bypass_connect_repository. Show Repository → App and the white-box/black-box stage status. Use code mode while DNS is pending; do not describe the entire review as blocked. The engines are mocked. Offer the isolated local walkthrough for real proof instead of asking for deployed-app identities that cannot produce a real finding yet.'}}]});return;}
     if(method==='resources/read'){
       if(params.uri!=='bypass://context'){error(id,-32602,'Unknown resource');return;}
-      try{const data=await execute('context',[],{project:cwd,json:true,'non-interactive':true});respond(id,{contents:[{uri:params.uri,mimeType:'application/json',text:JSON.stringify(redact(data))}]});}catch(e){error(id,-32001,e.message);}return;
+      try{const data=await context();respond(id,{contents:[{uri:params.uri,mimeType:'application/json',text:JSON.stringify(redact(data))}]});}catch(e){error(id,-32001,e.message);}return;
     }
     if(method!=='tools/call'){error(id,-32601,'Method not found');return;}
     const t=toolDefinitions.find(t=>t.name===params.name);
@@ -82,9 +87,29 @@ export async function serveMCP(cwd=process.cwd(),io={input:process.stdin,output:
     const controller=new AbortController();pending.set(id,controller);const token=params._meta?.progressToken;
     if(token!==undefined)send({jsonrpc:'2.0',method:'notifications/progress',params:{progressToken:token,progress:0,total:1,message:'Starting Bypass operation'}});
     try{
-      const result=await execute(t.command,t.makeArgs(args),{...t.makeOptions(args),project:cwd,json:true,'non-interactive':true},{cwd,signal:controller.signal});
+      let result;
+      if(t.command==='workspace')result=outcome(await workspaceInfo(cwd,selectedRoot));
+      else if(t.command==='connect-session'){
+        need(!selecting,'Repository selection is already in progress.');
+        need(args.confirmed,'Ask which application repository to review before connecting it.');
+        need(args.repository.trim(),'Supply the application repository path or Git URL.');
+        const remote=/^(https:\/\/|ssh:\/\/|git@)/.test(args.repository);
+        const location=remote?args.repository:projectPath(args.repository,cwd);
+        need(!remote||!/[/ :]bypass-for-muse(?:\.git)?\/?$/i.test(location)||args.allowBypassSource,'This URL identifies Bypass tooling. Choose the application repository, or explicitly request reviewing Bypass itself.');
+        need(remote||!isBypassSource(location)||args.allowBypassSource,'This is the Bypass tooling repository. Ask for the application repository; allowBypassSource requires an explicit request to review Bypass itself.');
+        selecting=true;
+        try{
+          result=await execute('init',[location],{dir:args.dir?projectPath(args.dir,cwd):undefined,name:args.name,json:true,'non-interactive':true},{signal:controller.signal});
+          selectedRoot=result.root;
+          result.session={selectedRepository:selectedRoot,hostWorkspace:cwd,allSubsequentToolsUse:selectedRoot,selectionPersists:'this MCP session only',editorWorkspaceMatches:path.resolve(cwd)===selectedRoot};
+        }finally{selecting=false;}
+      }else if(!selectedRoot&&['status','context'].includes(t.command))result=outcome(await workspaceInfo(cwd));
+      else{
+        need(selectedRoot&&!selecting,'Choose the application repository first with bypass_connect_repository. The current Muse folder is not selected automatically.');
+        result=await execute(t.command,t.makeArgs(args),{...t.makeOptions(args),project:selectedRoot,json:true,'non-interactive':true},{cwd:selectedRoot,signal:controller.signal});
+      }
       if(token!==undefined)send({jsonrpc:'2.0',method:'notifications/progress',params:{progressToken:token,progress:1,total:1,message:'Operation complete'}});
-      respond(id,{content:[{type:'text',text:JSON.stringify(redact(result))}],isError:(result?.exitCode??0)!==0});
+      respond(id,{content:[{type:'text',text:JSON.stringify(redact(result))}],isError:!result?.plan&&(result?.exitCode??0)!==0});
     }catch(e){respond(id,{content:[{type:'text',text:JSON.stringify(redact({schemaVersion:SCHEMA,error:e.message,exitCode:e.code||2,details:e.details||{}}))}],isError:true});}
     finally{pending.delete(id);}
   }

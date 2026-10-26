@@ -2,6 +2,7 @@ import { execute, readiness } from './service.mjs';
 import { connectProject } from './onboarding-repository.mjs';
 import { checkModelConnection } from './model-check.mjs';
 import { guidedDemo } from './guided-demo.mjs';
+import { reviewSummary } from './experience.mjs';
 import { read } from './store.mjs';
 import { scopeReady, loopback, appOriginInput } from './network.mjs';
 import { cleanText, redact, Fault, need, outcome } from './util.mjs';
@@ -31,8 +32,8 @@ export async function onboard(options={}, args=[], io={}) {
   say('\nBYPASS / Get started\nReal setup and saved checks. Analysis engines are mocked.');
   say('Press Enter for the recommended next action. Your progress is saved.');
   const flow=options.flow||((options.repo||options.project||args[0])?'quickstart':(await pick('How would you like to start?',[
-    {label:'See the full walkthrough (recommended) — no login or DNS needed',id:'demo'},
-    {label:'Connect my repository — preview the workflow on my project',id:'quickstart'},
+    {label:'Connect my application (recommended) — repository + live app',id:'quickstart'},
+    {label:'See the full local walkthrough — no login or DNS needed',id:'demo'},
     {label:'Advanced setup — more configuration choices',id:'advanced'}
   ])).id);
   const advanced=flow==='advanced';
@@ -43,6 +44,7 @@ export async function onboard(options={}, args=[], io={}) {
   say('Repository → model → optional app connection → first review.\nDNS, test accounts, and the Muse plugin can all be finished later.');
 
   say('\nStep 1 of 4 / Connect your repository');
+  say('White-box uses this application source. Black-box uses its deployed app URL.\nChoose the application you want to review, not the Bypass CLI checkout.');
   const initial=await connectProject(options,args,{ask,say,yes,pick});
   root=initial.root;
   say(`✓ Repository connected: ${root}${initial.resumed?' · resuming saved setup':''}`);
@@ -108,7 +110,7 @@ export async function onboard(options={}, args=[], io={}) {
   if(target){await connectApp();target=read(root).targets.find(t=>t.name===target.name);}
 
   say('\nStep 4 of 4 / Finish setup');
-  if(target&&authorized(target)){
+  if(advanced&&target&&authorized(target)){
     const identities=read(root).identities.filter(i=>i.target===target.name);
     if(identities.length>=2)say(`Keeping ${identities.length} test-account references.`);
     else if(await yes('Add two test-account references now?'))await recover(async()=>{
@@ -125,7 +127,7 @@ export async function onboard(options={}, args=[], io={}) {
       }
       say('Load those variables in your terminal before testing accounts or starting Muse. Test the connections in Targets & identities.');
     });
-  }else say('Test accounts can be added after app verification in Targets & identities.');
+  }else say('No test accounts are needed for this preview. Deployed-app investigation is mocked; advanced account setup is available in Settings.');
   say('The CLI works on its own. The Muse plugin is optional.');
   if(await yes('Connect the Muse Code plugin now?'))try{
     say('Checking the existing Muse plugin installation…');
@@ -178,6 +180,7 @@ export async function onboard(options={}, args=[], io={}) {
     say('\nSetup saved\n');
     say(`  Repository    ${root}\n  Model         ${info.model?`${info.model.name} · ${info.model.connection}`:'add later'}\n  App           ${info.target?`${info.target.url} · ${info.target.authorized?'verified and authorized':info.target.ownership==='verified'?'scope required':'verification pending'}`:'add later; code-only review available'}\n  Test accounts ${read(root).identities.length} references\n  Muse plugin   ${museInstalled?'installed; approve in Muse':'optional'}`);
     say('\nAnalysis is simulated. Fixture proof and saved-test replay are real.');
+    say('\nYour review\n'+reviewSummary(info.review));
     say('Ready: your review preview. Press Enter on the next screen to continue.\nApp verification and plugin setup are available later in Settings.');
     const openDashboard=io.inDashboard||await yes('Open my project?','y');
     return outcome({root,interactive:true,openDashboard,readiness:info});

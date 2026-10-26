@@ -20,6 +20,7 @@ export function readiness(root){
   const s=read(root),target=s.targets.find(t=>t.name===s.activeTarget),model=s.models.find(m=>m.name===s.activeModel);
   let liveReady=false;try{scopeReady(target||{});liveReady=true;}catch{}
   return {project:s.project,root,engine:{mode:'mock',analysisImplemented:false,label:'MOCK analysis · real setup and saved-test replay'},
+    review:scanPlan(s,{mode:liveReady?'combined':'code'}),
     model:model?{name:model.name,provider:model.provider,destination:model.dataDestination,connection:model.lastAttempt?.status||model.lastTest?.status||'not tested'}:null,
     target:target?{name:target.name,url:target.url,environment:target.environment,ownership:target.ownership?.status||'pending',authorized:liveReady}:null,
     ready:{repository:true,model:!!model,target:!!target,liveTesting:liveReady},
@@ -27,7 +28,7 @@ export function readiness(root){
     checks:{total:s.checks.length,enabled:s.checks.filter(c=>c.enabled).length,passed:s.checks.filter(c=>c.lastResult?.status==='passed').length,failed:s.checks.filter(c=>c.lastResult?.status==='failed').length},
     worker:workerStatus(root),monitors:s.monitors.length,latestRun:s.runs.at(-1)||null,
     privacy:{evidence:'local',sourceUpload:false,analysisInference:'not invoked (mock engine)',secretStorage:'environment variable references; public fixture credentials only in demo'},
-    next:!model?'model add':!target?'target add':!liveReady?'target verify / target authorize':!s.findings.length?'scan':!s.checks.length?'finding show → verify → fix → retest':'test run --all',
+    next:s.checks.some(c=>c.enabled)?'test run --all':s.findings.length?'finding list':liveReady?'scan --mode combined':'scan --mode code',
     limitations:['White-box and black-box engines are simulated.','Hosted Bypass account, cloud scheduler, and deployment attestation are not connected.','No passing result implies complete security coverage.']};
 }
 
@@ -37,6 +38,7 @@ export async function execute(key,args=[],o={},context={}){
     const config=o.config?loadJSON(o.config):null;
     const {root,repository}=await connectRepository(o.repo||args[0]||config?.repo||working,o.dir||config?.dir);
     const {resumed}=initStore(root,repository,o.name||config?.name);
+    if(resumed)await change(root,s=>{s.project.repository=repository;s.project.root=root;});
     if(config){
       if(config.model&&!read(root).models.some(m=>m.name===config.model.name))await execute('model add',[config.model.name],{...config.model,project:root},context);
       if(config.target&&!read(root).targets.some(t=>t.name===config.target.name))await execute('target add',[config.target.name],{...config.target,project:root},context);

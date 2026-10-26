@@ -2,10 +2,14 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import readline from 'node:readline';
+import fs from 'node:fs';
+import path from 'node:path';
 import { temp } from './helpers.mjs';
 import { CLI } from '../src/demo.mjs';
 import { execute } from '../src/service.mjs';
 import { toolDefinitions } from '../src/mcp.mjs';
+import { read } from '../src/store.mjs';
+import { delay } from '../src/util.mjs';
 
 test('MCP negotiates, validates typed tools, shares CLI state, and closes cleanly',async t=>{
   const root=temp();await execute('init',[root]);
@@ -17,6 +21,7 @@ test('MCP negotiates, validates typed tools, shares CLI state, and closes cleanl
   const init=await request('initialize',{protocolVersion:'2025-11-25',capabilities:{},clientInfo:{name:'test',version:'1'}});assert.equal(init.result.protocolVersion,'2025-11-25');
   child.stdin.write(JSON.stringify({jsonrpc:'2.0',method:'notifications/initialized'})+'\n');
   const listed=await request('tools/list');assert.equal(listed.result.tools.length,toolDefinitions.length);assert.ok(listed.result.tools.find(t=>t.name==='bypass_status').annotations.readOnlyHint);
+  const selected=await request('tools/call',{name:'bypass_connect_repository',arguments:{repository:root,confirmed:true}});assert.equal(selected.result.isError,false);
   const status=await request('tools/call',{name:'bypass_status',arguments:{},_meta:{progressToken:'status-1'}});assert.equal(status.result.isError,false);assert.equal(JSON.parse(status.result.content[0].text).engine.mode,'mock');
   assert.equal(notifications.filter(n=>n.method==='notifications/progress').length,2);
   const invalid=await request('tools/call',{name:'bypass_add_target',arguments:{name:'app',url:'http://127.0.0.1:4444',environment:'local',evil:'ignored?'}});assert.equal(invalid.error.code,-32602);
@@ -27,4 +32,46 @@ test('MCP negotiates, validates typed tools, shares CLI state, and closes cleanl
   const unknown=await request('does/not/exist');assert.equal(unknown.error.code,-32601);
   child.stdin.write('null\nnot-json\n[]\n');await request('ping');assert.deepEqual(protocolErrors.map(e=>e.error.code),[-32600,-32700,-32600]);
   child.stdin.end();const code=await new Promise(res=>child.once('close',res));assert.equal(code,0);
+});
+
+test('plugin selects the application explicitly, keeps host state untouched, and scopes preview to the selected source',async t=>{
+  const host=temp(),app=temp();
+  fs.writeFileSync(path.join(host,'package.json'),JSON.stringify({name:'@bypass-labs/cli-skeleton'}));
+  fs.writeFileSync(path.join(host,'wrong-source.js'),'throw new Error("Must not inventory the tooling app")');
+  fs.writeFileSync(path.join(app,'job-search.js'),'throw new Error("Must not execute customer code")');
+  await execute('init',[host]);const before=fs.readFileSync(path.join(host,'.bypass/state.json'),'utf8');
+  const child=spawn(process.execPath,[CLI,'mcp','serve','--project',host],{stdio:['pipe','pipe','pipe']});
+  t.after(()=>child.kill());let sequence=0;const pending=new Map();
+  readline.createInterface({input:child.stdout}).on('line',line=>{const message=JSON.parse(line);const item=pending.get(message.id);if(item){clearTimeout(item.timer);pending.delete(message.id);item.resolve(message);}});
+  const request=(method,params={})=>new Promise((resolve,reject)=>{const id=++sequence;const timer=setTimeout(()=>reject(new Error('MCP selection request timed out')),8000);pending.set(id,{resolve,timer});child.stdin.write(JSON.stringify({jsonrpc:'2.0',id,method,params})+'\n');});
+  const call=(name,args={})=>request('tools/call',{name,arguments:args});
+  const data=message=>JSON.parse(message.result.content[0].text);
+  await request('initialize',{protocolVersion:'2025-11-25'});
+  const workspace=data(await call('bypass_workspace'));
+  assert.equal(workspace.selectionRequired,true);assert.equal(workspace.isBypassSource,true);
+  assert.equal((await call('bypass_init')).error.code,-32602);
+  assert.equal((await call('bypass_scan',{mode:'code'})).result.isError,true);
+  assert.equal((await call('bypass_connect_repository',{repository:host,confirmed:true})).result.isError,true);
+  assert.equal((await call('bypass_connect_repository',{repository:app,confirmed:false})).result.isError,true);
+  assert.equal(fs.existsSync(path.join(app,'.bypass/state.json')),false);
+  const connected=data(await call('bypass_connect_repository',{repository:path.relative(host,app),confirmed:true}));
+  assert.equal(connected.root,app);assert.equal(connected.session.editorWorkspaceMatches,false);
+  assert.equal((await call('bypass_add_target',{name:'job-radar',url:'https://job-radar.app',environment:'production'})).result.isError,false);
+  const pendingPlan=await call('bypass_prepare_scan',{mode:'combined'});
+  assert.equal(pendingPlan.result.isError,false,'a readable blocked plan is not a tool failure');
+  assert.equal(data(pendingPlan).plan.repository.path,app);
+  assert.equal(data(pendingPlan).plan.app.url,'https://job-radar.app');
+  assert.equal(data(pendingPlan).plan.whiteBox.status,'simulated');assert.equal(data(pendingPlan).plan.blackBox.status,'blocked');
+  const codePlan=data(await call('bypass_prepare_scan',{mode:'code'}));
+  assert.equal(codePlan.plan.blockers.length,0);assert.equal(codePlan.plan.blackBox.status,'deferred');
+  const started=data(await call('bypass_scan',{mode:'code'}));
+  let run;for(let i=0;i<100;i++){run=data(await call('bypass_run',{id:started.runId})).run;if(run.status==='completed')break;await delay(30);}
+  assert.equal(run.status,'completed');assert.deepEqual(run.result.inventory.files,['job-search.js']);
+  assert.equal(run.result.plan.repository.path,app);assert.equal(run.result.modelCalls,0);
+  assert.equal(read(app).targets[0].ownership.status,'pending');
+  assert.equal(read(app).identities.length,0);
+  const context=await request('resources/read',{uri:'bypass://context'});
+  assert.equal(JSON.parse(context.result.contents[0].text).summary.root,app);
+  assert.equal(fs.readFileSync(path.join(host,'.bypass/state.json'),'utf8'),before);
+  child.stdin.end();assert.equal(await new Promise(resolve=>child.once('close',resolve)),0);
 });

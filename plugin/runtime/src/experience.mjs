@@ -8,7 +8,11 @@ export function homeActions(state) {
   ];
 }
 export function previewRun(run) {return run?.kind==='scan'&&run.result?.simulation===true&&!!run.result.inventory;}
+export function reviewSummary(plan){
+  return `Repository: ${plan.repository.path}${plan.repository.branch?` (${plan.repository.branch})`:''}\nGit remote: ${plan.repository.remote||'local folder; no remote configured'}\nApp: ${plan.app?.url||'not connected; code preview is available'}\nWhite-box / code: ${plan.whiteBox.status}\nBlack-box / live app: ${plan.blackBox.status}\n${plan.blackBox.description}`;
+}
 export const quickCommands=`Commands you can type here (no IDs needed):
+  repo       Choose or change the application repository
   review     Run a review preview of this repository
   results    Open findings and their next step
   demo       Follow the complete local walkthrough

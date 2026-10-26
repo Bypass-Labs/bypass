@@ -4,6 +4,7 @@ import path from 'node:path';
 import { execute, PACKAGE_ROOT } from './service.mjs';
 import { repositoryInfo } from './repository.mjs';
 import { execFile, Fault, need } from './util.mjs';
+import { isBypassSource } from './project-selection.mjs';
 
 const expand = value => value === '~' ? os.homedir() : value.startsWith('~/') ? path.join(os.homedir(), value.slice(2)) : value;
 const display = value => value.startsWith(os.homedir()+path.sep) ? '~'+value.slice(os.homedir().length) : value;
@@ -33,7 +34,7 @@ function availableFolder(base) {
 // Keep the source while correcting the destination; never merge into an occupied folder.
 export async function connectProject(options, args, {ask, say, yes, pick}) {
   let location=options.repo||args[0]||options.project;
-  let fallback=process.cwd()===PACKAGE_ROOT ? '' : process.cwd();
+  let fallback=process.cwd()===PACKAGE_ROOT||isBypassSource(process.cwd()) ? '' : process.cwd();
   let suppliedDirectory=options.dir;
   const init=(source,dir) => execute('init',[source],{...options,repo:undefined,dir,'non-interactive':true});
 
@@ -42,6 +43,10 @@ export async function connectProject(options, args, {ask, say, yes, pick}) {
     if(!location) { say('Enter your repository URL or an existing local folder.'); continue; }
     const remote=isRemote(location);
     if(!remote) {
+      if(isBypassSource(path.resolve(expand(location)))){
+        say('This is Bypass’s own tooling source. For white-box review, choose your application repository.');
+        if(!await yes('Do you specifically want to review Bypass itself?','n')){location=null;fallback='';continue;}
+      }
       try { return await init(expand(location)); }
       catch(error) {
         if(stopped(error)) throw error;

@@ -17,6 +17,9 @@ export function scanPlan(state,options={}){
     else try{scopeReady(target);}catch(e){blockers.push(e.message);}
   }
   return {mode,target:targetName,comparison:options.base?`Git reference ${options.base}`:'full eligible source inventory',engine:'mock',simulation:true,realAnalysis:false,modelCalls:0,
+    repository:{path:state.project.root,remote:state.project.repository.remote,branch:state.project.repository.branch},app:target?{name:target.name,url:target.url,environment:target.environment}:null,
+    whiteBox:{status:mode==='live'?'skipped':'simulated',implemented:false,description:mode==='live'?'Source review is not selected.':'Local source inventory works; vulnerability discovery is mocked.'},
+    blackBox:{status:mode==='code'?'deferred':blockers.length?'blocked':'simulated',implemented:false,description:mode==='code'?'App investigation is deferred. Code preview can run now.':blockers.length?blockers.join(' '):'Deployed-app investigation is mocked. Saved authorized HTTP checks can replay.'},
     stages:['Replay saved tests','Inventory changed source','Simulate candidate discovery','Simulate live engine handoff','Persist evidence and context'],
     savedChecks:state.checks.filter(c=>c.enabled).length,blockers,
     dataFlow:{source:'local inventory only',inference:'simulated; selected model not called',requests:mode==='code'?'none':'saved tests only, within authorized scope',evidence:'local .bypass/runs'},
@@ -58,7 +61,7 @@ export async function executeRun(root,runId,externalSignal){
       const regression=plan.mode==='code'?{results:[],exitCode:0,modelCalls:0}:await runChecks(root,{all:true,target:plan.target,signal:controller.signal,runId});
       if(controller.signal.aborted)throw Object.assign(new Error('Run cancelled.'),{code:130});
       await progress(root,runId,'inventory','Hashing source locally; no repository content is sent to a model.');
-      const inv=await inventory(root,options.base);
+      const inv=plan.mode==='live'?{fingerprint:null,files:[],sourceFileCount:0,routes:[],skipped:true}:await inventory(root,options.base);
       await progress(root,runId,'mock-analysis','MOCK engine: creating a clearly labeled candidate for the product walkthrough.');
       // A small cancellable boundary also exercises the real detached-job lifecycle.
       await delay(100,undefined,{signal:controller.signal});

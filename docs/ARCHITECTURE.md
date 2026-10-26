@@ -27,6 +27,7 @@ No npm runtime dependencies. Node 22 supplies HTTP/TLS, DNS, child processes, re
 | `store.mjs` | Local canonical state, locks, atomic writes, summaries, audit events |
 | `network.mjs` | Exact-origin scope, ownership challenges, address checks, pinned DNS requests |
 | `repository.mjs` | Git connection and nonexecuting local source inventory |
+| `project-selection.mjs` | Read-only workspace inspection, explicit application selection, and tooling-repository detection |
 | `models.mjs` | Provider profiles and synthetic connection smoke tests |
 | `engine.mjs` | Real orchestration around explicit mock discovery/verification boundaries |
 | `checks.mjs` | Check bindings, persistence, freshness, and export |
@@ -36,6 +37,10 @@ No npm runtime dependencies. Node 22 supplies HTTP/TLS, DNS, child processes, re
 | `demo.mjs` | Isolated Ledger fixture and source-editable application behavior |
 
 ## State and evidence
+
+The Muse server starts with no selected application. `bypass_workspace` inspects its host folder without initialization. `bypass_connect_repository` requires a user-identified local path or Git URL and binds subsequent tools and context reads to that root for the MCP session. The compatibility `bypass_init` tool requires the same explicit selection. Tooling repositories require an explicit request to review the tooling itself. Selecting an application does not move Muse's editor; a differing editor workspace is reported before any source fix. Selection does not copy another project's permissions or evidence.
+
+Scan plans and readiness share repository/remote/branch, app origin/environment, and explicit white-box/black-box statuses. A plan with setup blockers remains a successful MCP plan read; starting an unauthorized live scan is still blocked. Code-only preview can proceed without DNS or a model. Live-only mode skips source inventory. Both analysis engines remain mocked.
 
 The canonical file is `.bypass/state.json` (local, mode 0600, Git-ignored). Writes are atomic and serialized by a short-lived directory lock. `project.json` and `checks.json` are generated nonsecret summaries, not a second canonical database. Edit configuration through commands; summaries can be regenerated from state.
 

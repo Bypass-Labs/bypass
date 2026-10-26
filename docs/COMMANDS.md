@@ -6,7 +6,7 @@ Global: --project <path>, --json, --non-interactive, --help, --version.
 
 ## Interactive shortcuts
 
-Run `./bypass --project /path/to/your/app` to open the project screen. Press Enter for the first recommended action. Type `?` to show shortcuts: `review`, `results`, `demo`, `tests`, `app`, `models`, `plugin`, `settings`, `back`, and `q`. These shortcuts belong to the interactive screen; shell commands use the catalog below. `help all` shows the complete catalog inside the screen.
+Run `./bypass --project /path/to/your/app` to open the project screen. Press Enter for the first recommended action. Type `?` to show shortcuts: `repo`, `review`, `results`, `demo`, `tests`, `app`, `models`, `plugin`, `settings`, `back`, and `q`. These shortcuts belong to the interactive screen; shell commands use the catalog below. `help all` shows the complete catalog inside the screen.
 
 ## demo
 
@@ -16,7 +16,7 @@ Options: --dir.
 
 ## onboard [path]
 
-Guided local walkthrough (recommended opening choice), repository setup, or advanced setup. Requires an interactive terminal. `--flow quickstart`, `--flow advanced`, or `--flow demo` skips the opening choice. Supplying a repository path, `--repo`, or `--project` defaults to QuickStart. Existing settings and evidence are retained. App fields accept bare domains; pending DNS defaults to continuing the review preview. For automation, use `init --non-interactive` and explicit commands below.
+Application repository and app setup (recommended opening choice), guided local walkthrough, or advanced setup. Requires an interactive terminal. `--flow quickstart`, `--flow advanced`, or `--flow demo` skips the opening choice. Supplying a repository path, `--repo`, or `--project` defaults to QuickStart. Existing settings and evidence are retained. App fields accept bare domains; pending DNS defaults to continuing the review preview. For automation, use `init --non-interactive` and explicit commands below.
 
 Options: --repo, --dir, --flow.
 

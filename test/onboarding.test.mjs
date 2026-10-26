@@ -20,6 +20,10 @@ test('repository onboarding is idempotent, never executes source, and holds live
   assert.equal((await cli(root,'target','verify','app','--method','local')).code,0);
   assert.equal((await cli(root,'scan')).code,3);
   assert.equal((await cli(root,'target','authorize','app','--accept','--paths','/api')).code,0);
+  const live=await cli(root,'scan','--mode','live');
+  assert.equal(live.data.run.result.inventory.sourceFileCount,0);
+  assert.equal(live.data.run.result.plan.whiteBox.status,'skipped');
+  assert.equal(live.data.run.result.plan.blackBox.status,'simulated');
   const scan=await cli(root,'scan');assert.equal(scan.code,3);assert.equal(scan.data.run.result.simulation,true);assert.equal(scan.data.run.result.modelCalls,0);
   const finding=read(root).findings[0];assert.equal(finding.status,'simulated_unproven');
   const verify=await cli(root,'verify',finding.id);assert.equal(verify.code,3);assert.equal(verify.data.verification.requests,0);

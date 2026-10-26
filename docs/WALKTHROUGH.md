@@ -1,27 +1,6 @@
-# Your first complete Bypass journey
+# Connect your application with Bypass
 
-Run this from the Bypass checkout:
-
-```bash
-./bypass demo
-```
-
-No repository URL, model login, DNS, or plugin is required. Bypass creates a separate Ledger app on an available local port. Open the printed URL in a browser if you want to see the two accounts beside the terminal.
-
-## Six steps, six presses of Enter
-
-| Step | What Bypass does | What you see |
-| --- | --- | --- |
-| 1. Review | Inventory the fixture and create its seeded example | A clearly labeled account-access scenario; discovery is simulated |
-| 2. Prove | Send real requests as owner, other account, and anonymous visitor | Owner 200, other account 200, anonymous 401: the defect is reproduced |
-| 3. Fix and retest | Change the fixture's ownership check and replay the requests | Owner 200, other account 403, anonymous 401; one regression test saved |
-| 4. Export | Export an ordinary Node test and execute it | Independent test passes, without Bypass or a model |
-| 5. Catch it again | Reintroduce the defect and run both forms of the test | Both detect the regression; this expected failure is a successful demonstration |
-| 6. Remember | Run one due local scheduler tick and read session context | The regression is recorded for the next session |
-
-The walkthrough then restores the fix, retests, pauses its schedule, and stops its local server. The final screen prints the folder containing all evidence and the exported test. This demonstrates one scheduler tick; it does not start a permanent monitoring service.
-
-Type `q` at any step to leave. Partial evidence is kept and the local server stops. Run `./bypass demo` again for a fresh walkthrough. Existing projects and demos are not overwritten.
+Choose the application source, connect its deployed app, then review the white-box and black-box stages together.
 
 ## Connect your own repository and app
 
@@ -29,7 +8,7 @@ Type `q` at any step to leave. Partial evidence is kept and the local server sto
 ./bypass onboard
 ```
 
-Choose **2 → Connect my repository**. Or supply an existing checkout to skip the opening choice:
+Press Enter for **1 → Connect my application**. Or supply an existing checkout to skip the opening choice:
 
 ```bash
 ./bypass onboard /path/to/your/app
@@ -77,7 +56,7 @@ Once ownership is verified, explicitly authorize the testing paths. Defaults are
 
 ### 4. Optional connections
 
-After authorization, you can add two test-account references. Enter environment-variable names, never token values. Load the actual values privately in the terminal that launches Bypass or Muse.
+Basic setup skips test-account collection because deployed-app investigation is mocked. In Advanced setup, after authorization, you can add two test-account references for later use. Enter environment-variable names, never token values. Load the actual values privately in the terminal that launches Bypass or Muse.
 
 The Muse plugin is optional. If Bypass is already installed from another checkout, setup recognizes it and does not try to install a conflicting copy. Review native capabilities with `muse plugins inspect bypass`, approve those you want with `muse plugins approve bypass`, and start a new session in your connected repository. Use `/bypass:review` there. To refresh an existing plugin later, use `muse plugins update bypass`.
 
@@ -91,10 +70,13 @@ Choose **Open my project**, then press Enter. Bypass inventories source locally,
 
 The home screen shows three choices. Press Enter for the first one; it changes from **Run my first review preview** to **Open review results**, then **Replay saved tests** when that project has saved tests.
 
+The home screen shows the exact source folder, Git remote, app origin, and both stage statuses. Type `repo` to change the selected application. Opening Bypass’s tooling checkout first asks which application you intended to review.
+
 Type `?` for the short command menu:
 
 | Command inside the interactive screen | Purpose |
 | --- | --- |
+| `repo` | Select another application repository |
 | `review` / `results` | Run a preview / open its results |
 | `demo` | Start the complete isolated walkthrough |
 | `tests` | Replay or export saved tests |
@@ -113,3 +95,41 @@ To reopen a project later, run this from the Bypass checkout:
 ```
 
 For an extended presentation with source edits in Muse, a detached monitor while Muse is closed, and a second saved regression, use the [advanced presenter script](ADVANCED_WALKTHROUGH.md#4-begin-the-proof-demo-one-ledger-app-two-accounts).
+
+## Complete local proof walkthrough
+
+Run this from the Bypass checkout:
+
+```bash
+./bypass demo
+```
+
+No repository URL, model login, DNS, or plugin is required. Bypass creates a separate Ledger app on an available local port. Open the printed URL in a browser if you want to see the two accounts beside the terminal.
+
+### Six steps, six presses of Enter
+
+| Step | What Bypass does | What you see |
+| --- | --- | --- |
+| 1. Review | Inventory the fixture and create its seeded example | A clearly labeled account-access scenario; discovery is simulated |
+| 2. Prove | Send real requests as owner, other account, and anonymous visitor | Owner 200, other account 200, anonymous 401: the defect is reproduced |
+| 3. Fix and retest | Change the fixture's ownership check and replay the requests | Owner 200, other account 403, anonymous 401; one regression test saved |
+| 4. Export | Export an ordinary Node test and execute it | Independent test passes, without Bypass or a model |
+| 5. Catch it again | Reintroduce the defect and run both forms of the test | Both detect the regression; this expected failure is a successful demonstration |
+| 6. Remember | Run one due local scheduler tick and read session context | The regression is recorded for the next session |
+
+The walkthrough then restores the fix, retests, pauses its schedule, and stops its local server. The final screen prints the folder containing all evidence and the exported test. This demonstrates one scheduler tick; it does not start a permanent monitoring service.
+
+Type `q` at any step to leave. Partial evidence is kept and the local server stops. Run `./bypass demo` again for a fresh walkthrough. Existing projects and demos are not overwritten.
+
+
+## The same flow inside Muse
+
+After native plugin setup, start a new Muse session and run `/bypass:review`. Bypass asks for the application repository first; it never initializes the current folder silently. An explicit request naming the repository supplies that selection without an extra confirmation. Give the actual source path or Git URL, then the app URL and its environment.
+
+All subsequent Bypass tools use the selected repository for this session. The plugin shows repository, remote, branch, app, white-box status, and black-box status before a review. Muse keeps its host model/account. DNS pending means the black-box stage waits; the code preview can proceed. A simulated result offers the local walkthrough rather than asking for identities that cannot produce real deployed-app proof yet.
+
+If the selected source differs from Muse’s editor folder, open a new Muse session in the application before editing a fix. Repository changes do not transfer DNS challenges, authorizations, identities, or findings from another project.
+
+To load updated plugin instructions and tools, run `muse plugins update bypass`, then start a new Muse session. Existing sessions may retain the old plugin.
+
+When native inspection reports the MCP capability as modified, review with `muse plugins inspect bypass` and approve that capability with `muse plugins approve plugin:bypass:mcp_server:security`. This is Muse's native review for a changed runtime definition; Bypass does not approve it automatically.

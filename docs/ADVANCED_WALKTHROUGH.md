@@ -213,16 +213,16 @@ MUSE_NO_AUTO_UPDATE=1 muse
 
 In Muse, run `/bypass:review`. If the project is already configured above, Muse resumes it. To demonstrate onboarding from Muse instead, install into a fresh customer checkout before running the CLI setup and give Muse this request, replacing the example origin:
 
-> Connect this repository to Bypass and add https://staging.example.com as a staging target. Show me the exact DNS TXT record to publish. After I publish it, verify it and show me the proposed read-only /api scope for authorization. Use my existing Muse Code account. Add owner and outsider test identities using BYPASS_STAGING_OWNER_TOKEN and BYPASS_STAGING_OUTSIDER_TOKEN, and show readiness and the review plan. Keep simulated results labeled.
+> Select this application repository for Bypass and add https://staging.example.com as a staging target. Show the repository, Git remote, and app together. Use my current Muse model/account. Show the exact DNS TXT record, but let me continue with code preview while DNS is pending. After verification, show the proposed read-only /api scope for authorization. Explain the white-box and black-box stage status, and keep simulated results labeled.
 
 | Customer action | Native Muse tool / behavior |
 | --- | --- |
-| Connect this checkout | `bypass_init` |
+| Inspect and select the application repository | `bypass_workspace` → `bypass_connect_repository` with an explicit repository and `confirmed: true` |
 | Add the app and display its challenge | `bypass_add_target` |
 | Publish the TXT record | Customer saves it in their DNS provider |
 | Check DNS | `bypass_verify_target` with method `dns` |
 | Authorize the reviewed paths | `bypass_authorize_target` after the customer's scope decision |
-| Choose provider and test accounts | `bypass_add_model`, `bypass_use_model`, `bypass_add_identity`, `bypass_test_identity` |
+| Optional standalone provider or future identity setup, only when requested | `bypass_add_model`, `bypass_use_model`, `bypass_add_identity`, `bypass_test_identity` |
 | Show readiness and data flow | `bypass_status`, `bypass_prepare_scan` |
 | Run and retrieve the review | `bypass_scan`, then poll `bypass_run` using its returned run ID |
 
