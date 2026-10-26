@@ -1,6 +1,7 @@
 // One catalog drives strict CLI parsing, help, and the command reference.
 const command=(usage,description,flags='',extra={})=>({usage,description,flags:flags.split(' ').filter(Boolean),...extra});
 export const commands={
+  onboard:command('onboard [path]','Guided QuickStart, resumable app verification, or local demo.','repo dir flow'),
   init:command('init [path]','Connect a repository and configure a project.','repo dir config name'),
   'repo show':command('repo show','Inspect the connected repository.'),
   'repo connect':command('repo connect <path-or-url>','Connect or clone a repository.','dir name'),
@@ -97,5 +98,5 @@ export function help(key){
   const selected=commands[key];
   if(selected)return `bypass ${selected.usage}\n\n${selected.description}\n\nOptions: ${selected.flags.map(x=>'--'+x).join(', ')||'(none)'}\nGlobal: --project <path>, --json, --non-interactive, --help\n`;
   const entries=Object.entries(commands).filter(([k,v])=>!v.hidden&&(!key||k.startsWith(key+' ')));
-  return `BYPASS  /  security checks that stay with your code\n\nRunnable skeleton · analysis engines are MOCKED\n\n${entries.map(([,v])=>`  ${v.usage.padEnd(38)} ${v.description}`).join('\n')}\n\nQuick start: bypass demo start\nGlobal: --project <path>, --json, --non-interactive, --help, --version\nExit codes: 0 success · 1 failed regression · 2 usage/config · 3 blocked/incomplete · 130 cancelled\n`;
+  return `BYPASS  /  security checks that stay with your code\n\nRunnable skeleton · analysis engines are MOCKED\n\n${entries.map(([,v])=>`  ${v.usage.padEnd(38)} ${v.description}`).join('\n')}\n\nGet started: bypass onboard\nGlobal: --project <path>, --json, --non-interactive, --help, --version\nExit codes: 0 success · 1 failed regression · 2 usage/config · 3 blocked/incomplete · 130 cancelled\n`;
 }

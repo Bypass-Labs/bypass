@@ -2,7 +2,15 @@
 
 Validated locally on 2026-10-26 with Node v22.14.0 and Muse Code 1.4.13.
 
-## Automated checks
+## Latest: guided onboarding
+
+The simplified `onboard` experience passed **14 integration tests, 0 failures**: the seven existing workflow checks below plus seven new wizard checks. The new checks cover pending DNS and resumption without duplicate settings, separate ownership/scope consent, explicit production acknowledgment, recovery from a failed model test, account credential references, a real local demo, and rejection of invalid/noninteractive onboarding before state is written.
+
+Syntax checks passed for **24 modules**, and the rebuilt native Muse plugin validated successfully. A real terminal session also exercised QuickStart, deferred app setup, opening the dashboard, the code-only review default, the readable review plan, and a mock review. Ctrl+C returned exit 130 both in the terminal and in resumed onboarding; saved settings and findings remained intact.
+
+The short README and walkthrough link to the preserved advanced script. Documentation checks covered 30 Bash blocks, 67 CLI examples against the real parser, and 11 local links. Public DNS verification was tested with controlled resolver responses, not a customer domain. No live model call was made during this onboarding update.
+
+## Existing engine and workflow checks
 
 `npm run check` passed for 22 source, CLI, script, and test modules. `npm test` passed **7 integration tests, 0 failures**, with these exercised behaviors:
 
@@ -34,7 +42,7 @@ The exported regression was separately executed from the walkthrough repository 
 - Source editing is covered by the automated journey: changing `enforceOwnership` in `app.mjs` changes live HTTP behavior without restarting the fixture server.
 - Started the local monitor worker detached. Its first scheduled check passed, was persisted, and appeared in the native Muse context hook.
 
-## Full walkthrough rehearsal
+## Earlier manual-walkthrough rehearsal
 
 The expanded customer journey and presenter script were checked on 2026-10-26:
 

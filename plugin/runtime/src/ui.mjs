@@ -1,10 +1,10 @@
 import readline from 'node:readline/promises';
-import fs from 'node:fs';
 import path from 'node:path';
 import { read, rootFrom } from './store.mjs';
-import { execute, readiness, PACKAGE_ROOT } from './service.mjs';
+import { execute, readiness } from './service.mjs';
 import { parse, help } from './catalog.mjs';
 import { cleanText, redact, Fault } from './util.mjs';
+import { onboard } from './onboarding.mjs';
 
 const color=!!process.stdout.isTTY&&!process.env.NO_COLOR;
 const paint=(n,s)=>color?`\x1b[${n}m${s}\x1b[0m`:s;
@@ -14,6 +14,14 @@ export function printResult(data){
   if(!data)return;
   const value=redact(data);
   if(value.error){console.error(paint('31',value.error));if(value.details&&Object.keys(value.details).length)console.error(JSON.stringify(value.details,null,2));return;}
+  if(value.plan){
+    const p=value.plan;
+    console.log(`\n${bold('Review plan')} · ${p.mode==='code'?'code only':p.mode}\n`);
+    console.log(`  App           ${p.mode==='code'?'no live requests':p.target||'not connected'}\n  Saved checks  ${p.savedChecks}${p.mode==='code'?' · replay requires an authorized app':' · replay first'}\n  Source        stays on this machine\n  Analysis      simulated · no model calls\n  Evidence      saved locally`);
+    if(p.blockers.length)console.log(`\n${paint('33','Setup needed:')}\n${p.blockers.map(x=>'  '+x).join('\n')}`);
+    else console.log('\nReady for a walkthrough review. Simulated results are not a security verdict.');
+    return;
+  }
   if(value.run){
     const r=value.run;console.log(`\n${bold(r.id)}  ${label(r.kind)} · ${r.status}`);
     for(const step of r.steps||[])console.log(`  ${muted('›')} ${step.message}`);
@@ -37,26 +45,17 @@ export function tokenize(line){
 }
 function createPrompt(){
   const rl=readline.createInterface({input:process.stdin,output:process.stdout});
-  const ask=async(text,defaultValue='')=>{const result=await rl.question(`${text}${defaultValue?muted(` [${defaultValue}]`):''}: `);return result.trim()||defaultValue;};
+  const controller=new AbortController();
+  rl.once('SIGINT',()=>{controller.abort();rl.close();});
+  rl.once('close',()=>controller.abort());
+  const ask=async(text,defaultValue='')=>{try{const result=await rl.question(`${text}${defaultValue?muted(` [${defaultValue}]`):''}: `,{signal:controller.signal});return result.trim()||defaultValue;}catch(e){if(e.name==='AbortError')throw new Fault('Setup stopped. Saved choices are retained.',130);throw e;}};
   return {ask,close:()=>rl.close()};
 }
 async function choose(ask,items,title){console.log(`\n${bold(title)}`);items.forEach((x,i)=>console.log(`  ${i+1}  ${x.label||x.name||x.id}`));const choice=await ask('Choose','1');return items[Number(choice)-1]||null;}
 
 export async function initWizard(options={},args=[]){
   const prompt=createPrompt();
-  try{return await setup(prompt.ask,options,args);}finally{prompt.close();}
-}
-async function setup(ask,options,args=[]){
-  console.log(`\n${accent('BYPASS')}  /  connect your project\n`);
-  const location=options.repo||args[0]||await ask('Repository directory or Git URL',options.project||process.cwd());
-  let dir=options.dir;if(/^(https:|ssh:|git@)/.test(location)&&!dir)dir=await ask('Clone into directory');
-  const result=await execute('init',[location],{...options,dir,'non-interactive':true});
-  console.log(`${accent('✓')} Repository connected: ${result.root}`);
-  const s=read(result.root);
-  if(!s.models.length)await modelWizard(ask,result.root);
-  if(!s.targets.length&&(await ask('Connect a running app now? (y/n)','y')).toLowerCase()==='y')await targetWizard(ask,result.root);
-  console.log(`\n${accent('✓')} Setup saved. Resume at any time with bypass --project '${result.root}'.`);
-  return {...result,readiness:readiness(result.root)};
+  try{return await onboard(options,args,{ask:prompt.ask});}finally{prompt.close();}
 }
 async function modelWizard(ask,root){
   const choice=await choose(ask,[{label:'Muse Code subscription',provider:'muse-code'},{label:'Local model · inference on this machine',provider:'local'},{label:'Your self-hosted compatible endpoint',provider:'endpoint'}],'Where should model inference run?');if(!choice)return;
@@ -89,21 +88,22 @@ function dashboard(root){
   console.log(`  EVIDENCE     local · ${info.findings.total} findings · ${info.checks.enabled} saved tests`);
   console.log(`  MONITOR      ${info.worker.status} · ${info.monitors} schedules`);
   console.log(`\n${paint('33','  MOCK ANALYSIS')}  ${muted('Real onboarding, HTTP fixture proof, tests, and scheduler.')}`);
-  console.log(`  Next: ${accent(info.next)}\n`);
+  const next=!info.model?'Setup → choose a model':!info.ready.liveTesting?(info.target?'Setup → finish app verification, or Run a review in code-only mode':'Run a review (code only), or Setup → connect an app'):!info.findings.total?'Run a review':!info.checks.enabled?'Findings → verify, fix, and retest':'Saved tests → replay your regressions';
+  console.log(`  Next: ${accent(next)}\n`);
 }
 export async function terminal(options={}){
   let root=options.project?path.resolve(options.project):process.cwd();
-  try{root=rootFrom(root);}catch{const demo=path.join(PACKAGE_ROOT,'.demo/ledger');if(!options.project&&fs.existsSync(path.join(demo,'.bypass/state.json')))root=demo;}
+  try{root=rootFrom(root);}catch{const result=await initWizard(options);if(!result.openDashboard)return;root=result.root;}
   const {ask,close}=createPrompt();
   const run=async(key,args=[],flags={})=>{const result=await execute(key,args,{project:root,...flags});printResult(result);return result;};
   try{
     while(true){
       dashboard(root);
-      console.log('  1  Setup / connect repository       6  Saved tests\n  2  Targets & identities            7  Monitoring\n  3  Models & privacy                8  Session context\n  4  Run a review                    9  Demo controls\n  5  Findings                        0  Exit\n');
+      console.log('  1  Setup / resume onboarding      6  Saved tests\n  2  Targets & identities            7 Monitoring\n  3  Models & privacy                8  Session context\n  4  Run a review                    9  Demo controls\n  5  Findings                        0  Exit\n');
       console.log(muted('You can also type any Bypass command here. Type help for the command reference.'));
       const choice=await ask('bypass');if(['0','q','quit','exit'].includes(choice))break;
       try{
-        if(choice==='1'){const result=await setup(ask,{project:root});root=result.root;}
+        if(choice==='1'){const result=await onboard({project:root},[],{ask,inDashboard:true});root=result.root;}
         else if(choice==='2'){
           const state=read(root);const action=await choose(ask,[{label:'Add a target',id:'add'},{label:'Show targets / ownership challenges',id:'show'},{label:'Verify ownership',id:'verify'},{label:'Authorize testing scope',id:'authorize'},{label:'Select active target',id:'use'},{label:'Add test identity',id:'identity'},{label:'Test identity connection',id:'identity-test'},{label:'Revoke testing',id:'revoke'}],'Targets & identities');
           if(action?.id==='add')await targetWizard(ask,root);
@@ -116,7 +116,8 @@ export async function terminal(options={}){
           if(action?.id==='add')await modelWizard(ask,root);else if(action?.id==='list')await run('model list');else if(action){const model=await choose(ask,read(root).models,'Profile');if(model)await run(`model ${action.id}`,[model.name]);}
         }
         else if(choice==='4'){
-          const mode=await ask('Review mode: combined / code / live','combined');await run('scan',[],{mode,plan:true});if((await ask('Run this plan? (y/n)','y')).toLowerCase()==='y')await run('scan',[],{mode});
+          const ready=readiness(root).ready.liveTesting;
+          const mode=await ask('Review mode: combined / code / live',ready?'combined':'code');const planned=await run('scan',[],{mode,plan:true});if(planned.exitCode===0&&(await ask('Run this plan? (y/n)','y')).toLowerCase()==='y')await run('scan',[],{mode});
         }
         else if(choice==='5'){
           const finding=await choose(ask,read(root).findings.map(f=>({...f,label:`${f.title} · ${label(f.status)} · ${f.id}`})),'Findings');

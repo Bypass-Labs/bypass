@@ -4,6 +4,12 @@ Generated from the parser catalog. Add --help to any command. Values are require
 
 Global: --project <path>, --json, --non-interactive, --help, --version.
 
+## onboard [path]
+
+Guided QuickStart, resumable app verification, or local demo. Requires an interactive terminal. `--flow quickstart`, `--flow advanced`, or `--flow demo` skips the opening choice. Existing settings and evidence are retained. For automation, use `init --non-interactive` and explicit commands below.
+
+Options: --repo, --dir, --flow.
+
 ## init [path]
 
 Connect a repository and configure a project.
