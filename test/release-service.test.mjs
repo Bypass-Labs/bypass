@@ -5,7 +5,7 @@ import { authorizePublisher } from '../infra/releases/auth.mjs';
 import { createHandler, platforms } from '../infra/releases/worker.mjs';
 const env={GITHUB_REPOSITORY:'Bypass-Labs/bypass-for-muse',GITHUB_REPOSITORY_ID:'123',GITHUB_OWNER_ID:'456',PUBLISH_AUDIENCE:'https://bypasslabs.ai/downloads/bypass'};
 const now=Math.floor(Date.now()/1000),commit='a'.repeat(40);
-const claims={iss:'https://token.actions.githubusercontent.com',aud:env.PUBLISH_AUDIENCE,sub:`repo:${env.GITHUB_REPOSITORY}:ref:refs/heads/main`,repository:env.GITHUB_REPOSITORY,repository_id:'123',repository_owner_id:'456',ref:'refs/heads/main',ref_type:'branch',workflow_ref:env.GITHUB_REPOSITORY+'/.github/workflows/release.yml@refs/heads/main',workflow_sha:commit,sha:commit,event_name:'push',runner_environment:'github-hosted',run_id:'1234',run_number:'2',run_attempt:'1',exp:now+300,iat:now,nbf:now-5};
+const claims={iss:'https://token.actions.githubusercontent.com',aud:env.PUBLISH_AUDIENCE,sub:'repo:Bypass-Labs@456/bypass-for-muse@123:ref:refs/heads/main',repository:env.GITHUB_REPOSITORY,repository_id:'123',repository_owner_id:'456',ref:'refs/heads/main',ref_type:'branch',workflow_ref:env.GITHUB_REPOSITORY+'/.github/workflows/release.yml@refs/heads/main',workflow_sha:commit,sha:commit,event_name:'push',runner_environment:'github-hosted',run_id:'1234',run_number:'2',run_attempt:'1',exp:now+300,iat:now,nbf:now-5};
 const encode=value=>Buffer.from(typeof value==='string'?value:JSON.stringify(value)).toString('base64url');
 const digest=value=>createHash('sha256').update(value).digest('hex');
 const releaseId=`main-${commit}-1234-1`;
@@ -26,7 +26,7 @@ test('publishing accepts only a signed, unexpired identity for the exact main wo
   const jwk={...await crypto.subtle.exportKey('jwk',pair.publicKey),kid:'test-key',use:'sig',alg:'RS256'};
   async function request(changes={}){const unsigned=encode({kid:'test-key',alg:'RS256'})+'.'+encode({...claims,...changes});const signature=Buffer.from(await crypto.subtle.sign('RSASSA-PKCS1-v1_5',pair.privateKey,new TextEncoder().encode(unsigned))).toString('base64url');return new Request('https://bypasslabs.ai/downloads/bypass/_publish/promote',{headers:{Authorization:`Bearer ${unsigned}.${signature}`}});}
   const options={now,fetchKeys:async()=>[jwk]};assert.equal((await authorizePublisher(await request(),env,options)).releaseId,releaseId);
-  for(const change of [{repository_id:'999'},{ref:'refs/pull/1/merge'},{workflow_ref:env.GITHUB_REPOSITORY+'/.github/workflows/evil.yml@refs/heads/main'},{exp:now-1},{aud:'another-service'},{event_name:'pull_request_target'},{workflow_sha:'b'.repeat(40)}])await assert.rejects(authorizePublisher(await request(change),env,options));
+  for(const change of [{repository_id:'999'},{repository_owner_id:'999'},{sub:`repo:${env.GITHUB_REPOSITORY}:ref:refs/heads/main`},{sub:claims.sub.replace('@123','@999')},{ref:'refs/pull/1/merge'},{workflow_ref:env.GITHUB_REPOSITORY+'/.github/workflows/evil.yml@refs/heads/main'},{exp:now-1},{aud:'another-service'},{event_name:'pull_request_target'},{workflow_sha:'b'.repeat(40)}])await assert.rejects(authorizePublisher(await request(change),env,options));
   const forged=await request();forged.headers.set('authorization',forged.headers.get('authorization').slice(0,-8)+'xxxxxxxx');await assert.rejects(authorizePublisher(forged,env,options));
 });
 test('R2 uploads are immutable, promotion requires every verified asset, and old runs cannot replace main',async()=>{
