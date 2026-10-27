@@ -16,7 +16,7 @@ export const commands={
   'auth login':command('auth login','Use local mode or launch official Muse account login.','provider device'),
   'auth status':command('auth status','Show local mode and Muse account integration status.'),
   'auth logout':command('auth logout','Clear Bypass-local account metadata; Muse account is separate.'),
-  'integrate muse':command('integrate muse','Reuse an existing Muse plugin or install the bundled plugin.','scope install'),
+  'integrate muse':command('integrate muse','Reuse an existing Muse plugin or install the bundled plugin.','scope install replace'),
   'integrate status':command('integrate status','Inspect the Muse plugin installation.'),
   'integrate remove':command('integrate remove <muse>','Remove the native Muse plugin.'),
   'target add':command('target add <name>','Add a local or HTTPS deployed target.','url environment'),
@@ -87,7 +87,7 @@ export const commands={
   _run:command('_run <id>','Internal detached run entry point.','',{hidden:true}),
   '_demo-serve':command('_demo-serve','Internal fixture server.','',{hidden:true})
 };
-export const booleanFlags=new Set(['json','help','version','non-interactive','plan','full','detach','all','force','accept','production','renew','once','stop','device','install','allow-private']);
+export const booleanFlags=new Set(['json','help','version','non-interactive','plan','full','detach','all','force','accept','production','renew','once','stop','device','install','replace','allow-private']);
 export const globalFlags=['project','json','help','version','non-interactive'];
 export function parse(argv){
   const options={},words=[];

@@ -237,16 +237,19 @@ async function integrate(key,args,o,working,signal){
   }
   const inspected=await native('plugins','inspect','bypass','--json');
   let existing;try{existing=JSON.parse(inspected.stdout);}catch{}
-  if(inspected.code===0&&existing?.valid&&existing.record?.id==='bypass'){
+  if(inspected.code===0&&existing?.valid&&existing.record?.id==='bypass'&&!o.replace){
     return outcome({alreadyInstalled:true,installed:existing.record,active:!!existing.active,reviewRequired:true,
       message:`Bypass is already installed in Muse${existing.record.source?.path?` from ${existing.record.source.path}`:''}. No second installation is needed.`,
       next:existing.active?'Review with muse plugins inspect bypass, then approve the capabilities you want. Refresh later with muse plugins update bypass.':'Enable it with muse plugins enable bypass, then inspect and approve its native capabilities.'});
   }
-  const plugin=path.join(PACKAGE_ROOT,'plugin');
+  const plugin=fs.existsSync(path.join(PACKAGE_ROOT,'../.muse-plugin/plugin.json'))?path.resolve(PACKAGE_ROOT,'..'):path.join(PACKAGE_ROOT,'plugin');
   need(fs.existsSync(path.join(plugin,'runtime/bin/bypass.mjs')),'The bundled Muse plugin runtime is missing. In the Bypass checkout, run npm run plugin:build, then retry.',3);
   const validation=await native('plugins','validate',plugin,'--json');need(validation.code===0,'Muse rejected plugin validation.',3,{validation:validation.stdout});
   const scope=o.scope||'project';need(['user','project'].includes(scope),'Scope must be user or project.');
+  let replaced=false;
+  if(o.replace&&existing?.record?.id==='bypass'){const removed=await native('plugins','remove','bypass','--json');need(removed.code===0,'Could not replace the existing Muse plugin. Run muse plugins inspect bypass for details.',3);replaced=true;}
   const installed=await native('plugins','install',plugin,'--scope',scope,'--json');
+  if(installed.code!==0&&replaced&&existing.record.source?.path)await native('plugins','install',existing.record.source.path,'--scope',scope,'--json');
   let diagnostic;try{diagnostic=JSON.parse(installed.stdout).error?.message;}catch{}
   need(installed.code===0,`Muse plugin installation did not finish: ${redact(String(diagnostic||installed.stderr||'Run muse plugins inspect bypass for details.')).replace(/[\x00-\x1f\x7f]/g,' ').slice(0,500)}`,3);
   return outcome({plugin,scope,installed:JSON.parse(installed.stdout),next:'Review with muse plugins inspect bypass, then muse plugins approve bypass. Start a new Muse session and use /bypass:review.',message:'Installation does not grant runtime trust. Muse’s native capability review remains visible.'});

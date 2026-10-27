@@ -96,14 +96,17 @@ test('opening the tooling checkout asks for the application before any review',a
 
 async function fakeMuse(t,scenario){
   const root=temp(),bin=path.join(root,'bin'),calls=path.join(root,'calls');fs.mkdirSync(bin);
+  const hasExisting=scenario==='existing'||scenario.startsWith('replace');
   fs.writeFileSync(path.join(bin,'muse'),`#!${process.execPath}
 const fs=require('fs'),args=process.argv.slice(2);
 fs.appendFileSync(${JSON.stringify(calls)},args.join(' ')+'\\n');
 if(args[1]==='inspect'){
-  console.log(JSON.stringify(${JSON.stringify(scenario==='existing'?{valid:true,active:true,record:{id:'bypass',source:{path:'/other/checkout/plugin'}}}:{error:{message:'not installed'}})}));
-  process.exit(${scenario==='existing'?0:1});
+  console.log(JSON.stringify(${JSON.stringify(hasExisting?{valid:true,active:true,record:{id:'bypass',source:{path:'/other/checkout/plugin'}}}:{error:{message:'not installed'}})}));
+  process.exit(${hasExisting?0:1});
 }
-if(args[1]==='validate'){console.log('{"valid":true}');process.exit(0);}
+if(args[1]==='validate'){console.log('{"valid":true}');process.exit(${scenario==='replace-invalid'?1:0});}
+if(args[1]==='remove'){console.log('{"removed":true}');process.exit(0);}
+if(args[1]==='install'&&(${scenario==='replace-success'}||args[2]==='/other/checkout/plugin')){console.log('{"installed":true}');process.exit(0);}
 console.log(JSON.stringify({error:{message:'plugin bypass is already installed from a different source'}}));process.exit(1);
 `,{mode:0o755});
   const previous=process.env.PATH;process.env.PATH=bin+path.delimiter+previous;
@@ -122,4 +125,28 @@ test('existing plugin in another checkout is reused without installing, changing
 test('native plugin failure includes the actionable native reason',async t=>{
   const {root}=await fakeMuse(t,'failure');
   await assert.rejects(execute('integrate muse',[],{project:root}),/already installed from a different source/);
+});
+
+test('explicit plugin replacement validates before removal and installs the bundled package without approving it',async t=>{
+  const {root,calls}=await fakeMuse(t,'replace-success');
+  const result=await execute('integrate muse',[],{project:root,scope:'user',replace:true});
+  assert.equal(result.exitCode,0);
+  const commands=fs.readFileSync(calls,'utf8').trim().split('\n');
+  assert.deepEqual(commands.map(c=>c.split(' ')[1]),['inspect','validate','remove','install']);
+  assert.ok(commands[3].endsWith('--scope user --json'));
+  assert.ok(commands[3].includes(result.plugin));
+});
+
+test('invalid bundled plugin leaves the existing installation intact',async t=>{
+  const {root,calls}=await fakeMuse(t,'replace-invalid');
+  await assert.rejects(execute('integrate muse',[],{project:root,replace:true}),/rejected plugin validation/);
+  assert.deepEqual(fs.readFileSync(calls,'utf8').trim().split('\n').map(c=>c.split(' ')[1]),['inspect','validate']);
+});
+
+test('failed plugin replacement attempts to restore the prior source and reports the installation error',async t=>{
+  const {root,calls}=await fakeMuse(t,'replace-failure');
+  await assert.rejects(execute('integrate muse',[],{project:root,scope:'user',replace:true}),/already installed from a different source/);
+  const commands=fs.readFileSync(calls,'utf8').trim().split('\n');
+  assert.deepEqual(commands.map(c=>c.split(' ')[1]),['inspect','validate','remove','install','install']);
+  assert.equal(commands[4],'plugins install /other/checkout/plugin --scope user --json');
 });

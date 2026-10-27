@@ -1,0 +1,20 @@
+{
+  "$schema": "https://raw.githubusercontent.com/cloudflare/workers-sdk/main/packages/wrangler/config-schema.json",
+  "name": "bypass-distribution",
+  "account_id": "b2675b78a99b92f1181898c655617665",
+  "main": "worker.mjs",
+  "compatibility_date": "2026-10-27",
+  "workers_dev": false,
+  "routes": [
+    {"pattern": "bypasslabs.ai/install*", "zone_name": "bypasslabs.ai"},
+    {"pattern": "bypasslabs.ai/downloads/bypass/*", "zone_name": "bypasslabs.ai"}
+  ],
+  "r2_buckets": [{"binding": "RELEASES", "bucket_name": "bypass-releases"}],
+  "vars": {
+    "GITHUB_REPOSITORY": "Bypass-Labs/bypass-for-muse",
+    "GITHUB_REPOSITORY_ID": "1434899468",
+    "GITHUB_OWNER_ID": "348399906",
+    "PUBLISH_AUDIENCE": "https://bypasslabs.ai/downloads/bypass"
+  },
+  "observability": {"enabled": true}
+}

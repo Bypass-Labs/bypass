@@ -8,28 +8,25 @@ Use Bypass inside **Muse Code**, or in its standalone CLI. A source-review agent
 
 ## Start with the Muse plugin
 
-You need **Node.js 22+**, **Git**, **Muse Code**, and a running **Docker Desktop or Colima**. Sign in to Muse with `muse login` if you have not already. No `npm install` or Bypass account is needed.
+The installer supports **macOS and glibc Linux, x64 and arm64**, and includes Node.js. For reviews, you also need **Git**, **Muse Code**, and a running **Docker Desktop or Colima**. Sign in to Muse with `muse login` if needed.
 
-### 1. Download Bypass — in your terminal
+### 1. Install Bypass — one terminal command
 
 ```bash
-git clone https://github.com/Bypass-Labs/bypass-for-muse.git ~/bypass-for-muse
-cd ~/bypass-for-muse
+curl -fsSL https://bypasslabs.ai/install | bash
 ```
 
-Check prerequisites with `./bypass doctor`; it works before connecting an application.
+This downloads the tested `main` build from Cloudflare R2, verifies its SHA-256 checksum, and installs it locally. No GitHub access, clone, npm install, system Node or sudo is needed to install the tool. The installer prints the executable path if `~/.local/bin` is not on your PATH.
 
-Already have that folder? **Do not clone again.** Follow [Update an existing installation](#update-an-existing-installation).
-
-### 2. Install and enable the plugin — in your terminal
+### 2. Connect the Muse plugin — in your terminal
 
 ```bash
-muse plugins install ./plugin --scope user
+bypass integrate muse --scope user --replace
 muse plugins inspect bypass
 muse plugins approve bypass
 ```
 
-`inspect` shows the plugin's local server and session hook. `approve` enables those capabilities through Muse's native permission system. Already installed? Use the update steps below.
+Use `~/.local/bin/bypass` if the short command is not on your PATH. `--replace` switches an existing plugin to the bundled version; application settings and evidence stay in their project folders. `inspect` and `approve` use Muse's native capability review. Open a new Muse session after installing or updating.
 
 ### 3. Open Muse, then start Bypass
 
@@ -47,7 +44,7 @@ This optional setting applies only to this Muse session. It was used in the live
 /bypass:start
 ```
 
-Bypass asks for **your application folder or Git URL**. The folder you downloaded in step 1 contains the tool; it is not automatically the app to review.
+Bypass asks for **your application folder or Git URL**. The installed tool is separate from your application; Bypass does not automatically select a repository.
 
 You can also use one ordinary prompt:
 
@@ -123,7 +120,7 @@ What Bypass retains:
 Use this if you prefer Bypass's own terminal interface. **Plugin installation is not required.**
 
 ```bash
-~/bypass-for-muse/bypass onboard
+bypass onboard
 ```
 
 1. Choose **Connect my application**.
@@ -171,17 +168,26 @@ A timeout means **review incomplete**. The screen shows the failed stage and evi
 
 ## Update an existing installation
 
-If your checkout is elsewhere, substitute its path on the first line:
+Run the installer again, then refresh the Muse integration if you use it:
 
 ```bash
-cd ~/bypass-for-muse
-git pull --ff-only
-muse plugins update bypass
+curl -fsSL https://bypasslabs.ai/install | bash
+bypass integrate muse --scope user --replace
 muse plugins inspect bypass
 muse plugins approve bypass
 ```
 
-Updating can leave the plugin listed as installed while its tool server is disabled. The inspect/approve steps above review and enable the updated capabilities. **Close the old Muse session and open a new one** to load the updated plugin. `/bypass:start` reports the loaded version, source folder and installed plugin version. A cached process from an earlier update reports that a new Muse session is required. Version 0.2.4 adds these checks; sessions still running older code must be closed first. CLI-only users need just `git pull --ff-only`.
+Restart Muse. The installer keeps previous versions and does not touch application repositories, model settings, ownership records or security memory. Check the active CLI with `bypass --version`. No cleanup or reclone is needed.
+
+For source development instead of an installed release:
+
+```bash
+git clone https://github.com/Bypass-Labs/bypass-for-muse.git
+cd bypass-for-muse
+./bypass doctor
+```
+
+An existing source checkout can use `git pull --ff-only` and `npm run plugin:build`. [Release and installer details](docs/RELEASES.md) cover CI, platform support, custom install paths and rollback.
 
 ## Optional examples and technical details
 
@@ -194,7 +200,7 @@ Developers: `npm run check` and `npm test` run local checks. `npm run plugin:bui
 For feature-specific context in the CLI (or JSON for another coding agent):
 
 ```bash
-~/bypass-for-muse/bypass context --project /path/to/your/app \
+bypass context --project /path/to/your/app \
   --task "Add invoice export" --files "src/routes.js,src/auth.js" --json
 ```
 
