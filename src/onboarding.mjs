@@ -33,7 +33,7 @@ export async function onboard(options={}, args=[], io={}) {
     const work=signal=>execute(key,argv,{...flags,project:root},{signal});
     return io.activity?io.activity(key,work):work(io.signal);
   };
-  say('\nBYPASS / Get started\nConnect your application, then choose /engine for real Docker agents. Offline preview is also available.');
+  say('\nBYPASS / Get started\nConnect your application for a real AI review. Docker and a working model are required.');
   say('Press Enter for the recommended next action. Your progress is saved.');
   const flow=options.flow||((options.repo||options.project||args[0])?'quickstart':(await pick('How would you like to start?',[
     {label:'Connect my application (recommended) — repository + live app',id:'quickstart'},
@@ -53,8 +53,9 @@ export async function onboard(options={}, args=[], io={}) {
   say('White-box uses this application source. Black-box uses its deployed app URL.\nChoose the application you want to review, not the Bypass CLI checkout.');
   const initial=await connectProject(options,args,{ask,say,yes,pick,activity:io.activity,signal:io.signal});
   root=initial.root;
+  if(!initial.resumed)await call(root,'engine use',['docker']);
   io.setContext?.({title:read(root).project.name,repo:root,branch:read(root).project.repository.branch});
-  io.task?.(0,'done');io.task?.(1,'running');io.setNext?.('Connect your deployed app, or continue with a code preview');
+  io.task?.(0,'done');io.task?.(1,'running');io.setNext?.('Connect your deployed app, or continue with a source review');
   say(`✓ Repository connected: ${root}${initial.resumed?' · resuming saved setup':''}`);
 
   say('\nStep 2 of 4 / Choose your model connection');
@@ -99,7 +100,7 @@ export async function onboard(options={}, args=[], io={}) {
     }
   }
 
-  io.task?.(1,'done');io.task?.(2,'running');io.setNext?.('Save setup → open your project → run a review preview');
+  io.task?.(1,'done');io.task?.(2,'running');io.setNext?.('Save setup → open your project → run a source review');
   say('\nStep 3 of 4 / Connect your running app');
   say('Have a deployed app? Enter its URL to verify ownership. Press Enter to add it later.');
   let state=read(root), target=state.targets.find(t=>t.name===state.activeTarget);
@@ -139,9 +140,8 @@ export async function onboard(options={}, args=[], io={}) {
       }
       say('Load those variables in your terminal before testing accounts or starting Muse. Test the connections in Targets & identities.');
     });
-  }else say('No test accounts are needed for the offline preview. Use /engine to enable real Docker agents and guided account/resource setup.');
-  say('The CLI works on its own. The Muse plugin is optional.');
-  if(await yes('Connect the Muse Code plugin now?'))try{
+  }else say('You can review source now. Use /engine to add two test accounts and an owner-owned resource for HTTP proof.');
+  if(advanced&&await yes('Connect the Muse Code plugin now?'))try{
     say('Checking the existing Muse plugin installation…');
     const integration=await call(root,'integrate muse',[],{scope:'project'});museInstalled=true;
     say(integration.message);
@@ -158,13 +158,13 @@ export async function onboard(options={}, args=[], io={}) {
         target=(await call(root,'target verify',[target.name],{method:'local'})).target;
       }else{
         if(Date.parse(target.challenge?.expiresAt||0)<=Date.now())target=(await call(root,'target verify',[target.name],{renew:true})).target;
-        say('If your DNS provider appends the zone name, omit that suffix from the record name.\nExample: for staging.example.com in the example.com zone, enter _bypass-verification.staging.\nYou can preview this project and run the complete local walkthrough while DNS is pending.');
+        say('If your DNS provider appends the zone name, omit that suffix from the record name.\nExample: for staging.example.com in the example.com zone, enter _bypass-verification.staging.\nYou can review source while DNS is pending.');
         say(`\nAdd this DNS record (keep unrelated records):\n  Type    TXT · TTL Auto\n  Name    ${target.challenge.record}\n  Value   ${target.challenge.token}`);
         while(!verified(target)){
           const choices=[{label:"I've added the record — check DNS",method:'dns'},{label:'Continue to my review — verify DNS later (recommended)',method:null}];
           if(advanced)choices.push({label:'Use the HTTPS challenge instead',method:'http'});
           const selection=await pick('Optional: verify ownership now',choices,1);
-          if(!selection.method){say('DNS pending — saved for later. Your review preview and the local walkthrough are ready. Live requests to this app remain disabled.');return;}
+          if(!selection.method){say('DNS pending — saved for later. Source review can continue. Live requests to this app remain disabled.');return;}
           if(selection.method==='http'){
             say(`Serve ${target.challenge.token} at:\n${target.url}${target.challenge.httpPath}`);
             if(!await yes('Is that HTTPS challenge published?'))continue;
@@ -189,13 +189,13 @@ export async function onboard(options={}, args=[], io={}) {
   }
   async function finish(){
     const info=readiness(root);
-    io.setContext?.({model:info.model?`${info.model.name} · ${info.model.provider} · ${info.model.connection}`:'optional for this preview',app:info.target?`${info.target.url} · ${info.target.authorized?'authorized':info.target.ownership==='verified'?'scope required':'DNS pending'}`:'not connected · code preview available'});
-    io.task?.(3,'done');io.setNext?.('Run a review preview, or /demo for the complete proof loop');
+    io.setContext?.({model:info.model?`${info.model.name} · ${info.model.provider} · ${info.model.connection}`:'not configured',app:info.target?`${info.target.url} · ${info.target.authorized?'authorized':info.target.ownership==='verified'?'scope required':'DNS pending'}`:'not connected · source review available'});
+    io.task?.(3,'done');io.setNext?.('Run /review; type / to see commands');
     say('\nSetup saved\n');
     say(`  Repository    ${root}\n  Model         ${info.model?`${info.model.name} · ${info.model.connection}`:'add later'}\n  App           ${info.target?`${info.target.url} · ${info.target.authorized?'verified and authorized':info.target.ownership==='verified'?'scope required':'verification pending'}`:'add later; code-only review available'}\n  Test accounts ${read(root).identities.length} references\n  Muse plugin   ${museInstalled?'installed; approve in Muse':'optional'}`);
-    say('\nOffline preview is selected. Use /engine for real source review and scoped HTTP proof, or /poc for a separate real-AI test app.');
+    say(info.engine.mode==='docker'?'\nReal AI selected. The first review checks your model connection before sending source.':'\nYour saved offline-preview choice is retained. Use /engine to switch to real AI.');
     say('\nYour review\n'+reviewSummary(info.review));
-    say('Ready: your review preview. Press Enter on the next screen to continue.\nApp verification and plugin setup are available later in Settings.');
+    say('Press Enter on the next screen to review source. Live proof also needs verified app scope, two accounts and a resource.\nType / for commands; /app resumes DNS and /models changes the model.');
     const openDashboard=io.inDashboard||io.rich||await yes('Open my project?','y');
     return outcome({root,interactive:true,openDashboard,readiness:info});
   }

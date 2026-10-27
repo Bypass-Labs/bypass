@@ -168,7 +168,7 @@ Remove an identity reference; dependent tests become blocked.
 
 Add local, self-hosted endpoint, or Muse Code provider.
 
-Options: --provider, --base-url, --model, --secret-env, --allow-private.
+Options: --provider, --base-url, --model, --secret-env, --allow-private, --effort. Muse effort defaults to minimal; accepts minimal, low, medium, high.
 
 ## model list
 

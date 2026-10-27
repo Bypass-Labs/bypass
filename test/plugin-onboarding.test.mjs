@@ -11,6 +11,14 @@ import { VERSION } from '../src/util.mjs';
 
 const dockerReady=async()=>({available:true,message:'Docker ready (test dependency).'});
 const checklist=(host,root,options={})=>pluginOnboarding(host,root,{checkDocker:dockerReady,...options});
+
+test('failed model preflight takes precedence over app questions without discarding setup',async()=>{
+  const root=await sourceReady();
+  await change(root,s=>{s.models[0].lastAttempt={status:'failed',reason:'timeout',checkedAt:new Date().toISOString()};});
+  const result=await checklist(root,root);
+  assert.equal(result.ready.source,false);assert.equal(result.nextAction.id,'connection');
+  assert.equal(result.nextAction.tool,'bypass_test_model');assert.equal(result.selectedRepository,root);
+});
 function environment(t,values){for(const [key,value] of Object.entries(values)){const old=process.env[key];process.env[key]=value;t.after(()=>{if(old===undefined)delete process.env[key];else process.env[key]=old;});}}
 async function sourceReady(){const root=temp();await execute('init',[root]);await execute('engine use',['docker'],{project:root});await execute('model add',['muse'],{project:root,provider:'muse-code'});return root;}
 

@@ -7,7 +7,11 @@ import path from 'node:path';
 export function modelProfile(name, options) {
   const provider=options.provider;
   need(['local','endpoint','muse-code'].includes(provider),'Choose --provider local, endpoint, or muse-code.');
-  if(provider==='muse-code')return {name,provider,model:options.model || 'Muse session default',dataDestination:'Muse Code account/provider',contributorMode:'off for Bypass-launched smoke checks',createdAt:now()};
+  if(provider==='muse-code'){
+    const effort=options.effort||'minimal';
+    need(['minimal','low','medium','high'].includes(effort),'Choose --effort minimal, low, medium, or high.');
+    return {name,provider,model:options.model || 'Muse session default',effort,dataDestination:'Muse Code account/provider',contributorMode:'off for Bypass-launched requests',createdAt:now()};
+  }
   need(options['base-url']&&options.model,'Endpoint profiles require --base-url and --model.');
   const u=new URL(options['base-url']);
   need(!u.username&&!u.password&&!u.search&&!u.hash,'Model URL must not contain credentials, queries, or fragments.');
@@ -48,14 +52,15 @@ export async function testModel(profile, root, {signal:externalSignal,onProgress
       let result;
       try {
         progress('Muse is installed. Sending the small test prompt; waiting for a reply…');
-        result=await execFile('muse',['exec','--json','--provider','meta','--workspace',workspace,'--preset','empty','--contributor-mode','off','--no-foreign-personal-context','--no-session-log','--disable-web-tools','--disable-reminders','--disable-request-user-input','--disable-write','--disable-shell','--max-model-steps','1',...(profile.model&&profile.model!=='Muse session default'?['--model',profile.model]:[]),`Reply with exactly ${marker}. Do not use tools or read files.`],{cwd:workspace,timeout:timeoutMs,signal,killGroup:true,env:{MUSE_CONTRIBUTOR_MODE:'0'}});
+        result=await execFile('muse',['exec','--json','--provider','meta','--workspace',workspace,'--preset','empty','--contributor-mode','off','--no-foreign-personal-context','--no-session-log','--disable-web-tools','--disable-reminders','--disable-request-user-input','--disable-write','--disable-shell','--max-model-steps','1','--reasoning-effort',profile.effort||'minimal',...(profile.model&&profile.model!=='Muse session default'?['--model',profile.model]:[]),`Reply with exactly ${marker}. Do not use tools or read files.`],{cwd:workspace,timeout:timeoutMs,signal,killGroup:true,env:{MUSE_CONTRIBUTOR_MODE:'0'}});
       } finally { fs.rmSync(workspace,{recursive:true,force:true}); }
       const events=result.stdout.split('\n').flatMap(line=>{try{return [JSON.parse(line).payload];}catch{return [];}});
       const terminal=events.findLast(event=>event?.kind==='run_terminal');
       if(result.code!==0 || terminal?.terminal!=='completed')throw museFailure(result,terminal,events);
       // The prompt itself contains the marker. Only a completed assistant reply is evidence.
       need(terminal.text?.trim()===marker,'Muse responded, but did not return the expected test reply. Connection is not confirmed; retry the check.',3,{reason:'unexpected_response'});
-      return {status:'connected',provider:profile.provider,checkedAt:now(),elapsedMs:Date.now()-started,syntheticPrompt:true,repositorySent:false,workspace:'empty temporary directory',note:'Muse’s native provider and personal configuration still apply.'};
+      const configured=events.findLast(event=>event?.kind==='run_model_configured');
+      return {status:'connected',provider:profile.provider,model:configured?.model_id||profile.model,checkedAt:now(),elapsedMs:Date.now()-started,syntheticPrompt:true,repositorySent:false,workspace:'empty temporary directory',note:'A small reply worked; a complete source review can still fail.'};
     }
     const token=profile.secretEnv?process.env[profile.secretEnv]:null;
     if(profile.secretEnv)need(token,`Set ${profile.secretEnv} in the terminal that launches Bypass, then retry. Enter the variable name in setup, never its secret value.`,3,{reason:'credential_missing'});

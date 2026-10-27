@@ -40,11 +40,12 @@ export function printResult(data){
       for(const check of r.result.regression||[])console.log(`  Saved check: ${check.status} — ${check.reason}`);
       console.log('\nThis is a successful prototype preview. The example is simulated; it is not a verified vulnerability in your app.');return;
     }
-    console.log(`\n${bold(r.id)}  ${label(r.kind)} · ${r.status}`);
-    for(const step of r.steps||[])console.log(`  ${muted('›')} ${step.message}`);
+    const incomplete=r.result?.details?.stage||r.result?.details?.reason==='model_timeout';
+    console.log(`\n${bold(incomplete?'Review incomplete':r.id)}  ${label(r.kind)} · ${incomplete?'stopped':r.status}`);
     if(r.result?.message)console.log(`\n${r.result.message}`);
     for(const result of r.result?.results||r.result?.regression||[])console.log(`  ${result.status==='passed'?accent('✓'):paint('33','!')} ${result.id}  ${result.status} — ${result.reason}`);
     if(r.result?.findings?.length)console.log(`\nFindings: ${r.result.findings.join(', ')}\nNext: bypass finding show ${r.result.findings[0]}`);
+    if(incomplete)console.log(`\nStopped at: ${r.result.details.stage||'model response'}\nSetup and partial evidence are saved. No complete security result is available.\nNext inside Bypass: model test\nIf that fails, use /models to choose another connection. After it passes, /review retries.\nEvidence: .bypass/runs/${r.id}.json`);
     console.log(muted(`Exit ${value.exitCode} · model calls ${r.result?.modelCalls??0} · evidence stored locally`));return;
   }
   if(value.target?.challenge){const t=value.target;console.log(`\n${bold(t.name)} · ${t.url}\nOwnership: ${t.ownership?.status||'pending'}\n`);if(t.environment==='local')console.log(`Next: bypass target verify ${t.name} --method local`);else console.log(`Publish TXT record:\n  Name:  ${t.challenge.record}\n  Value: ${t.challenge.token}\n\nOr serve exactly that value at:\n  ${t.url}${t.challenge.httpPath}\n\nThen: bypass target verify ${t.name} --method dns`);if(t.authorization)console.log(`Scope: ${t.authorization.paths.join(', ')} · expires ${t.authorization.expiresAt}`);return;}
@@ -268,7 +269,7 @@ export async function terminal(options={},io){
           if(action?.id==='add')await modelWizard(ask,root,prompt);else if(action?.id==='list')await run('model list');else if(action){const model=await choose(ask,read(root).models,'Profile');if(model)await run(`model ${action.id}`,[model.name]);}
         }
         else if(choice==='4'){
-          const ready=readiness(root).ready.liveTesting;
+          const ready=readiness(root).ready.liveReview;
           const mode=ready?'combined':'code';
           console.log('\n'+reviewSummary(readiness(root).review));
           console.log(`\nRunning your ${read(root).settings.analysisEngine==='docker'?'real AI review':'review preview'}${ready?'':' (code only; app verification can wait)'}…`);

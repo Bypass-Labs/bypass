@@ -26,7 +26,7 @@ export function readiness(root){
     review:scanPlan(s,{mode:liveReady?'combined':'code'}),
     model:model?{name:model.name,provider:model.provider,destination:model.dataDestination,connection:model.lastAttempt?.status||model.lastTest?.status||'not tested'}:null,
     target:target?{name:target.name,url:target.url,environment:target.environment,ownership:target.ownership?.status||'pending',authorized:liveReady}:null,
-    ready:{repository:true,model:!!model,target:!!target,liveTesting:liveReady},
+    ready:{repository:true,model:!!model,target:!!target,liveTesting:liveReady,liveReview:liveReady&&(!realEngine(s)||!!target?.probes?.length)},
     findings:{total:s.findings.length,confirmed:s.findings.filter(f=>f.status==='confirmed').length,fixtureConfirmed:s.findings.filter(f=>f.status==='confirmed_fixture').length,simulated:s.findings.filter(f=>f.status==='simulated_unproven').length,fixed:s.findings.filter(f=>f.status==='fixed_verified').length},
     checks:{total:s.checks.length,enabled:s.checks.filter(c=>c.enabled).length,passed:s.checks.filter(c=>c.lastResult?.status==='passed').length,failed:s.checks.filter(c=>c.lastResult?.status==='failed').length},
     worker:workerStatus(root),monitors:s.monitors.length,latestRun:s.runs.at(-1)||null,

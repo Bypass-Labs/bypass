@@ -14,7 +14,7 @@ export async function pluginOnboarding(cwd,root,{intent='real',signal,checkDocke
   const state=read(root),real=intent==='real',engine=state.settings.analysisEngine==='docker'?'docker':'mock',model=state.models.find(m=>m.name===state.activeModel),target=state.targets.find(t=>t.name===state.activeTarget);
   const runtime=real?await checkDocker({signal}):{available:true,message:'Offline preview does not require Docker.'};
   const steps=[{id:'repository',label:'Application repository',status:'complete',path:root},{id:'engine',label:'Analysis engine',status:engine===(real?'docker':'mock')?'complete':'needed',current:engine,requested:real?'docker':'mock',tool:'bypass_engine'},
-    {id:'model',label:'Shared model',status:!real?'not_required':model?'complete':'needed',profile:model?{name:model.name,provider:model.provider,model:model.model,destination:model.dataDestination,connection:model.lastAttempt?.status||model.lastTest?.status||'not tested'}:null,tool:'bypass_add_model'},
+    {id:'model',label:'Model profile (connection checked before review)',status:!real?'not_required':model?'complete':'needed',profile:model?{name:model.name,provider:model.provider,model:model.model,destination:model.dataDestination,connection:model.lastAttempt?.status||model.lastTest?.status||'not tested'}:null,tool:'bypass_add_model'},
     {id:'docker',label:'Docker services',status:runtime.available?'complete':'needed',message:runtime.message,tool:'bypass_engine_doctor'}];
   const modelSecretMissing=real&&model?.secretEnv&&!process.env[model.secretEnv];
   if(modelSecretMissing)steps[2]={...steps[2],status:'needed',missingEnvironment:[model.secretEnv],message:'Load this environment variable in the terminal that starts Muse. Do not paste the value into chat.'};
@@ -36,7 +36,8 @@ export async function pluginOnboarding(cwd,root,{intent='real',signal,checkDocke
   });
   steps.push({id:'accounts',label:'Two test accounts',status:!real?'not_required':usable.length>=2?'complete':authorized?'needed':'waiting',tool:'bypass_add_identity',configured:identities.map(i=>({name:i.name,type:i.type,secretEnv:i.secretEnv,checkPath:i.checkPath})),missingEnvironment,message:'Two distinct accounts, environment-variable references, and a signed-in JSON identity endpoint. HTTP controls validate the identities when reviewing.'},
     {id:'resource',label:'Owner-owned JSON resource',status:!real?'not_required':probes.some(p=>p.ready)?'complete':authorized&&usable.length>=2?'needed':'waiting',tool:'bypass_add_probe',probes,message:'Provide the exact GET path, expected resource ID and JSON identifier fields. No guessing customer resource IDs.'});
-  const source=steps.slice(0,4).every(s=>['complete','not_required'].includes(s.status));
+  const connectionFailed=real&&model?.lastAttempt?.status==='failed';
+  const source=!connectionFailed&&steps.slice(0,4).every(s=>['complete','not_required'].includes(s.status));
   const live=source&&authorized&&(!real||probes.some(p=>p.ready));
   const next=steps.find(s=>s.status==='needed');
   const nextAction=next?{id:next.id,tool:next.tool,question:questions[next.id],...(next.id==='engine'?{arguments:{mode:real?'docker':'mock'},automatic:true}:{}),...(next.id==='ownership'?{challenge:next.challenge}:{}),...(next.missingEnvironment?.length?{missingEnvironment:next.missingEnvironment}:{})}:{id:'review',tool:'bypass_scan',arguments:{mode:'combined'},message:'Show repository, app, model and scope, then start the requested review.'};
@@ -48,7 +49,8 @@ export async function pluginOnboarding(cwd,root,{intent='real',signal,checkDocke
     else{nextAction.tool='bypass_authorize_target';nextAction.question='The configured identity endpoint is outside the authorized paths. Review and explicitly authorize a scope that includes the login controls.';}
   }
   if(next?.id==='ownership'&&target?.environment==='local')nextAction.question=`Confirm you control the local app at ${target.url}; then Bypass can record local ownership. Testing permission is a separate next step.`;
-  return {version:VERSION,intent,workspace,selectedRepository:root,engine,stage:next?.id||'ready',steps,ready:{source,live},nextAction,
+  if(connectionFailed&&!modelSecretMissing&&engine==='docker')Object.assign(nextAction,{id:'connection',tool:'bypass_test_model',arguments:{name:model.name},question:'The last model connection check failed. Check it once before retrying the review, or choose another model connection. Your repository and app setup are saved.',reason:model.lastAttempt.reason});
+  return {version:VERSION,intent,workspace,selectedRepository:root,engine,stage:next?.id||'ready',steps,ready:{source,live},readinessMeaning:'Configuration readiness only. A real review first checks an untested or stale model connection; each review response is bounded to 60 seconds.',nextAction,
     alternatives:source&&!live?[{label:real?'Review source now; finish app setup later':'Run offline code preview',tool:'bypass_scan',arguments:{mode:'code'}}]:[],
     guidance:'Show the compact checklist and ask only for the next missing choice. Perform tool calls yourself after the user answers. Do not describe missing setup as a security finding or search example folders. Honor an explicit code-only choice without repeating app questions.'};
 }

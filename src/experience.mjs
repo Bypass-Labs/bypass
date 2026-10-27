@@ -1,8 +1,10 @@
 // The next useful action follows evidence, not unfinished optional configuration.
 export function homeActions(state) {
   const results=state.findings.length>0,checks=state.checks.some(check=>check.enabled);
+  const latest=state.runs?.at(-1),model=state.models?.find(m=>m.name===state.activeModel);
+  const needsConnection=latest?.result?.details?.stage&&(Date.parse(model?.lastAttempt?.checkedAt)||0)<=(Date.parse(latest.finishedAt)||0);
   return [
-    checks?{id:'tests',label:'Replay saved tests'}:results?{id:'results',label:'Open review results'}:{id:'review',label:state.settings?.analysisEngine==='docker'?'Run my first real AI review':'Run my first review preview'},
+    needsConnection?{id:'model test',label:'Check model connection before retrying'}:checks?{id:'tests',label:'Replay saved tests'}:results?{id:'results',label:'Open review results'}:{id:'review',label:state.settings?.analysisEngine==='docker'?'Run my first real AI review':'Run my first review preview'},
     {id:'walkthrough',label:'Walk through prove → fix → retest → regression'},
     {id:'settings',label:'Settings & optional connections'}
   ];

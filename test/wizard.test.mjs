@@ -26,7 +26,7 @@ async function wizard(root, answers, options={}){
 test('wizard defers failed DNS and resumes the same challenge through explicit scope without duplicate setup',async t=>{
   const root=temp();
   t.mock.method(dns,'resolveTxt',async()=>[['wrong challenge']]);
-  const first=await wizard(root,['1','n','https://staging.example.com','1','1','2','n','n']);
+  const first=await wizard(root,['1','n','https://staging.example.com','1','1','2','n']);
   const saved=read(root),challenge=saved.targets[0].challenge;
   assert.equal(saved.targets[0].ownership.status,'pending');
   assert.equal(saved.targets[0].authorization,null);
@@ -34,8 +34,9 @@ test('wizard defers failed DNS and resumes the same challenge through explicit s
   assert.match(first.output,/verification pending/);
   assert.equal(first.result.openDashboard,false);
   assert.equal(saved.models[0].lastTest,undefined);
+  assert.equal(saved.settings.analysisEngine,'docker');
   dns.resolveTxt.mock.mockImplementation(async record=>{assert.equal(record,challenge.record);return [[challenge.token]];});
-  const second=await wizard(root,['n','1','','yes','n','n']);
+  const second=await wizard(root,['n','1','','yes','n']);
   const resumed=read(root);
   assert.equal(resumed.project.id,saved.project.id);
   assert.equal(resumed.targets.length,1);assert.equal(resumed.models.length,1);
@@ -47,7 +48,7 @@ test('wizard defers failed DNS and resumes the same challenge through explicit s
 
 test('wizard never turns local ownership acknowledgment into testing permission by default',async()=>{
   const root=temp();
-  const result=await wizard(root,['1','n','http://127.0.0.1:4317','yes','','','n','n']);
+  const result=await wizard(root,['1','n','http://127.0.0.1:4317','yes','','','n']);
   const target=read(root).targets[0];
   assert.equal(target.ownership.status,'verified');
   assert.equal(target.authorization,null);
@@ -60,9 +61,9 @@ test('wizard production scope requires the separate production confirmation',asy
   await execute('model add',['muse'],{project:root,provider:'muse-code'});
   await execute('target add',['production'],{project:root,url:'https://app.example.com',environment:'production'});
   t.mock.method(dns,'resolveTxt',async()=>[[read(root).targets[0].challenge.token]]);
-  await wizard(root,['n','1','','yes','no','n','n']);
+  await wizard(root,['n','1','','yes','no','n']);
   assert.equal(read(root).targets[0].authorization,null);
-  await wizard(root,['n','','yes','production','n','n']);
+  await wizard(root,['n','','yes','production','n']);
   assert.equal(read(root).targets[0].authorization.productionAcknowledged,true);
 });
 
@@ -72,7 +73,7 @@ test('failed optional model smoke is recoverable and never shown as connected',a
   await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));
   t.after(()=>new Promise(resolve=>server.close(resolve)));
   const root=temp();
-  const result=await wizard(root,['2',`http://127.0.0.1:${server.address().port}/v1`,'test-model','','yes','1','','n','n']);
+  const result=await wizard(root,['2',`http://127.0.0.1:${server.address().port}/v1`,'test-model','','yes','1','','n']);
   assert.equal(requests,1);
   assert.equal(read(root).models[0].lastTest,undefined);
   assert.match(result.output,/HTTP 503/);
@@ -105,13 +106,13 @@ test('demo onboarding refuses to replace existing project or unrelated files',as
 test('wizard accepts a bare domain directly after a typo and defers DNS on Enter',async t=>{
   t.mock.method(dns,'resolveTxt',async()=>assert.fail('Default continuation must not request DNS'));
   const root=temp();
-  const result=await wizard(root,['1','n','bad input','job-radar.app','2','','n','n'],{flow:undefined});
+  const result=await wizard(root,['1','n','bad input','job-radar.app','2','','n'],{flow:undefined});
   assert.equal(read(root).targets[0].url,'https://job-radar.app');
   assert.equal(read(root).targets[0].environment,'production');
   assert.equal(read(root).targets[0].ownership.status,'pending');
   assert.equal(result.prompts.filter(p=>p.startsWith('App domain')).length,2);
   assert.equal(result.prompts.some(p=>p.startsWith('Try again')),false);
-  assert.match(result.output,/review preview and the local walkthrough are ready/);
+  assert.match(result.output,/Source review can continue/);
 });
 
 test('wizard invalid flow and noninteractive invocation fail before writing setup',async()=>{
@@ -125,10 +126,10 @@ test('wizard invalid flow and noninteractive invocation fail before writing setu
 
 test('repository setup redirects an accidental tooling checkout to the chosen application',async()=>{
   const tooling=temp(),app=temp();fs.writeFileSync(path.join(tooling,'package.json'),JSON.stringify({name:'@bypass-labs/cli-skeleton'}));
-  const result=await wizard(app,['n',app,'1','n','','n','n'],{repo:tooling});
+  const result=await wizard(app,['n',app,'1','n','','n'],{repo:tooling});
   assert.equal(result.result.root,app);
   assert.equal(fs.existsSync(path.join(tooling,'.bypass/state.json')),false);
   assert.match(result.output,/Bypass’s own tooling source/);
-  assert.match(result.output,/White-box \/ code: simulated/);
+  assert.match(result.output,/White-box \/ code: ready/);
   assert.match(result.output,/Black-box \/ live app: deferred/);
 });

@@ -1,0 +1,168 @@
+{
+  "version": "0.2.3",
+  "date": "2026-10-27",
+  "scope": "Packaged Muse plugin over actual MCP transport; real Muse subscription and Docker; bundled local fixture only",
+  "automatedInference": false,
+  "nativeConversation": "pending separate fresh-session check",
+  "productionValidated": false,
+  "attempts": [
+    {
+      "attempt": 1,
+      "startedAt": "2026-10-27T02:04:29.277Z",
+      "finishedAt": "2026-10-27T02:05:51.256Z",
+      "passed": false,
+      "configuration": "minimal effort, unstructured responses",
+      "error": "Model did not finish within 60 seconds. Review incomplete; setup and earlier evidence are saved. Check the model connection before retrying.",
+      "modelUsage": [
+        {
+          "role": "connection",
+          "call": 1,
+          "at": "2026-10-27T02:04:30.385Z",
+          "status": "completed",
+          "resolvedModel": "muse-wonder-full-1.0",
+          "elapsedMs": 9428,
+          "finishedAt": "2026-10-27T02:04:39.813Z"
+        },
+        {
+          "role": "orchestrator",
+          "call": 2,
+          "at": "2026-10-27T02:04:39.956Z",
+          "status": "completed",
+          "resolvedModel": "muse-wonder-full-1.0",
+          "elapsedMs": 9516,
+          "finishedAt": "2026-10-27T02:04:49.737Z"
+        },
+        {
+          "role": "white-box",
+          "call": 3,
+          "at": "2026-10-27T02:04:50.032Z",
+          "status": "failed",
+          "resolvedModel": "muse-wonder-full-1.0",
+          "reason": "model_timeout",
+          "elapsedMs": 60125,
+          "finishedAt": "2026-10-27T02:05:50.162Z"
+        }
+      ]
+    },
+    {
+      "attempt": 2,
+      "startedAt": "2026-10-27T02:07:22.736Z",
+      "finishedAt": "2026-10-27T02:07:50.624Z",
+      "passed": false,
+      "configuration": "structured output before strict-schema repair",
+      "error": "Muse stopped before returning a completed model response. Retry the review; your setup and earlier evidence are saved. No mock fallback was used.",
+      "modelUsage": [
+        {
+          "role": "connection",
+          "call": 1,
+          "at": "2026-10-27T02:07:23.804Z",
+          "status": "completed",
+          "resolvedModel": "muse-wonder-full-1.0",
+          "elapsedMs": 8023,
+          "finishedAt": "2026-10-27T02:07:31.827Z"
+        },
+        {
+          "role": "orchestrator",
+          "call": 2,
+          "at": "2026-10-27T02:07:35.535Z",
+          "status": "completed",
+          "resolvedModel": "muse-wonder-full-1.0",
+          "elapsedMs": 9451,
+          "finishedAt": "2026-10-27T02:07:44.992Z"
+        },
+        {
+          "role": "white-box",
+          "call": 3,
+          "at": "2026-10-27T02:07:45.397Z",
+          "status": "failed",
+          "resolvedModel": "muse-wonder-full-1.0",
+          "reason": "muse_failed",
+          "elapsedMs": 4188,
+          "finishedAt": "2026-10-27T02:07:49.591Z"
+        }
+      ]
+    },
+    {
+      "attempt": 3,
+      "startedAt": "2026-10-27T02:09:06.332Z",
+      "finishedAt": "2026-10-27T02:10:28.082Z",
+      "passed": true,
+      "configuration": "strict structured output, prefetched small source",
+      "modelUsage": [
+        {
+          "role": "connection",
+          "call": 1,
+          "at": "2026-10-27T02:09:07.482Z",
+          "status": "completed",
+          "resolvedModel": "muse-wonder-full-1.0",
+          "elapsedMs": 8571,
+          "finishedAt": "2026-10-27T02:09:16.053Z"
+        },
+        {
+          "role": "orchestrator",
+          "call": 2,
+          "at": "2026-10-27T02:09:17.601Z",
+          "status": "completed",
+          "resolvedModel": "muse-wonder-full-1.0",
+          "elapsedMs": 33488,
+          "finishedAt": "2026-10-27T02:09:51.151Z"
+        },
+        {
+          "role": "white-box",
+          "call": 3,
+          "at": "2026-10-27T02:09:51.420Z",
+          "status": "completed",
+          "resolvedModel": "muse-wonder-full-1.0",
+          "elapsedMs": 12127,
+          "finishedAt": "2026-10-27T02:10:03.553Z"
+        },
+        {
+          "role": "black-box",
+          "call": 4,
+          "at": "2026-10-27T02:10:04.115Z",
+          "status": "completed",
+          "resolvedModel": "muse-wonder-full-1.0",
+          "elapsedMs": 9885,
+          "finishedAt": "2026-10-27T02:10:14.006Z"
+        }
+      ],
+      "controls": [
+        {
+          "label": "owner identity",
+          "status": 200
+        },
+        {
+          "label": "outsider identity",
+          "status": 200
+        },
+        {
+          "label": "owner access",
+          "status": 200
+        },
+        {
+          "label": "cross-account access",
+          "status": 200
+        },
+        {
+          "label": "unauthenticated access",
+          "status": 401
+        }
+      ],
+      "source": {
+        "kind": "source",
+        "file": "policy.mjs",
+        "line": 2,
+        "quote": "return Boolean(account);",
+        "sourceFingerprint": "69eed1812574d9e32f4602a86d627f6d8bce66c72b5d51b8cca925667e38768b"
+      },
+      "exportedTest": {
+        "fixedExit": 0,
+        "regressedExit": 1
+      },
+      "replay": {
+        "regressedExit": 1,
+        "modelCalls": 0
+      }
+    }
+  ]
+}

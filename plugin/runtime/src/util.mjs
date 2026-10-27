@@ -2,7 +2,7 @@ import { randomUUID, createHash } from 'node:crypto';
 import { spawn } from 'node:child_process';
 import { setTimeout as delay } from 'node:timers/promises';
 
-export const VERSION = '0.2.2';
+export const VERSION = '0.2.3';
 export const SCHEMA = 'bypass.v1';
 export const now = () => new Date().toISOString();
 export const id = prefix => `${prefix}_${randomUUID().slice(0, 8)}`;
@@ -50,7 +50,12 @@ export function execFile(command, args = [], options = {}) {
     const cancel=()=>stop(abortFault(options.signal));
     const timer = setTimeout(() => stop(new Fault(`${command} timed out.`,3,{reason:'timeout'})), options.timeout ?? 20000);
     const cleanup=()=>{closed=true;clearTimeout(timer);clearTimeout(killTimer);options.signal?.removeEventListener('abort',cancel);};
-    const collect = (kind, data) => { size += data.length; if (size > 2_000_000) stop(new Fault(`${command} output exceeded the limit.`,3)); else if (kind === 'out') stdout += data; else stderr += data; };
+    const collect = (kind, data) => {
+      size += data.length;
+      if (size > 2_000_000) { stop(new Fault(`${command} output exceeded the limit.`,3)); return; }
+      if (kind === 'out') { stdout += data; try { options.onStdout?.(data.toString()); } catch(error) { stop(error); } }
+      else stderr += data;
+    };
     child.stdout.on('data', b => collect('out', b)); child.stderr.on('data', b => collect('err', b));
     child.on('error', e => { cleanup();reject(new Fault(`Cannot run ${command}: ${e.code ?? e.message}`,3,{causeCode:e.code})); });
     child.on('close', code => { cleanup();if(failure)reject(failure);else resolve({code:code ?? 130, stdout:stdout.trim(), stderr:stderr.trim()}); });

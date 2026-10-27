@@ -5,7 +5,8 @@ import { inventory } from './repository.mjs';
 import { runChecks, specFor } from './checks.mjs';
 import { replay } from './portable-check.mjs';
 import { scopeReady } from './network.mjs';
-import { infer } from './inference.mjs';
+import { infer, INFERENCE_TIMEOUT_MS, modelResponseSchema } from './inference.mjs';
+import { testModel } from './models.mjs';
 import { prepareAgents, runContainer } from './agent-runtime.mjs';
 import { named, need, id, now, hash, redact } from './util.mjs';
 
@@ -73,22 +74,46 @@ export function groundCandidates(candidates,reader,inv){
     return {title:candidate.title,category:candidate.category,hypothesis:candidate.hypothesis,recommendation:candidate.recommendation,resourcePath:typeof candidate.resourcePath==='string'?candidate.resourcePath:null,sourceEvidence:{kind:'source',file:candidate.file,line:candidate.line,quote:candidate.quote,sourceFingerprint:inv.fingerprint}};
   });
 }
-export async function executeRealScan(root,runId,options,{signal,report,runtime={prepareAgents,runContainer,infer}}={}){
+export async function executeRealScan(root,runId,options,{signal,report,runtime={prepareAgents,runContainer,infer,testModel}}={}){
   const initial=read(root),plan=realPlan(initial,options);need(!plan.blockers.length,plan.blockers.join(' '),3);
   // Snapshot one profile for all three roles; no per-worker provider or credential fallback.
   const profile=structuredClone(named(initial.models,initial.activeModel,'Model'));
   let modelCalls=0;const modelUsage=[],containers=[],probes=[],candidateIds=[];
   const persist=async()=>change(root,s=>{const run=named(s.runs,runId,'Run');run.modelCalls=modelCalls;run.simulation=false;run.agentEvidence={model:{name:profile.name,provider:profile.provider,model:profile.model},modelUsage,containers,probes};});
   const model=async(role,messages,activeSignal=signal)=>{
-    need(modelCalls<17,'Shared model call budget exceeded.',3);modelCalls++;modelUsage.push({role,call:modelCalls,at:now(),status:'started'});await persist();
+    need(modelCalls<18,'Shared model call budget exceeded.',3);modelCalls++;const usage={role,call:modelCalls,at:now(),status:'started'};modelUsage.push(usage);await persist();
     await report(role,`${role}: model call ${modelCalls} · ${profile.name} / ${profile.model}`);
-    const started=Date.now();const heartbeat=setInterval(()=>{report(role,`Waiting for ${profile.name} · ${Math.floor((Date.now()-started)/1000)}s elapsed · 120s limit`).catch(()=>{});},15000);
-    try{const result=await runtime.infer(profile,messages,{signal:activeSignal});modelUsage.at(-1).status='completed';return result;}
-    catch(error){modelUsage.at(-1).status='failed';throw error;}finally{clearInterval(heartbeat);await persist();}
+    const started=Date.now(),progress=[];let lastPhase;
+    const heartbeat=setInterval(()=>{report(role,`${role}: waiting for ${profile.name} · ${Math.floor((Date.now()-started)/1000)}s / ${INFERENCE_TIMEOUT_MS/1000}s · cancel to stop`).catch(()=>{});},10000);
+    try{const result=await runtime.infer(profile,messages,{signal:activeSignal,schema:modelResponseSchema(role),onProgress:event=>{
+      if(event.kind==='model'){
+        usage.resolvedModel=event.model;
+        if(profile.model==='Muse session default'){profile.model=event.model;progress.push(report(role,`Using ${event.model} for this run`));}
+      }else if(event.phase!==lastPhase){lastPhase=event.phase;progress.push(report(role,`${role}: ${event.message}`));}
+    }});usage.status='completed';return result;}
+    catch(error){usage.status='failed';usage.reason=error.details?.reason||'model_response';error.details={...error.details,stage:role};throw error;}
+    finally{clearInterval(heartbeat);usage.elapsedMs=Date.now()-started;usage.finishedAt=now();await Promise.allSettled(progress);await persist();}
   };
   await report('replay',plan.mode==='code'?'Code review selected; HTTP replay deferred.':'Replaying saved tests before spending model calls.');
   const regression=plan.mode==='code'?{results:[],exitCode:0}:await runChecks(root,{all:true,target:plan.target,signal,runId});
   await change(root,s=>{named(s.runs,runId,'Run').partialRegression=regression;});
+  // A saved profile is not a working connection. Check before source upload or container work.
+  const last=profile.lastAttempt||profile.lastTest;
+  if(runtime.testModel&&!(last?.status==='connected'&&Date.now()-Date.parse(last.checkedAt)<15*60*1000)){
+    const started=Date.now(),usage={role:'connection',call:++modelCalls,at:now(),status:'started'};modelUsage.push(usage);await persist();
+    await report('connection','Checking the model first · one small prompt · 30s limit · no source sent');
+    try{
+      const check=await runtime.testModel(profile,root,{signal,timeoutMs:30000});
+      await change(root,s=>{const m=named(s.models,profile.name,'Model');m.lastAttempt=check;m.lastTest=check;});
+      if(profile.provider==='muse-code'&&profile.model==='Muse session default'&&check.model)profile.model=check.model;
+      usage.status='completed';usage.resolvedModel=check.model;
+      await report('connection',`Model connection passed in ${((Date.now()-started)/1000).toFixed(1)}s · ${profile.model}. Starting review.`);
+    }catch(error){
+      usage.status='failed';usage.reason=error.details?.reason||'connection_check';
+      await change(root,s=>{named(s.models,profile.name,'Model').lastAttempt={status:'failed',checkedAt:now(),reason:usage.reason,repositorySent:false};});
+      error.details={...error.details,stage:'connection',next:'model test'};throw error;
+    }finally{usage.elapsedMs=Date.now()-started;usage.finishedAt=now();await persist();}
+  }else if(profile.provider==='muse-code'&&profile.model==='Muse session default'&&last?.model)profile.model=last.model;
   const inv=plan.mode==='live'?{fingerprint:null,files:[],sourceFileCount:0,routes:[],skipped:true}:await inventory(root,options.base);
   const latest=read(root),target=latest.targets.find(t=>t.name===plan.target);
   const passed=regression.results.filter(r=>r.status==='passed').map(r=>r.id);
@@ -100,7 +125,12 @@ export async function executeRealScan(root,runId,options,{signal,report,runtime=
   let candidates=[];
   if(plan.mode!=='live'){
     const reader=sourceReader(root,inv);
-    const worker=await runtime.runContainer('white-box',{...scope,focus:orchestration.focus},async(method,params,activeSignal)=>{
+    let initialSource=[];
+    if(inv.files.length>0&&inv.files.length<=4){
+      try{if(inv.files.reduce((n,file)=>n+fs.statSync(path.join(root,file)).size,0)<=32000)initialSource=reader.read(inv.files);}catch{/* The worker can request individual eligible files. */}
+    }
+    if(initialSource.length)await report('white-box',`Read ${initialSource.map(f=>`${f.file}:${f.startLine}-${f.endLine}`).join(', ')} (source only; supplied to agent)`);
+    const worker=await runtime.runContainer('white-box',{...scope,focus:orchestration.focus,initialSource},async(method,params,activeSignal)=>{
       if(method==='model')return model('white-box',params.messages,activeSignal);
       need(method==='read_files','White-box requested an unavailable capability.',3);
       const files=reader.read(params.paths);await report('white-box',`Read ${files.map(f=>`${f.file}:${f.startLine}-${f.endLine}`).join(', ')} (source only)`);return files;
