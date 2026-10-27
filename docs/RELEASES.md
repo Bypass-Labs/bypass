@@ -43,6 +43,8 @@ The Worker exposes only the installer, the main manifest and allowlisted immutab
 
 Worker routes are limited to `bypasslabs.ai/install*` and `bypasslabs.ai/downloads/bypass/*`. The existing marketing Worker and its source are managed separately.
 
+CI writes use the dedicated `bypass-distribution.maksim-b26.workers.dev` hostname, with the same GitHub authentication policy and audience. This separates machine publishing from the marketing domain's browser/firewall rules. Customer downloads and all installer checks use `bypasslabs.ai`; no website firewall exceptions are required.
+
 The trust policy uses this repository's immutable GitHub subject: `repo:Bypass-Labs@348399906/bypass-for-muse@1434899468:ref:refs/heads/main`. GitHub's repository OIDC settings can be inspected with `gh api repos/Bypass-Labs/bypass-for-muse/actions/oidc/customization/sub`.
 
 Official references: [GitHub OIDC claims](https://docs.github.com/en/actions/reference/security/oidc), [Cloudflare R2 checksums and conditional writes](https://developers.cloudflare.com/r2/api/workers/workers-api-reference/), [Worker route precedence](https://developers.cloudflare.com/workers/configuration/routing/routes/).
