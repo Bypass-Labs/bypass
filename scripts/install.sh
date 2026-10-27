@@ -11,7 +11,7 @@ bypass_install() {
   done
   if [ "$integration" = muse ]; then
     command -v muse >/dev/null 2>&1 || fail 'Muse Code was not found on PATH. Install Muse from https://dev.meta.ai, open it and sign in, then retry this same installer. No Bypass files were changed.'
-    printf 'Bypass for Muse · 1/3 Download · 2/3 Install plugin · 3/3 Review in Muse\n'
+    printf 'Installing Bypass for Muse\n'
   fi
   case "$(uname -s)" in Darwin) platform=darwin ;; Linux) platform=linux ;; *) fail 'Supported platforms: macOS and glibc Linux (x64 or arm64).' ;; esac
   case "$(uname -m)" in x86_64|amd64) arch=x64 ;; arm64|aarch64) arch=arm64 ;; *) fail 'Supported CPUs: x64 and arm64.' ;; esac
@@ -71,20 +71,26 @@ for(const [link,target] of [[path.join(install,'current'),destination],[path.joi
   try{fs.symlinkSync(target,temporary);fs.renameSync(temporary,link);}finally{if(fs.existsSync(temporary))fs.unlinkSync(temporary);}
 }
 NODE
-  printf '\nInstalled %s\nLocation: %s\n\n' "$version" "$install_dir/current"
+  if [ "$integration" = muse ]; then printf '✓ Downloaded Bypass %s\n' "$version"
+  else printf '\nInstalled %s\nLocation: %s\n\n' "$version" "$install_dir/current"; fi
   if [ -f "$destination/configure-path.mjs" ]; then
-    "$destination/plugin/runtime/node" "$destination/configure-path.mjs" "$bin_dir" || printf 'PATH setup did not finish. Use the full executable path below.\n'
+    "$destination/plugin/runtime/node" "$destination/configure-path.mjs" "$bin_dir" "$integration" || printf 'PATH setup did not finish. Use the full executable path below.\n'
   else
     printf 'This older release has no automatic PATH setup. Add %s to your shell PATH.\n' "$bin_dir"
   fi
   case ":$PATH:" in *":$bin_dir:"*) command_name=bypass ;; *) printf -v command_name '%q' "$bin_dir/bypass" ;; esac
   printf '\n'
   if [ "$integration" = muse ]; then
-    printf '2/3 Registering the full Muse plugin…\n'
+    if [ -f "$destination/plugin/runtime/bin/muse-setup.mjs" ]; then
+      # Release the download lock before the user enters an interactive Muse session.
+      rm -rf "$work"; rmdir "$lock"; trap - EXIT
+      MUSE_NO_AUTO_UPDATE=1 "$destination/plugin/runtime/node" "$destination/plugin/runtime/bin/muse-setup.mjs"
+      return
+    fi
+    printf 'Connecting Bypass to Muse…\n'
     if ! MUSE_NO_AUTO_UPDATE=1 "$destination/launch-bypass" integrate muse --scope user --replace; then
       fail "The CLI is installed, but Muse setup did not finish. Fix the reason above and rerun this same installer. Your project settings and evidence are preserved."
     fi
-    printf '\nNo separate model key or Docker setup is needed for the Muse plugin.\n'
   else
     printf 'Next: %s onboard\n\nPrefer Muse? Run: curl -fsSL https://bypasslabs.ai/install/muse | bash\n' "$command_name"
   fi

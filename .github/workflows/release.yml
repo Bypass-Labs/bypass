@@ -31,6 +31,7 @@ jobs:
           npm ci --ignore-scripts
           npm run check
           BYPASS_DOCKER_TESTS=1 npm test
+          python3 scripts/smoke-muse-terminal.py "$(command -v node)"
       - name: Build self-contained macOS, Linux, and Windows artifacts
         id: build
         run: |

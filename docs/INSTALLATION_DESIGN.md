@@ -12,16 +12,18 @@ Research checked on 2026-10-27 against the primary sources below and installed M
 ## The shipped journey
 
 1. Run `curl -fsSL https://bypasslabs.ai/install/muse | bash` in a macOS/Linux terminal, or `irm https://bypasslabs.ai/install/muse.ps1 | iex` in Windows PowerShell. The installer checks Muse availability, downloads a checksum-verified release with its own Node runtime, sets PATH and registers the full native plugin at user scope. Installation invokes no model and requests no provider key.
-2. Review the local MCP server and session-context hook in `/plugins` → Installed → Bypass → Runtime.
-3. Open a fresh Muse session in the application folder and use `/bypass:start`. Bypass resumes missing application setup. Source review can start immediately; deployed HTTP proof still needs ownership, bounded authorization and account references. Demo, fixes, deterministic replay, exports, monitoring and security memory remain part of the same native plugin.
+2. The installer explains the security-tools and session-context permissions and asks “Allow these permissions and open Muse?” Answering `y` records approval for exactly those two capabilities through Muse's native CLI, checks the result, and opens a new interactive Muse session in the current folder with onboarding already requested.
+3. Bypass resumes missing application setup. Source review can start immediately; deployed HTTP proof still needs ownership, bounded authorization and account references. Demo, fixes, deterministic replay, exports, monitoring and security memory remain part of the same native plugin. Muse's own account/workspace trust prompts still apply when needed.
 
 The direct installer is the recommended path: no prompt, skill discovery or agent interpretation is needed to install. It supports macOS, glibc Linux and Windows on x64/arm64 (PowerShell 5.1+). Git is needed when connecting a Git repository.
 
 Updating/repairing uses that same command. It preserves identical-package approvals and project evidence, validates before replacement, attempts rollback on failed replacement, and reports the actual native capability state. A disabled/rejected capability is not silently enabled.
 
+Interactive installation reads consent from the real terminal, including when the script arrives through `curl | bash`. Empty input, decline and cancellation do not approve anything. CI, redirected output and `BYPASS_NO_OPEN_MUSE=1` leave approval and opening Muse to the user. The fallback is `/plugins` → Installed → Bypass → Runtime, followed by a new session and `/bypass:start`. An unexpected capability or a package that changes while the user is deciding requires a new review.
+
 ## Optional: install from inside Muse
 
-Ask: `Read https://bypasslabs.ai/install/muse.md and install Bypass for Muse.` The host reads the skill and executes the same OS-specific installer. This is a convenience for users already in a chat; it adds no capabilities over the direct command. Runtime approval and a fresh session are still required.
+Ask: `Read https://bypasslabs.ai/install/muse.md and install Bypass for Muse.` The host reads the skill and executes the same OS-specific installer. This is a convenience for users already in a chat; it adds no capabilities over the direct command. Headless installation does not open a nested Muse session or record approval; the user completes the manual fallback above.
 
 ## Why not just a marketplace or npx?
 

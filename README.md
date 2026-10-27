@@ -10,7 +10,7 @@ This is a working POC for missing authentication and cross-account access to con
 
 Requires **Muse Code installed and signed in**.
 
-**1. Run one command in your terminal.**
+**1. Run this from your application folder.**
 
 macOS / Linux:
 
@@ -26,9 +26,11 @@ irm https://bypasslabs.ai/install/muse.ps1 | iex
 
 This installs the full Muse plugin and CLI, includes Node, and sets up PATH. No GitHub clone, npm, Docker or separate model key is needed for the plugin. Rerun the same command to update or repair.
 
-**2. Approve the plugin in Muse.** Open `/plugins` → **Installed** → **Bypass** → **Runtime**. Approve its local tool server and session-context hook.
+**2. Answer `y` to “Allow these permissions and open Muse?”**
 
-**3. Start a new Muse session in your application folder and run:**
+The installer explains Bypass's two permissions, records your choice through Muse, and opens a fresh Muse session in the same folder with setup already started. You do not need to navigate plugin menus or type a startup command. Muse may still ask you to sign in or trust the workspace if you have not done that before.
+
+To return to setup in a later Muse session:
 
 ```text
 /bypass:start
@@ -49,7 +51,7 @@ Ask Muse:
 Read https://bypasslabs.ai/install/muse.md and install Bypass for Muse.
 ```
 
-Muse runs the same installer. Then complete steps 2 and 3 above. This prompt is optional; the terminal command installs the complete plugin directly. [Installation details and the optional npx skills route](docs/INSTALLATION_DESIGN.md).
+Muse runs the same installer. Agent-run or noninteractive installs leave permission review to you: `/plugins` → **Installed** → **Bypass** → **Runtime**, then start a new session and run `/bypass:start`. The terminal installer above handles that handoff after your confirmation. [Installation details and the optional npx skills route](docs/INSTALLATION_DESIGN.md).
 
 </details>
 
@@ -122,7 +124,7 @@ Presets: **Meta/Muse, OpenAI, Anthropic/Claude, Moonshot/Kimi, DeepSeek, custom*
 
 ## Existing installations
 
-Version 0.5 separates host reasoning from CLI API billing. Existing `muse-code`, `local` and `endpoint` profiles remain on disk but cannot run standalone AI. Create/select a new explicit API profile, or use the Muse plugin without any model setup. Targets, findings, memory and saved regressions are retained. Use the same Muse installer above to update, review the changed package in `/plugins`, and start a fresh Muse session.
+Version 0.5 separates host reasoning from CLI API billing. Existing `muse-code`, `local` and `endpoint` profiles remain on disk but cannot run standalone AI. Create/select a new explicit API profile, or use the Muse plugin without any model setup. Targets, findings, memory and saved regressions are retained. Use the same Muse installer above to update and continue. Changed packages need renewed consent; disabled or rejected capabilities stay available for manual review in `/plugins`.
 
 ## Develop and verify
 

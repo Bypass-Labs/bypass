@@ -1,0 +1,32 @@
+{
+  "version": "0.5.2",
+  "nativeMuse": "1.4.14-R7309.1",
+  "localTests": {
+    "passed": 125,
+    "failed": 0,
+    "skipped": 2,
+    "skippedReason": "Docker checks run in release CI"
+  },
+  "interactiveTerminal": {
+    "pipedInstaller": true,
+    "explicitConsent": true,
+    "sameDirectoryStartup": true,
+    "declinePreservesPermissions": true,
+    "host": "fixture executable"
+  },
+  "nativePluginManager": {
+    "isolatedStore": true,
+    "firstInstallAndConsent": true,
+    "identicalRerunPreservesApproval": true,
+    "rejectionAndDisabledStatePreserved": true,
+    "changedPackageRequiresReview": true,
+    "tools": 78,
+    "commands": 9,
+    "modelCalls": 0
+  },
+  "limits": [
+    "No model-driven onboarding conversation in this verification.",
+    "Terminal handoff and native permission management verified separately.",
+    "Windows install and adapter checks run in release CI."
+  ]
+}

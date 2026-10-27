@@ -44,11 +44,12 @@ export function configurePath({binDir,homeDirectory=os.homedir(),shell=process.e
 
 if(process.argv[1]&&fs.existsSync(process.argv[1])&&fs.realpathSync(process.argv[1])===fileURLToPath(import.meta.url)){
   const binDir=process.argv[2],result=configurePath({binDir});
-  for(const file of result.files)console.log(`${result.changed.includes(file)?'Added Bypass to PATH':'Bypass PATH already configured'} in ${file}`);
+  const quiet=process.argv[3]==='muse';
+  if(!quiet)for(const file of result.files)console.log(`${result.changed.includes(file)?'Added Bypass to PATH':'Bypass PATH already configured'} in ${file}`);
   for(const error of result.errors)console.log(`Could not update ${error.file}: ${error.message}`);
   if(result.unsupported)console.log(`Automatic PATH setup supports Bash and Zsh; configure ${result.shell} to include ${binDir}.`);
-  else if(result.skipped)console.log('Automatic PATH setup skipped (BYPASS_NO_MODIFY_PATH=1).');
+  else if(result.skipped){if(!quiet)console.log('Automatic PATH setup skipped (BYPASS_NO_MODIFY_PATH=1).');}
   else if(result.errors.length)console.log('Some shell profiles could not be updated. Use the activation command or full executable path below.');
-  else if(result.files.length)console.log('New terminal windows will find bypass automatically.');
-  if(!(process.env.PATH||'').split(path.delimiter).includes(binDir)&&!result.unsupported)console.log(`\nTo use bypass in this terminal now, run:\n  ${result.activation}`);
+  else if(result.files.length)console.log(quiet?'✓ Terminal command configured':'New terminal windows will find bypass automatically.');
+  if(!quiet&&!(process.env.PATH||'').split(path.delimiter).includes(binDir)&&!result.unsupported)console.log(`\nTo use bypass in this terminal now, run:\n  ${result.activation}`);
 }

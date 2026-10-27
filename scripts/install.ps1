@@ -9,7 +9,7 @@
     }
     if ($Muse) {
         if (-not (Get-Command muse -ErrorAction SilentlyContinue)) { throw 'Muse Code was not found on PATH. Install Muse from https://dev.meta.ai, open it and sign in, then retry this same installer. No Bypass files were changed.' }
-        Write-Host 'Bypass for Muse: 1/3 Download - 2/3 Install plugin - 3/3 Review in Muse'
+        Write-Host 'Installing Bypass for Muse'
     }
     function Write-AtomicText([string]$File, [string]$Value, [bool]$Bom = $false) {
         $temporary = $File + '.new-' + [guid]::NewGuid().ToString('N')
@@ -122,27 +122,37 @@
         # Switch only after checksum verification and successful CLI execution. Keep old versions.
         $settings = @{ schema = 'bypass.windows.v1'; installDir = $installDir; bundle = $destination; releaseId = $release } | ConvertTo-Json
         Write-AtomicText $configuration $settings $true
-        Write-Host "`nInstalled Bypass $version`nLocation: $destination"
+        if ($Muse) { Write-Host "Downloaded Bypass $version" }
+        else { Write-Host "`nInstalled Bypass $version`nLocation: $destination" }
         if ($env:BYPASS_NO_MODIFY_PATH -ne '1') {
             $userPath = [Environment]::GetEnvironmentVariable('Path', 'User')
             if (-not (Contains-Path $userPath $binDir)) {
                 $separator = if ($userPath -and -not $userPath.EndsWith(';')) { ';' } else { '' }
-                try { [Environment]::SetEnvironmentVariable('Path', ($userPath + $separator + $binDir), 'User'); Write-Host 'Added Bypass to your user PATH for future terminals.' }
+                try { [Environment]::SetEnvironmentVariable('Path', ($userPath + $separator + $binDir), 'User'); if (-not $Muse) { Write-Host 'Added Bypass to your user PATH for future terminals.' } }
                 catch { Write-Warning 'Could not save user PATH. Bypass is available in this session; add the bin directory to PATH for future terminals.' }
-            } else { Write-Host 'Bypass is already in your user PATH.' }
+            } elseif (-not $Muse) { Write-Host 'Bypass is already in your user PATH.' }
             if (-not (Contains-Path $env:Path $binDir)) { $env:Path = $binDir + ';' + $env:Path }
-            Write-Host 'Bypass is ready in this PowerShell session.'
+            if ($Muse) { Write-Host 'Terminal command configured' }
+            else { Write-Host 'Bypass is ready in this PowerShell session.' }
             $commandName = 'bypass'
         } else { Write-Host 'Automatic PATH setup skipped (BYPASS_NO_MODIFY_PATH=1).'; $commandName = "& '" + $shim.Replace("'", "''") + "'" }
         if ($Muse) {
-            Write-Host '2/3 Registering the full Muse plugin...'
+            $setupEntry = Join-Path $destination 'plugin\runtime\bin\muse-setup.mjs'
+            if (Test-Path -LiteralPath $setupEntry) {
+                # Let the user run another installer while their Muse session is open.
+                if ($work -and (Test-Path -LiteralPath $work)) { Remove-Item -LiteralPath $work -Recurse -Force; $work = $null }
+                if ($lock) { $lock.Dispose(); $lock = $null }
+                & (Join-Path $destination 'plugin\runtime\node.exe') $setupEntry
+                if ($LASTEXITCODE -ne 0) { throw 'Muse setup did not finish. Your installation is saved; rerun this same installer to continue.' }
+                return
+            }
+            Write-Host 'Connecting Bypass to Muse...'
             $previousAutoUpdate = $env:MUSE_NO_AUTO_UPDATE
             try {
                 $env:MUSE_NO_AUTO_UPDATE = '1'
                 & (Join-Path $destination 'plugin\runtime\node.exe') (Join-Path $destination 'plugin\runtime\bin\bypass.mjs') integrate muse --scope user --replace
                 if ($LASTEXITCODE -ne 0) { throw 'The CLI is installed, but Muse setup did not finish. Fix the reason above and rerun this same installer. Your project settings and evidence are preserved.' }
             } finally { $env:MUSE_NO_AUTO_UPDATE = $previousAutoUpdate }
-            Write-Host 'No separate model key or Docker setup is needed for the Muse plugin.'
         } else {
             Write-Host "`nNext: $commandName onboard`n`nPrefer Muse? Run: irm https://bypasslabs.ai/install/muse.ps1 | iex"
         }

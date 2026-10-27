@@ -17,7 +17,8 @@ test('installer verifies checksums, works without system Node, survives repeat i
   fs.mkdirSync(path.join(runtime,'bin'),{recursive:true});
   fs.writeFileSync(path.join(runtime,'node'),`#!/bin/sh\nexec ${shellQuote(process.execPath)} "$@"\n`,{mode:0o755});
   const calls=path.join(directory,'integration-calls');
-  fs.writeFileSync(path.join(runtime,'bin/bypass.mjs'),`import fs from 'node:fs';\nif(process.argv.includes('integrate')){fs.appendFileSync(${JSON.stringify(calls)},JSON.stringify(process.argv.slice(2))+'\\n');if(process.env.BYPASS_FIXTURE_INTEGRATION_FAIL==='1')process.exit(3);console.log('Plugin installed; review in Muse');}else console.log("Bypass 0.3.1");\n`);
+  fs.writeFileSync(path.join(runtime,'bin/bypass.mjs'),`import fs from 'node:fs';\nif(process.argv.includes('integrate')){fs.appendFileSync(${JSON.stringify(calls)},JSON.stringify(process.argv.slice(2))+'\\n');if(process.env.BYPASS_FIXTURE_INTEGRATION_FAIL==='1'){console.error('integration fixture failed');process.exit(3);}console.log('Plugin installed; review in Muse');}else console.log("Bypass 0.3.1");\n`);
+  fs.writeFileSync(path.join(runtime,'bin/muse-setup.mjs'),`import fs from 'node:fs';import path from 'node:path';import {execFileSync} from 'node:child_process';import {fileURLToPath} from 'node:url';\nif(fs.existsSync(path.join(process.env.BYPASS_INSTALL_DIR,'.install-lock')))throw new Error('The installer kept its lock during the Muse handoff');\nexecFileSync(process.execPath,[fileURLToPath(new URL('./bypass.mjs',import.meta.url)),'integrate','muse','--scope','user','--replace'],{stdio:'inherit'});\n`);
   fs.copyFileSync(fileURLToPath(new URL('../scripts/launch-bypass.sh',import.meta.url)),path.join(bundle,'launch-bypass'));fs.chmodSync(path.join(bundle,'launch-bypass'),0o755);
   fs.copyFileSync(fileURLToPath(new URL('../scripts/configure-path.mjs',import.meta.url)),path.join(bundle,'configure-path.mjs'));
   const archive=path.join(directory,'release.tar.gz');execFileSync('tar',['-czf',archive,'-C',directory,'bypass'],{env:{...process.env,COPYFILE_DISABLE:'1'}});
@@ -40,7 +41,7 @@ test('installer verifies checksums, works without system Node, survives repeat i
   const museEnv={...env,PATH:fake+':'+env.PATH};
   assert.match((await execFile('/bin/bash',[museScript],{env:museEnv})).stdout,/Plugin installed; review in Muse/);
   assert.deepEqual(JSON.parse(fs.readFileSync(calls,'utf8').trim()),['integrate','muse','--scope','user','--replace']);
-  await assert.rejects(execFile('/bin/bash',[museScript],{env:{...museEnv,BYPASS_FIXTURE_INTEGRATION_FAIL:'1'}}),e=>/CLI is installed, but Muse setup did not finish/.test(e.stderr));
+  await assert.rejects(execFile('/bin/bash',[museScript],{env:{...museEnv,BYPASS_FIXTURE_INTEGRATION_FAIL:'1'}}),e=>/integration fixture failed/.test(e.stderr));
   assert.equal(fs.readlinkSync(path.join(install,'current')),current);
   await assert.rejects(execFile('/bin/bash',[script,'--unknown'],{env}),e=>/Unknown option/.test(e.stderr));
   corrupt=true;release='main-'+'b'.repeat(40)+'-2-1';await assert.rejects(run(),e=>/Checksum mismatch/.test(e.stderr));assert.equal(fs.readlinkSync(path.join(install,'current')),current);

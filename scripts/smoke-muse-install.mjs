@@ -5,6 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
+import { finishMuseSetup, setupPrompt } from '../src/muse-setup.mjs';
 
 const [bundle]=process.argv.slice(2);
 assert.ok(bundle,'Usage: node scripts/smoke-muse-install.mjs <release-bundle>');
@@ -24,8 +25,10 @@ try{
   assert.equal(inspected.runtime_capabilities.length,2);
   assert.ok(inspected.runtime_capabilities.every(row=>row.status==='review_needed'));
   const installedAt=inspected.record.installed_at;
-  // The test explicitly approves only the isolated fixture package.
-  run('muse',['plugins','approve','bypass','--json']);
+  // Exercise the consent handoff against the real native manager, exclusively
+  // in this isolated fixture store. The launch boundary makes no model call.
+  const handoff=await finishMuseSetup({cwd:app,inspect:async()=>run('muse',['plugins','inspect','bypass','--json']),approve:async id=>run('muse',['plugins','approve',id,'--json']),ask:async()=>'yes',launch:async prompt=>{assert.equal(prompt,setupPrompt);return 0;},write:()=>{}});
+  assert.equal(handoff.opened,true);
   const repeated=install();assert.equal(repeated.alreadyInstalled,true);assert.equal(repeated.state,'ready_for_new_session');
   inspected=run('muse',['plugins','inspect','bypass','--json']);
   assert.equal(inspected.record.installed_at,installedAt);
