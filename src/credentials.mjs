@@ -30,9 +30,9 @@ function directory(state,create=false){
         $acl.SetAccessRuleProtection($true, $false)
         $rule = [System.Security.AccessControl.FileSystemAccessRule]::new($sid, [System.Security.AccessControl.FileSystemRights]::FullControl, [System.Security.AccessControl.InheritanceFlags]'ContainerInherit,ObjectInherit', [System.Security.AccessControl.PropagationFlags]::None, [System.Security.AccessControl.AccessControlType]::Allow)
         $acl.AddAccessRule($rule)
-        Set-Acl -LiteralPath $env:BYPASS_ACL_DIRECTORY -AclObject $acl
+        [System.IO.Directory]::SetAccessControl($env:BYPASS_ACL_DIRECTORY, $acl)
       `:`
-        $acl = Get-Acl -LiteralPath $env:BYPASS_ACL_DIRECTORY
+        $acl = [System.IO.Directory]::GetAccessControl($env:BYPASS_ACL_DIRECTORY)
         if ($acl.GetOwner([System.Security.Principal.SecurityIdentifier]).Value -ne $sid.Value) { throw 'Wrong directory owner' }
         foreach ($rule in $acl.GetAccessRules($true, $true, [System.Security.Principal.SecurityIdentifier])) {
           if ($rule.AccessControlType -eq 'Allow' -and $rule.IdentityReference.Value -ne $sid.Value) { throw 'Directory grants another account access' }
