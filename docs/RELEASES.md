@@ -1,5 +1,17 @@
 # R2 releases and one-line installation
 
+For the **Muse plugin**, run:
+
+```bash
+curl -fsSL https://bypasslabs.ai/install/muse | bash
+```
+
+Windows: `irm https://bypasslabs.ai/install/muse.ps1 | iex`.
+
+Then approve Bypass in Muse's `/plugins` → Installed → Bypass → Runtime, open a fresh Muse session and run `/bypass:start`. No installation prompt is required. [Quick start](../README.md#start-in-muse).
+
+## Standalone CLI installation
+
 Windows PowerShell 5.1 / PowerShell 7:
 
 ```powershell
@@ -34,7 +46,7 @@ CI runs the downloaded x64 package on Windows Server 2022 in both Windows PowerS
 
 ## Muse integration
 
-Start inside Muse with “Read https://bypasslabs.ai/install/muse.md and install Bypass for Muse.” The public skill installs the complete runtime using `https://bypasslabs.ai/install/muse` or Windows `https://bypasslabs.ai/install/muse.ps1`. These are explicit plugin installers; the original `/install` and `/install.ps1` remain CLI-only.
+The recommended Muse entry point is the direct one-command installer above. Optionally, users already in Muse can ask “Read https://bypasslabs.ai/install/muse.md and install Bypass for Muse.” That skill runs the same complete installer. The `/install/muse` and `/install/muse.ps1` endpoints install the plugin; the original `/install` and `/install.ps1` remain CLI-only.
 
 The plugin installer calls `bypass integrate muse --scope user --replace` internally. It compares all package bytes with the installed cache, preserving approval for an identical package. Changed packages are validated before replacement; failed replacements attempt to restore the previous source. Muse's Runtime panel owns the permission decision. A new session loads the MCP server and hook. Installation does not attest active-session loading.
 

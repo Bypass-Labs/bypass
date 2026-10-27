@@ -8,24 +8,9 @@ This is a working POC for missing authentication and cross-account access to con
 
 ## Start in Muse
 
-**1. Open Muse in your application folder and paste:**
+Requires **Muse Code installed and signed in**.
 
-```text
-Read https://bypasslabs.ai/install/muse.md and install Bypass for Muse.
-```
-
-Muse follows the installation skill: downloads the full package, configures PATH and registers the native plugin. You need Muse Code installed and signed in. No GitHub clone, npm, system Node, Docker or separate model key is required to install and use the plugin. Git is needed when connecting a Git repository.
-
-**2. Review permissions in Muse.** Open `/plugins` → **Installed** → **Bypass** → **Runtime**. Approve its local tool server and session-context hook. Start a **new Muse session** in your application folder so those capabilities load.
-
-**3. Type `/bypass:start`, or ask:**
-
-> Use Bypass to review this application. Inspect its source, help me connect its running app, prove any account-access issue, and help fix and save a regression test. Keep me informed about what is done and what comes next.
-
-Muse reuses saved setup. When needed, it guides repository → app URL → exact DNS TXT ownership record → testing scope → two account credential references → one owned resource. Source review can start while live setup is pending. Never paste app credentials into chat.
-
-<details>
-<summary>Prefer a terminal install?</summary>
+**1. Run one command in your terminal.**
 
 macOS / Linux:
 
@@ -39,20 +24,32 @@ Windows PowerShell:
 irm https://bypasslabs.ai/install/muse.ps1 | iex
 ```
 
-Then complete steps 2 and 3 above. Rerun the same command to update or repair. Reinstalling identical bytes preserves your approval; changed packages need a new review. The installer bundles Node and supports macOS, glibc Linux and Windows on x64/arm64 (PowerShell 5.1+ on Windows).
+This installs the full Muse plugin and CLI, includes Node, and sets up PATH. No GitHub clone, npm, Docker or separate model key is needed for the plugin. Rerun the same command to update or repair.
 
-</details>
+**2. Approve the plugin in Muse.** Open `/plugins` → **Installed** → **Bypass** → **Runtime**. Approve its local tool server and session-context hook.
 
-<details>
-<summary>Already use npx skills?</summary>
+**3. Start a new Muse session in your application folder and run:**
 
-From your application folder, with Node 22.20+:
-
-```bash
-npx skills add https://bypasslabs.ai/install/muse.md -a universal
+```text
+/bypass:start
 ```
 
-This puts the **installation skill** in the project's `.agents/skills`, which Muse reads. In Muse, run `/skills reload`, then ask “Install Bypass for Muse.” The skill installs the complete native plugin; it is not a substitute for its tools. Use project scope here: `universal -g` uses a different global directory from Muse. The one-prompt path above needs neither Node nor this extra step.
+Bypass guides you through connecting your repository and running app. For a deployed app, it gives you the exact DNS TXT ownership record, then helps configure testing scope and account references. Source review can start while live setup is pending. Never paste app credentials into chat.
+
+Then ask, for example:
+
+> Review this application, prove any account-access issue, help me fix it, and save a regression test.
+
+<details>
+<summary>Optional: install from inside Muse instead</summary>
+
+Ask Muse:
+
+```text
+Read https://bypasslabs.ai/install/muse.md and install Bypass for Muse.
+```
+
+Muse runs the same installer. Then complete steps 2 and 3 above. This prompt is optional; the terminal command installs the complete plugin directly. [Installation details and the optional npx skills route](docs/INSTALLATION_DESIGN.md).
 
 </details>
 
