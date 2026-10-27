@@ -49,3 +49,9 @@ Then run `/skills reload` in Muse and ask “Install Bypass for Muse.” This in
 ## Verification
 
 Automated coverage includes installer argument/preflight behavior, absent Muse, plugin registration failure, identical-package reruns, capability state reporting, changed-package review, failed replacement rollback, public asset promotion, all 78 MCP tools and CLI/plugin command parity. Native install/inspect/approval checks are performed with isolated XDG directories, never the user's active plugin store. Windows plugin-entrypoint parsing and installer execution run in the existing PowerShell 5.1/7 release gate. Installation tests are distinct from a paid model test or a production security review.
+
+### Terminal handoff regression (0.5.3)
+
+On macOS, passing an opened `/dev/tty` alias as Muse stdin caused its kqueue input registration to fail. Installation, permission approval and MCP startup completed, but the UI stayed blank before the initial request. The piped installer now releases its consent reader and gives Muse a readable descriptor for the actual terminal device. Direct terminal and Windows launches retain their existing handoff.
+
+The terminal smoke test now waits for interactive input through the child process and uses the platform event selector, including kqueue on macOS. It fails on the 0.5.2 handoff and passes on 0.5.3. Both Linux and macOS checks gate publication. Native Muse 1.4.14 was also exercised through a piped installer in an isolated store with the offline echo provider: visible UI, submitted initial request, response and clean interactive exit. This verifies the terminal handoff; it is not a paid-model onboarding or production review test.

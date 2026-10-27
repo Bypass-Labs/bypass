@@ -9,6 +9,18 @@ concurrency:
   group: bypass-main-downloads
   cancel-in-progress: false
 jobs:
+  macos-terminal:
+    runs-on: macos-15
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: '22.23.4'
+      - name: Verify piped installer hands interactive input to Muse on macOS
+        run: python3 scripts/smoke-muse-terminal.py "$(command -v node)"
   release:
     if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-24.04
@@ -97,7 +109,7 @@ jobs:
         shell: pwsh
         run: ./scripts/windows-install-test.ps1 -ReleaseId '${{ needs.release.outputs.release_id }}'
   promote:
-    needs: [release, windows]
+    needs: [release, windows, macos-terminal]
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:

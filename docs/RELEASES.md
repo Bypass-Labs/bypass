@@ -60,7 +60,7 @@ The CLI-only path is `bypass onboard`. Existing app state stays in the app's `.b
 
 `.github/workflows/release.yml` runs on pushes to `main` and manual dispatches of `main`:
 
-1. Run syntax checks and the full test suite, including real fixture HTTP requests and Docker agent tests. CI does not call a paid model or test a production application.
+1. Run syntax checks and the full test suite, including real fixture HTTP requests and Docker agent tests. The piped installer must also pass interactive terminal input checks on Linux and macOS before promotion. CI does not call a paid model or test a production application.
 2. Build six archives using the pinned runtime/checksums in `scripts/node-runtime.json`. Include Node's upstream license.
 3. Upload archives, checksum list, installer and release manifest to private R2 bucket `bypass-releases` through Worker `bypass-distribution`.
 4. Install the candidate through its public versioned URLs on Linux and Windows runners. Exercise CLI version/help, repository initialization, feature-context retrieval, and platform-specific PATH checks. Windows must pass in PowerShell 5.1 and 7 before promotion.

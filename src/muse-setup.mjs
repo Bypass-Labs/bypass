@@ -71,17 +71,28 @@ export function setupTerminal({cwd=process.cwd(),env=process.env}={}){
   const rl=readline.createInterface({input,output:process.stdout,terminal:true});
   const controller=new AbortController();
   rl.on('SIGINT',()=>controller.abort());rl.on('close',()=>controller.abort());
-  const pause=()=>{rl.close();input.pause();input.setRawMode?.(false);};
+  let paused=false;
+  const pause=()=>{if(paused)return;paused=true;rl.close();input.pause();input.setRawMode?.(false);};
   return {
     ask:async text=>{try{return await rl.question(text,{signal:controller.signal});}catch{return null;}},
     launch:async prompt=>{
       pause();
+      let childInput=fd;
+      if(owned){
+        await new Promise(resolve=>{input.once('close',resolve);input.destroy();});
+        // /dev/tty works for the consent reader, but macOS cannot register that
+        // alias with kqueue. Muse needs the actual terminal device for its UI.
+        // Reopen the known terminal output descriptor as readable input after
+        // releasing our reader; never give Muse the installer's script pipe.
+        try{childInput=fs.openSync('/dev/fd/1','r+');}
+        catch{throw new Fault('Could not hand the terminal to Muse. Run muse in this folder, then /bypass:start.',3);}
+      }
       const invocation=commandInvocation('muse',[prompt],env);
-      return new Promise((resolve,reject)=>{
-        const child=spawn(invocation.command,invocation.args,{cwd,env:{...env,MUSE_NO_AUTO_UPDATE:'1'},stdio:[fd,'inherit','inherit'],shell:false});
+      try{return await new Promise((resolve,reject)=>{
+        const child=spawn(invocation.command,invocation.args,{cwd,env:{...env,MUSE_NO_AUTO_UPDATE:'1'},stdio:[childInput,'inherit','inherit'],shell:false});
         child.on('error',()=>reject(new Fault('Muse could not open. Run muse in this folder, then /bypass:start.',3)));
         child.on('exit',(code)=>resolve(code??130));
-      });
+      });}finally{if(owned)fs.closeSync(childInput);}
     },
     close:()=>{pause();if(owned)input.destroy();}
   };

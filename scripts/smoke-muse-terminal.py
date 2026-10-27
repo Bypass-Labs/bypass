@@ -1,5 +1,6 @@
 """Exercise curl-style piped stdin with a real terminal and a fixture Muse host."""
 import json
+import fcntl
 import os
 from pathlib import Path
 import pty
@@ -7,12 +8,14 @@ import select
 import shlex
 import signal
 import sys
+import struct
 import tempfile
+import termios
 import time
 
 root = Path(__file__).resolve().parent.parent
 node = sys.argv[1]
-for answer in ("y", "n"):
+for mode, answer in (("piped", "y"), ("piped", "n"), ("direct", "y"), ("piped", "\x03")):
     with tempfile.TemporaryDirectory(prefix="bypass-terminal-") as temporary:
         base = Path(temporary)
         app = base / "customer app & Ω"
@@ -22,8 +25,28 @@ for answer in ("y", "n"):
         launched = base / "launch.json"
         approvals = base / "approvals.json"
         host = fake / "muse"
-        host.write_text("#!" + sys.executable + "\nimport json,os,sys\nfrom pathlib import Path\n"
-                        + "Path(" + repr(str(launched)) + ").write_text(json.dumps({'cwd':os.getcwd(),'args':sys.argv[1:]}))\n")
+        host.write_text("#!" + sys.executable + "\n" + """
+import json,os,sys,selectors,termios,tty,time
+from pathlib import Path
+assert all(os.isatty(fd) for fd in (0,1,2)), 'Muse must inherit a terminal'
+saved=termios.tcgetattr(0)
+try:
+    tty.setraw(0)
+    with selectors.DefaultSelector() as selector:
+        selector.register(0,selectors.EVENT_READ)
+        os.write(1,b'MUSE_INPUT_READY')
+        received=b''
+        deadline=time.monotonic()+5
+        while not received.endswith(b'\\n'):
+            assert selector.select(max(0,deadline-time.monotonic())), 'Terminal input was not delivered to Muse'
+            chunk=os.read(0,4096)
+            assert chunk, 'Terminal input closed'
+            received+=chunk
+        assert received==b'bypass-input\\n', repr(received)
+    Path(LAUNCHED).write_text(json.dumps({'cwd':os.getcwd(),'args':sys.argv[1:],'input':received.decode()}))
+finally:
+    termios.tcsetattr(0,termios.TCSANOW,saved)
+""".replace("LAUNCHED",repr(str(launched))))
         host.chmod(0o755)
         driver = base / "setup.mjs"
         driver.write_text("""
@@ -33,7 +56,8 @@ const value={valid:true,active:true,record:{package_sha256:'fixture',cache_path:
 const terminal=setupTerminal();
 if(!terminal)throw new Error('Piped installer did not find its controlling terminal');
 try{
- await finishMuseSetup({cwd:process.cwd(),inspect:async()=>structuredClone(value),approve:async id=>{value.runtime_capabilities.find(row=>row.candidate.stable_id===id).status='trusted_enabled';fs.writeFileSync(APPROVALS,JSON.stringify(value.runtime_capabilities));},ask:terminal.ask,launch:terminal.launch});
+ const result=await finishMuseSetup({cwd:process.cwd(),inspect:async()=>structuredClone(value),approve:async id=>{value.runtime_capabilities.find(row=>row.candidate.stable_id===id).status='trusted_enabled';fs.writeFileSync(APPROVALS,JSON.stringify(value.runtime_capabilities));},ask:terminal.ask,launch:terminal.launch});
+ process.exitCode=result.exitCode??0;
 }finally{terminal.close();}
 """.replace("MODULE", json.dumps((root / "src/muse-setup.mjs").as_uri()))
            .replace("APPROVALS", json.dumps(str(approvals))))
@@ -45,9 +69,12 @@ try{
             env = dict(os.environ, PATH=str(fake) + os.pathsep + os.environ["PATH"], TERM="xterm-256color")
             env.pop("CI", None)
             env.pop("BYPASS_NO_OPEN_MUSE", None)
-            os.execve("/bin/bash", ["bash", "-c", "cat " + shlex.quote(str(bootstrap)) + " | bash"], env)
+            command = "cat " + shlex.quote(str(bootstrap)) + " | bash" if mode == "piped" else "bash " + shlex.quote(str(bootstrap))
+            os.execve("/bin/bash", ["bash", "-c", command], env)
+        fcntl.ioctl(fd,termios.TIOCSWINSZ,struct.pack('HHHH',40,120,0,0))
         transcript = b""
         sent = False
+        input_sent = False
         status = None
         try:
             deadline = time.monotonic() + 30
@@ -61,8 +88,11 @@ try{
                         break
                     transcript += chunk
                     if b"[y/N]" in transcript and not sent:
-                        os.write(fd, (answer + "\n").encode())
+                        os.write(fd, (answer if answer == "\x03" else answer + "\n").encode())
                         sent = True
+                    if b"MUSE_INPUT_READY" in transcript and not input_sent:
+                        os.write(fd,b"bypass-input\n")
+                        input_sent = True
                 done, value = os.waitpid(pid, os.WNOHANG)
                 if done:
                     status = value
@@ -81,9 +111,10 @@ try{
                 launch = json.loads(launched.read_text())
                 assert Path(launch["cwd"]).resolve() == app.resolve()
                 assert len(launch["args"]) == 1 and "bypass_onboarding" in launch["args"][0]
+                assert launch["input"] == "bypass-input\n"
                 assert len(json.loads(approvals.read_text())) == 2
             else:
                 assert not launched.exists() and not approvals.exists()
         finally:
             os.close(fd)
-print("Terminal handoff passed: piped installer, explicit consent, same-folder startup, decline without approval.")
+print("Terminal handoff passed: piped and direct startup, interactive terminal input, same-folder onboarding, decline and cancellation without approval.")
