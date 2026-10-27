@@ -22,6 +22,7 @@ bypass_install() {
   case "$install_dir:$bin_dir" in *$'\n'*|*$'\r'*) fail 'Installation paths cannot contain newlines.' ;; esac
   case "$install_dir" in /*) ;; *) fail 'BYPASS_INSTALL_DIR must be an absolute path.' ;; esac
   case "$bin_dir" in /*) ;; *) fail 'BYPASS_BIN_DIR must be an absolute path.' ;; esac
+  case "$bin_dir" in *:*) fail 'BYPASS_BIN_DIR cannot contain a colon because PATH uses colons as separators.' ;; esac
   if [ -d "$install_dir" ] && [ -n "$(ls -A "$install_dir")" ] && [ ! -f "$install_dir/.bypass-installer" ]; then fail "$install_dir contains unrelated files. Set BYPASS_INSTALL_DIR to an empty directory."; fi
   mkdir -p "$install_dir" "$bin_dir"
   printf '1\n' > "$install_dir/.bypass-installer"
@@ -63,7 +64,13 @@ for(const [link,target] of [[path.join(install,'current'),destination],[path.joi
 }
 NODE
   printf '\nInstalled %s\nLocation: %s\n\n' "$version" "$install_dir/current"
-  case ":$PATH:" in *":$bin_dir:"*) command_name=bypass ;; *) command_name="$bin_dir/bypass"; printf 'Add %s to PATH to use the short bypass command.\n\n' "$bin_dir" ;; esac
+  if [ -f "$destination/configure-path.mjs" ]; then
+    "$destination/plugin/runtime/node" "$destination/configure-path.mjs" "$bin_dir" || printf 'PATH setup did not finish. Use the full executable path below.\n'
+  else
+    printf 'This older release has no automatic PATH setup. Add %s to your shell PATH.\n' "$bin_dir"
+  fi
+  case ":$PATH:" in *":$bin_dir:"*) command_name=bypass ;; *) printf -v command_name '%q' "$bin_dir/bypass" ;; esac
+  printf '\n'
   printf 'Muse plugin:\n  %s integrate muse --scope user --replace\n  muse plugins inspect bypass\n  muse plugins approve bypass\n  Then open Muse and use /bypass:start.\n\n' "$command_name"
   printf 'Standalone CLI:\n  %s onboard\n\nUpdate: rerun the same installer. Project settings and evidence stay in your app.\n' "$command_name"
 }

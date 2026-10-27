@@ -38,6 +38,7 @@ for(const platform of selected){
     for(const capability of [...manifest.capabilities.mcpServers,...manifest.capabilities.hooks])capability.command[0]='./runtime/node';
     fs.writeFileSync(manifestPath,JSON.stringify(manifest,null,2)+'\n');
     fs.copyFileSync(path.join(root,'scripts/launch-bypass.sh'),path.join(bundle,'launch-bypass'));fs.chmodSync(path.join(bundle,'launch-bypass'),0o755);
+    fs.copyFileSync(path.join(root,'scripts/configure-path.mjs'),path.join(bundle,'configure-path.mjs'));
     fs.copyFileSync(path.join(root,'README.md'),path.join(bundle,'README.md'));
     fs.writeFileSync(path.join(bundle,'release.json'),JSON.stringify({releaseId,commit,version,platform,node:runtime.version},null,2)+'\n');
     const file=`bypass-${platform}.tar.gz`;

@@ -17,15 +17,16 @@ test('installer verifies checksums, works without system Node, survives repeat i
   fs.writeFileSync(path.join(runtime,'node'),`#!/bin/sh\nexec ${shellQuote(process.execPath)} "$@"\n`,{mode:0o755});
   fs.writeFileSync(path.join(runtime,'bin/bypass.mjs'),'console.log("Bypass 0.3.1");\n');
   fs.copyFileSync(fileURLToPath(new URL('../scripts/launch-bypass.sh',import.meta.url)),path.join(bundle,'launch-bypass'));fs.chmodSync(path.join(bundle,'launch-bypass'),0o755);
+  fs.copyFileSync(fileURLToPath(new URL('../scripts/configure-path.mjs',import.meta.url)),path.join(bundle,'configure-path.mjs'));
   const archive=path.join(directory,'release.tar.gz');execFileSync('tar',['-czf',archive,'-C',directory,'bypass'],{env:{...process.env,COPYFILE_DISABLE:'1'}});
   const bytes=fs.readFileSync(archive),hash=createHash('sha256').update(bytes).digest('hex'),platform=(process.platform==='darwin'?'darwin':'linux')+'-'+process.arch,asset=`bypass-${platform}.tar.gz`;
   let release='main-'+'a'.repeat(40)+'-1-1',corrupt=false;
   const server=http.createServer((req,res)=>{if(req.url.endsWith('main.txt'))res.end(release+'\n');else if(req.url.endsWith('SHASUMS256.txt'))res.end(`${hash}  ${asset}\n`);else if(req.url.endsWith(asset))res.end(corrupt?Buffer.from('corrupt'):bytes);else{res.statusCode=404;res.end();}});
   await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));t.after(()=>new Promise(resolve=>server.close(resolve)));
   const install=path.join(directory,'space and single\'quote','installation'),bin=path.join(directory,'bin');
-  const env={...process.env,PATH:'/usr/bin:/bin',BYPASS_INSTALL_DIR:install,BYPASS_BIN_DIR:bin,BYPASS_DOWNLOAD_BASE_URL:`http://127.0.0.1:${server.address().port}/downloads/bypass`};
+  const env={...process.env,PATH:'/usr/bin:/bin',BYPASS_NO_MODIFY_PATH:'1',BYPASS_INSTALL_DIR:install,BYPASS_BIN_DIR:bin,BYPASS_DOWNLOAD_BASE_URL:`http://127.0.0.1:${server.address().port}/downloads/bypass`};
   const run=()=>execFile('/bin/bash',[script],{env,timeout:30000});
-  assert.match((await run()).stdout,/Installed Bypass 0.3.1/);
+  const output=(await run()).stdout;assert.match(output,/Installed Bypass 0.3.1/);assert.match(output,/Automatic PATH setup skipped/);assert.match(output,/To use bypass in this terminal now/);
   assert.equal((await execFile(path.join(bin,'bypass'),['--version'],{env})).stdout.trim(),'Bypass 0.3.1');
   const current=fs.readlinkSync(path.join(install,'current'));await run();assert.equal(fs.readlinkSync(path.join(install,'current')),current);
   corrupt=true;release='main-'+'b'.repeat(40)+'-2-1';await assert.rejects(run(),e=>/Checksum mismatch/.test(e.stderr));assert.equal(fs.readlinkSync(path.join(install,'current')),current);

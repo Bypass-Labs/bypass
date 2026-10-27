@@ -25,6 +25,7 @@ jobs:
           node-version: '22.23.4'
       - name: Check source and exercise HTTP and Docker regressions
         run: |
+          command -v zsh || (sudo apt-get update && sudo apt-get install -y zsh)
           npm run check
           BYPASS_DOCKER_TESTS=1 npm test
       - name: Build self-contained macOS and Linux artifacts
@@ -39,12 +40,32 @@ jobs:
           export BYPASS_RELEASE="$release"
           export BYPASS_INSTALL_DIR="$RUNNER_TEMP/bypass-install"
           export BYPASS_BIN_DIR="$RUNNER_TEMP/bypass-bin"
+          export BYPASS_NO_MODIFY_PATH=1
           curl --fail --silent --show-error --location "https://bypasslabs.ai/downloads/bypass/releases/$release/install.sh" | bash
           "$BYPASS_BIN_DIR/bypass" --version
           "$BYPASS_BIN_DIR/bypass" --help
           mkdir -p "$RUNNER_TEMP/bypass-customer-app"
           "$BYPASS_BIN_DIR/bypass" init "$RUNNER_TEMP/bypass-customer-app" --non-interactive
           "$BYPASS_BIN_DIR/bypass" context --project "$RUNNER_TEMP/bypass-customer-app" --task "Add invoice export" --json
+          # Exercise PATH using the downloaded package and isolated shell profiles.
+          node --input-type=module <<'NODE'
+          import assert from 'node:assert/strict';
+          import fs from 'node:fs';
+          import path from 'node:path';
+          import {pathToFileURL} from 'node:url';
+          import {execFileSync} from 'node:child_process';
+          const bundle=path.join(process.env.BYPASS_INSTALL_DIR,'current');
+          const {configurePath}=await import(pathToFileURL(path.join(bundle,'configure-path.mjs')));
+          const expected=JSON.parse(fs.readFileSync(path.join(bundle,'release.json'))).version;
+          for(const shell of ['bash','zsh']){
+            const profiles=path.join(process.env.RUNNER_TEMP,'bypass-profile-'+shell);
+            const result=configurePath({binDir:process.env.BYPASS_BIN_DIR,homeDirectory:profiles,shell,zdotdir:undefined,skip:false});
+            assert.deepEqual(result.errors,[]);
+            const args=shell==='bash'?['--noprofile','--rcfile',path.join(profiles,'.bashrc'),'-ic','bypass --version']:['-d','-lic','bypass --version'];
+            const output=execFileSync('/bin/'+shell,args,{env:{...process.env,PATH:'/usr/bin:/bin',ZDOTDIR:profiles},encoding:'utf8'});
+            assert.equal(output.trim(),expected);console.log(shell+' resolves the downloaded Bypass '+expected+' through PATH');
+          }
+          NODE
       - name: Atomically promote the complete tested release
         run: npm run release:promote
       - name: Verify the one-line public entry point
@@ -53,5 +74,6 @@ jobs:
           set -euo pipefail
           export BYPASS_INSTALL_DIR="$RUNNER_TEMP/bypass-install"
           export BYPASS_BIN_DIR="$RUNNER_TEMP/bypass-bin"
+          export BYPASS_NO_MODIFY_PATH=1
           curl --fail --silent --show-error --location https://bypasslabs.ai/install | bash
           "$BYPASS_BIN_DIR/bypass" --version

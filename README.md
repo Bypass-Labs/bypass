@@ -16,7 +16,9 @@ The installer supports **macOS and glibc Linux, x64 and arm64**, and includes No
 curl -fsSL https://bypasslabs.ai/install | bash
 ```
 
-This downloads the tested `main` build from Cloudflare R2, verifies its SHA-256 checksum, and installs it locally. No GitHub access, clone, npm install, system Node or sudo is needed to install the tool. The installer prints the executable path if `~/.local/bin` is not on your PATH.
+This downloads the tested `main` build from Cloudflare R2, verifies its SHA-256 checksum, and installs it locally. No GitHub access, clone, npm install, system Node or sudo is needed to install the tool. **The installer adds Bypass to your Bash or Zsh PATH automatically**, including login terminals, and preserves your existing shell configuration. Repeated installs do not add duplicate entries.
+
+Open a new terminal after installing, or run the activation command printed by the installer to use `bypass` in the current terminal. A `curl | bash` child process cannot change its parent terminal's PATH.
 
 ### 2. Connect the Muse plugin — in your terminal
 

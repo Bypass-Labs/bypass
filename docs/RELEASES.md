@@ -4,7 +4,13 @@
 curl -fsSL https://bypasslabs.ai/install | bash
 ```
 
-`-f` makes an HTTP error stop the download. The installer downloads the latest tested main build, verifies SHA-256, and atomically updates the local `current` link. It installs under `~/.local/share/bypass` with a launcher at `~/.local/bin/bypass`. It uses no sudo and does not modify shell profiles or customer repositories. If that bin directory is absent from PATH, use the full path printed by the installer or add it to PATH.
+`-f` makes an HTTP error stop the download. The installer downloads the latest tested main build, verifies SHA-256, and atomically updates the local `current` link. It installs under `~/.local/share/bypass` with a launcher at `~/.local/bin/bypass`. It uses no sudo and does not modify customer repositories.
+
+The installer detects the configured shell from `SHELL` and adds one managed PATH block to its startup files. For Bash, it updates `.bashrc` plus the first existing login profile in Bash's order: `.bash_profile`, `.bash_login`, `.profile`; when none exists, it creates `.bash_profile`. It never creates a higher-priority file that would hide an existing login profile. For Zsh, it updates `.zshrc` and `.zprofile`, respecting an exported `ZDOTDIR`. Existing content, profile symlinks and permissions are preserved. Repeated installs keep one managed block and one PATH entry. Unsupported shells and unwritable profiles receive an actionable message without undoing the installation.
+
+Open a new terminal, or run the printed `export PATH=…` command to activate Bypass in the existing terminal. A piped child process cannot change its parent shell's environment. The installer prints full-path commands that work immediately too. Set `BYPASS_NO_MODIFY_PATH=1` on the bash process to opt out (for example, `curl -fsSL https://bypasslabs.ai/install | BYPASS_NO_MODIFY_PATH=1 bash`). CI uses this opt-out for its temporary install paths; automated tests independently exercise Bash and Zsh startup files. Pinned releases before 0.3.2 retain their manual PATH setup.
+
+Startup-file references: [Bash](https://www.gnu.org/software/bash/manual/html_node/Bash-Startup-Files), [Zsh](https://zsh.sourceforge.io/Doc/Release/Files.html).
 
 Artifacts contain the CLI, native Muse plugin, and an official checksum-pinned Node.js runtime. Four builds are published: macOS x64/arm64 and Linux x64/arm64. Node 22 requires macOS 11+ or glibc 2.28+ Linux. Alpine/musl and Windows are not supported by this installer. Git, Muse and Docker remain separate prerequisites for the workflows that use them; downloading Bypass itself requires neither GitHub access nor a system Node installation.
 
