@@ -29,7 +29,9 @@ try{
 const child=spawn(path.join(runtime,'node.exe'),[path.join(bundle,'plugin/mcp/server.mjs')],{cwd:app,env:{...process.env,BYPASS_PLUGIN_STATE_DIR:path.join(path.dirname(app),'plugin-state')},stdio:['pipe','pipe','pipe']});
 let sequence=0;const pending=new Map();let stderr='';child.stderr.on('data',chunk=>stderr+=chunk);
 readline.createInterface({input:child.stdout}).on('line',line=>{const result=JSON.parse(line),p=pending.get(result.id);if(p){clearTimeout(p.timer);pending.delete(result.id);p.resolve(result);}});
-const request=(method,params={})=>new Promise((resolve,reject)=>{const id=++sequence,timer=setTimeout(()=>reject(new Error('Installed MCP timed out: '+stderr)),15000);pending.set(id,{resolve,timer});child.stdin.write(JSON.stringify({jsonrpc:'2.0',id,method,params})+'\n');});
+const closed=new Promise(resolve=>child.once('close',(code,signal)=>{for(const p of pending.values()){clearTimeout(p.timer);p.reject(new Error(`Installed MCP closed during ${p.label} (code ${code}, signal ${signal}): ${stderr}`));}pending.clear();resolve(code);}));
+child.stdin.on('error',()=>{});
+const request=(method,params={})=>new Promise((resolve,reject)=>{const id=++sequence,label=params.name||method,timer=setTimeout(()=>{pending.delete(id);reject(new Error(`Installed MCP timed out during ${label}: ${stderr}`));},30000);pending.set(id,{resolve,reject,timer,label});child.stdin.write(JSON.stringify({jsonrpc:'2.0',id,method,params})+'\n');});
 try{
   assert.equal((await request('initialize',{protocolVersion:'2025-11-25',capabilities:{},clientInfo:{name:'windows-release-test',version:'1'}})).result.protocolVersion,'2025-11-25');
   child.stdin.write(JSON.stringify({jsonrpc:'2.0',method:'notifications/initialized'})+'\n');
@@ -47,4 +49,4 @@ try{
   }finally{await call('bypass_demo_control',{action:'stop'});}
   assert.equal((await call('bypass_dashboard')).selectedRepository,app);
   console.log('Installed Windows MCP and native Muse launcher adapter passed (Muse account/model calls not exercised).');
-}finally{child.stdin.end();await new Promise(resolve=>child.once('close',resolve));}
+}finally{child.stdin.end();await closed;}
