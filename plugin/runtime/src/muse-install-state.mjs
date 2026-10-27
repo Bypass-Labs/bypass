@@ -14,7 +14,7 @@ export function samePluginPackage(left,right){
         if(stat.isSymbolicLink())throw new Error('Cannot compare a linked package');
         hash.update(JSON.stringify([entry,stat.isDirectory()?'directory':'file',stat.mode&0o111]));
         if(stat.isDirectory())visit(entry);
-        else if(stat.isFile())hash.update(fs.readFileSync(file));
+        else if(stat.isFile())hash.update(createHash('sha256').update(fs.readFileSync(file)).digest('hex'));
         else throw new Error('Unsupported package entry');
       }
     }

@@ -28,3 +28,12 @@ test('same-version source changes, added files and executable changes invalidate
   fs.unlinkSync(path.join(b,'extra'));fs.chmodSync(path.join(b,'hook.mjs'),0o755);assert.equal(samePluginPackage(a,b),false);
   assert.equal(samePluginPackage(a,path.join(root,'missing')),false);
 });
+
+test('package comparison cannot confuse file contents with another file entry',t=>{
+  const root=fs.mkdtempSync(path.join(os.tmpdir(),'bypass-package-boundaries-'));t.after(()=>fs.rmSync(root,{recursive:true,force:true}));
+  const a=path.join(root,'a'),b=path.join(root,'b');fs.mkdirSync(a);fs.mkdirSync(b);
+  fs.writeFileSync(path.join(a,'first'),'start'+JSON.stringify(['second','file',0])+'end',{mode:0o644});
+  fs.writeFileSync(path.join(b,'first'),'start',{mode:0o644});
+  fs.writeFileSync(path.join(b,'second'),'end',{mode:0o644});
+  assert.equal(samePluginPackage(a,b),false);
+});
