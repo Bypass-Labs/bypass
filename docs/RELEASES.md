@@ -12,7 +12,7 @@ macOS / Linux:
 curl -fsSL https://bypasslabs.ai/install | bash
 ```
 
-`-f` makes an HTTP error stop the download. The installer downloads the latest tested main build, verifies SHA-256, and atomically updates the local `current` link. It installs under `~/.local/share/bypass` with a launcher at `~/.local/bin/bypass`. It uses no sudo and does not modify customer repositories.
+On macOS/Linux, `-f` makes an HTTP error stop the download. The Bash installer downloads the latest tested main build, verifies SHA-256, and atomically updates the local `current` link. It installs under `~/.local/share/bypass` with a launcher at `~/.local/bin/bypass`. It uses no sudo and does not modify customer repositories. Windows locations and PATH behavior are described below.
 
 The installer detects the configured shell from `SHELL` and adds one managed PATH block to its startup files. For Bash, it updates `.bashrc` plus the first existing login profile in Bash's order: `.bash_profile`, `.bash_login`, `.profile`; when none exists, it creates `.bash_profile`. It never creates a higher-priority file that would hide an existing login profile. For Zsh, it updates `.zshrc` and `.zprofile`, respecting an exported `ZDOTDIR`. Existing content, profile symlinks and permissions are preserved. Repeated installs keep one managed block and one PATH entry. Unsupported shells and unwritable profiles receive an actionable message without undoing the installation.
 

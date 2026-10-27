@@ -9,7 +9,8 @@ const manifest=JSON.parse(fs.readFileSync(path.join(bundle,'plugin/.muse-plugin/
 assert.ok([...manifest.capabilities.mcpServers,...manifest.capabilities.hooks].every(c=>c.command[0]==='./runtime/node.exe'));
 const fake=path.join(path.dirname(app),'fake Muse'),savedPath=process.env.Path;fs.mkdirSync(fake);
 fs.writeFileSync(path.join(fake,'muse.cmd'),'@exit /b 97\r\n');
-fs.writeFileSync(path.join(fake,'.muse-launcher.ps1'),`if ($args[0] -eq '--version') { Write-Output 'Windows Muse fixture'; exit 0 }
+fs.writeFileSync(path.join(fake,'.muse-launcher.ps1'),`[Console]::OutputEncoding = New-Object Text.UTF8Encoding($false)
+if ($args[0] -eq '--version') { Write-Output 'Windows Muse fixture'; exit 0 }
 switch ($args[1]) {
   'inspect' { Write-Output '{"error":{"message":"not installed"}}'; exit 1 }
   'validate' { Write-Output '{"valid":true}'; exit 0 }

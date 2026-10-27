@@ -8,11 +8,17 @@
     }
     function Write-AtomicText([string]$File, [string]$Value, [bool]$Bom = $false) {
         $temporary = $File + '.new-' + [guid]::NewGuid().ToString('N')
+        $backup = $temporary + '.previous'
         try {
             [IO.File]::WriteAllText($temporary, $Value, (New-Object Text.UTF8Encoding($Bom)))
-            if ([IO.File]::Exists($File)) { [IO.File]::Replace($temporary, $File, $null) }
+            # PowerShell 5.1 coerces a null string argument to an empty path.
+            # Use an owned backup path so File.Replace works on both .NET runtimes.
+            if ([IO.File]::Exists($File)) { [IO.File]::Replace($temporary, $File, $backup) }
             else { [IO.File]::Move($temporary, $File) }
-        } finally { if ([IO.File]::Exists($temporary)) { [IO.File]::Delete($temporary) } }
+        } finally {
+            if ([IO.File]::Exists($temporary)) { [IO.File]::Delete($temporary) }
+            if ([IO.File]::Exists($backup)) { [IO.File]::Delete($backup) }
+        }
     }
     function Contains-Path([string]$Value, [string]$Directory) {
         foreach ($entry in ($Value -split ';')) {

@@ -154,7 +154,7 @@ Inside the Bypass workspace:
 | `/` | Browse commands |
 | `/quit` | Exit with progress saved |
 
-Reopen with `~/bypass-for-muse/bypass --project /path/to/your/app`. Existing offline-preview projects keep their selected engine; use `/engine` to switch them. [Full CLI reference](docs/COMMANDS.md).
+Reopen with `bypass --project "/path/to/your/app"` (on Windows, use your application's Windows path). Existing offline-preview projects keep their selected engine; use `/engine` to switch them. [Full CLI reference](docs/COMMANDS.md).
 
 ## Why use Bypass?
 
