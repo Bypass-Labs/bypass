@@ -3,6 +3,7 @@ import os from 'node:os';
 import path from 'node:path';
 import assert from 'node:assert/strict';
 import {spawnSync} from 'node:child_process';
+import {toolDefinitions} from '../src/mcp.mjs';
 
 const [bundle,workspace]=process.argv.slice(2),plugin=path.resolve(bundle,'plugin');
 const manifest=JSON.parse(fs.readFileSync(path.join(plugin,'.muse-plugin/plugin.json')));
@@ -29,7 +30,7 @@ try{
   ];
   const output=launch(manifest.capabilities.mcpServers[0],messages.map(m=>JSON.stringify({jsonrpc:'2.0',...m})).join('\n')+'\n');
   const rows=output.split('\n').map(JSON.parse),tools=rows.find(r=>r.id===2).result.tools;
-  assert.equal(tools.length,78);
+  assert.deepEqual(tools.map(t=>t.name).sort(),toolDefinitions.map(t=>t.name).sort(),'The downloaded plugin must expose the current tool catalog.');
   for(const id of [3,4]){
     const result=rows.find(r=>r.id===id).result;
     assert.equal(result.isError,false,JSON.stringify(result));

@@ -6,6 +6,7 @@ import path from 'node:path';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import { finishMuseSetup, setupPrompt } from '../src/muse-setup.mjs';
+import { toolDefinitions } from '../src/mcp.mjs';
 
 const [bundle]=process.argv.slice(2);
 assert.ok(bundle,'Usage: node scripts/smoke-muse-install.mjs <release-bundle>');
@@ -45,7 +46,7 @@ try{
   inspected=run('muse',['plugins','inspect','bypass','--json']);
   assert.ok(inspected.runtime_capabilities.every(row=>row.status==='review_needed'));
   execFileSync(node,[path.resolve('scripts/smoke-plugin-launch.mjs'),copy,app],{cwd:process.cwd(),env,stdio:'inherit',timeout:30000});
-  console.log(JSON.stringify({nativeMuse:'passed',firstInstall:'review_required',identicalRerun:'approval_preserved',rejection:'preserved',disabled:'preserved',changedPackage:'review_required',tools:78,commands:9,modelCalls:0,isolatedStore:true}));
+  console.log(JSON.stringify({nativeMuse:'passed',firstInstall:'review_required',identicalRerun:'approval_preserved',rejection:'preserved',disabled:'preserved',changedPackage:'review_required',tools:toolDefinitions.length,commands:inspected.plugin.capabilities.commands.length,modelCalls:0,isolatedStore:true}));
 }finally{
   // Every path removed was created by this script. No user store is touched.
   fs.rmSync(root,{recursive:true,force:true});
