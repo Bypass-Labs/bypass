@@ -39,7 +39,9 @@ function directory(state,create=false){
         }
       `;
       const script=`$ErrorActionPreference='Stop'; $ProgressPreference='SilentlyContinue'; try { $sid=[System.Security.Principal.WindowsIdentity]::GetCurrent().User; ${operation} } catch { [Console]::Error.WriteLine($_.Exception.Message); exit 1 }`;
-      execFileSync('powershell.exe',['-NoProfile','-NonInteractive','-EncodedCommand',Buffer.from(script,'utf16le').toString('base64')],{stdio:['ignore','pipe','pipe'],windowsHide:true,timeout:15000,env:{...process.env,BYPASS_ACL_DIRECTORY:dir}});
+      // Use the system helper, never an executable from the application cwd/PATH.
+      const powershell=path.join(process.env.SystemRoot||process.env.WINDIR||'C:\\Windows','System32/WindowsPowerShell/v1.0/powershell.exe');
+      execFileSync(powershell,['-NoProfile','-NonInteractive','-EncodedCommand',Buffer.from(script,'utf16le').toString('base64')],{stdio:['ignore','pipe','pipe'],windowsHide:true,timeout:15000,env:{...process.env,BYPASS_ACL_DIRECTORY:dir}});
     }catch(error){throw new Fault(`Could not restrict the credential store to your Windows account. ${String(error.stderr||error.code||'Permission update failed').replace(/[\r\n]+/g,' ').slice(0,1000)}`,3);}
     windowsDirectories.add(dir);
   }
