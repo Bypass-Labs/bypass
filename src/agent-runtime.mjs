@@ -32,10 +32,19 @@ export async function runContainer(role,task,rpc,{image,signal,onProgress,timeou
   const controller=new AbortController(),combined=signal?AbortSignal.any([signal,controller.signal]):controller.signal;
   const timer=setTimeout(()=>controller.abort(new Fault(`${role} exceeded ten minutes.`,3)),timeoutMs);
   try{
+    if(combined.aborted)throw abortFault(combined);
+    // Await creation before attaching: killing `docker run` while its create request
+    // is in flight can let cleanup race ahead of daemon-side container creation.
+    // Creation is bounded, but cancellation waits for its acknowledgement so the
+    // finally block can remove the known container even when we never start it.
+    const create=containerArgs(name,image,role);create[0]='create';
+    const created=await execFile('docker',create,{timeout:20000,killGroup:true});
+    need(created.code===0,'Could not create the isolated agent container. Check Docker and retry.',3);
+    if(combined.aborted)throw abortFault(combined);
     return await new Promise((resolve,reject)=>{
       const stop=error=>{failure??=error;child?.kill('SIGKILL');};
       const abort=()=>stop(abortFault(combined));
-      child=spawn('docker',containerArgs(name,image,role),{stdio:['pipe','pipe','pipe'],shell:false});
+      child=spawn('docker',['start','--attach','--interactive',name],{stdio:['pipe','pipe','pipe'],shell:false});
       combined.addEventListener('abort',abort,{once:true});
       if(combined.aborted)abort();
       child.stdin.on('error',()=>{});

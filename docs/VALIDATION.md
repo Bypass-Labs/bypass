@@ -1,5 +1,19 @@
 # Verification record
 
+## v0.2.3 — plugin-first startup and live reliability checks, 2026-10-27
+
+The README now starts with terminal installation → native approval → a fresh Muse session → `/bypass:start`. Standalone CLI setup follows separately. Fresh CLI onboarding selects real Docker agents; source review proceeds when live resource setup is incomplete. Model failures display the failed stage and a concrete recovery action instead of inviting blind review retries.
+
+The Muse adapter uses strict structured responses and explicit minimal reasoning by default, streams sanitized transport status, resolves the model ID, and checks an untested/stale connection before source upload. Preflight is bounded to 30 seconds; each review response to 60 seconds. These bounds expose failures sooner; they do not guarantee provider availability. Small repositories can supply source in the first worker turn. Cancellation now waits for Docker creation acknowledgement before cleanup to avoid leaving a container after a create/start race.
+
+**78/78 automated tests passed, zero skipped, with real Docker tests enabled.** Syntax checked 47 modules. Controlled inference in these tests is distinct from the real Muse runs below.
+
+**Two final real proof loops passed through the packaged plugin MCP transport**, with the actual Muse subscription and two Docker worker containers: a source citation in `policy.mjs` → observed unauthorized cross-account HTTP 200 → ownership fix verified → exported Node test passes → deliberately reintroduced bug fails both exported and saved tests with zero model calls. Each loop restored the fixture fix and stopped its app. Two earlier development attempts failed (an inference timeout and an initially invalid structured-output schema); they are retained in the [evidence record](evidence/plugin-reliability-2026-10-27.json). This is a local fixture, not production evidence.
+
+**Native Muse startup was also tested, with mixed latency.** Updating the plugin invalidated its tool-server approval even though the plugin remained listed as installed. Reapproval restored the callable tools. A fresh direct onboarding request completed in 48.8 seconds and returned version 0.2.3 plus the repository-selection question; the actual onboarding tool had succeeded at 14.4 seconds. A preceding start-template request timed out at 120 seconds. The README uses the tested per-session minimal setting and includes explicit reapproval after updates. Full conversational onboarding is not claimed consistently reliable.
+
+Production Job Radar proof still requires the two authorized test-account references and an owner-owned resource. No production vulnerability, fix, or complete coverage is claimed by these checks.
+
 ## v0.2.2 — actual Job Radar plugin integration, 2026-10-26
 
 Validated the installed plugin against `Bypass-Labs/job-finder` at commit `1f5684f9d1b051187ec6be40e981ba489d6240a8` and the real production origin `https://job-radar.app`. Reused `/Users/maksim/Projects/job-finder-3`; no new clone or application-source edits. The published DNS TXT matched this checkout's challenge and passed the plugin's actual ownership verification. A bounded scope was recorded from the user's production testing request. One anonymous `GET /api/profile` returned 401; this is an authentication-gate observation, not account-isolation proof.

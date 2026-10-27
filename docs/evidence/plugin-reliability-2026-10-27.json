@@ -3,7 +3,30 @@
   "date": "2026-10-27",
   "scope": "Packaged Muse plugin over actual MCP transport; real Muse subscription and Docker; bundled local fixture only",
   "automatedInference": false,
-  "nativeConversation": "pending separate fresh-session check",
+  "nativeConversation": {
+    "scope": "Fresh headless Muse session, installed plugin, actual direct onboarding MCP call; not a full interactive wizard or production review",
+    "startupSetting": "minimal reasoning",
+    "attempts": [
+      {
+        "status": "tools_unavailable",
+        "reason": "Plugin update invalidated MCP capability approval; subsequently reviewed and reapproved"
+      },
+      {
+        "status": "timeout",
+        "elapsedMs": 120150,
+        "prompt": "Full start command template, stop after onboarding question"
+      },
+      {
+        "status": "completed",
+        "elapsedMs": 48811,
+        "tool": "mcp__plugin_bypass_security__bypass_onboarding",
+        "toolSucceededAtMs": 14424,
+        "loadedVersion": "0.2.3",
+        "nextAction": "Which application should we review? Give its folder or Git URL; this folder contains the Bypass tool."
+      }
+    ],
+    "limitation": "Host conversation latency remains variable; native tool availability and one successful reply do not establish reliable end-to-end conversational onboarding."
+  },
   "productionValidated": false,
   "attempts": [
     {
@@ -163,6 +186,100 @@
         "regressedExit": 1,
         "modelCalls": 0
       }
+    },
+    {
+      "attempt": 4,
+      "configuration": "final strict structured output and acknowledged Docker creation before attach",
+      "startedAt": "2026-10-27T02:17:08.917Z",
+      "finishedAt": "2026-10-27T02:18:39.535Z",
+      "passed": true,
+      "modelUsage": [
+        {
+          "role": "connection",
+          "call": 1,
+          "at": "2026-10-27T02:17:10.034Z",
+          "status": "completed",
+          "resolvedModel": "muse-wonder-full-1.0",
+          "elapsedMs": 9594,
+          "finishedAt": "2026-10-27T02:17:19.628Z"
+        },
+        {
+          "role": "orchestrator",
+          "call": 2,
+          "at": "2026-10-27T02:17:19.835Z",
+          "status": "completed",
+          "resolvedModel": "muse-wonder-full-1.0",
+          "elapsedMs": 12069,
+          "finishedAt": "2026-10-27T02:17:32.236Z"
+        },
+        {
+          "role": "white-box",
+          "call": 3,
+          "at": "2026-10-27T02:17:32.543Z",
+          "status": "completed",
+          "resolvedModel": "muse-wonder-full-1.0",
+          "elapsedMs": 12957,
+          "finishedAt": "2026-10-27T02:17:45.505Z"
+        },
+        {
+          "role": "black-box",
+          "call": 4,
+          "at": "2026-10-27T02:17:47.144Z",
+          "status": "completed",
+          "resolvedModel": "muse-wonder-full-1.0",
+          "elapsedMs": 37706,
+          "finishedAt": "2026-10-27T02:18:25.305Z"
+        }
+      ],
+      "controls": [
+        {
+          "label": "owner identity",
+          "status": 200
+        },
+        {
+          "label": "outsider identity",
+          "status": 200
+        },
+        {
+          "label": "owner access",
+          "status": 200
+        },
+        {
+          "label": "cross-account access",
+          "status": 200
+        },
+        {
+          "label": "unauthenticated access",
+          "status": 401
+        }
+      ],
+      "source": {
+        "kind": "source",
+        "file": "policy.mjs",
+        "line": 2,
+        "quote": "  return Boolean(account);",
+        "sourceFingerprint": "69eed1812574d9e32f4602a86d627f6d8bce66c72b5d51b8cca925667e38768b"
+      },
+      "exportedTest": {
+        "fixedExit": 0,
+        "regressedExit": 1
+      },
+      "replay": {
+        "regressedExit": 1,
+        "modelCalls": 0
+      }
     }
-  ]
+  ],
+  "automatedTests": {
+    "passed": 78,
+    "failed": 0,
+    "skipped": 0,
+    "dockerEnabled": true,
+    "inference": "controlled in automated tests; live Muse attempts are recorded separately",
+    "syntaxModules": 47
+  },
+  "runtimeParity": {
+    "authoredBundledInstalledFiles": 33,
+    "pluginVersion": "0.2.3"
+  }
 }

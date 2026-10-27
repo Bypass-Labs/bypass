@@ -316,7 +316,7 @@ async function engineWizard(ask,root,run){
   const identities=[];
   for(const role of ['owner','outsider']){
     state=read(root);
-    const available=state.identities.filter(i=>i.target===target.name);
+    const available=state.identities.filter(i=>i.target===target.name&&!identities.includes(i.name));
     const selected=await choose(ask,[...available.map(i=>({id:i.name,label:`Use ${i.name} (${i.secretEnv})`})),{id:'__new',label:`Add ${role} account`}],`${role} identity`);
     if(!selected)return;
     if(selected.id!=='__new'){identities.push(selected.id);continue;}

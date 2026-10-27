@@ -34,8 +34,10 @@ muse plugins approve bypass
 In your terminal:
 
 ```bash
-muse
+muse --reasoning-effort minimal
 ```
+
+This is the startup setting used in the live POC checks. It applies to this session and does not change your saved Muse settings.
 
 **Inside Muse**, type:
 

@@ -22,16 +22,17 @@ const wrap=value=>value?.schemaVersion==='bypass.v1'?value:outcome(value);
 export function readiness(root){
   const s=read(root),target=s.targets.find(t=>t.name===s.activeTarget),model=s.models.find(m=>m.name===s.activeModel);
   let liveReady=false;try{scopeReady(target||{});liveReady=true;}catch{}
+  const liveReview=liveReady&&(!realEngine(s)||!!target?.probes?.length);
   return {project:s.project,root,engine:{mode:realEngine(s)?'docker':'mock',analysisImplemented:realEngine(s),label:realEngine(s)?'Docker agents · real source review and scoped HTTP proof':'MOCK analysis · real setup and saved-test replay'},
-    review:scanPlan(s,{mode:liveReady?'combined':'code'}),
+    review:scanPlan(s,{mode:liveReview?'combined':'code'}),
     model:model?{name:model.name,provider:model.provider,destination:model.dataDestination,connection:model.lastAttempt?.status||model.lastTest?.status||'not tested'}:null,
     target:target?{name:target.name,url:target.url,environment:target.environment,ownership:target.ownership?.status||'pending',authorized:liveReady}:null,
-    ready:{repository:true,model:!!model,target:!!target,liveTesting:liveReady,liveReview:liveReady&&(!realEngine(s)||!!target?.probes?.length)},
+    ready:{repository:true,model:!!model,target:!!target,liveTesting:liveReady,liveReview},
     findings:{total:s.findings.length,confirmed:s.findings.filter(f=>f.status==='confirmed').length,fixtureConfirmed:s.findings.filter(f=>f.status==='confirmed_fixture').length,simulated:s.findings.filter(f=>f.status==='simulated_unproven').length,fixed:s.findings.filter(f=>f.status==='fixed_verified').length},
     checks:{total:s.checks.length,enabled:s.checks.filter(c=>c.enabled).length,passed:s.checks.filter(c=>c.lastResult?.status==='passed').length,failed:s.checks.filter(c=>c.lastResult?.status==='failed').length},
     worker:workerStatus(root),monitors:s.monitors.length,latestRun:s.runs.at(-1)||null,
     privacy:{evidence:'local',sourceUpload:realEngine(s),analysisInference:realEngine(s)?'Selected source excerpts sent to the active model':'not invoked (mock engine)',secretStorage:'environment variable references; public fixture credentials only in demo'},
-    next:s.checks.some(c=>c.enabled)?'test run --all':s.findings.length?'finding list':liveReady?'scan --mode combined':'scan --mode code',
+    next:s.checks.some(c=>c.enabled)?'test run --all':s.findings.length?'finding list':liveReview?'scan --mode combined':'scan --mode code',
     limitations:[realEngine(s)?'Bounded JSON API account-boundary POC; incomplete coverage.':'White-box and black-box engines are simulated.','Hosted Bypass account, cloud scheduler, and deployment attestation are not connected.','No passing result implies complete security coverage.']};
 }
 

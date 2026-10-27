@@ -119,8 +119,10 @@ test('skipping a running Muse check stops its process before continuing and save
 test('Muse timeout is bounded, stops a process that ignores SIGTERM, and does not claim login failure',async t=>{
   const root=await fixture(t);process.env.BYPASS_MUSE_TEST_SCENARIO='hang';
   const started=Date.now();
-  await assert.rejects(execute('model test',['muse'],{project:root},{timeoutMs:800}),error=>error.details.reason==='timeout'&&error.message.includes('does not by itself mean your login is wrong'));
-  assert.ok(Date.now()-started<3000,'Hard stop is bounded');
+  // Allow both Node fixture processes to start under the full concurrent suite;
+  // the assertion must exercise a hung provider, not just a slow version check.
+  await assert.rejects(execute('model test',['muse'],{project:root},{timeoutMs:2000}),error=>error.details.reason==='timeout'&&error.message.includes('does not by itself mean your login is wrong'));
+  assert.ok(Date.now()-started<5000,'Hard stop is bounded');
   const pid=Number(fs.readFileSync(path.join(root,'pid'),'utf8'));
   assert.throws(()=>process.kill(pid,0),error=>error.code==='ESRCH');
   assert.equal(readiness(root).model.connection,'failed');
