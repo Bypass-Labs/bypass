@@ -13,7 +13,9 @@ export async function startPOC(options={}){
   const root=path.resolve(options.dir||path.join(packageRoot,'.demo',`poc-${Date.now()}`));
   need(!fs.existsSync(root)||fs.readdirSync(root).length===0,'POC destination must be empty. Existing projects are never overwritten.');
   fs.mkdirSync(root,{recursive:true});
-  fs.cpSync(path.join(packageRoot,'examples/poc-api'),root,{recursive:true});
+  // Only these two bundled files form the fixture. Avoid Node's native recursive
+  // copy path, which can abort on Unicode Windows paths (nodejs/node#59636).
+  for(const file of ['server.mjs','policy.mjs'])fs.copyFileSync(path.join(packageRoot,'examples/poc-api',file),path.join(root,file),fs.constants.COPYFILE_EXCL);
   await execFile('git',['init','--quiet',root]);
   await execute('init',[root],{});
   await execute('model add',['muse'],{project:root,provider:'muse-code',model:options.model||'Muse session default'});
