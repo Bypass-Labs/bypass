@@ -33,7 +33,7 @@ function identityHeaders(identity,env,fixture){
   return {[identity.header]:value};
 }
 function resourceMatches(response,spec){
-  try{const data=JSON.parse(response.body);return String(data[spec.idField||'id'])===String(spec.resourceId);}catch{return false;}
+  try{const data=JSON.parse(response.body);const field=spec.idField||'id';return Object.hasOwn(data,field)&&['string','number'].includes(typeof data[field])&&String(data[field])===String(spec.resourceId);}catch{return false;}
 }
 export async function replay(spec,{env=process.env,signal}={}){
   const started=Date.now();let requests=0;const controls=[];
@@ -54,7 +54,21 @@ export async function replay(spec,{env=process.env,signal}={}){
     const resource=new URL(spec.resourcePath,url);
     assert(resource.origin===url.origin,'Resource escapes target origin');
     const gap=Math.ceil(1000/spec.authorization.maxRequestsPerSecond);
-    const send=async(headers,label)=>{if(requests)await new Promise((resolve,reject)=>{const t=setTimeout(resolve,gap);if(signal){const onAbort=()=>{clearTimeout(t);reject(new Error('Cancelled'));};signal.addEventListener('abort',onAbort,{once:true});setTimeout(()=>signal.removeEventListener('abort',onAbort),gap);}});requests++;const r=await request(resource,{Accept:'application/json','User-Agent':'Bypass-Regression/0.1',...headers},local,signal,spec.timeoutMs||8000);controls.push({label,status:r.status});return r;};
+    const send=async(headers,label,requestURL=resource)=>{if(requests)await new Promise((resolve,reject)=>{const t=setTimeout(resolve,gap);if(signal){const onAbort=()=>{clearTimeout(t);reject(new Error('Cancelled'));};signal.addEventListener('abort',onAbort,{once:true});setTimeout(()=>signal.removeEventListener('abort',onAbort),gap);}});requests++;const r=await request(requestURL,{Accept:'application/json','User-Agent':'Bypass-Regression/0.1',...headers},local,signal,spec.timeoutMs||8000);controls.push({label,status:r.status});return r;};
+    if(spec.requireIdentityControl){
+      const identityURL=identity=>{
+        const p=identity.checkPath;
+        assert(typeof p==='string'&&p.startsWith('/')&&!p.startsWith('//')&&!/[?#\\]/.test(p)&&!/%(?:2f|5c|2e|25)/i.test(p)&&!p.split('/').includes('..'),'Invalid identity positive-control path');
+        assert(spec.authorization.paths.some(prefix=>prefix==='/'||p===prefix||p.startsWith(prefix.endsWith('/')?prefix:prefix+'/')),'Identity control is outside authorized paths');
+        const result=new URL(p,url);assert(result.origin===url.origin,'Identity control escapes target');return result;
+      };
+      const own=await send(owner,'owner identity',identityURL(spec.owner));
+      const other=await send(outsider,'outsider identity',identityURL(spec.outsider));
+      assert(own.status===200&&other.status===200,'Both account login controls must return HTTP 200; refresh credentials');
+      const field=spec.identityField||'id';let a,b;
+      try{a=JSON.parse(own.body)[field];b=JSON.parse(other.body)[field];}catch{}
+      assert(['string','number'].includes(typeof a)&&['string','number'].includes(typeof b)&&String(a)!==String(b),'Identity controls must identify two different accounts; check identityField');
+    }
     const ownerResponse=await send(owner,'owner access');
     assert(ownerResponse.status===200&&resourceMatches(ownerResponse,spec),'Owner positive control failed: check login, fixture ID, and deployment');
     const outsiderResponse=await send(outsider,'cross-account access');

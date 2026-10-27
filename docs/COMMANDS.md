@@ -6,7 +6,7 @@ Global: --project <path>, --json, --non-interactive, --help, --version.
 
 ## Interactive shortcuts
 
-Run `./bypass --project /path/to/your/app` to open the persistent workspace. Press Enter for the suggested action. Type `/` for a searchable command list: `/repo`, `/review`, `/results`, `/demo`, `/tests`, `/app`, `/models`, `/status`, `/history`, `/plugin`, `/settings`, `/help`, and `/quit`. The slash is optional. `?`, `back`, and `q` still work. `/help all` shows the complete catalog.
+Run `./bypass --project /path/to/your/app` to open the persistent workspace. Press Enter for the suggested action. Type `/` for a searchable command list: `/engine`, `/poc`, `/repo`, `/review`, `/results`, `/demo`, `/tests`, `/app`, `/models`, `/status`, `/history`, `/plugin`, `/settings`, `/help`, and `/quit`. The slash is optional. `?`, `back`, and `q` still work. `/help all` shows the complete catalog.
 
 Use ↑↓ and Enter in menus, Tab to complete a slash command, ↑↓ on an empty command bar to recall session commands, Ctrl+O to expand operation details, PgUp/PgDn to scroll, and Esc to clear a draft, go back, or stop a running operation. Ctrl+C exits with saved project state retained. Enter skips a running model connection check. A local fixture startup finishes its short setup before cleanup; its footer says when it cannot be interrupted.
 
@@ -15,6 +15,18 @@ Use ↑↓ and Enter in menus, Tab to complete a slash command, ↑↓ on an emp
 These shortcuts belong to the interactive screen; shell commands use the catalog below. Raw catalog commands also work inside the workspace, except processes that need their own terminal (`auth login`, `mcp serve`, internal server commands). A foreground monitor worker requested in the workspace starts detached; `monitor worker --once` runs a single tick. Stopping `run watch` stops watching, not the background job; use `run stop <id>` to request job cancellation.
 
 For a scrolling interface or screen reader, use `BYPASS_PLAIN=1 ./bypass`. `TERM=dumb` also selects the plain interface. `NO_COLOR=1` disables color. JSON and noninteractive output never use the full-screen renderer.
+
+## poc / poc start / poc stop
+
+`poc` creates a separate local app and opens the workspace with real Docker agents selected. Docker and a configured model are required for review. The fixture uses two public accounts; model calls analyze actual source, and HTTP controls determine the findings. `--dir` must be empty; `--model` selects a Muse model ID. Existing active project profiles are reused when `--project` is supplied. `poc start` is the scriptable setup and also supports `--port`; it returns the project root. `poc stop --project <root>` stops the fixture app and preserves evidence.
+
+## engine use <docker|mock> / engine doctor / engine prepare
+
+Select real agents or offline preview. `engine doctor` checks Docker and the shared model profile; `engine prepare` builds the image. All three roles share one model profile. Source excerpts go to that provider. Docker services have no direct network, credentials or repository mounts. No mock fallback occurs on failure.
+
+## probe add <name> / probe list
+
+Configure one exact owner-owned JSON resource for HTTP proof. Options: `--target`, `--path`, `--resource-id`, `--owner`, `--outsider`, `--id-field` (default `id`), `--identity-field` (default `id`). Both identities need an authorized `--check-path` returning distinct account IDs. Credentials stay in environment variables. Up to six probes per target. Reusing a probe name updates that binding. `probe list` shows configured probes.
 
 ## demo
 
@@ -180,7 +192,7 @@ Remove a model profile.
 
 ## scan
 
-Replay saved checks, then run simulated analysis. Human-readable output calls a completed mock scan a review preview and explicitly marks the example as unverified. Scripted exit code 3 is retained because mocked discovery provides no real security verdict. Saved-check failures remain visible separately.
+Replay saved checks, then run the selected engine. Real mode uses shared-model Docker agents and scoped HTTP controls. Code-only review does not make HTTP requests. Confirmation and failed regressions return exit 1; bounded/no-confirmation and blocked reviews return exit 3. Human-readable output calls a completed mock scan a review preview and explicitly marks the example as unverified. Scripted exit code 3 is retained because mocked discovery provides no real security verdict. Saved-check failures remain visible separately.
 
 Options: --mode, --target, --base, --full, --plan, --detach.
 
@@ -196,7 +208,7 @@ Show evidence, history, and remediation context.
 
 ## verify <finding-id>
 
-Verify a fixture candidate; deployed-app engine remains mocked.
+Reproduce a real finding with its bound HTTP controls. Source hypotheses need a matching approved probe. Offline samples cannot become deployed proof.
 
 Options: --target.
 
@@ -218,7 +230,7 @@ Show a check and environment bindings.
 
 ## test save <finding-id>
 
-Save a regression after a verified fixture fix.
+Save a regression after a verified fix.
 
 ## test run [id]
 

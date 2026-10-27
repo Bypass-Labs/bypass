@@ -6,8 +6,10 @@ import path from 'node:path';
 import { Fault, redact } from './util.mjs';
 
 export const commands = [
-  ['review', 'Preview the connected repository'],
+  ['review', 'Review the connected repository'],
   ['demo', 'Walk through proof, fix and regression'],
+  ['engine', 'Real Docker agents and HTTP proof setup'],
+  ['poc', 'Start a real AI POC with a separate local app'],
   ['results', 'Open results and their next action'],
   ['tests', 'Replay or export saved tests'],
   ['repo', 'Choose your application repository'],
@@ -69,7 +71,7 @@ export function frame(state, columns, rows, now=Date.now()) {
     put(`App    ${state.context.app||'optional · add a deployed URL during setup'}`, 'muted');
     put(`Model  ${state.context.model||'Muse subscription · local · self-hosted'}`, 'muted');
   }
-  put(width<70?'Prototype · simulated analysis; real fixture proof':'Prototype · discovery simulated; fixture proof & replay real','warning');
+  put(state.context.engine==='docker'?(width<70?'POC · real Docker agents · bounded scope':'POC · real Docker agents · source hypotheses + observed HTTP proof'):(width<70?'Offline preview · simulated discovery':'Offline preview · simulated discovery; use /engine for real AI'),'warning');
   put(divider,'rule');
 
   const bottom=[];

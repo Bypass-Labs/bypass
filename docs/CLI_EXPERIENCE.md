@@ -4,7 +4,7 @@ Start with `./bypass`, or reopen a connected application with `./bypass --projec
 
 ![Actual local walkthrough after proving and fixing the example issue](assets/cli-walkthrough.png)
 
-This image is rendered from a real terminal session, after the local HTTP controls changed from 200/200/401 to 200/403/401. Discovery remains simulated. The screen is not evidence of a vulnerability in a customer application.
+This image is rendered from a real terminal session, after the local HTTP controls changed from 200/200/401 to 200/403/401. This screenshot shows the older offline walkthrough; discovery in that mode is simulated. Use `bypass poc` for real Docker agents. The screen is not evidence of a vulnerability in a customer application.
 
 | What you want | Interaction |
 | --- | --- |
@@ -21,7 +21,7 @@ Menus accept arrow keys or numbers. The input supports editing, long pasted path
 
 `BYPASS_PLAIN=1 ./bypass` preserves a plain scrolling interface, including for screen readers. `TERM=dumb` also uses plain mode. `NO_COLOR=1` removes color. Scripted commands and `--json` keep their original output and exit codes.
 
-The workspace offers defined commands and guided actions. Free-form model conversation remains in Muse. Selecting a model profile or a connection check does not turn the mocked analysis engines into real discovery.
+The workspace offers defined commands and guided actions. Free-form model conversation remains in Muse. Use `/engine` to select real Docker agents and configure HTTP proof, or `/poc` for the separate real-AI exercise. The header identifies the selected engine. See [the POC walkthrough](REAL_POC.md).
 
 ## Interaction references
 

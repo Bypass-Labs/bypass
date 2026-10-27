@@ -33,7 +33,7 @@ export async function onboard(options={}, args=[], io={}) {
     const work=signal=>execute(key,argv,{...flags,project:root},{signal});
     return io.activity?io.activity(key,work):work(io.signal);
   };
-  say('\nBYPASS / Get started\nReal setup and saved checks. Analysis engines are mocked.');
+  say('\nBYPASS / Get started\nConnect your application, then choose /engine for real Docker agents. Offline preview is also available.');
   say('Press Enter for the recommended next action. Your progress is saved.');
   const flow=options.flow||((options.repo||options.project||args[0])?'quickstart':(await pick('How would you like to start?',[
     {label:'Connect my application (recommended) — repository + live app',id:'quickstart'},
@@ -139,7 +139,7 @@ export async function onboard(options={}, args=[], io={}) {
       }
       say('Load those variables in your terminal before testing accounts or starting Muse. Test the connections in Targets & identities.');
     });
-  }else say('No test accounts are needed for this preview. Deployed-app investigation is mocked; advanced account setup is available in Settings.');
+  }else say('No test accounts are needed for the offline preview. Use /engine to enable real Docker agents and guided account/resource setup.');
   say('The CLI works on its own. The Muse plugin is optional.');
   if(await yes('Connect the Muse Code plugin now?'))try{
     say('Checking the existing Muse plugin installation…');
@@ -193,7 +193,7 @@ export async function onboard(options={}, args=[], io={}) {
     io.task?.(3,'done');io.setNext?.('Run a review preview, or /demo for the complete proof loop');
     say('\nSetup saved\n');
     say(`  Repository    ${root}\n  Model         ${info.model?`${info.model.name} · ${info.model.connection}`:'add later'}\n  App           ${info.target?`${info.target.url} · ${info.target.authorized?'verified and authorized':info.target.ownership==='verified'?'scope required':'verification pending'}`:'add later; code-only review available'}\n  Test accounts ${read(root).identities.length} references\n  Muse plugin   ${museInstalled?'installed; approve in Muse':'optional'}`);
-    say('\nAnalysis is simulated. Fixture proof and saved-test replay are real.');
+    say('\nOffline preview is selected. Use /engine for real source review and scoped HTTP proof, or /poc for a separate real-AI test app.');
     say('\nYour review\n'+reviewSummary(info.review));
     say('Ready: your review preview. Press Enter on the next screen to continue.\nApp verification and plugin setup are available later in Settings.');
     const openDashboard=io.inDashboard||io.rich||await yes('Open my project?','y');

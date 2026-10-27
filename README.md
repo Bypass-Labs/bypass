@@ -4,21 +4,21 @@
 
 Bring application source, a running app, and saved security checks into one workflow—in **Muse Code** or a **guided terminal workspace**. Keep the evidence and the next step with your project.
 
-[Muse plugin](#use-with-muse-code) · [CLI quick start](#use-the-cli) · [Try the demo](#try-the-complete-demo) · [Documentation](#documentation)
+[Muse plugin](#use-with-muse-code) · [CLI quick start](#use-the-cli) · [Real AI POC](#try-the-real-ai-poc) · [Documentation](#documentation)
 
-> **Prototype status:** source discovery and deployed-app investigation are mocked. Repository connection, model checks, DNS ownership, local fixture proof, exported tests, and local scheduling work today. The demo walks through the complete proof-to-regression journey.
+> **v0.2 POC:** real white-box and black-box Docker agents share one model profile with the orchestrator. They review source and prove missing-authentication / cross-account JSON resource access with actual HTTP controls. Coverage is bounded. The older offline demo remains explicitly seeded.
 
 ## Why Bypass
 
 - **Work where you already code.** Give Muse one prompt, or use the CLI. Both share your application's saved Bypass settings and evidence.
-- **Choose where inference runs.** Use a compatible **local Muse / local model server for greater privacy**, **bring your own self-hosted model**, or **use your existing Muse Code subscription**. The plugin uses your current Muse session by default.
-- **Keep verified fixes as tests.** The local demo saves a check after a verified fix. Export ordinary Node tests; replay with **zero model calls**.
+- **Choose where inference runs.** Use a compatible **local Muse / local model server for greater privacy**, **bring your own self-hosted model**, or **use your existing Muse Code subscription**. For real agent runs, select a shared profile matching your Muse model; see [model inheritance](docs/REAL_POC.md#muse-plugin).
+- **Keep verified fixes as tests.** Real HTTP-confirmed findings become saved checks after a fix passes the account controls. Export ordinary Node tests; replay with **zero model calls**.
 - **See what is happening.** Keep repository/app/model context, completed steps, elapsed time, expandable activity, and the next action visible.
 - **Resume without starting over.** Reopen saved results or finish DNS later. Local schedules replay checks while their worker and machine remain running.
 
 ## Get Bypass
 
-Requires **Node.js 22+**, **Git**, and repository access. Add Muse Code for the plugin or subscription model option. No `npm install` or separate Bypass account is needed.
+Requires **Node.js 22+**, **Git**, and repository access. Real agents also require a running **Docker engine** and a model connection. Add Muse Code for the plugin or subscription model option. No `npm install` or separate Bypass account is needed.
 
 ```bash
 git clone https://github.com/Bypass-Labs/bypass-for-muse.git ~/bypass-for-muse
@@ -47,9 +47,9 @@ muse
 
 **3. Paste this prompt.** Replace the example URL with your staging app:
 
-> Use Bypass to review this repository and its staging app at https://staging.example.com. Walk me through setup and show me what to do next.
+> Use Bypass's real Docker agents to review this repository and its staging app at https://staging.example.com. Use the same model as this session, guide setup, and prove findings with HTTP controls.
 
-Bypass uses this repository and your current Muse model, guides ownership and scope setup, then shows the source/app pairing and review preview. Code preview can continue while DNS is pending. White-box/source and black-box/app stages show their actual prototype status.
+Bypass connects this repository, selects one shared model profile, and guides ownership, scope, two test-account references and a known owner-owned JSON resource. Source review can continue while DNS is pending. Source hypotheses and HTTP-confirmed findings are labeled separately. If the host model ID is unavailable, it asks which profile to use.
 
 Or start with **`/bypass:review`**. Use **`/bypass:context`** for saved evidence and monitor results in a later session.
 
@@ -67,11 +67,12 @@ Press Enter for **Connect my application**. Bypass guides you through:
 2. **Model** — choose Muse Code, a compatible local server, or your own endpoint. The connection test is optional.
 3. **Running app** — enter its URL and environment, or add it later. Publish the generated DNS TXT record now or continue the preview while DNS propagates. Authorize testing scope separately after verification.
 
-The workspace opens automatically. **Press Enter for your first review preview**, or type **`/`** to browse commands. This path needs no finding IDs or memorized commands.
+The workspace opens automatically. **Type `/engine` and choose Real AI agents** to finish the account/resource setup, then **`/review`**. Type **`/`** to browse commands. Existing offline-preview settings are preserved until you switch engines.
 
 | Command inside Bypass | What it does |
 | --- | --- |
-| `/review` · `/results` | Preview this repository and open its results |
+| `/review` · `/results` | Review this repository and inspect evidence |
+| `/engine` · `/poc` | Configure real agents or start a separate real AI exercise |
 | `/repo` · `/app` | Change the source repository or resume app/DNS setup |
 | `/models` | Choose a model connection or test it |
 | `/tests` | Replay or export saved regression tests |
@@ -89,7 +90,19 @@ Reopen the same application later:
 
 For a scrolling interface or screen reader, use `BYPASS_PLAIN=1 ~/bypass-for-muse/bypass`. Scripts can use `--json` and `--non-interactive`; see the [full command reference](docs/COMMANDS.md).
 
-## Try the complete demo
+## Try the real AI POC
+
+With Docker running and Muse signed in:
+
+```bash
+~/bypass-for-muse/bypass poc
+```
+
+This opens a separate local app with two test accounts. Press Enter to run actual AI source discovery and HTTP proof. Inspect the finding, fix `policy.mjs`, then use `/results` → **Retest a fix** and `/tests` → **Export standalone Node tests**. Reintroduce the bug to see both saved and exported tests fail with zero model calls.
+
+The orchestrator and both Docker agents share one selected model profile. Model usage applies; use `/models` for local or self-hosted inference. [Full POC walkthrough, customer-app setup and boundaries](docs/REAL_POC.md).
+
+## Try the offline demo
 
 **No model login, DNS record, or customer test accounts needed.** Run:
 
@@ -120,13 +133,13 @@ Discovery is seeded; HTTP proof, the fix, and replay execute for real. The demo 
 | **Your self-hosted model** | Use inference infrastructure your team controls | A compatible HTTPS endpoint, model ID, and optional credential reference |
 | **Muse Code subscription** | Use your existing coding account and provider | Installed Muse CLI and your existing login |
 
-Model weights are not bundled. Optional connection checks send a synthetic prompt and may use provider allowance. Mock discovery and replay make zero model calls. Credentials use environment-variable references; evidence and transcripts are stored in your project's `.bypass/` folder.
+Model weights are not bundled. Optional connection checks send a synthetic prompt and may use provider allowance. Offline mock discovery and saved regression replay make zero model calls. Real agent reviews send selected source excerpts to the configured model. Credentials use environment-variable references; evidence and transcripts are stored in your project's `.bypass/` folder.
 
 **Inside Muse, its configured model and privacy settings apply.** Selecting a local profile in the standalone CLI does not change a separate Muse session's provider.
 
 ## Current scope
 
-Customer-app discovery and live investigation remain mocked; DNS and credentials do not enable those engines. The complete proof loop works in the isolated fixture. Hosted scheduling and deployment attestation are not connected. See [architecture](docs/ARCHITECTURE.md) and [validation](docs/VALIDATION.md) for details.
+Real analysis is available through `engine use docker` or `/engine`. The POC supports missing authentication and cross-account access on explicitly configured JSON resources; it does not cover arbitrary browser workflows or every vulnerability class. Hosted scheduling and deployment attestation are not connected. See [architecture](docs/ARCHITECTURE.md) and [validation](docs/VALIDATION.md) for details.
 
 ## Updating
 
@@ -145,6 +158,7 @@ If Muse requests renewed capability approval, review the changes and run `muse p
 
 ## Documentation
 
+- [Real Docker-agent POC and proof-to-regression walkthrough](docs/REAL_POC.md)
 - [Application setup and DNS walkthrough](docs/WALKTHROUGH.md)
 - [Interactive workspace and controls](docs/CLI_EXPERIENCE.md)
 - [CLI commands and automation flags](docs/COMMANDS.md)

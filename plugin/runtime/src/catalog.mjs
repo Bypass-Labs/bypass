@@ -1,6 +1,9 @@
 // One catalog drives strict CLI parsing, help, and the command reference.
 const command=(usage,description,flags='',extra={})=>({usage,description,flags:flags.split(' ').filter(Boolean),...extra});
 export const commands={
+  poc:command('poc','Open a real-AI, two-container POC with a local test app.','dir model'),
+  'poc start':command('poc start','Create a separate POC app with public accounts and real Docker agents.','dir port model'),
+  'poc stop':command('poc stop','Stop this POC fixture app; preserve its evidence.'),
   demo:command('demo','Guided local walkthrough: prove, fix, retest, and catch a regression.','dir'),
   onboard:command('onboard [path]','Guided QuickStart, resumable app verification, or local demo.','repo dir flow'),
   init:command('init [path]','Connect a repository and configure a project.','repo dir config name'),
@@ -34,14 +37,19 @@ export const commands={
   'model use':command('model use <name>','Select the model profile.'),
   'model test':command('model test [name]','Send a synthetic smoke prompt, without repository content.'),
   'model remove':command('model remove <name>','Remove a model profile.'),
-  scan:command('scan','Replay saved checks, then run simulated analysis.','mode target base full plan detach'),
+  'engine use':command('engine use <docker|mock>','Select real Docker agents or the offline mocked preview.'),
+  'engine doctor':command('engine doctor','Check Docker and the shared inference profile.'),
+  'engine prepare':command('engine prepare','Build the agent image for both Docker services.'),
+  'probe add':command('probe add <name>','Configure an exact authorized JSON resource and account controls.','target path resource-id owner outsider id-field identity-field'),
+  'probe list':command('probe list','List approved resources for live agent probes.','target'),
+  scan:command('scan','Replay saved checks, then review with the selected analysis engine.','mode target base full plan detach'),
   'finding list':command('finding list','List findings, with simulation and evidence labels.','target run status severity'),
   'finding show':command('finding show <id>','Show evidence, history, and remediation context.'),
-  verify:command('verify <finding-id>','Verify a fixture candidate; deployed-app engine remains mocked.','target'),
+  verify:command('verify <finding-id>','Reproduce a finding using its scoped HTTP controls.','target'),
   retest:command('retest <finding-id>','Check a deployed fix and save a standalone regression.','target build'),
   'test list':command('test list','List saved regression checks.','target'),
   'test show':command('test show <id>','Show a check and environment bindings.'),
-  'test save':command('test save <finding-id>','Save a regression after a verified fixture fix.'),
+  'test save':command('test save <finding-id>','Save a regression after a verified fix.'),
   'test run':command('test run [id]','Replay deterministic checks with zero model calls.','all target detach'),
   'test bind':command('test bind [id]','Bind a saved check to an authorized environment.','all target file'),
   'test export':command('test export [id]','Write ordinary Node tests with no Bypass dependency.','all target out force'),
@@ -99,5 +107,5 @@ export function help(key){
   const selected=commands[key];
   if(selected)return `bypass ${selected.usage}\n\n${selected.description}\n\nOptions: ${selected.flags.map(x=>'--'+x).join(', ')||'(none)'}\nGlobal: --project <path>, --json, --non-interactive, --help\n`;
   const entries=Object.entries(commands).filter(([k,v])=>!v.hidden&&(!key||k.startsWith(key+' ')));
-  return `BYPASS  /  security checks that stay with your code\n\nStart here: ./bypass demo — complete guided walkthrough; no DNS or login needed.\nYour project: ./bypass onboard — connect a repository and preview a review.\n\nRunnable skeleton · analysis engines are MOCKED\n\n${entries.map(([,v])=>`  ${v.usage.padEnd(38)} ${v.description}`).join('\n')}\n\nGlobal: --project <path>, --json, --non-interactive, --help, --version\nExit codes: 0 success · 1 failed regression · 2 usage/config · 3 blocked/incomplete (including mock scan results) · 130 cancelled\n`;
+  return `BYPASS  /  security checks that stay with your code\n\nStart here: ./bypass demo — complete guided walkthrough; no DNS or login needed.\nYour project: ./bypass onboard — connect a repository and preview a review.\n\nPOC · real Docker agents via engine use docker; offline mock preview available\n\n${entries.map(([,v])=>`  ${v.usage.padEnd(38)} ${v.description}`).join('\n')}\n\nGlobal: --project <path>, --json, --non-interactive, --help, --version\nExit codes: 0 success · 1 failed regression · 2 usage/config · 3 blocked/incomplete (including mock scan results) · 130 cancelled\n`;
 }

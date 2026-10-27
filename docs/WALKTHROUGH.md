@@ -1,5 +1,7 @@
 # Connect your application with Bypass
 
+**For the real AI version:** start with [`bypass poc` or `/engine`](REAL_POC.md). The setup below also supports the optional offline preview; seeded results in that mode are not real discoveries.
+
 Choose the application source, connect its deployed app, then review the white-box and black-box stages together.
 
 ## Connect your own repository and app
@@ -56,7 +58,7 @@ Once ownership is verified, explicitly authorize the testing paths. Defaults are
 
 ### 4. Optional connections
 
-Basic setup skips test-account collection because deployed-app investigation is mocked. In Advanced setup, after authorization, you can add two test-account references for later use. Enter environment-variable names, never token values. Load the actual values privately in the terminal that launches Bypass or Muse.
+Basic setup leaves account/resource configuration to `/engine`. Choose real Docker agents there to add two test-account references, login controls and an owner-owned JSON resource. Advanced settings also expose account configuration. Enter environment-variable names, never token values. Load the actual values privately in the terminal that launches Bypass or Muse.
 
 The Muse plugin is optional. If Bypass is already installed from another checkout, setup recognizes it and does not try to install a conflicting copy. Review native capabilities with `muse plugins inspect bypass`, approve those you want with `muse plugins approve bypass`, and start a new session in your connected repository. Use `/bypass:review` there. To refresh an existing plugin later, use `muse plugins update bypass`.
 
@@ -129,7 +131,7 @@ Type `q` at any step to leave. Partial evidence is kept and the local server sto
 
 After native plugin setup, start a new Muse session and run `/bypass:review`. Bypass asks for the application repository first; it never initializes the current folder silently. An explicit request naming the repository supplies that selection without an extra confirmation. Give the actual source path or Git URL, then the app URL and its environment.
 
-All subsequent Bypass tools use the selected repository for this session. The plugin shows repository, remote, branch, app, white-box status, and black-box status before a review. Muse keeps its host model/account. DNS pending means the black-box stage waits; the code preview can proceed. A simulated result offers the local walkthrough rather than asking for identities that cannot produce real deployed-app proof yet.
+All subsequent Bypass tools use the selected repository for this session. The plugin shows repository, remote, branch, app, white-box status, and black-box status before a review. For real agents, select one shared Bypass model profile matching the known Muse provider/model ID; the plugin asks when that information is unavailable. DNS pending means the black-box stage waits; the code preview can proceed. Offline preview stays labeled; real Docker mode uses configured accounts/resources for actual proof.
 
 If the selected source differs from Muse’s editor folder, open a new Muse session in the application before editing a fix. Repository changes do not transfer DNS challenges, authorizations, identities, or findings from another project.
 

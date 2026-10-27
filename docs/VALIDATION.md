@@ -1,5 +1,28 @@
 # Verification record
 
+## v0.2 real Docker-agent POC — 2026-10-26
+
+Verified with the installed Muse subscription CLI and a local Docker VM. Both workers ran in separate containers using the same immutable model profile as the orchestrator. The live scan used **4 real model calls**, took **45 seconds**, read actual `policy.mjs` / `server.mjs`, cited `policy.mjs:2`, and reproduced unauthorized invoice access.
+
+| Check | Observed result |
+| --- | --- |
+| Owner / outsider login controls | HTTP 200 / 200, distinct account IDs |
+| Vulnerable resource | Owner 200, outsider 200, anonymous 401 |
+| Fixed resource | Owner 200, outsider 403, anonymous 401 |
+| Independent exported Node test on fixed app | Exit 0 |
+| Reintroduced defect: saved replay / exported suite / scheduler | Exit 1 / 1 / 1 |
+| Replay and scheduler inference | 0 model calls |
+| Final fixture state | Fixed, app stopped, schedule paused |
+| Automated suite including real Docker startup/cancellation | 59/59 passing |
+| Native Muse plugin validation | v0.2.0 valid, no diagnostics |
+
+[Machine-readable live evidence](evidence/real-poc-2026-10-26.json). The controlled unit/integration tests use explicitly scripted inference to test failure cases; the evidence above comes from actual Muse inference. An initial live run retained real proof but timed out on a redundant final model summary. Removing that extra round-trip and using bounded low-effort inference produced the completed run recorded here.
+
+Scope: the supplied local example API, not a customer production system. External DNS setup and real customer account credentials still need to be supplied per application. Docker cancellation removed its worker container; invalid outsider credentials were blocked; fabricated source citations and path escapes were rejected. This does not establish coverage for unsupported vulnerability classes.
+
+The records below describe the earlier offline skeleton and remain historical.
+
+
 Validated locally on 2026-10-26 with Node v22.14.0 and Muse Code 1.4.13.
 
 ## Latest: a persistent terminal workspace

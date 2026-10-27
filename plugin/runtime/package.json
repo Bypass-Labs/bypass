@@ -1,11 +1,15 @@
 {
   "name": "@bypass-labs/cli-skeleton",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
-  "description": "Runnable Bypass journey: real onboarding and regression replay, explicitly simulated analysis engines.",
+  "description": "Bypass POC: shared-model Docker agents, scoped HTTP proof, and deterministic security regressions.",
   "type": "module",
-  "bin": { "bypass": "bin/bypass.mjs" },
-  "engines": { "node": ">=22" },
+  "bin": {
+    "bypass": "bin/bypass.mjs"
+  },
+  "engines": {
+    "node": ">=22"
+  },
   "scripts": {
     "start": "node bin/bypass.mjs",
     "test": "node --test test/*.test.mjs",

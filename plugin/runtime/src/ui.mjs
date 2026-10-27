@@ -27,9 +27,9 @@ export function printResult(data){
     const p=value.plan;
     console.log(`\n${bold('Review plan')} · ${p.mode==='code'?'code only':p.mode}\n`);
     console.log(reviewSummary(p));
-    console.log(`  App           ${p.mode==='code'?'no live requests':p.target||'not connected'}\n  Saved checks  ${p.savedChecks}${p.mode==='code'?' · replay requires an authorized app':' · replay first'}\n  Source        stays on this machine\n  Analysis      simulated · no model calls\n  Evidence      saved locally`);
+    console.log(`  App           ${p.mode==='code'?'no live requests':p.target||'not connected'}\n  Saved checks  ${p.savedChecks}${p.mode==='code'?' · replay requires an authorized app':' · replay first'}\n  Source        ${p.simulation?'local inventory only':'selected excerpts sent to '+p.model?.destination}\n  Analysis      ${p.simulation?'simulated · no model calls':'real Docker agents · shared model'}\n  Evidence      saved locally`);
     if(p.blockers.length)console.log(`\n${paint('33','Setup needed:')}\n${p.blockers.map(x=>'  '+x).join('\n')}`);
-    else console.log('\nReady for a walkthrough review. Simulated results are not a security verdict.');
+    else console.log(p.simulation?'\nReady for a walkthrough review. Simulated results are not a security verdict.':'\nReady for a bounded real review. Model usage applies; HTTP evidence decides confirmation.');
     return;
   }
   if(value.run){
@@ -50,7 +50,7 @@ export function printResult(data){
   if(value.target?.challenge){const t=value.target;console.log(`\n${bold(t.name)} · ${t.url}\nOwnership: ${t.ownership?.status||'pending'}\n`);if(t.environment==='local')console.log(`Next: bypass target verify ${t.name} --method local`);else console.log(`Publish TXT record:\n  Name:  ${t.challenge.record}\n  Value: ${t.challenge.token}\n\nOr serve exactly that value at:\n  ${t.url}${t.challenge.httpPath}\n\nThen: bypass target verify ${t.name} --method dns`);if(t.authorization)console.log(`Scope: ${t.authorization.paths.join(', ')} · expires ${t.authorization.expiresAt}`);return;}
   if(value.findings){console.log(`\n${value.findings.length} findings`);for(const f of value.findings)console.log(`  ${bold(f.id)}  ${f.title}\n    ${label(f.status)} · ${f.fixture?'local fixture':f.simulation?'SIMULATED · unproven':'evidence available'}`);return;}
   if(value.checks&&Array.isArray(value.checks)){console.log(`\n${value.checks.length} saved checks`);for(const c of value.checks)console.log(`  ${bold(c.id)}  ${c.title||c.behavior}\n    ${c.status||c.lastResult?.status||'not run'} · ${c.enabled===false?'disabled':c.target}`);if(value.message)console.log(value.message);return;}
-  if(value.finding){const f=value.finding;const next=f.fixture?`bypass ${f.status==='confirmed_fixture'?'retest':'verify'} ${f.id}`:'bypass demo — complete the proof loop in a separate local app';console.log(`\n${bold(f.title)}\n${f.id} · ${label(f.status)}\n\n${f.hypothesis}\n\n${f.sourceEvidence?.message||''}\n\nFix: ${f.recommendation}\n\nNext: ${next}`);if(f.verification)console.log(JSON.stringify(f.verification,null,2));return;}
+  if(value.finding){const f=value.finding;const next=f.fixture||f.engine==='docker'?`bypass ${['confirmed_fixture','confirmed','regression_failed'].includes(f.status)?'retest':'verify'} ${f.id}`:'bypass demo — complete the proof loop in a separate local app';console.log(`\n${bold(f.title)}\n${f.id} · ${label(f.status)}\n\n${f.hypothesis}\n\n${f.sourceEvidence?.file?`${f.sourceEvidence.file}:${f.sourceEvidence.line}\n${f.sourceEvidence.quote}`:f.sourceEvidence?.message||''}\n\nFix: ${f.recommendation}\n\nNext: ${next}`);if(f.verification)console.log(JSON.stringify(f.verification,null,2));return;}
   if(value.installed&&value.next){console.log(`\n${value.message}\n${value.next}`);return;}
   if(value.message)console.log(`\n${value.message}`);
   const rest={...value};delete rest.schemaVersion;delete rest.exitCode;delete rest.message;
@@ -108,7 +108,7 @@ export async function modelTestWizard(root,name,{interactive=process.stdin.isTTY
 function updateWorkspace(prompt,root){
   if(!prompt.setContext)return;
   const info=readiness(root);
-  prompt.setContext({title:info.project.name,repo:root,branch:info.project.repository.branch,app:info.target?`${info.target.url} · ${info.target.authorized?'authorized':info.target.ownership==='verified'?'scope required':'DNS pending'}`:'not connected · code preview available',model:info.model?`${info.model.name} · ${info.model.provider} · ${info.model.connection}`:'not configured · optional for this preview'});
+  prompt.setContext({engine:info.engine.mode,title:info.project.name,repo:root,branch:info.project.repository.branch,app:info.target?`${info.target.url} · ${info.target.authorized?'authorized':info.target.ownership==='verified'?'scope required':'DNS pending'}`:'not connected · code preview available',model:info.model?`${info.model.name} · ${info.model.provider} · ${info.model.connection}`:'not configured · optional for this preview'});
 }
 async function modelWizard(ask,root,io){
   const choice=await choose(ask,[{label:'Muse Code subscription',provider:'muse-code'},{label:'Local model · inference on this machine',provider:'local'},{label:'Your self-hosted compatible endpoint',provider:'endpoint'}],'Where should model inference run?');if(!choice)return;
@@ -155,17 +155,19 @@ export async function terminal(options={},io){
     if(prompt.rich&&['auth login','mcp serve','_run','_demo-serve'].includes(key))throw new Fault('Run this process in a separate shell. Type /help for commands available in this workspace.');
     if(prompt.rich&&key==='monitor worker'&&!flags.once&&!flags.stop&&!flags.detach)flags={...flags,detach:true};
     let lastStage=-1;
-    if(key==='scan')prompt.setTasks?.('Review preview',['Saved checks / scope','Local source inventory','Simulated discovery']);
+    const real=read(root).settings.analysisEngine==='docker';
+    const stages=real?['replay','containers','orchestrator','white-box','black-box']:['replay','inventory','mock-analysis'];
+    if(key==='scan')prompt.setTasks?.(real?'Real AI review':'Review preview',real?['Saved checks','Docker services','Shared-model plan','White-box source review','Black-box HTTP proof']:['Saved checks / scope','Local source inventory','Simulated discovery']);
     const work=async signal=>{
       const result=await execute(key,args,{project:root,...flags},{signal,onProgress:step=>{
         prompt.write?.(step.message);
-        if(key==='scan'){if(lastStage>=0)prompt.task?.(lastStage,'done');lastStage=['replay','inventory','mock-analysis'].indexOf(step.stage);prompt.task?.(lastStage,'running');}
+        if(key==='scan'){if(lastStage>=0)prompt.task?.(lastStage,'done');lastStage=stages.indexOf(step.stage);prompt.task?.(lastStage,'running');}
       }});
       if(result.exitCode===130)throw new Fault('Run stopped. Partial evidence is saved.',130,{cancelled:true});
       if(key==='scan'&&lastStage>=0)prompt.task?.(lastStage,previewRun(result.run)?'done':'attention');
       return result;
     };
-    const result=prompt.activity?await prompt.activity(key==='scan'?'Review repository · simulated discovery':key==='test run'?'Replay saved checks · no model':key,work,{verdict:r=>r.exitCode&&!(previewRun(r.run)&&r.exitCode===3)?'attention':'done'}):await work(prompt.signal);
+    const result=prompt.activity?await prompt.activity(key==='scan'?(real?'Review repository · real Docker agents':'Review repository · simulated discovery'):key==='test run'?'Replay saved checks · no model':key,work,{verdict:r=>r.exitCode&&!(previewRun(r.run)&&r.exitCode===3)?'attention':'done'}):await work(prompt.signal);
     printResult(result);return result;
   };
   const tour=async(flags={})=>{try{return await guidedDemo(flags,prompt);}finally{if(prompt.rich)updateWorkspace(prompt,root);}};
@@ -174,14 +176,14 @@ export async function terminal(options={},io){
     if(!findings.length){console.log('\nNo review results yet. Press Enter on the home screen to run the first preview.');return;}
     const finding=findings.length===1?findings[0]:await choose(ask,findings.map(f=>({...f,label:`${f.title} · ${label(f.status)}`})),'Review results');
     if(!finding)return;
-    if(!finding.fixture){
+    if(!finding.fixture&&finding.engine!=='docker'){
       prompt.setNext?.('Try the local walkthrough to prove the example and save a regression test');
       console.log(`\n${bold('Example scenario / account access')}\nCould another account read a resource owned by someone else?\n\nThis sample demonstrates how a finding will look. It was not discovered in your code.\nThe deployed-app investigation engine is not built yet; DNS verification will not turn this sample into a verified vulnerability.`);
       const action=await choose(ask,[{label:'See the full prove → fix → retest walkthrough in a local app',id:'demo'},{label:'Show saved scenario details',id:'details'}],'Next step');
       if(action?.id==='demo')await tour();else if(action?.id==='details')printResult({finding});
     }else{
       printResult({finding});
-      const action=await choose(ask,[{label:'Verify this local fixture',id:'verify'},{label:'Retest a fix',id:'retest'},{label:'Follow a fresh guided walkthrough',id:'demo'}],'Next step');
+      const action=await choose(ask,[{label:finding.engine==='docker'?'Reproduce with HTTP controls':'Verify this local fixture',id:'verify'},{label:'Retest a fix',id:'retest'},{label:'Follow a fresh guided walkthrough',id:'demo'}],'Next step');
       if(action?.id==='demo')await tour();else if(action)await run(action.id,[finding.id]);
     }
   };
@@ -233,6 +235,8 @@ export async function terminal(options={},io){
       const aliases={review:'4',results:'5',tests:'6',app:prompt.rich?'app':'1',models:'3',plugin:'10'};
       choice=aliases[choice]||choice;
       try{
+        if(choice==='engine'){await engineWizard(ask,root,run);continue;}
+        if(choice==='poc'){const result=await run('poc start',[],{project:root});root=result.root;updateWorkspace(prompt,root);continue;}
         if(choice==='demo'||choice==='walkthrough'){await tour();continue;}
         if(choice==='repo'){const result=await onboard({flow:'quickstart'},[],{...prompt,inDashboard:true});root=result.root;continue;}
         if(choice==='app'){
@@ -267,9 +271,9 @@ export async function terminal(options={},io){
           const ready=readiness(root).ready.liveTesting;
           const mode=ready?'combined':'code';
           console.log('\n'+reviewSummary(readiness(root).review));
-          console.log(`\nRunning your review preview${ready?'':' (code only; app verification can wait)'}…`);
+          console.log(`\nRunning your ${read(root).settings.analysisEngine==='docker'?'real AI review':'review preview'}${ready?'':' (code only; app verification can wait)'}…`);
           const result=await run('scan',[],{mode});
-          if(previewRun(result.run)&&result.run.result.findings.length)await showResults();
+          if(result.run?.result?.findings?.length)await showResults();
         }
         else if(choice==='5')await showResults();
         else if(choice==='6'){
@@ -293,4 +297,39 @@ export async function terminal(options={},io){
     }
   }finally{close?.();}
   console.log(muted(`\nProject state saved. Reopen from the Bypass checkout with:\n  ./bypass --project ${JSON.stringify(root)}\n`));
+}
+
+async function engineWizard(ask,root,run){
+  const mode=await choose(ask,[{id:'docker',label:'Real AI agents · two Docker services · model usage applies'},{id:'mock',label:'Offline preview · simulated discovery · no model usage'}],'Analysis engine');
+  if(!mode)return;
+  await run('engine use',[mode.id]);if(mode.id==='mock')return;
+  await run('engine doctor');
+  let state=read(root);
+  if(!state.activeModel){console.log('Choose the shared model in /models before reviewing.');return;}
+  const profile=state.models.find(m=>m.name===state.activeModel);
+  console.log(`Orchestrator + white-box + black-box all use ${profile.name} / ${profile.model}. Selected source excerpts go to ${profile.dataDestination}.`);
+  const target=state.targets.find(t=>t.name===state.activeTarget);
+  if(!target||!readiness(root).ready.liveTesting){console.log('Source review is ready. Use /app to finish ownership and scope before HTTP proof.');return;}
+  if(target.probes?.length){console.log(`${target.probes.length} authorized resource(s) configured. Use /review to begin.`);return;}
+  console.log('For real account-boundary proof, use two different test accounts and one resource belonging to the owner. Supply environment variable NAMES, never token values.');
+  const identities=[];
+  for(const role of ['owner','outsider']){
+    state=read(root);
+    const available=state.identities.filter(i=>i.target===target.name);
+    const selected=await choose(ask,[...available.map(i=>({id:i.name,label:`Use ${i.name} (${i.secretEnv})`})),{id:'__new',label:`Add ${role} account`}],`${role} identity`);
+    if(!selected)return;
+    if(selected.id!=='__new'){identities.push(selected.id);continue;}
+    const name=await ask('Account reference name',role);
+    const type=await ask('Credential type: bearer / cookie / header','bearer');
+    const secret=await ask('Credential environment variable',`BYPASS_${role.toUpperCase()}_TOKEN`);
+    const check=await ask('Signed-in identity endpoint','/api/me');
+    const header=type==='header'?await ask('Header name'):undefined;
+    await run('identity add',[name],{target:target.name,type,'secret-env':secret,'check-path':check,header});identities.push(name);
+  }
+  const resourcePath=await ask('Exact path to an owner-owned JSON resource (GET)');
+  const resourceId=await ask('Expected resource identifier');
+  const idField=await ask('JSON field identifying the resource','id');
+  const identityField=await ask('JSON field identifying the account at the identity endpoint','id');
+  await run('probe add',['primary'],{target:target.name,path:resourcePath,'resource-id':resourceId,owner:identities[0],outsider:identities[1],'id-field':idField,'identity-field':identityField});
+  console.log('Ready. Use /review for source analysis and real HTTP proof. Fix confirmed issues in your editor, then use /results → Retest a fix.');
 }

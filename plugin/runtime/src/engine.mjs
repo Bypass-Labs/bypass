@@ -5,11 +5,13 @@ import { replay } from './portable-check.mjs';
 import { id, now, named, need, outcome, aggregate, delay } from './util.mjs';
 import { scopeReady } from './network.mjs';
 import { demoConfig } from './demo.mjs';
+import { realEngine, realPlan, executeRealScan } from './real-engine.mjs';
 
 export function scanPlan(state,options={}){
   need(!(options.base&&options.full),'Choose --base or --full, not both.');
   const mode=options.mode || 'combined',targetName=options.target||state.activeTarget;
   need(['code','live','combined'].includes(mode),'Scan mode must be code, live, or combined.');
+  if(realEngine(state))return realPlan(state,options);
   const target=targetName?named(state.targets,targetName,'Target'):null;
   const blockers=[];
   if(mode!=='code'){
@@ -56,6 +58,8 @@ export async function executeRun(root,runId,externalSignal,onProgress){
     if(run.kind==='tests'||run.kind==='monitor'){
       await report('replay','Running saved checks without a model.');
       result=await runChecks(root,{all:!options.checkId,checkId:options.checkId,target:options.target,signal:controller.signal,runId});
+    }else if(realEngine(initial)){
+      result=await executeRealScan(root,runId,options,{signal:controller.signal,report});
     }else{
       const plan=scanPlan(initial,options);
       need(!plan.blockers.length,plan.blockers.join(' '),3,{plan});
@@ -84,8 +88,10 @@ export async function executeRun(root,runId,externalSignal,onProgress){
         message:'Walkthrough scan complete. Analysis is simulated; no real security conclusion is available.'};
     }
     if(controller.signal.aborted){result.exitCode=130;result.message='Run cancelled.';}
-  }catch(e){result={exitCode:controller.signal.aborted?130:(e.code||3),message:e.message,details:e.details||{},modelCalls:0};}
+  }catch(e){result={exitCode:controller.signal.aborted?130:(e.code||3),message:e.message,details:e.details||{},modelCalls:named(read(root).runs,runId,'Run').modelCalls||0,simulation:!realEngine(read(root)),engine:realEngine(read(root))?'docker':'mock'};}
   finally{clearInterval(timer);externalSignal?.removeEventListener('abort',cancel);}
+  const partial=named(read(root).runs,runId,'Run').partialRegression;
+  if(partial?.exitCode===1&&result.exitCode!==130){result.exitCode=1;result.regression??=partial.results;}
   const final=await change(root,s=>{const r=named(s.runs,runId,'Run');Object.assign(r,{status:result.exitCode===130?'cancelled':'completed',finishedAt:now(),exitCode:result.exitCode,result});event(s,'run-finished',`${r.kind}: ${r.status}`,{runId,exitCode:r.exitCode});return r;});
   writeEvidence(root,final);return outcome({run:final},final.exitCode);
 }
@@ -94,17 +100,20 @@ export async function verifyFinding(root,findingId,{target,build,retest=false,si
   target=target||finding.target||state.activeTarget;
   const t=named(state.targets,target,'Target');scopeReady(t);
   need(finding.target===target,'Finding is bound to another target. Add an explicit saved-test binding for another environment.',3);
-  if(!finding.fixture||!state.demo||target!==state.demo.target){
+  if(finding.engine!=='docker'&&(!finding.fixture||!state.demo||target!==state.demo.target)){
     const verification={status:'simulated_unproven',simulation:true,requests:0,modelCalls:0,reason:'The live verification engine is mocked. No exploit was sent to this deployed application.'};
     await change(root,s=>{const f=named(s.findings,findingId,'Finding');f.history.push({at:now(),action:retest?'retest':'verify',...verification});f.verification=verification;});
     return outcome({findingId,verification},3);
   }
-  const check={target,fixture:true,bindings:{[target]:finding.binding}};
+  need(finding.binding,'This source hypothesis has no approved HTTP resource binding. Add the matching probe and run review again.',3);
+  const check={target,fixture:!!finding.fixture,engine:finding.engine,bindings:{[target]:finding.binding}};
   const result=await replay(specFor(state,check,target),{signal});
   const inv=await inventory(root);
-  const status=result.status==='failed'?'confirmed_fixture':retest&&result.status==='passed'?'fixed_verified':result.status==='passed'?'not_reproduced_fixture':'blocked';
-  await change(root,s=>{const f=named(s.findings,findingId,'Finding');f.status=status;f.verification={...result,fixture:true,simulation:false,at:now(),build:build?{value:build,source:'operator-supplied, not attested'}:null};f.history.push({action:retest?'retest':'verify',...f.verification});f.sourceFingerprint=inv.fingerprint;event(s,status,`${f.title}: ${status}`,{findingId});});
+  const real=finding.engine==='docker';
+  const previouslyConfirmed=finding.history.some(h=>h.status==='failed')||finding.verification?.status==='failed';
+  const status=result.status==='failed'?(real?'confirmed':'confirmed_fixture'):retest&&result.status==='passed'&&(!real||previouslyConfirmed)?'fixed_verified':result.status==='passed'?(real?'not_reproduced':'not_reproduced_fixture'):'blocked';
+  await change(root,s=>{const f=named(s.findings,findingId,'Finding');f.status=status;f.verification={...result,fixture:!!finding.fixture,simulation:false,at:now(),build:build?{value:build,source:'operator-supplied, not attested'}:null};f.history.push({action:retest?'retest':'verify',...f.verification});f.sourceFingerprint=inv.fingerprint;event(s,status,`${f.title}: ${status}`,{findingId});});
   let saved=null;
   if(status==='fixed_verified'&&state.settings.autoSave){saved=await saveCheck(root,findingId);await change(root,s=>{const c=named(s.checks,saved.id,'Check');c.sourceFingerprint=inv.fingerprint;c.lastResult={...result,checkedAt:now(),target};});saved=named(read(root).checks,saved.id,'Check');}
-  return outcome({findingId,status,verification:result,fixtureOnly:true,savedCheck:saved,build:build||null},result.status==='failed'?1:result.status==='passed'?0:3);
+  return outcome({findingId,status,verification:result,fixtureOnly:!!finding.fixture,savedCheck:saved,build:build||null},result.status==='failed'?1:result.status==='passed'?0:3);
 }

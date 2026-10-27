@@ -14,7 +14,7 @@ export function specFor(state,check,targetName){
   const owner=named(state.identities,b.owner,'Identity'),outsider=named(state.identities,b.outsider,'Identity');
   need(owner.target===target.name&&outsider.target===target.name,'Identities belong to a different target.',3);
   return {schemaVersion:1,title:check.title,origin:target.url,environment:target.environment,authorization:target.authorization,ownershipExpiresAt:target.ownership.expiresAt,timeoutMs:state.settings.requestTimeoutMs,
-    resourcePath:b.resourcePath,resourceId:b.resourceId,idField:b.idField||'id',owner,outsider,fixture:!!(check.fixture&&state.demo&&state.demo.target===target.name)};
+    requireIdentityControl:check.engine==='docker',identityField:b.identityField||'id',resourcePath:b.resourcePath,resourceId:b.resourceId,idField:b.idField||'id',owner,outsider,fixture:!!(check.fixture&&((state.demo&&state.demo.target===target.name)||(state.poc&&target.pocFixture)))};
 }
 export async function runChecks(root,{checkId,all=false,target,signal,runId}={}){
   let state=read(root);const checks=state.checks.filter(c=>c.enabled&&(all||c.id===checkId));
@@ -31,7 +31,7 @@ export async function runChecks(root,{checkId,all=false,target,signal,runId}={})
       const c=named(s.checks,check.id,'Check');c.lastResult=results.at(-1);
       const finding=s.findings.find(f=>f.id===c.findingId);
       if(result.status==='failed'&&finding&&finding.target===(target||check.target)){
-        finding.status=finding.fixture?'confirmed_fixture':'regression_failed';
+        finding.status=finding.engine==='docker'?'confirmed':finding.fixture?'confirmed_fixture':'regression_failed';
         finding.history.push({at:now(),action:'regression',...results.at(-1)});
       }
       event(s,'regression',`${check.title}: ${results.at(-1).status}`,{checkId:check.id,target:target||check.target});
@@ -45,7 +45,7 @@ export async function saveCheck(root,findingId){
   const inv=await inventory(root);
   return change(root,s=>{
     const existing=s.checks.find(c=>c.findingId===findingId);if(existing)return existing;
-    const check={id:id('check'),findingId,title:finding.title,kind:'cross-account-resource',target:finding.target,fixture:!!finding.fixture,enabled:true,createdAt:now(),sourceFingerprint:inv.fingerprint,bindings:{[finding.target]:finding.binding},lastResult:null};
+    const check={id:id('check'),findingId,title:finding.title,kind:'cross-account-resource',target:finding.target,fixture:!!finding.fixture,engine:finding.engine||'mock',enabled:true,createdAt:now(),sourceFingerprint:inv.fingerprint,bindings:{[finding.target]:finding.binding},lastResult:null};
     s.checks.push(check);event(s,'check-saved',`Saved regression: ${check.title}`,{checkId:check.id});return check;
   });
 }
@@ -56,7 +56,7 @@ export async function bindCheck(root,checkId,targetName,binding){
     const target=named(s.targets,targetName,'Target');scopeReady(target,binding.resourcePath);
     for(const key of ['owner','outsider'])need(named(s.identities,binding[key],'Identity').target===targetName,'Identity belongs to another target.');
     const checks=checkId==='all'?s.checks:[named(s.checks,checkId,'Check')];
-    for(const c of checks)c.bindings[targetName]={resourcePath:binding.resourcePath,resourceId:String(binding.resourceId),idField:binding.idField||'id',owner:binding.owner,outsider:binding.outsider};
+    for(const c of checks)c.bindings[targetName]={resourcePath:binding.resourcePath,resourceId:String(binding.resourceId),idField:binding.idField||'id',owner:binding.owner,outsider:binding.outsider,identityField:binding.identityField||'id'};
     return {bound:checks.map(c=>c.id),target:targetName};
   });
 }

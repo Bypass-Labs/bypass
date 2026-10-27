@@ -8,7 +8,9 @@ import { connectRepository, repositoryInfo, inventory } from './repository.mjs';
 import { targetURL, makeChallenge, verifyOwnership, authorization, scopeReady, safeRequest } from './network.mjs';
 import { modelProfile, testModel } from './models.mjs';
 import { scanPlan, executeRun, verifyFinding } from './engine.mjs';
-import { saveCheck, bindCheck, exportChecks } from './checks.mjs';
+import { realEngine } from './real-engine.mjs';
+import { dockerStatus, prepareAgents } from './agent-runtime.mjs';
+import { specFor, saveCheck, bindCheck, exportChecks } from './checks.mjs';
 import { dispatchRun, watchRun, startWorker, workerStatus, runMonitor } from './jobs.mjs';
 import { startDemo, updateDemo, serveDemo, demoConfig, CLI } from './demo.mjs';
 
@@ -19,17 +21,17 @@ const wrap=value=>value?.schemaVersion==='bypass.v1'?value:outcome(value);
 export function readiness(root){
   const s=read(root),target=s.targets.find(t=>t.name===s.activeTarget),model=s.models.find(m=>m.name===s.activeModel);
   let liveReady=false;try{scopeReady(target||{});liveReady=true;}catch{}
-  return {project:s.project,root,engine:{mode:'mock',analysisImplemented:false,label:'MOCK analysis · real setup and saved-test replay'},
+  return {project:s.project,root,engine:{mode:realEngine(s)?'docker':'mock',analysisImplemented:realEngine(s),label:realEngine(s)?'Docker agents · real source review and scoped HTTP proof':'MOCK analysis · real setup and saved-test replay'},
     review:scanPlan(s,{mode:liveReady?'combined':'code'}),
     model:model?{name:model.name,provider:model.provider,destination:model.dataDestination,connection:model.lastAttempt?.status||model.lastTest?.status||'not tested'}:null,
     target:target?{name:target.name,url:target.url,environment:target.environment,ownership:target.ownership?.status||'pending',authorized:liveReady}:null,
     ready:{repository:true,model:!!model,target:!!target,liveTesting:liveReady},
-    findings:{total:s.findings.length,fixtureConfirmed:s.findings.filter(f=>f.status==='confirmed_fixture').length,simulated:s.findings.filter(f=>f.status==='simulated_unproven').length,fixed:s.findings.filter(f=>f.status==='fixed_verified').length},
+    findings:{total:s.findings.length,confirmed:s.findings.filter(f=>f.status==='confirmed').length,fixtureConfirmed:s.findings.filter(f=>f.status==='confirmed_fixture').length,simulated:s.findings.filter(f=>f.status==='simulated_unproven').length,fixed:s.findings.filter(f=>f.status==='fixed_verified').length},
     checks:{total:s.checks.length,enabled:s.checks.filter(c=>c.enabled).length,passed:s.checks.filter(c=>c.lastResult?.status==='passed').length,failed:s.checks.filter(c=>c.lastResult?.status==='failed').length},
     worker:workerStatus(root),monitors:s.monitors.length,latestRun:s.runs.at(-1)||null,
-    privacy:{evidence:'local',sourceUpload:false,analysisInference:'not invoked (mock engine)',secretStorage:'environment variable references; public fixture credentials only in demo'},
+    privacy:{evidence:'local',sourceUpload:realEngine(s),analysisInference:realEngine(s)?'Selected source excerpts sent to the active model':'not invoked (mock engine)',secretStorage:'environment variable references; public fixture credentials only in demo'},
     next:s.checks.some(c=>c.enabled)?'test run --all':s.findings.length?'finding list':liveReady?'scan --mode combined':'scan --mode code',
-    limitations:['White-box and black-box engines are simulated.','Hosted Bypass account, cloud scheduler, and deployment attestation are not connected.','No passing result implies complete security coverage.']};
+    limitations:[realEngine(s)?'Bounded JSON API account-boundary POC; incomplete coverage.':'White-box and black-box engines are simulated.','Hosted Bypass account, cloud scheduler, and deployment attestation are not connected.','No passing result implies complete security coverage.']};
 }
 
 export async function execute(key,args=[],o={},context={}){
@@ -45,6 +47,8 @@ export async function execute(key,args=[],o={},context={}){
     }
     return outcome({root,resumed,message:resumed?'Existing project resumed; settings and evidence retained.':'Repository connected. No source code was executed.',readiness:readiness(root)});
   }
+  if(key==='poc start'){const {startPOC}=await import('./poc.mjs');return outcome(await startPOC(o));}
+  if(key==='poc stop'){const {stopPOC}=await import('./poc.mjs');return outcome(await stopPOC(rootFrom(working)));}
   if(key==='demo start')return outcome(await startDemo(o.dir||path.join(PACKAGE_ROOT,'.demo/ledger'),{port:o.port||4317}));
   if(key==='auth login'){
     if(o.device)throw new Fault('A hosted Bypass identity service is not configured. Local mode needs no Bypass account. Use --provider muse-code for the official Muse login.',3,{implemented:false});
@@ -61,6 +65,23 @@ export async function execute(key,args=[],o={},context={}){
   const root=rootFrom(working);const s=read(root);const targetName=o.target||s.activeTarget;
   let result;
   switch(key){
+    case 'engine use':{
+      need(['docker','mock'].includes(args[0]),'Choose docker or mock.');
+      result=await change(root,state=>{state.settings.analysisEngine=args[0];return {engine:args[0],message:args[0]==='docker'?'Real agents selected. Source excerpts go to your shared model. Use engine doctor and probe add, then scan.':'Offline mocked preview selected.'};});break;
+    }
+    case 'engine doctor':result={...(await dockerStatus(context)),engine:realEngine(s)?'docker':'mock',model:s.models.find(m=>m.name===s.activeModel)||null};break;
+    case 'engine prepare':result=await prepareAgents(context);break;
+    case 'probe list':result={target:targetName,probes:named(s.targets,targetName,'Target').probes||[]};break;
+    case 'probe add':{
+      safeName(args[0]);const t=named(s.targets,targetName,'Target');scopeReady(t,o.path);
+      need(o.path&&o['resource-id']&&o.owner&&o.outsider,'Provide --path, --resource-id, --owner and --outsider.');
+      need(o.path.startsWith('/')&&!o.path.startsWith('//')&&!/[?#\\]/.test(o.path)&&!/%(?:2f|5c|2e|25)/i.test(o.path)&&!o.path.split('/').includes('..'),'Probe path must be an exact safe path without query strings.');
+      const binding={resourcePath:o.path,resourceId:o['resource-id'],owner:o.owner,outsider:o.outsider,idField:o['id-field']||'id',identityField:o['identity-field']||'id'};
+      need(o.owner!==o.outsider,'Choose two different account identities.');
+      for(const name of [o.owner,o.outsider]){const identity=named(s.identities,name,'Identity');need(identity.checkPath,'Each identity needs --check-path (for example /api/me).');scopeReady(t,identity.checkPath);}
+      specFor(s,{target:targetName,engine:'docker',bindings:{[targetName]:binding}},targetName);
+      result=await change(root,state=>{const target=named(state.targets,targetName,'Target');target.probes??=[];need(target.probes.length<6||target.probes.some(p=>p.name===args[0]),'POC supports up to six approved resources per target.');target.probes=target.probes.filter(p=>p.name!==args[0]);target.probes.push({name:args[0],binding});return {probe:target.probes.at(-1),target:targetName};});break;
+    }
     case 'status':result=readiness(root);break;
     case 'repo show':result={repository:await repositoryInfo(root)};break;
     case 'doctor':{
@@ -155,7 +176,7 @@ export async function execute(key,args=[],o={},context={}){
     case 'coverage':{
       const inv=await inventory(root);result={scope:'Specific saved HTTP behaviors only',complete:false,sourceFingerprint:inv.fingerprint,checks:s.checks.map(c=>({id:c.id,behavior:c.title,target:c.target,status:!c.enabled?'disabled':['failed','blocked'].includes(c.lastResult?.status)?c.lastResult.status:c.sourceFingerprint!==inv.fingerprint?'stale':c.lastResult?.status||'not-run',sourceChanged:c.sourceFingerprint!==inv.fingerprint,lastResult:c.lastResult})),unproven:s.findings.filter(f=>f.status==='simulated_unproven').map(f=>({id:f.id,title:f.title,simulation:true})),message:'A route is not fully covered just because one behavior on that route has a test.'};break;
     }
-    case 'context':result={project:s.project.name,engine:'mock',summary:readiness(root),finding:o.finding?named(s.findings,o.finding,'Finding'):null,recentEvents:s.events.slice(-15),attention:s.checks.filter(c=>c.enabled&&['failed','blocked','stale'].includes(c.lastResult?.status)),next:'Replay saved checks first. Investigate failed, blocked, stale, and uncovered behaviors. Never treat simulated candidates as verified issues.'};break;
+    case 'context':result={project:s.project.name,engine:realEngine(s)?'docker':'mock',summary:readiness(root),finding:o.finding?named(s.findings,o.finding,'Finding'):null,recentEvents:s.events.slice(-15),attention:s.checks.filter(c=>c.enabled&&['failed','blocked','stale'].includes(c.lastResult?.status)),next:'Replay saved checks first. Investigate failed, blocked, stale, and uncovered behaviors. Never treat simulated candidates as verified issues.'};break;
     case 'report':{
       const r=named(s.runs,o.run||s.runs.at(-1)?.id,'Run'),format=o.format||'json';need(['json','md'].includes(format),'Report format must be json or md.');
       const content=format==='json'?JSON.stringify(redact(r),null,2):`# Bypass run ${r.id}\n\nStatus: ${r.status}. Exit: ${r.exitCode}.\n\nAnalysis simulated: ${r.simulation}. Model calls: ${r.result?.modelCalls??0}.\n\n${r.result?.message||''}\n\n## Evidence\n\n\`\`\`json\n${JSON.stringify(redact(r.result),null,2)}\n\`\`\`\n`;

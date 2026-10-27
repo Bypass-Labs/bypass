@@ -2,7 +2,7 @@
 export function homeActions(state) {
   const results=state.findings.length>0,checks=state.checks.some(check=>check.enabled);
   return [
-    checks?{id:'tests',label:'Replay saved tests'}:results?{id:'results',label:'Open review results'}:{id:'review',label:'Run my first review preview'},
+    checks?{id:'tests',label:'Replay saved tests'}:results?{id:'results',label:'Open review results'}:{id:'review',label:state.settings?.analysisEngine==='docker'?'Run my first real AI review':'Run my first review preview'},
     {id:'walkthrough',label:'Walk through prove → fix → retest → regression'},
     {id:'settings',label:'Settings & optional connections'}
   ];
@@ -13,7 +13,9 @@ export function reviewSummary(plan){
 }
 export const quickCommands=`Commands you can type here (no IDs needed; / prefix optional):
   repo       Choose or change the application repository
-  review     Run a review preview of this repository
+  review     Run the selected analysis engine on this repository
+  engine     Enable real Docker agents and configure HTTP proof
+  poc        Create a separate local app for real AI testing
   results    Open findings and their next step
   demo       Follow the complete local walkthrough
   tests      Replay saved regression tests

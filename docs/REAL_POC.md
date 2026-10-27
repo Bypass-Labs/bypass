@@ -1,0 +1,100 @@
+# Real AI POC: source → HTTP proof → regression
+
+Version 0.2 adds two separate Docker agent services. They use the same Bypass model profile as the orchestrator. Source hypotheses come from actual files; confirmed findings come from actual HTTP responses. There is no simulated fallback when Docker, inference or a request fails.
+
+The first supported scope is **missing authentication and cross-account access to JSON resources**. This is a bounded POC, not a general-purpose production scanner. Browser login, arbitrary exploit execution, SSRF testing, deployment attestation and broad framework coverage are not implemented.
+
+## Fastest start: a real AI exercise
+
+Requires Node 22+, Git, a running Docker engine, and a working model connection. Docker Desktop or Colima works. For Muse subscription inference, install Muse and sign in with `muse login`.
+
+```bash
+./bypass poc
+```
+
+This creates a separate local app and opens the terminal workspace with the Docker engine selected. Its two public test accounts, authorized local URL and owner-owned invoice are already configured. Your customer repository is untouched. With no existing project profile, the POC uses your Muse subscription's default model; `/models` lets you select local or self-hosted inference instead. When started from an initialized Bypass project, its active profile is copied without credential values.
+
+1. **Press Enter to review.** First-run Docker image preparation may take a minute. The transcript shows orchestrator, white-box and black-box progress and model-call counts. Model calls may take up to two minutes each.
+2. **Open the finding.** Expect an exact source citation in `policy.mjs` and five real controls: owner identity 200, outsider identity 200, owner resource access 200, outsider resource access 200, anonymous access 401. A model hypothesis alone cannot confirm a bug.
+3. **Fix the application.** Open the displayed project folder and change `policy.mjs` to:
+
+   ```js
+   export function mayReadInvoice(account, invoice) {
+     return account === invoice.ownerId;
+   }
+   ```
+
+   The local app reloads the policy automatically. The agents do not edit or execute customer source.
+4. **Choose `/results` → Retest a fix.** Owner access remains 200; the outsider becomes 403. Both account login controls must remain valid. A deterministic check is saved after the previously confirmed finding passes these controls.
+5. **Choose `/tests` → Export standalone Node tests.** Run the printed `node --test` command. The exported suite needs no Bypass runtime or model.
+6. **Change the policy back to `return Boolean(account);`.** `/tests` replay and the exported Node suite must both fail. Restore the ownership comparison and retest to finish fixed.
+7. **Type `poc stop` inside the workspace** when finished. The app stops; evidence and generated tests remain in its `.bypass/` and `tests/security/bypass/` directories. The Docker agents are removed after each phase. Your Docker VM remains running.
+
+For scripts, use `./bypass poc start --json`, then `./bypass --project <returned-root> scan --mode combined`. Review exit codes: **1** means a confirmed exposure or failed regression; **3** means incomplete/blocked or no confirmed issue in a bounded review. Neither is a claim of full coverage.
+
+The older `./bypass demo` is still available as an offline, seeded walkthrough. `poc` performs real inference and discovery against a deliberately vulnerable example application.
+
+## Review your own app
+
+```bash
+./bypass onboard
+```
+
+Connect the app repository and choose the model. Add your running local or HTTPS deployed app. For deployed apps, publish the generated DNS TXT record, verify ownership, and authorize the testing paths. Pending DNS still permits source-only review.
+
+In the workspace, type **`/engine`** and choose **Real AI agents**. It walks through Docker readiness, shared model, account references and one resource probe. The account and resource paths must be within your approved scope.
+
+Supply two test accounts, a signed-in JSON endpoint such as `/api/me`, and a known resource owned by the first account. Store credentials in environment variables **before starting Bypass or Muse**, using their names in setup. Supported credential types are bearer, cookie and custom header. The identity endpoint must return a scalar account ID that differs for the two accounts; configure its field name if it is not `id`.
+
+Equivalent automation commands, after repository/model/app setup:
+
+```bash
+./bypass --project /path/to/app engine use docker
+./bypass --project /path/to/app engine doctor
+./bypass --project /path/to/app identity add owner --type bearer --secret-env BYPASS_OWNER_TOKEN --check-path /api/me
+./bypass --project /path/to/app identity add outsider --type bearer --secret-env BYPASS_OUTSIDER_TOKEN --check-path /api/me
+./bypass --project /path/to/app probe add invoice --path /api/invoices/123 --resource-id 123 --owner owner --outsider outsider
+./bypass --project /path/to/app scan --mode combined
+```
+
+The server must return the configured resource identifier as a top-level scalar JSON field (default `id`). Change it with `--id-field`; change the login identity field with `--identity-field`. Up to six resources per target are supported. The agent cannot invent or widen the allowed resource paths.
+
+Source-only: `scan --mode code`. HTTP-only: `scan --mode live`. Use `/results` or `finding show <id>` to inspect evidence, and `retest <id>` after a fix. Saved checks run before investigation; only exact, valid, passing checks are excluded from repeat HTTP probes. Stale, failed and blocked checks return to investigation.
+
+## Muse plugin
+
+Update the plugin and start a new Muse session. Paste:
+
+> Use Bypass's real Docker agents to review this repository and its staging app. Use the same model as this session, guide any missing setup, prove findings with HTTP controls, and help me keep verified fixes as regression tests.
+
+The plugin guides repository selection, shared model, ownership, scope and resource setup through typed tools. It polls a durable run so you can see progress and stop it. Source editing stays in Muse; tests and evidence stay in the selected application.
+
+**Model inheritance is explicit.** The MCP interface does not expose the host Muse model automatically. When its provider and model ID are known, configure those exact values. Otherwise the plugin asks which shared profile to use. All three Bypass roles use that one profile. It never claims a different provider is the same model, extracts subscription tokens or silently falls back to cloud inference.
+
+## What runs where
+
+```mermaid
+flowchart LR
+  UI[CLI or Muse plugin] --> Host[Host orchestrator and capability broker]
+  Host --> White[White-box Docker agent]
+  Host --> Black[Black-box Docker agent]
+  Host --> Model[One selected model profile]
+  White -->|Source reads and model requests| Host
+  Black -->|Approved probes and model requests| Host
+  Host -->|Scoped GET controls| App[Authorized application]
+  Host --> Evidence[Local evidence and regression tests]
+```
+
+Each worker is a separate short-lived container with no direct network, source mounts, credentials or Docker socket. The broker supplies bounded source reads and performs scoped network requests. Containers run without root, with a read-only filesystem, dropped capabilities, no privilege escalation, and CPU/memory/process limits. They are removed on completion, error or cancellation. Docker run controls follow [Docker's container runtime documentation](https://docs.docker.com/engine/containers/run/).
+
+The host calls the selected model: compatible local inference stays local; self-hosted inference goes to your endpoint; Muse subscription inference uses the installed native CLI in an empty temporary workspace. Source excerpts are sent only for real analysis. Environment-referenced secrets are redacted from source excerpts; `.env`, keys, ignored files and symlinks outside the project are excluded. Inspect your eligible source before using a remote model: this is not a comprehensive secret scanner.
+
+A run permits at most 17 model calls across the three roles, eight turns per worker, 192 KB of source reads and six resource probes. Each probe uses five GET requests. Requests honor existing exact-origin, authorization, expiry, path, DNS-pinning and rate-limit controls. Raw HTTP bodies and credential values are not persisted or sent to the model. Findings, citations, control statuses, container identities, selected model and call counts are saved locally.
+
+## Troubleshooting
+
+- **Docker unavailable:** start Docker Desktop or Colima; `docker version` must show a server. `engine doctor` checks availability. The first review builds the shared image; `engine prepare` prepares it in advance. An image tag is derived from worker source and Dockerfile; runs use its resolved image ID.
+- **Model timeout / invalid JSON:** the run is incomplete and retains partial evidence. Check `muse usage` / `muse login`, or your endpoint/model selection. No fake result is substituted.
+- **Identity control blocked:** refresh both credentials, verify `/api/me`, and select the correct account identifier field. An invalid outsider login never counts as proof of a fixed authorization check.
+- **No source citation accepted:** the model must cite an exact line from a file it actually read. Unsupported or fabricated evidence is rejected.
+- **No issue confirmed:** this only describes the bounded resource probes and selected source files, not the whole application.
