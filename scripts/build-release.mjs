@@ -4,6 +4,7 @@ import os from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
+import { buildInstallAssets } from './build-install-assets.mjs';
 const root=fileURLToPath(new URL('../',import.meta.url));
 const runtime=JSON.parse(fs.readFileSync(new URL('./node-runtime.json',import.meta.url)));
 const version=JSON.parse(fs.readFileSync(path.join(root,'package.json'))).version;
@@ -55,9 +56,8 @@ for(const platform of selected){
     assets.push({...metadata(file),platform});
   }finally{fs.rmSync(work,{recursive:true,force:true});}
 }
-fs.copyFileSync(path.join(root,'scripts/install.sh'),path.join(dist,'install.sh'));
-fs.copyFileSync(path.join(root,'scripts/install.ps1'),path.join(dist,'install.ps1'));
+buildInstallAssets(dist);
 fs.writeFileSync(path.join(dist,'SHASUMS256.txt'),assets.map(a=>`${a.sha256}  ${a.file}`).join('\n')+'\n');
-const release={schemaVersion:1,releaseId,commit,version,node:runtime.version,assets,installer:metadata('install.sh'),windowsInstaller:metadata('install.ps1'),checksums:metadata('SHASUMS256.txt')};
+const release={schemaVersion:1,releaseId,commit,version,node:runtime.version,assets,installer:metadata('install.sh'),windowsInstaller:metadata('install.ps1'),museInstaller:metadata('install-muse.sh'),museWindowsInstaller:metadata('install-muse.ps1'),installSkill:metadata('install-muse.md'),checksums:metadata('SHASUMS256.txt')};
 fs.writeFileSync(path.join(dist,'release.json'),JSON.stringify(release,null,2)+'\n');
 console.log(JSON.stringify({releaseId,dist,platforms:selected}));

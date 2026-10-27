@@ -5,6 +5,14 @@ bypass_install() {
   set -euo pipefail
   umask 022
   fail() { printf 'Bypass: %s\n' "$*" >&2; exit 1; }
+  integration=cli
+  for argument in "$@"; do
+    case "$argument" in --muse) integration=muse ;; --help|-h) printf 'Usage: install.sh [--muse]\nInstall Bypass, optionally register the full Muse plugin. Runtime approval stays in Muse.\n'; return ;; *) fail "Unknown option: $argument. Use --muse to install the Muse plugin." ;; esac
+  done
+  if [ "$integration" = muse ]; then
+    command -v muse >/dev/null 2>&1 || fail 'Muse Code was not found on PATH. Install Muse from https://dev.meta.ai, open it and sign in, then retry this same installer. No Bypass files were changed.'
+    printf 'Bypass for Muse · 1/3 Download · 2/3 Install plugin · 3/3 Review in Muse\n'
+  fi
   case "$(uname -s)" in Darwin) platform=darwin ;; Linux) platform=linux ;; *) fail 'Supported platforms: macOS and glibc Linux (x64 or arm64).' ;; esac
   case "$(uname -m)" in x86_64|amd64) arch=x64 ;; arm64|aarch64) arch=arm64 ;; *) fail 'Supported CPUs: x64 and arm64.' ;; esac
   if [ "$platform" = linux ] && command -v ldd >/dev/null 2>&1 && ldd --version 2>&1 | grep -qi musl; then fail 'This download needs glibc Linux. Alpine/musl is not supported.'; fi
@@ -71,7 +79,15 @@ NODE
   fi
   case ":$PATH:" in *":$bin_dir:"*) command_name=bypass ;; *) printf -v command_name '%q' "$bin_dir/bypass" ;; esac
   printf '\n'
-  printf 'Muse plugin:\n  %s integrate muse --scope user --replace\n  muse plugins inspect bypass\n  muse plugins approve bypass\n  Then open Muse and use /bypass:start.\n\n' "$command_name"
-  printf 'Standalone CLI:\n  %s onboard\n\nUpdate: rerun the same installer. Project settings and evidence stay in your app.\n' "$command_name"
+  if [ "$integration" = muse ]; then
+    printf '2/3 Registering the full Muse plugin…\n'
+    if ! MUSE_NO_AUTO_UPDATE=1 "$destination/launch-bypass" integrate muse --scope user --replace; then
+      fail "The CLI is installed, but Muse setup did not finish. Fix the reason above and rerun this same installer. Your project settings and evidence are preserved."
+    fi
+    printf '\nNo separate model key or Docker setup is needed for the Muse plugin.\n'
+  else
+    printf 'Next: %s onboard\n\nPrefer Muse? Run: curl -fsSL https://bypasslabs.ai/install/muse | bash\n' "$command_name"
+  fi
+  printf '\nUpdate or repair: rerun this same installer. Project settings and evidence stay in your app.\n'
 }
 bypass_install "$@"

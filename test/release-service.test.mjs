@@ -38,11 +38,20 @@ test('R2 uploads are immutable, promotion requires every verified asset, and old
   const installer=Buffer.from('#!/bin/bash\necho install\n'),checksums=Buffer.from(assets.map(a=>`${a.sha256}  ${a.file}`).join('\n')+'\n');
   const windowsInstaller=Buffer.from('Write-Host "Windows install"\n');
   const release={schemaVersion:1,releaseId,commit,version:'0.3.3',assets,installer:{file:'install.sh',sha256:digest(installer),size:installer.length},windowsInstaller:{file:'install.ps1',sha256:digest(windowsInstaller),size:windowsInstaller.length},checksums:{file:'SHASUMS256.txt',sha256:digest(checksums),size:checksums.length}};
+  const bootstrap=[['museInstaller','install-muse.sh'],['museWindowsInstaller','install-muse.ps1'],['installSkill','install-muse.md']];
+  for(const [key,file] of bootstrap){const bytes=Buffer.from('bootstrap '+file);release[key]={file,sha256:digest(bytes),size:bytes.length};}
   await upload('release.json',Buffer.from(JSON.stringify(release)));
   const promote=()=>handler(new Request('https://bypasslabs.ai/downloads/bypass/_publish/promote',{method:'POST'}),bindings);
   assert.equal((await promote()).status,409);assert.equal(await bucket.get('channels/main.json'),null);
   await upload('install.sh',installer);await upload('SHASUMS256.txt',checksums);assert.equal((await promote()).status,409);
-  await upload('install.ps1',windowsInstaller);assert.equal((await promote()).status,200);
+  await upload('install.ps1',windowsInstaller);assert.equal((await promote()).status,409);
+  for(const [,file] of bootstrap)await upload(file,Buffer.from('bootstrap '+file));
+  assert.equal((await promote()).status,200);
+  for(const [route,file] of [['/install/muse','install-muse.sh'],['/install/muse.ps1','install-muse.ps1'],['/install/muse.md','install-muse.md']]){
+    const response=await handler(new Request('https://bypasslabs.ai'+route),bindings);
+    assert.equal(response.status,200);assert.equal(await response.text(),'bootstrap '+file);assert.equal(response.headers.get('cache-control'),'no-store');
+    assert.equal((await handler(new Request('https://bypasslabs.ai'+route,{method:'HEAD'}),bindings)).status,200);
+  }
   const installed=await handler(new Request('https://bypasslabs.ai/install'),bindings);assert.equal(await installed.text(),installer.toString());assert.equal(installed.headers.get('cache-control'),'no-store');
   const windows=await handler(new Request('https://bypasslabs.ai/install.ps1'),bindings);assert.equal(await windows.text(),windowsInstaller.toString());assert.match(windows.headers.get('content-type'),/text\/plain/);
   const promotion=releaseId=>handler(new Request('https://bypasslabs.ai/downloads/bypass/_publish/promote',{method:'POST',body:JSON.stringify({releaseId})}),bindings);

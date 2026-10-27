@@ -8,37 +8,53 @@ This is a working POC for missing authentication and cross-account access to con
 
 ## Start in Muse
 
-**1. Install Bypass.**
+**1. Open Muse in your application folder and paste:**
+
+```text
+Read https://bypasslabs.ai/install/muse.md and install Bypass for Muse.
+```
+
+Muse follows the installation skill: downloads the full package, configures PATH and registers the native plugin. You need Muse Code installed and signed in. No GitHub clone, npm, system Node, Docker or separate model key is required to install and use the plugin. Git is needed when connecting a Git repository.
+
+**2. Review permissions in Muse.** Open `/plugins` → **Installed** → **Bypass** → **Runtime**. Approve its local tool server and session-context hook. Start a **new Muse session** in your application folder so those capabilities load.
+
+**3. Type `/bypass:start`, or ask:**
+
+> Use Bypass to review this application. Inspect its source, help me connect its running app, prove any account-access issue, and help fix and save a regression test. Keep me informed about what is done and what comes next.
+
+Muse reuses saved setup. When needed, it guides repository → app URL → exact DNS TXT ownership record → testing scope → two account credential references → one owned resource. Source review can start while live setup is pending. Never paste app credentials into chat.
+
+<details>
+<summary>Prefer a terminal install?</summary>
 
 macOS / Linux:
 
 ```bash
-curl -fsSL https://bypasslabs.ai/install | bash
+curl -fsSL https://bypasslabs.ai/install/muse | bash
 ```
 
 Windows PowerShell:
 
 ```powershell
-irm https://bypasslabs.ai/install.ps1 | iex
+irm https://bypasslabs.ai/install/muse.ps1 | iex
 ```
 
-The installer includes Node.js and configures PATH. On macOS/Linux, open a new terminal or use the activation command printed by the installer. Windows updates the current PowerShell session and user PATH. The download supports macOS, glibc Linux and Windows, x64/arm64; Windows requires PowerShell 5.1+.
+Then complete steps 2 and 3 above. Rerun the same command to update or repair. Reinstalling identical bytes preserves your approval; changed packages need a new review. The installer bundles Node and supports macOS, glibc Linux and Windows on x64/arm64 (PowerShell 5.1+ on Windows).
 
-**2. Enable the native plugin.** You need Git and a signed-in Muse Code host; the integration is tested against Muse 1.4.13.
+</details>
+
+<details>
+<summary>Already use npx skills?</summary>
+
+From your application folder, with Node 22.20+:
 
 ```bash
-bypass integrate muse --scope user --replace
-muse plugins inspect bypass
-muse plugins approve bypass
+npx skills add https://bypasslabs.ai/install/muse.md -a universal
 ```
 
-Open a new Muse session in your application folder. Native approval stays under your control. If `bypass` is not on PATH yet, use `~/.local/bin/bypass` or Windows `& "$env:LOCALAPPDATA\Bypass\bin\bypass.cmd"`.
+This puts the **installation skill** in the project's `.agents/skills`, which Muse reads. In Muse, run `/skills reload`, then ask “Install Bypass for Muse.” The skill installs the complete native plugin; it is not a substitute for its tools. Use project scope here: `universal -g` uses a different global directory from Muse. The one-prompt path above needs neither Node nor this extra step.
 
-**3. Ask once, inside Muse:**
-
-> Use Bypass to review this application. Inspect its source, help me connect its running app, prove any account-access issue, and help fix and save a regression test. Keep me informed about what is done and what comes next.
-
-Or type **`/bypass:start`**. An initialized application workspace is reused; otherwise Muse confirms the repository once. For live testing it guides the app URL → exact DNS TXT ownership record → explicit testing scope → two account credential references → an owner-owned resource. Source review can start while live setup is pending. Never paste app credentials into chat.
+</details>
 
 **Account/privacy boundary:** Bypass uses the active Muse session and makes no independent model requests. The current MCP interface does not attest session billing, so Bypass cannot verify subscription usage. Confirm subscription mode in Muse; if the host shows API billing, switch to subscription mode. For confidential/personal code, turn Contributor mode off in Muse `/settings` and use Standard mode. Bypass does not change those settings. [Meta's requirements](https://dev.meta.ai/help/subscriptions/muse-code-contributor-mode).
 
@@ -76,6 +92,14 @@ A monitor needs a running worker and an awake machine. A single tick is not an a
 
 ## Standalone CLI
 
+Install once (includes Node and PATH setup):
+
+```bash
+curl -fsSL https://bypasslabs.ai/install | bash
+```
+
+On Windows: `irm https://bypasslabs.ai/install.ps1 | iex`. On macOS/Linux, open a new terminal or use the activation command printed by the installer. Windows updates the current PowerShell session and user PATH.
+
 AI review requires Docker and **your provider API key**. Coding-agent subscriptions and login tokens are never used. Repository setup, reports, memory and saved tests do not require an AI key.
 
 ```bash
@@ -101,7 +125,7 @@ Presets: **Meta/Muse, OpenAI, Anthropic/Claude, Moonshot/Kimi, DeepSeek, custom*
 
 ## Existing installations
 
-Version 0.5 separates host reasoning from CLI API billing. Existing `muse-code`, `local` and `endpoint` profiles remain on disk but cannot run standalone AI. Create/select a new explicit API profile, or use the Muse plugin without any model setup. Targets, findings, memory and saved regressions are retained. Reinstall/approve the updated plugin and start a fresh Muse session.
+Version 0.5 separates host reasoning from CLI API billing. Existing `muse-code`, `local` and `endpoint` profiles remain on disk but cannot run standalone AI. Create/select a new explicit API profile, or use the Muse plugin without any model setup. Targets, findings, memory and saved regressions are retained. Use the same Muse installer above to update, review the changed package in `/plugins`, and start a fresh Muse session.
 
 ## Develop and verify
 
@@ -116,3 +140,5 @@ BYPASS_DOCKER_TESTS=1 npm test
 `npm run test:live` is an opt-in **actual Muse host** fixture test: it installs a temporary candidate plugin under a distinct ID, uses normal host approvals, exercises the full reasoning/test/fix loop, retains evidence, then removes the candidate. It uses the host account's allowance or billing; the test does not attest subscription billing. `node scripts/provider-smoke.mjs` tests only explicitly available provider API-key environment variables with synthetic prompts.
 
 [Architecture and provider limits](docs/AI_MODES.md) · [POC execution details](docs/REAL_POC.md) · [Job Radar setup](docs/JOB_RADAR.md) · [Verification results](docs/AI_VALIDATION.md)
+
+[Installation design and comparison with Strix, Superpowers and Context7](docs/INSTALLATION_DESIGN.md)

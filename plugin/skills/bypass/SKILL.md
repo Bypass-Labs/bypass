@@ -13,6 +13,10 @@ Use the active signed-in Muse session. Explain once that Bypass does not receive
 
 For confidential or personal source, tell the user to turn Contributor mode off in Muse `/settings` and use Standard mode before reviewing. Meta's Contributor mode terms prohibit submitting confidential/personal content. Do not change that setting yourself or imply that the plugin can verify it. A synthetic public fixture can be reviewed without confidential source. Keep authentication, usage-limit and version recovery in Muse's supported account, `/settings`, `/mcp`, and plugin management flows; no API fallback. If the host itself cannot reason because login/allowance is blocked, saved Bypass evidence remains resumable after host recovery.
 
+## Installation recovery
+
+If `bypass_onboarding` is absent, do not call missing tools or launch standalone AI. An installed skill or slash command can be visible before its MCP server is approved. Direct the user to `/plugins` → Installed → Bypass → Runtime to review/approve the MCP server and session hook, then start a new session. If the native plugin is missing or broken, fetch https://bypasslabs.ai/install/muse.md and follow its installation/repair flow. Preserve any explicit rejection; never silently approve capabilities or reset settings. Once tools are available, continue below.
+
 ## Select and prepare
 
 1. Call `bypass_onboarding`. Reuse an initialized active application workspace or an explicitly saved selection. If no application is selected, confirm the displayed workspace or ask for a folder/Git URL, then call `bypass_connect_repository`. Do not accidentally select Bypass tooling or search old demos. Use the user's supplied repository and URL without asking again.

@@ -2,7 +2,8 @@ import { authorizePublisher } from './auth.mjs';
 export const platforms=['darwin-arm64','darwin-x64','linux-arm64','linux-x64','win-arm64','win-x64'];
 const prefix='/downloads/bypass/';
 const releasePattern=/^main-[a-f0-9]{40}-[1-9][0-9]{0,15}-[1-9][0-9]{0,15}$/;
-const filePattern=/^(bypass-(?:darwin|linux)-(?:arm64|x64)\.tar\.gz|bypass-win-(?:arm64|x64)\.zip|SHASUMS256\.txt|release\.json|install\.(?:sh|ps1))$/;
+const filePattern=/^(bypass-(?:darwin|linux)-(?:arm64|x64)\.tar\.gz|bypass-win-(?:arm64|x64)\.zip|SHASUMS256\.txt|release\.json|install\.(?:sh|ps1)|install-muse\.(?:sh|ps1|md))$/;
+const publicInstallers={'/install':'install.sh','/install/':'install.sh','/install.ps1':'install.ps1','/install/muse':'install-muse.sh','/install/muse.ps1':'install-muse.ps1','/install/muse.md':'install-muse.md'};
 const archiveFile=file=>file.endsWith('.tar.gz')||file.endsWith('.zip');
 const digestPattern=/^[a-f0-9]{64}$/;
 const headers={'X-Content-Type-Options':'nosniff','Cache-Control':'no-store','Strict-Transport-Security':'max-age=31536000; includeSubDomains'};
@@ -16,7 +17,9 @@ export async function promote(bucket,claims){
   if(!validRelease(release,claims)||!Array.isArray(release.assets)||release.assets.length!==platforms.length)return reply('Invalid release manifest',409);
   const expected=platforms.map(platform=>`bypass-${platform}`+(platform.startsWith('win-')?'.zip':'.tar.gz'));
   if(!expected.every(file=>release.assets.filter(a=>a.file===file).length===1)||release.installer?.file!=='install.sh'||release.windowsInstaller?.file!=='install.ps1'||release.checksums?.file!=='SHASUMS256.txt')return reply('Incomplete platform set',409);
-  for(const asset of [...release.assets,release.installer,release.windowsInstaller,release.checksums]){
+  const bootstrap=[['museInstaller','install-muse.sh'],['museWindowsInstaller','install-muse.ps1'],['installSkill','install-muse.md']];
+  if(!bootstrap.every(([key,file])=>release[key]?.file===file))return reply('Incomplete Muse installation assets',409);
+  for(const asset of [...release.assets,release.installer,release.windowsInstaller,release.checksums,...bootstrap.map(([key])=>release[key])]){
     if(!digestPattern.test(asset.sha256)||!Number.isInteger(asset.size)||asset.size<1||asset.size>100000000)return reply('Invalid asset metadata',409);
     const object=await bucket.head(base+asset.file);
     if(!object||object.size!==asset.size||object.customMetadata?.sha256!==asset.sha256)return reply('Release asset missing or checksum mismatch',409);
@@ -61,12 +64,12 @@ export function createHandler(authorize=authorizePublisher){return async(request
     }
     if(!['GET','HEAD'].includes(request.method))return reply('Method not allowed',405,{Allow:'GET, HEAD'});
     let key,cache='public, max-age=31536000, immutable';
-    if(pathname==='/install'||pathname==='/install/'||pathname==='/install.ps1'||pathname===prefix+'channels/main.txt'||pathname===prefix+'channels/main.json'){
+    if(Object.hasOwn(publicInstallers,pathname)||pathname===prefix+'channels/main.txt'||pathname===prefix+'channels/main.json'){
       const latest=await env.RELEASES.get('channels/main.json');if(!latest)return reply('The first Bypass release is not published yet. Retry shortly.',503,{'Retry-After':'30'});
       const current=await latest.json();if(!releasePattern.test(current.releaseId))return reply('Release metadata unavailable',503);
       if(pathname.endsWith('main.txt'))return reply(request.method==='HEAD'?null:current.releaseId+'\n',200,{'Content-Type':'text/plain; charset=utf-8'});
       if(pathname.endsWith('main.json'))return reply(request.method==='HEAD'?null:JSON.stringify(current),200,{'Content-Type':'application/json; charset=utf-8'});
-      key=`releases/${current.releaseId}/`+(pathname==='/install.ps1'?'install.ps1':'install.sh');cache='no-store';
+      key=`releases/${current.releaseId}/`+publicInstallers[pathname];cache='no-store';
     }else{
       const match=pathname.match(/^\/downloads\/bypass\/releases\/([^/]+)\/([^/]+)$/);
       if(!match||!releasePattern.test(match[1])||!filePattern.test(match[2]))return reply('Not found',404);

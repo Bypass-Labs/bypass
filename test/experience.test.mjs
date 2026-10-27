@@ -101,12 +101,13 @@ async function fakeMuse(t,scenario){
 const fs=require('fs'),args=process.argv.slice(2);
 fs.appendFileSync(${JSON.stringify(calls)},args.join(' ')+'\\n');
 if(args[1]==='inspect'){
-  console.log(JSON.stringify(${JSON.stringify(hasExisting?{valid:true,active:true,record:{id:'bypass',source:{path:'/other/checkout/plugin'}}}:{error:{message:'not installed'}})}));
+  console.log(JSON.stringify(${JSON.stringify(hasExisting?{valid:true,active:scenario!=='replace-disabled',record:{id:'bypass',enabled:scenario!=='replace-disabled',source:{path:'/other/checkout/plugin'}}}:{error:{message:'not installed'}})}));
   process.exit(${hasExisting?0:1});
 }
 if(args[1]==='validate'){console.log('{"valid":true}');process.exit(${scenario==='replace-invalid'?1:0});}
 if(args[1]==='remove'){console.log('{"removed":true}');process.exit(0);}
-if(args[1]==='install'&&(${scenario==='replace-success'}||args[2]==='/other/checkout/plugin')){console.log('{"installed":true}');process.exit(0);}
+if(args[1]==='disable'){console.log('{"disabled":true}');process.exit(0);}
+if(args[1]==='install'&&(${scenario==='replace-success'||scenario==='replace-disabled'}||args[2]==='/other/checkout/plugin')){console.log('{"installed":true}');process.exit(0);}
 if(args[1]==='install'&&${scenario==='replace-cancel'}){setInterval(()=>{},1000);}else{
 console.log(JSON.stringify({error:{message:'plugin bypass is already installed from a different source'}}));process.exit(1);
 }
@@ -134,7 +135,7 @@ test('explicit plugin replacement validates before removal and installs the bund
   const result=await execute('integrate muse',[],{project:root,scope:'user',replace:true});
   assert.equal(result.exitCode,0);
   const commands=fs.readFileSync(calls,'utf8').trim().split('\n');
-  assert.deepEqual(commands.map(c=>c.split(' ')[1]),['inspect','validate','remove','install']);
+  assert.deepEqual(commands.map(c=>c.split(' ')[1]),['inspect','validate','remove','install','inspect']);
   assert.ok(commands[3].endsWith('--scope user --json'));
   assert.ok(commands[3].includes(result.plugin));
 });
@@ -143,6 +144,13 @@ test('invalid bundled plugin leaves the existing installation intact',async t=>{
   const {root,calls}=await fakeMuse(t,'replace-invalid');
   await assert.rejects(execute('integrate muse',[],{project:root,replace:true}),/rejected plugin validation/);
   assert.deepEqual(fs.readFileSync(calls,'utf8').trim().split('\n').map(c=>c.split(' ')[1]),['inspect','validate']);
+});
+
+test('replacing a disabled package preserves the user disable decision',async t=>{
+  const {root,calls}=await fakeMuse(t,'replace-disabled');
+  const result=await execute('integrate muse',[],{project:root,scope:'user',replace:true});
+  assert.equal(result.state,'enable_required');
+  assert.deepEqual(fs.readFileSync(calls,'utf8').trim().split('\n').map(c=>c.split(' ')[1]),['inspect','validate','remove','install','disable','inspect']);
 });
 
 test('failed plugin replacement attempts to restore the prior source and reports the installation error',async t=>{

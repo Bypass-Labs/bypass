@@ -128,3 +128,9 @@ jobs:
           "$BYPASS_BIN_DIR/bypass" --version
           curl -fsSL https://bypasslabs.ai/install.ps1 -o "$RUNNER_TEMP/install.ps1"
           cmp scripts/install.ps1 "$RUNNER_TEMP/install.ps1"
+          node --input-type=module -e "import {buildInstallAssets} from './scripts/build-install-assets.mjs'; buildInstallAssets(process.env.RUNNER_TEMP+'/bootstrap-expected');"
+          for pair in 'muse install-muse.sh' 'muse.ps1 install-muse.ps1' 'muse.md install-muse.md'; do
+            read -r route file <<< "$pair"
+            curl -fsSL "https://bypasslabs.ai/install/$route" -o "$RUNNER_TEMP/$file"
+            cmp "$RUNNER_TEMP/bootstrap-expected/$file" "$RUNNER_TEMP/$file"
+          done

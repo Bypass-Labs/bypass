@@ -8,6 +8,7 @@ import { createHash } from 'node:crypto';
 import { execFileSync, execFile as callback } from 'node:child_process';
 import { promisify } from 'node:util';
 import { fileURLToPath } from 'node:url';
+import { buildInstallAssets } from '../scripts/build-install-assets.mjs';
 const execFile=promisify(callback),script=fileURLToPath(new URL('../scripts/install.sh',import.meta.url));
 const shellQuote=s=>"'"+s.replaceAll("'","'\\''")+"'";
 test('installer verifies checksums, works without system Node, survives repeat installs and preserves current on corrupt downloads',async t=>{
@@ -15,7 +16,8 @@ test('installer verifies checksums, works without system Node, survives repeat i
   t.after(()=>fs.rmSync(directory,{recursive:true,force:true}));
   fs.mkdirSync(path.join(runtime,'bin'),{recursive:true});
   fs.writeFileSync(path.join(runtime,'node'),`#!/bin/sh\nexec ${shellQuote(process.execPath)} "$@"\n`,{mode:0o755});
-  fs.writeFileSync(path.join(runtime,'bin/bypass.mjs'),'console.log("Bypass 0.3.1");\n');
+  const calls=path.join(directory,'integration-calls');
+  fs.writeFileSync(path.join(runtime,'bin/bypass.mjs'),`import fs from 'node:fs';\nif(process.argv.includes('integrate')){fs.appendFileSync(${JSON.stringify(calls)},JSON.stringify(process.argv.slice(2))+'\\n');if(process.env.BYPASS_FIXTURE_INTEGRATION_FAIL==='1')process.exit(3);console.log('Plugin installed; review in Muse');}else console.log("Bypass 0.3.1");\n`);
   fs.copyFileSync(fileURLToPath(new URL('../scripts/launch-bypass.sh',import.meta.url)),path.join(bundle,'launch-bypass'));fs.chmodSync(path.join(bundle,'launch-bypass'),0o755);
   fs.copyFileSync(fileURLToPath(new URL('../scripts/configure-path.mjs',import.meta.url)),path.join(bundle,'configure-path.mjs'));
   const archive=path.join(directory,'release.tar.gz');execFileSync('tar',['-czf',archive,'-C',directory,'bypass'],{env:{...process.env,COPYFILE_DISABLE:'1'}});
@@ -29,6 +31,18 @@ test('installer verifies checksums, works without system Node, survives repeat i
   const output=(await run()).stdout;assert.match(output,/Installed Bypass 0.3.1/);assert.match(output,/Automatic PATH setup skipped/);assert.match(output,/To use bypass in this terminal now/);
   assert.equal((await execFile(path.join(bin,'bypass'),['--version'],{env})).stdout.trim(),'Bypass 0.3.1');
   const current=fs.readlinkSync(path.join(install,'current'));await run();assert.equal(fs.readlinkSync(path.join(install,'current')),current);
+  const generated=path.join(directory,'generated');buildInstallAssets(generated);
+  const museScript=path.join(generated,'install-muse.sh');
+  const emptyInstall=path.join(directory,'not-created');
+  await assert.rejects(execFile('/bin/bash',[museScript],{env:{...env,BYPASS_INSTALL_DIR:emptyInstall}}),e=>/Muse Code was not found/.test(e.stderr));
+  assert.equal(fs.existsSync(emptyInstall),false);
+  const fake=path.join(directory,'fake');fs.mkdirSync(fake);fs.writeFileSync(path.join(fake,'muse'),'#!/bin/sh\nexit 0\n',{mode:0o755});
+  const museEnv={...env,PATH:fake+':'+env.PATH};
+  assert.match((await execFile('/bin/bash',[museScript],{env:museEnv})).stdout,/Plugin installed; review in Muse/);
+  assert.deepEqual(JSON.parse(fs.readFileSync(calls,'utf8').trim()),['integrate','muse','--scope','user','--replace']);
+  await assert.rejects(execFile('/bin/bash',[museScript],{env:{...museEnv,BYPASS_FIXTURE_INTEGRATION_FAIL:'1'}}),e=>/CLI is installed, but Muse setup did not finish/.test(e.stderr));
+  assert.equal(fs.readlinkSync(path.join(install,'current')),current);
+  await assert.rejects(execFile('/bin/bash',[script,'--unknown'],{env}),e=>/Unknown option/.test(e.stderr));
   corrupt=true;release='main-'+'b'.repeat(40)+'-2-1';await assert.rejects(run(),e=>/Checksum mismatch/.test(e.stderr));assert.equal(fs.readlinkSync(path.join(install,'current')),current);
   const unrelated=path.join(directory,'unrelated');fs.mkdirSync(unrelated);fs.writeFileSync(path.join(unrelated,'keep.txt'),'keep');
   await assert.rejects(execFile('/bin/bash',[script],{env:{...env,BYPASS_INSTALL_DIR:unrelated}}),e=>/unrelated files/.test(e.stderr));assert.equal(fs.readFileSync(path.join(unrelated,'keep.txt'),'utf8'),'keep');

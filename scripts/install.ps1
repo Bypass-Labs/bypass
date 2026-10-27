@@ -1,10 +1,15 @@
 # Bypass Windows installer: irm https://bypasslabs.ai/install.ps1 | iex
 # A complete script block is parsed before installation begins. No administrator rights required.
 & {
+    param([switch]$Muse)
     $ErrorActionPreference = 'Stop'
     $ProgressPreference = 'SilentlyContinue'
     if ($env:OS -ne 'Windows_NT' -or $PSVersionTable.PSVersion -lt [version]'5.1') {
         throw 'Use Windows PowerShell 5.1 or PowerShell 7 on Windows 10/11 or Windows Server 2016+.'
+    }
+    if ($Muse) {
+        if (-not (Get-Command muse -ErrorAction SilentlyContinue)) { throw 'Muse Code was not found on PATH. Install Muse from https://dev.meta.ai, open it and sign in, then retry this same installer. No Bypass files were changed.' }
+        Write-Host 'Bypass for Muse: 1/3 Download - 2/3 Install plugin - 3/3 Review in Muse'
     }
     function Write-AtomicText([string]$File, [string]$Value, [bool]$Bom = $false) {
         $temporary = $File + '.new-' + [guid]::NewGuid().ToString('N')
@@ -129,8 +134,19 @@
             Write-Host 'Bypass is ready in this PowerShell session.'
             $commandName = 'bypass'
         } else { Write-Host 'Automatic PATH setup skipped (BYPASS_NO_MODIFY_PATH=1).'; $commandName = "& '" + $shim.Replace("'", "''") + "'" }
-        Write-Host "`nMuse plugin:`n  $commandName integrate muse --scope user --replace`n  muse plugins inspect bypass`n  muse plugins approve bypass`n  Then open Muse and use /bypass:start."
-        Write-Host "`nStandalone CLI:`n  $commandName onboard`n`nUpdate: rerun the same installer. Project settings and evidence stay in your app."
+        if ($Muse) {
+            Write-Host '2/3 Registering the full Muse plugin...'
+            $previousAutoUpdate = $env:MUSE_NO_AUTO_UPDATE
+            try {
+                $env:MUSE_NO_AUTO_UPDATE = '1'
+                & (Join-Path $destination 'plugin\runtime\node.exe') (Join-Path $destination 'plugin\runtime\bin\bypass.mjs') integrate muse --scope user --replace
+                if ($LASTEXITCODE -ne 0) { throw 'The CLI is installed, but Muse setup did not finish. Fix the reason above and rerun this same installer. Your project settings and evidence are preserved.' }
+            } finally { $env:MUSE_NO_AUTO_UPDATE = $previousAutoUpdate }
+            Write-Host 'No separate model key or Docker setup is needed for the Muse plugin.'
+        } else {
+            Write-Host "`nNext: $commandName onboard`n`nPrefer Muse? Run: irm https://bypasslabs.ai/install/muse.ps1 | iex"
+        }
+        Write-Host "`nUpdate or repair: rerun this same installer. Project settings and evidence stay in your app."
     } finally {
         [Net.ServicePointManager]::SecurityProtocol = $tls
         if ($work -and (Test-Path -LiteralPath $work)) { Remove-Item -LiteralPath $work -Recurse -Force -ErrorAction SilentlyContinue }

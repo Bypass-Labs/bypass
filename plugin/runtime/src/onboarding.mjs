@@ -136,8 +136,7 @@ export async function onboard(options={}, args=[], io={}) {
     const integration=await call(root,'integrate muse',[],{scope:'project'});museInstalled=true;
     say(integration.message);
     if(integration.next)say(integration.next);
-    say('Native capability review stays in Muse.');
-    say(`In ${root}, run:\n  muse plugins inspect bypass\n  muse plugins approve bypass\nThen start a new Muse session and run /bypass:review.`);
+    say('Review permissions in Muse /plugins → Installed → Bypass → Runtime. Then start a new Muse session in your app and use /bypass:start.');
   }catch(error){if(error.code===130)throw error;say(`Plugin setup can wait. ${error.message}\nContinue in the CLI; choose Settings → Muse plugin to return later.`);}
   return finish();
 

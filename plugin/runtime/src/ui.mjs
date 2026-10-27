@@ -65,7 +65,11 @@ export function printResult(data){
   if(value.findings){console.log(`\n${value.findings.length} findings`);for(const f of value.findings)console.log(`  ${bold(f.id)}  ${f.title}\n    ${label(f.status)} · ${f.fixture?'local fixture':f.simulation?'SIMULATED · unproven':'evidence available'}`);return;}
   if(value.checks&&Array.isArray(value.checks)){console.log(`\n${value.checks.length} saved checks`);for(const c of value.checks)console.log(`  ${bold(c.id)}  ${c.title||c.behavior}\n    ${c.status||c.lastResult?.status||'not run'} · ${c.enabled===false?'disabled':c.target}`);if(value.message)console.log(value.message);return;}
   if(value.finding){const f=value.finding;const next=f.fixture||f.engine==='docker'?`bypass ${['confirmed_fixture','confirmed','regression_failed'].includes(f.status)?'retest':'verify'} ${f.id}`:'bypass demo — complete the proof loop in a separate local app';console.log(`\n${bold(f.title)}\n${f.id} · ${label(f.status)}\n\n${f.hypothesis}\n\n${f.sourceEvidence?.file?`${f.sourceEvidence.file}:${f.sourceEvidence.line}\n${f.sourceEvidence.quote}`:f.sourceEvidence?.message||''}\n\nFix: ${f.recommendation}\n\nNext: ${next}`);if(f.verification)console.log(JSON.stringify(f.verification,null,2));return;}
-  if(value.installed&&value.next){console.log(`\n${value.message}\n${value.next}`);return;}
+  if((value.installed||value.integration)&&value.state&&value.next){
+    console.log(`\n${bold('Bypass in Muse')} · ${label(value.state)}\n${value.message||'Native plugin status'}\n`);
+    for(const capability of value.capabilities||[])console.log(`  ${capability.id?.includes(':hook:')?'Session context':'Security tools'} · ${label(capability.status)}`);
+    console.log(`\nNext: ${value.next}`);return;
+  }
   if(value.message)console.log(`\n${value.message}`);
   const rest={...value};delete rest.schemaVersion;delete rest.exitCode;delete rest.message;
   if(Object.keys(rest).length)console.log(JSON.stringify(rest,null,2));

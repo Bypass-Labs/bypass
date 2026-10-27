@@ -8,6 +8,7 @@ import { spawn } from 'node:child_process';
 import { commandInvocation } from './command.mjs';
 import { rootFrom, read, change, initStore, snapshot, atomic, event } from './store.mjs';
 import { need, named, safeName, envName, now, duration, outcome, execFile, Fault, redact } from './util.mjs';
+import { samePluginPackage, museInstallState } from './muse-install-state.mjs';
 import { connectRepository, repositoryInfo, inventory } from './repository.mjs';
 import { targetURL, makeChallenge, verifyOwnership, authorization, scopeReady, safeRequest } from './network.mjs';
 import { modelProfile, testModel } from './models.mjs';
@@ -236,19 +237,19 @@ async function integrate(key,args,o,working,{signal,onProgress}={}){
     }).finally(()=>clearInterval(timer));
   };
   if(key==='integrate status'){
-    const r=await native('plugins','inspect','bypass','--json');let data;try{data=JSON.parse(r.stdout);}catch{data={message:r.stderr||r.stdout};}return outcome({integration:data},r.code===0?0:3);
+    const r=await native('plugins','inspect','bypass','--json');let data;try{data=JSON.parse(r.stdout);}catch{data={message:r.stderr||r.stdout};}return outcome({integration:data,...museInstallState(data)},r.code===0?0:3);
   }
   if(key==='integrate remove'){
     need(args[0]==='muse','Only muse is supported.');const r=await native('plugins','remove','bypass','--json');return outcome({message:r.stdout||r.stderr},r.code===0?0:3);
   }
   const inspected=await native('plugins','inspect','bypass','--json');
   let existing;try{existing=JSON.parse(inspected.stdout);}catch{}
-  if(inspected.code===0&&existing?.valid&&existing.record?.id==='bypass'&&!o.replace){
-    return outcome({alreadyInstalled:true,installed:existing.record,active:!!existing.active,reviewRequired:true,
-      message:`Bypass is already installed in Muse${existing.record.source?.path?` from ${existing.record.source.path}`:''}. No second installation is needed.`,
-      next:existing.active?'Review with muse plugins inspect bypass, then approve the capabilities you want. Refresh later with muse plugins update bypass.':'Enable it with muse plugins enable bypass, then inspect and approve its native capabilities.'});
-  }
   const plugin=fs.existsSync(path.join(PACKAGE_ROOT,'../.muse-plugin/plugin.json'))?path.resolve(PACKAGE_ROOT,'..'):path.join(PACKAGE_ROOT,'plugin');
+  if(inspected.code===0&&existing?.valid&&existing.record?.id==='bypass'&&(!o.replace||samePluginPackage(plugin,existing.record.cache_path))){
+    return outcome({alreadyInstalled:true,installed:existing.record,...museInstallState(existing),
+      message:`Bypass is already installed in Muse${existing.record.source?.path?` from ${existing.record.source.path}`:''}. No second installation is needed.`,
+    });
+  }
   need(fs.existsSync(path.join(plugin,'runtime/bin/bypass.mjs')),'The bundled Muse plugin runtime is missing. In the Bypass checkout, run npm run plugin:build, then retry.',3);
   const validation=await native('plugins','validate',plugin,'--json');need(validation.code===0,'Muse rejected plugin validation. Use a host with native plugins support (tested with Muse 1.4.13), update Muse if needed, then inspect the validation diagnostics and retry. The installed plugin has not been removed.',3,{validation:validation.stdout});
   const scope=o.scope||'project';need(['user','project'].includes(scope),'Scope must be user or project.');
@@ -268,5 +269,12 @@ async function integrate(key,args,o,working,{signal,onProgress}={}){
     const reason=redact(String(installationError?.message||diagnostic||installed?.stderr||'Run muse plugins inspect bypass for details.')).replace(/[\x00-\x1f\x7f]/g,' ').slice(0,500);
     throw new Fault(`Muse plugin installation did not finish: ${reason}${replaced?restored?' Previous plugin source restored; inspect its native approval state.':' Previous plugin could not be restored automatically; inspect Muse before retrying.':''}`,installationError?.code===130?130:3,{previousPluginRestored:restored,previousSource:existing?.record?.source?.path});
   }
-  return outcome({plugin,scope,installed:JSON.parse(installed.stdout),next:'Review with muse plugins inspect bypass, then muse plugins approve bypass. Start a new Muse session and use /bypass:review.',message:'Installation does not grant runtime trust. Muse’s native capability review remains visible.'});
+  if(replaced&&existing.record.enabled===false){
+    const disabled=await native('plugins','disable','bypass','--json');
+    need(disabled.code===0,'The new package was installed, but Muse could not restore its disabled state. Open /plugins and disable Bypass before proceeding.',3);
+  }
+  const confirmation=await native('plugins','inspect','bypass','--json');
+  let confirmed;try{confirmed=JSON.parse(confirmation.stdout);}catch{}
+  need(confirmation.code===0&&confirmed?.valid,'Muse did not confirm a valid installation. Run bypass integrate status for the current state.',3);
+  return outcome({plugin,scope,installed:JSON.parse(installed.stdout),...museInstallState(confirmed),message:'Bypass is installed. Full tools, commands, security memory and the session hook are included. Muse permission review is the next step.'});
 }

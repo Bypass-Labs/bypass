@@ -47,6 +47,6 @@ export function pluginHelp(tools,query=''){
       {name:'Feature work',steps:['bypass_feature_context','Muse coding tools','bypass_run_tests']}],
     capabilities:catalog.filter(c=>!needle||JSON.stringify(c).toLowerCase().includes(needle)),
     hostSteps:[{operation:'Official Muse sign-in',reason:'Interactive authentication belongs to Muse; Bypass never collects credentials.',command:'muse login'},
-      {operation:'Plugin capability approval or loading an update',reason:'Muse owns approval and session lifecycle.',commands:['muse plugins inspect bypass','muse plugins approve bypass','Restart Muse after updating']}],
+      {operation:'Plugin capability approval or loading an update',reason:'Muse owns approval and session lifecycle.',commands:['/plugins → Installed → Bypass → Runtime','Start a new Muse session, then /bypass:start']}],
     guidance:'Perform tools yourself in this Muse session. Show plain-language choices, not MCP syntax or a request to switch to the standalone CLI. Preserve explicit user scope and secrets. A local schedule needs a running worker and awake machine.'};
 }

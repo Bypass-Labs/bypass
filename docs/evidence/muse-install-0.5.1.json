@@ -1,0 +1,24 @@
+{
+  "version": "0.5.1",
+  "checkedOn": "2026-10-27",
+  "host": "Muse 1.4.13-R6996.1",
+  "platform": "macOS x64",
+  "script": "scripts/smoke-muse-install.mjs",
+  "nativePluginManager": "real",
+  "store": "isolated temporary XDG directories",
+  "firstInstall": "review_required",
+  "identicalRerun": "approval_preserved",
+  "rejectedCapability": "preserved",
+  "disabledPackage": "preserved",
+  "changedPackage": "review_required",
+  "bundledHookLaunch": "passed",
+  "mcpToolCount": 78,
+  "slashCommandCount": 9,
+  "modelCalls": 0,
+  "userInstallation": "remains uninstalled",
+  "limits": [
+    "This verifies native registration, approval states and executable capabilities; it is not a recorded model-driven installation conversation.",
+    "Windows installer execution is covered separately by the release workflow using a native-host fixture, not a live Windows Muse account.",
+    "This installation test does not test a production app or provider inference."
+  ]
+}

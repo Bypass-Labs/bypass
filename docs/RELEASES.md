@@ -34,13 +34,11 @@ CI runs the downloaded x64 package on Windows Server 2022 in both Windows PowerS
 
 ## Muse integration
 
-```bash
-bypass integrate muse --scope user --replace
-muse plugins inspect bypass
-muse plugins approve bypass
-```
+Start inside Muse with “Read https://bypasslabs.ai/install/muse.md and install Bypass for Muse.” The public skill installs the complete runtime using `https://bypasslabs.ai/install/muse` or Windows `https://bypasslabs.ai/install/muse.ps1`. These are explicit plugin installers; the original `/install` and `/install.ps1` remain CLI-only.
 
-`--replace` validates the bundled package before replacing a prior plugin, including one sourced from a Git checkout. It attempts to restore the old source if the new install fails. Muse's native runtime approval remains a separate explicit step. The distribution plugin contains its own Node binary, so its MCP server and session hook do not depend on system Node. The plugin is version-pinned until reinstalled with the command above; rerun it after updating the CLI and restart Muse.
+The plugin installer calls `bypass integrate muse --scope user --replace` internally. It compares all package bytes with the installed cache, preserving approval for an identical package. Changed packages are validated before replacement; failed replacements attempt to restore the previous source. Muse's Runtime panel owns the permission decision. A new session loads the MCP server and hook. Installation does not attest active-session loading.
+
+The source installer variants and installation skill are generated and uploaded with every release. Promotion requires their sizes and SHA-256 digests to match R2 metadata, alongside all six runtime archives. The public entry points always resolve the promoted release. No extra public repository or system npm is required.
 
 The CLI-only path is `bypass onboard`. Existing app state stays in the app's `.bypass` folder.
 

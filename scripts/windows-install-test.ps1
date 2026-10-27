@@ -44,6 +44,33 @@ try {
     Assert-Bypass ($LASTEXITCODE -eq 0) 'Installed plugin manifest could not launch from the application directory.'
     & $node (Join-Path $PSScriptRoot 'smoke-installed-windows.mjs') $first.bundle $app
     Assert-Bypass ($LASTEXITCODE -eq 0) 'Installed plugin/runtime verification failed.'
+    # Execute the actual Muse installer entrypoint with a local native-host fixture.
+    # This checks PowerShell argument forwarding and bundled-Node registration,
+    # without requiring an installed/paid Muse account on the CI runner.
+    $museFixture = Join-Path $sandbox 'installer Muse fixture'
+    New-Item -ItemType Directory -Path $museFixture | Out-Null
+    [IO.File]::WriteAllText((Join-Path $museFixture 'muse.cmd'), "@exit /b 97`r`n")
+    $museLauncher = @'
+[Console]::OutputEncoding = New-Object Text.UTF8Encoding($false)
+$marker = Join-Path $PSScriptRoot 'installed.json'
+switch ($args[1]) {
+  'inspect' { if (Test-Path $marker) { Get-Content $marker -Raw; exit 0 }; Write-Output '{"error":{"message":"not installed"}}'; exit 1 }
+  'validate' { Write-Output '{"valid":true}'; exit 0 }
+  'install' { @{valid=$true; active=$true; record=@{id='bypass'; cache_path=$args[2]}} | ConvertTo-Json -Depth 5 | Set-Content $marker; Write-Output '{"installed":true}'; exit 0 }
+  default { throw 'Unexpected operation (automatic approval is forbidden)' }
+}
+'@
+    [IO.File]::WriteAllText((Join-Path $museFixture '.muse-launcher.ps1'), $museLauncher)
+    $beforeMusePath = $env:Path
+    $env:Path = $museFixture + ';' + $env:Path
+    try {
+        $museInstaller = irm "https://bypasslabs.ai/downloads/bypass/releases/$ReleaseId/install-muse.ps1"
+        $museInstaller | iex
+        Assert-Bypass (Test-Path (Join-Path $museFixture 'installed.json')) 'Muse installer did not register the native plugin.'
+        $museInstaller | iex
+        $status = bypass integrate status --json | ConvertFrom-Json
+        Assert-Bypass ($status.state -eq 'review_required') 'Muse installer incorrectly claimed runtime approval.'
+    } finally { $env:Path = $beforeMusePath }
     # A corrupt download must not replace the active configuration.
     $portFile = Join-Path $env:RUNNER_TEMP ('bypass-port-' + [guid]::NewGuid().ToString('N'))
     $fixtureScript = Join-Path $PSScriptRoot 'windows-download-fixture.mjs'
