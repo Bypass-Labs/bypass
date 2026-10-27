@@ -13,6 +13,31 @@ $env:BYPASS_NO_MODIFY_PATH = $null
 $env:BYPASS_DOWNLOAD_BASE_URL = $null
 $fixture = $null
 try {
+    # Exercise the actual installer move with a real, temporary Windows file lock.
+    # Load only this helper; do not run installation as a side effect of the test.
+    $parseTokens = $null; $parseErrors = $null
+    $installerAst = [System.Management.Automation.Language.Parser]::ParseFile((Join-Path $PSScriptRoot 'install.ps1'), [ref]$parseTokens, [ref]$parseErrors)
+    $moveFunction = $installerAst.Find({ param($node) $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq 'Move-BypassBundle' }, $true)
+    . ([scriptblock]::Create($moveFunction.Extent.Text))
+    $lockedStage = Join-Path $sandbox 'locked package'
+    $unlockedDestination = Join-Path $sandbox 'unlocked package'
+    New-Item -ItemType Directory -Path $lockedStage -Force | Out-Null
+    $lockFile = Join-Path $lockedStage 'runtime.txt'
+    [IO.File]::WriteAllText($lockFile, 'verified package content')
+    $readyFile = Join-Path $sandbox 'lock-ready'
+    $lockJob = Start-Job -ArgumentList $lockFile,$readyFile -ScriptBlock {
+        param($file, $ready)
+        $handle = [IO.File]::Open($file, [IO.FileMode]::Open, [IO.FileAccess]::Read, [IO.FileShare]::Read)
+        try { [IO.File]::WriteAllText($ready, 'ready'); Start-Sleep -Milliseconds 1500 }
+        finally { $handle.Dispose() }
+    }
+    try {
+        for ($i=0; $i -lt 200 -and -not (Test-Path -LiteralPath $readyFile); $i++) { Start-Sleep -Milliseconds 50 }
+        Assert-Bypass (Test-Path -LiteralPath $readyFile) 'File-lock fixture did not start.'
+        $moveMessages = @(Move-BypassBundle $lockedStage $unlockedDestination 6>&1)
+        Assert-Bypass (($moveMessages | Out-String) -match 'Waiting for Windows') 'The move test did not exercise a locked package.'
+        Assert-Bypass ([IO.File]::ReadAllText((Join-Path $unlockedDestination 'runtime.txt')) -ceq 'verified package content') 'The retried move did not preserve the package.'
+    } finally { $lockJob | Stop-Job; $lockJob | Remove-Job -Force }
     # Exercise the customer's actual irm | iex flow, pinned to the unpromoted candidate.
     $installerUrl = "https://bypasslabs.ai/downloads/bypass/releases/$ReleaseId/install.ps1"
     $installer = irm $installerUrl

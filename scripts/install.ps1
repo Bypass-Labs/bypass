@@ -31,6 +31,20 @@
             if ([IO.File]::Exists($backup)) { [IO.File]::Delete($backup) }
         }
     }
+    function Move-BypassBundle([string]$Source, [string]$Destination) {
+        # Windows can briefly retain a handle after extraction or runtime validation.
+        # Retry the atomic directory move; never copy a partial active installation.
+        for ($attempt = 0; $attempt -lt 16; $attempt++) {
+            try { [IO.Directory]::Move($Source, $Destination); return }
+            catch {
+                $cause = $_.Exception.GetBaseException()
+                if ($cause -isnot [IO.IOException] -and $cause -isnot [UnauthorizedAccessException]) { throw }
+                if ($attempt -eq 15) { throw 'Windows could not finish moving the downloaded package. Your active installation was not changed. Close processes using Bypass and rerun this installer.' }
+                if ($attempt -eq 0) { Write-Host 'Waiting for Windows to release the downloaded package...' }
+                Start-Sleep -Milliseconds 500
+            }
+        }
+    }
     function Contains-Path([string]$Value, [string]$Directory) {
         foreach ($entry in ($Value -split ';')) {
             $expanded = [Environment]::ExpandEnvironmentVariables($entry.Trim().Trim('"')).TrimEnd('\', '/')
@@ -120,7 +134,7 @@
         $releases = Join-Path $installDir 'releases'
         New-Item -ItemType Directory -Path $releases -Force | Out-Null
         $destination = Join-Path $releases ("$release-win-$cpu-" + $expected.Substring(0, 12))
-        if (-not (Test-Path -LiteralPath $destination)) { Move-Item -LiteralPath $stage -Destination $destination }
+        if (-not (Test-Path -LiteralPath $destination)) { Move-BypassBundle $stage $destination }
         New-Item -ItemType Directory -Path $binDir -Force | Out-Null
         $shimContent = @('@echo off', 'rem Bypass managed launcher', 'setlocal DisableDelayedExpansion', '"%SystemRoot%\System32\WindowsPowerShell\v1.0\powershell.exe" -NoLogo -NoProfile -ExecutionPolicy Bypass -File "%~dp0.bypass-launcher.ps1" %*', 'exit /b %ERRORLEVEL%') -join "`r`n"
         Write-AtomicText $shim ($shimContent + "`r`n")
