@@ -1,5 +1,9 @@
 ---
-description: Review application source and scoped HTTP behavior with the Bypass Docker agents.
+description: Start or resume guided setup, then review application source and scoped HTTP behavior.
 ---
 
-Use the bypass skill. Start with bypass_workspace and use my identified application repository, or ask which one. Select it with bypass_connect_repository, then resume saved context. Show repository, app, engine and shared model. For a real review, select the Docker engine, configure the shared model to match my Muse model when its ID/provider are known, and show the inference destination. Do not silently substitute another provider. Guide DNS ownership, authorized scope, two test-account references and a known owner-owned JSON resource. Use source-only mode while app setup is pending. Start the scan and follow its progress. Report source hypotheses separately from HTTP-confirmed findings. After I fix a confirmed issue, retest and save/export the deterministic regression. Offline mock previews must stay labeled.
+Use the bypass skill. Call bypass_onboarding with intent real first. Show the version, selected application and compact setup checklist. Reuse the explicitly saved repository and its settings. If I already named my repository, connect it without another confirmation; otherwise ask only the returned repository question. A tooling-folder mismatch is setup information, never a security finding.
+
+Follow the checklist's nextAction yourself, calling tools after my answers and refreshing the checklist. A requested real review authorizes selecting the Docker engine; do not ask me to approve this implementation choice. Guide the shared model, running app, DNS ownership (local acknowledgment for loopback), explicit testing scope, two test-account references and an owner-owned JSON resource. Never request raw secrets. Offer source-only review while live setup is pending. Do not search .demo folders or give me MCP calls to type. Stop for missing user information, not after every successful tool call.
+
+When ready, show the plan and start the requested review. Follow its progress. Report source hypotheses separately from HTTP-confirmed findings. After I fix a confirmed issue, retest and save/export the deterministic regression. Offline mock previews require an explicit preview choice and remain labeled.

@@ -49,7 +49,7 @@ muse
 
 > Use Bypass's real Docker agents to review this repository and its staging app at https://staging.example.com. Use the same model as this session, guide setup, and prove findings with HTTP controls.
 
-Bypass connects this repository, selects one shared model profile, and guides ownership, scope, two test-account references and a known owner-owned JSON resource. Source review can continue while DNS is pending. Source hypotheses and HTTP-confirmed findings are labeled separately. If the host model ID is unavailable, it asks which profile to use.
+Bypass shows a setup checklist, connects this repository, selects one shared model profile, and guides ownership, scope, two test-account references and a known owner-owned JSON resource. It asks one question at a time and performs the setup tools itself. Your explicit application choice and its settings are reused in later sessions from the same folder. Source review can continue while DNS is pending. Source hypotheses and HTTP-confirmed findings are labeled separately. If the host model ID is unavailable, it asks which profile to use.
 
 Or start with **`/bypass:review`**. Use **`/bypass:context`** for saved evidence and monitor results in a later session.
 

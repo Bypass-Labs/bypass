@@ -8,6 +8,7 @@ import { connectRepository, repositoryInfo, inventory } from './repository.mjs';
 import { targetURL, makeChallenge, verifyOwnership, authorization, scopeReady, safeRequest } from './network.mjs';
 import { modelProfile, testModel } from './models.mjs';
 import { scanPlan, executeRun, verifyFinding } from './engine.mjs';
+import { monitorSummary } from './plugin-context.mjs';
 import { realEngine } from './real-engine.mjs';
 import { dockerStatus, prepareAgents } from './agent-runtime.mjs';
 import { specFor, saveCheck, bindCheck, exportChecks } from './checks.mjs';
@@ -176,7 +177,7 @@ export async function execute(key,args=[],o={},context={}){
     case 'coverage':{
       const inv=await inventory(root);result={scope:'Specific saved HTTP behaviors only',complete:false,sourceFingerprint:inv.fingerprint,checks:s.checks.map(c=>({id:c.id,behavior:c.title,target:c.target,status:!c.enabled?'disabled':['failed','blocked'].includes(c.lastResult?.status)?c.lastResult.status:c.sourceFingerprint!==inv.fingerprint?'stale':c.lastResult?.status||'not-run',sourceChanged:c.sourceFingerprint!==inv.fingerprint,lastResult:c.lastResult})),unproven:s.findings.filter(f=>f.status==='simulated_unproven').map(f=>({id:f.id,title:f.title,simulation:true})),message:'A route is not fully covered just because one behavior on that route has a test.'};break;
     }
-    case 'context':result={project:s.project.name,engine:realEngine(s)?'docker':'mock',summary:readiness(root),finding:o.finding?named(s.findings,o.finding,'Finding'):null,recentEvents:s.events.slice(-15),attention:s.checks.filter(c=>c.enabled&&['failed','blocked','stale'].includes(c.lastResult?.status)),next:'Replay saved checks first. Investigate failed, blocked, stale, and uncovered behaviors. Never treat simulated candidates as verified issues.'};break;
+    case 'context':result={project:s.project.name,engine:realEngine(s)?'docker':'mock',summary:readiness(root),latestMonitor:monitorSummary(s),finding:o.finding?named(s.findings,o.finding,'Finding'):null,recentEvents:s.events.slice(-15),attention:s.checks.filter(c=>c.enabled&&['failed','blocked','stale'].includes(c.lastResult?.status)),next:'Replay saved checks first. Investigate failed, blocked, stale, and uncovered behaviors. Never treat simulated candidates as verified issues.'};break;
     case 'report':{
       const r=named(s.runs,o.run||s.runs.at(-1)?.id,'Run'),format=o.format||'json';need(['json','md'].includes(format),'Report format must be json or md.');
       const content=format==='json'?JSON.stringify(redact(r),null,2):`# Bypass run ${r.id}\n\nStatus: ${r.status}. Exit: ${r.exitCode}.\n\nAnalysis simulated: ${r.simulation}. Model calls: ${r.result?.modelCalls??0}.\n\n${r.result?.message||''}\n\n## Evidence\n\n\`\`\`json\n${JSON.stringify(redact(r.result),null,2)}\n\`\`\`\n`;

@@ -13,7 +13,7 @@ import { delay } from '../src/util.mjs';
 
 test('MCP negotiates, validates typed tools, shares CLI state, and closes cleanly',async t=>{
   const root=temp();await execute('init',[root]);
-  const child=spawn(process.execPath,[CLI,'mcp','serve','--project',root],{stdio:['pipe','pipe','pipe']});
+  const child=spawn(process.execPath,[CLI,'mcp','serve','--project',root],{stdio:['pipe','pipe','pipe'],env:{...process.env,BYPASS_PLUGIN_STATE_DIR:temp()}});
   t.after(()=>child.kill());let sequence=0;const waiting=new Map();const notifications=[];
   const lines=readline.createInterface({input:child.stdout});const protocolErrors=[];
   lines.on('line',line=>{const m=JSON.parse(line);if(m.id===null){protocolErrors.push(m);}else if(m.id!==undefined){const pending=waiting.get(m.id);if(pending){clearTimeout(pending.timer);pending.resolve(m);waiting.delete(m.id);}}else notifications.push(m);});
@@ -40,7 +40,7 @@ test('plugin selects the application explicitly, keeps host state untouched, and
   fs.writeFileSync(path.join(host,'wrong-source.js'),'throw new Error("Must not inventory the tooling app")');
   fs.writeFileSync(path.join(app,'job-search.js'),'throw new Error("Must not execute customer code")');
   await execute('init',[host]);const before=fs.readFileSync(path.join(host,'.bypass/state.json'),'utf8');
-  const child=spawn(process.execPath,[CLI,'mcp','serve','--project',host],{stdio:['pipe','pipe','pipe']});
+  const child=spawn(process.execPath,[CLI,'mcp','serve','--project',host],{stdio:['pipe','pipe','pipe'],env:{...process.env,BYPASS_PLUGIN_STATE_DIR:temp()}});
   t.after(()=>child.kill());let sequence=0;const pending=new Map();
   readline.createInterface({input:child.stdout}).on('line',line=>{const message=JSON.parse(line);const item=pending.get(message.id);if(item){clearTimeout(item.timer);pending.delete(message.id);item.resolve(message);}});
   const request=(method,params={})=>new Promise((resolve,reject)=>{const id=++sequence;const timer=setTimeout(()=>reject(new Error('MCP selection request timed out')),8000);pending.set(id,{resolve,timer});child.stdin.write(JSON.stringify({jsonrpc:'2.0',id,method,params})+'\n');});
@@ -74,4 +74,39 @@ test('plugin selects the application explicitly, keeps host state untouched, and
   assert.equal(JSON.parse(context.result.contents[0].text).summary.root,app);
   assert.equal(fs.readFileSync(path.join(host,'.bypass/state.json'),'utf8'),before);
   child.stdin.end();assert.equal(await new Promise(resolve=>child.once('close',resolve)),0);
+});
+
+test('plugin setup resumes across real MCP processes without copying permissions from the host',async t=>{
+  const host=temp(),app=temp(),pluginState=temp();
+  fs.writeFileSync(path.join(host,'package.json'),JSON.stringify({name:'@bypass-labs/cli-skeleton'}));
+  await execute('init',[host]);const hostBefore=fs.readFileSync(path.join(host,'.bypass/state.json'),'utf8');
+  function client(){
+    const child=spawn(process.execPath,[CLI,'mcp','serve','--project',host],{stdio:['pipe','pipe','pipe'],env:{...process.env,BYPASS_PLUGIN_STATE_DIR:pluginState,BYPASS_MCP_OWNER_TOKEN:'owner-test-only',BYPASS_MCP_OTHER_TOKEN:'other-test-only'}});
+    let sequence=0;const pending=new Map();t.after(()=>child.kill());
+    readline.createInterface({input:child.stdout}).on('line',line=>{const m=JSON.parse(line),p=pending.get(m.id);if(p){clearTimeout(p.timer);pending.delete(m.id);p.resolve(m);}});
+    const request=(method,params={})=>new Promise((resolve,reject)=>{const id=++sequence,timer=setTimeout(()=>reject(new Error('Restart test request timeout')),15000);pending.set(id,{resolve,timer});child.stdin.write(JSON.stringify({jsonrpc:'2.0',id,method,params})+'\n');});
+    return {request,call:async(name,args={})=>{const reply=await request('tools/call',{name,arguments:args});assert.ok(reply.result,JSON.stringify(reply));assert.equal(reply.result.isError,false,JSON.stringify(reply));return JSON.parse(reply.result.content[0].text);},close:()=>new Promise(resolve=>{child.once('close',resolve);child.stdin.end();})};
+  }
+  let c=client();await c.request('initialize',{protocolVersion:'2025-11-25'});
+  const context=await c.call('bypass_context');assert.equal(context.stage,'repository');assert.equal(context.recentEvents,undefined);
+  await c.call('bypass_connect_repository',{repository:app,confirmed:true});
+  await c.call('bypass_engine',{mode:'docker'});await c.call('bypass_add_model',{name:'muse',provider:'muse-code'});
+  await c.call('bypass_add_target',{name:'local',url:'http://127.0.0.1:4567',environment:'local'});
+  await c.call('bypass_verify_target',{name:'local',method:'local'});
+  assert.equal((await c.call('bypass_onboarding')).steps.find(s=>s.id==='scope').status,'needed');
+  await c.call('bypass_authorize_target',{name:'local',paths:'/api',accept:true});
+  await c.call('bypass_add_identity',{name:'owner',target:'local',type:'bearer','secret-env':'BYPASS_MCP_OWNER_TOKEN'});
+  await c.call('bypass_update_identity',{name:'owner','check-path':'/api/me'});
+  await c.call('bypass_add_identity',{name:'other',target:'local',type:'bearer','secret-env':'BYPASS_MCP_OTHER_TOKEN','check-path':'/api/me'});
+  await c.call('bypass_add_probe',{name:'item',target:'local',path:'/api/items/1','resource-id':'1',owner:'owner',outsider:'other'});
+  const before=await c.call('bypass_onboarding');assert.equal(before.steps.find(s=>s.id==='resource').status,'complete');
+  assert.equal(await c.close(),0);
+  c=client();await c.request('initialize',{protocolVersion:'2025-11-25'});
+  const resumed=await c.call('bypass_onboarding');assert.equal(resumed.selectedRepository,app);assert.equal(resumed.engine,'docker');
+  assert.equal(resumed.steps.find(s=>s.id==='model').profile.name,'muse');assert.equal(resumed.steps.find(s=>s.id==='scope').status,'complete');
+  assert.equal(resumed.steps.find(s=>s.id==='resource').status,'complete');assert.equal(resumed.pluginVersion,'0.2.1');
+  assert.doesNotMatch(JSON.stringify(resumed),/owner-test-only|other-test-only/);
+  const resource=await c.request('resources/read',{uri:'bypass://context'});assert.equal(JSON.parse(resource.result.contents[0].text).summary.root,app);
+  assert.equal(fs.readFileSync(path.join(host,'.bypass/state.json'),'utf8'),hostBefore);assert.equal(read(app).runs.length,0);
+  assert.equal(await c.close(),0);
 });

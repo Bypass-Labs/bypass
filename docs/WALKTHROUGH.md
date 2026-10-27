@@ -129,12 +129,14 @@ Type `q` at any step to leave. Partial evidence is kept and the local server sto
 
 ## The same flow inside Muse
 
-After native plugin setup, start a new Muse session and run `/bypass:review`. Bypass asks for the application repository first; it never initializes the current folder silently. An explicit request naming the repository supplies that selection without an extra confirmation. Give the actual source path or Git URL, then the app URL and its environment.
+After native plugin setup, start a new Muse session and run `/bypass:review`. Bypass shows its version and a setup checklist. It reuses your explicitly selected application from earlier sessions in this folder, or asks which application to connect; it never initializes the current folder silently. An explicit request naming the repository supplies that selection without an extra confirmation. Give the actual source path or Git URL, then the app URL and its environment.
 
-All subsequent Bypass tools use the selected repository for this session. The plugin shows repository, remote, branch, app, white-box status, and black-box status before a review. For real agents, select one shared Bypass model profile matching the known Muse provider/model ID; the plugin asks when that information is unavailable. DNS pending means the black-box stage waits; the code preview can proceed. Offline preview stays labeled; real Docker mode uses configured accounts/resources for actual proof.
+All subsequent Bypass tools use the selected repository. The choice is remembered for future sessions opened from the same host folder; example/demo projects are not remembered. The plugin shows repository, remote, branch, app, white-box status, and black-box status before a review. For real agents, select one shared Bypass model profile matching the known Muse provider/model ID; the plugin asks when that information is unavailable. DNS pending means the black-box stage waits; real source review can proceed. Offline preview stays labeled; real Docker mode uses configured accounts/resources for actual proof.
 
 If the selected source differs from Muse’s editor folder, open a new Muse session in the application before editing a fix. Repository changes do not transfer DNS challenges, authorizations, identities, or findings from another project.
 
 To load updated plugin instructions and tools, run `muse plugins update bypass`, then start a new Muse session. Existing sessions may retain the old plugin.
 
 When native inspection reports the MCP capability as modified, review with `muse plugins inspect bypass` and approve that capability with `muse plugins approve plugin:bypass:mcp_server:security`. This is Muse's native review for a changed runtime definition; Bypass does not approve it automatically.
+
+The plugin performs the setup tools after each answer. You do not need MCP command syntax. It reuses saved model/target settings, shows the exact TXT record when needed, asks separately for testing permission, then collects account **environment-variable names** and one owner-owned resource. `/bypass:context` resumes this same application; it never searches example folders for old monitor failures. Historical failures superseded by a passing retest are labeled accordingly.

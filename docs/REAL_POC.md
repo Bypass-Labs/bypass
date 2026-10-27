@@ -67,7 +67,20 @@ Update the plugin and start a new Muse session. Paste:
 
 > Use Bypass's real Docker agents to review this repository and its staging app. Use the same model as this session, guide any missing setup, prove findings with HTTP controls, and help me keep verified fixes as regression tests.
 
-The plugin guides repository selection, shared model, ownership, scope and resource setup through typed tools. It polls a durable run so you can see progress and stop it. Source editing stays in Muse; tests and evidence stay in the selected application.
+The plugin shows its version and a setup checklist, then asks one question at a time. It performs the tools itself and reuses saved choices. The expected conversation is:
+
+| Step | What you provide | What Bypass does |
+| --- | --- | --- |
+| Repository | Use this application folder, another path, or a Git URL | Connects it and remembers your explicit choice for this Muse workspace |
+| Model | Muse subscription, local model, or self-hosted endpoint | Selects one shared profile; checks Docker without making a paid model test |
+| App | App URL and local/staging/production environment | Connects the app; offers source-only review if you prefer |
+| Ownership | Publish the displayed DNS TXT record, or acknowledge local ownership | Verifies the selected app; source review can proceed while DNS is pending |
+| Scope | Authorized path prefixes; explicit acknowledgment for production | Records GET/HEAD permission, 2 requests/second, expiring in seven days |
+| Accounts | Two credential environment-variable names, credential type and login endpoint | Reuses or repairs references without reading secrets into chat |
+| Resource | Owner's exact JSON resource path and expected ID | Binds the owner/other-account/anonymous controls |
+| Review | The review request already supplied | Shows the plan, runs the real agents and reports source hypotheses and HTTP proof separately |
+
+The plugin polls a durable run so you can see progress and stop it. Source editing stays in Muse; tests and evidence stay in the selected application. A later `/bypass:context` resumes that application's readiness and current checks. It labels old monitor failures superseded by a later passing retest, and does not search example projects for evidence.
 
 **Model inheritance is explicit.** The MCP interface does not expose the host Muse model automatically. When its provider and model ID are known, configure those exact values. Otherwise the plugin asks which shared profile to use. All three Bypass roles use that one profile. It never claims a different provider is the same model, extracts subscription tokens or silently falls back to cloud inference.
 
@@ -92,6 +105,9 @@ The host calls the selected model: compatible local inference stays local; self-
 A run permits at most 17 model calls across the three roles, eight turns per worker, 192 KB of source reads and six resource probes. Each probe uses five GET requests. Requests honor existing exact-origin, authorization, expiry, path, DNS-pinning and rate-limit controls. Raw HTTP bodies and credential values are not persisted or sent to the model. Findings, citations, control statuses, container identities, selected model and call counts are saved locally.
 
 ## Troubleshooting
+
+- **Plugin shows the old mocked-only instructions:** update the plugin, inspect/approve changed native capabilities, and start a new Muse session. The setup tool and session hook report the loaded version. Updating the checkout does not reload an already-running Muse session.
+- **Muse pauses between setup steps:** the setup checklist itself makes no model request, but Muse still needs a host-model response to choose and present its next action. During validation, some conversations hit their 3–5 minute test bounds between successful tools. The selected application and its configuration survived restart. A separate fresh-session check completed with `muse --reasoning-effort minimal`; this is an optional setting for onboarding, not a change to your saved model profile. This remains a host-conversation latency limitation; successful tool checks do not establish a consistently fast conversational experience. See the [plugin validation record](evidence/plugin-onboarding-2026-10-26.json), including the timed-out attempts.
 
 - **Docker unavailable:** start Docker Desktop or Colima; `docker version` must show a server. `engine doctor` checks availability. The first review builds the shared image; `engine prepare` prepares it in advance. An image tag is derived from worker source and Dockerfile; runs use its resolved image ID.
 - **Model timeout / invalid JSON:** the run is incomplete and retains partial evidence. Check `muse usage` / `muse login`, or your endpoint/model selection. No fake result is substituted.

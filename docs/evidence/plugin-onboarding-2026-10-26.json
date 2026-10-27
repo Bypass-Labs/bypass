@@ -1,0 +1,120 @@
+{
+  "version": "0.2.1",
+  "recordedAt": "2026-10-27T00:58:47.850Z",
+  "scope": "Plugin onboarding and context; this is not a new vulnerability-discovery benchmark.",
+  "tests": {
+    "passed": 67,
+    "failed": 0,
+    "skipped": 0,
+    "includesActualDocker": true,
+    "syntaxModules": 45
+  },
+  "nativePlugin": {
+    "version": "0.2.1",
+    "valid": true,
+    "packageSha256": "sha256:cb64aed46c44418a71c859a5b03b5d7cd409967303c515f9b6e5dc16625b3364",
+    "capabilities": [
+      {
+        "id": "plugin:bypass:hook:session-context",
+        "status": "trusted_enabled"
+      },
+      {
+        "id": "plugin:bypass:mcp_server:security",
+        "status": "trusted_enabled"
+      }
+    ],
+    "sessionHook": "Passed; versioned application-selection hint, no unselected demo evidence."
+  },
+  "nativeMuse": {
+    "model": "muse-wonder-full-1.0",
+    "initialQuestion": {
+      "status": "completed",
+      "tools": [
+        {
+          "tool": "mcp__plugin_bypass_security__bypass_onboarding",
+          "outcome": "success"
+        }
+      ],
+      "reply": "Bypass onboarding started. Plugin version is 0.2.1. No scan or model test was run.\n\nWhich application should we review? Give its folder or Git URL; this folder contains the Bypass tool."
+    },
+    "repositoryConnection": {
+      "connected": true,
+      "remembered": true,
+      "modelReused": true,
+      "tools": [
+        {
+          "tool": "read_skill",
+          "outcome": "success"
+        },
+        {
+          "tool": "mcp__plugin_bypass_security__bypass_onboarding",
+          "outcome": "success"
+        },
+        {
+          "tool": "mcp__plugin_bypass_security__bypass_connect_repository",
+          "outcome": "success"
+        }
+      ],
+      "conversation": "The 180-second check timed out after connection; saved selection was then resumed in a fresh native session."
+    },
+    "freshResume": {
+      "status": "timed_out_after_300_seconds",
+      "selectionRestored": true,
+      "tools": [
+        {
+          "tool": "read_skill",
+          "outcome": "success"
+        },
+        {
+          "tool": "mcp__plugin_bypass_security__bypass_onboarding",
+          "outcome": "success"
+        }
+      ],
+      "reply": null,
+      "lastStage": "engine"
+    },
+    "minimalReasoningResume": {
+      "status": "completed",
+      "tools": [
+        {
+          "tool": "read_skill",
+          "outcome": "success"
+        },
+        {
+          "tool": "mcp__plugin_bypass_security__bypass_onboarding",
+          "outcome": "success"
+        },
+        {
+          "tool": "mcp__plugin_bypass_security__bypass_engine",
+          "outcome": "success"
+        },
+        {
+          "tool": "mcp__plugin_bypass_security__bypass_onboarding",
+          "outcome": "success"
+        }
+      ],
+      "reply": "**Bypass 0.2.1 · [<temporary-app>](<temporary-app>)**\n\n- ✅ Application repository: selected\n- ✅ Analysis engine: Docker (real) — enabled\n- ✅ Shared model: `muse` (muse-code, Muse session default) — reused, not tested\n- ✅ Docker services: ready\n- ▶️ Running app: needed\n- ⏳ App ownership, testing permission, two test accounts, owner-owned JSON resource: waiting\n\nSource review is now ready; live review is not. No scan or model connection test was run.\n\nWhere is this repository running? Give its app URL and environment, or choose source-only for now.",
+      "stage": "app",
+      "sourceReady": true,
+      "liveReady": false
+    },
+    "bypassScanRuns": 0,
+    "configuredModels": 1,
+    "notes": [
+      "The first initial-question attempt also hit the 180-second bound; its retry completed. No timed-out conversation is counted as a completed test.",
+      "Muse host model responses stalled between successful tools at low reasoning effort; the fresh resume was bounded at 300 seconds. Account usage was below its limits. The separate minimal-effort check is reported without changing user settings.",
+      "No customer app requests, DNS publication, or new agent analysis was part of this onboarding check."
+    ]
+  },
+  "reportedHistoricalMonitor": {
+    "id": "run_1a695603",
+    "finishedAt": "2026-10-26T22:08:40.192Z",
+    "exitCode": 1,
+    "scope": "example application",
+    "status": "superseded_by_passing_retest",
+    "historical": true,
+    "superseded": true,
+    "activeSchedules": 0,
+    "message": "Historical failure was superseded by a later passing retest. Do not present it as a current incident."
+  }
+}
