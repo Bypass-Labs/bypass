@@ -37,7 +37,12 @@ for(const platform of selected){
     fs.copyFileSync(path.join(work,name,windows?'node.exe':'bin/node'),path.join(plugin,'runtime',nodeFile));fs.chmodSync(path.join(plugin,'runtime',nodeFile),0o755);
     fs.copyFileSync(path.join(work,name,'LICENSE'),path.join(plugin,'runtime/NODE_LICENSE'));
     const manifestPath=path.join(plugin,'.muse-plugin/plugin.json'),manifest=JSON.parse(fs.readFileSync(manifestPath));
-    for(const capability of [...manifest.capabilities.mcpServers,...manifest.capabilities.hooks])capability.command[0]='./runtime/'+nodeFile;
+    for(const capability of [...manifest.capabilities.mcpServers,...manifest.capabilities.hooks]){
+      // Muse resolves the first declared source path (our executable), but keeps
+      // the customer's cwd. Resolve the entrypoint from that executable as well.
+      const entry=capability.command[1];
+      capability.command=['./runtime/'+nodeFile,'--input-type=module','-e',`import { pathToFileURL } from 'node:url'; await import(new URL('../${entry}', pathToFileURL(process.execPath)));`];
+    }
     fs.writeFileSync(manifestPath,JSON.stringify(manifest,null,2)+'\n');
     fs.copyFileSync(path.join(root,'scripts/launch-bypass.sh'),path.join(bundle,'launch-bypass'));fs.chmodSync(path.join(bundle,'launch-bypass'),0o755);
     fs.copyFileSync(path.join(root,'scripts/configure-path.mjs'),path.join(bundle,'configure-path.mjs'));

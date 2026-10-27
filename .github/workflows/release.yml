@@ -52,6 +52,7 @@ jobs:
           mkdir -p "$RUNNER_TEMP/bypass-customer-app"
           "$BYPASS_BIN_DIR/bypass" init "$RUNNER_TEMP/bypass-customer-app" --non-interactive
           "$BYPASS_BIN_DIR/bypass" context --project "$RUNNER_TEMP/bypass-customer-app" --task "Add invoice export" --json
+          node scripts/smoke-plugin-launch.mjs "$BYPASS_INSTALL_DIR/current" "$RUNNER_TEMP/bypass-customer-app"
           # Exercise PATH using the downloaded package and isolated shell profiles.
           node --input-type=module <<'NODE'
           import assert from 'node:assert/strict';

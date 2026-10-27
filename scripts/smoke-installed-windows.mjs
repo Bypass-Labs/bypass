@@ -26,7 +26,8 @@ try{
   const installed=await execute('integrate muse',[],{project:app,scope:'user'});
   assert.equal(installed.exitCode,0);assert.equal(installed.installed.source,path.join(bundle,'plugin'));
 }finally{process.env.Path=savedPath;}
-const child=spawn(path.join(runtime,'node.exe'),[path.join(bundle,'plugin/mcp/server.mjs')],{cwd:app,env:{...process.env,BYPASS_PLUGIN_STATE_DIR:path.join(path.dirname(app),'plugin-state')},stdio:['pipe','pipe','pipe']});
+const server=manifest.capabilities.mcpServers[0];
+const child=spawn(path.resolve(bundle,'plugin',server.command[0]),server.command.slice(1),{cwd:app,env:{...process.env,BYPASS_PLUGIN_STATE_DIR:path.join(path.dirname(app),'plugin-state')},stdio:['pipe','pipe','pipe']});
 let sequence=0;const pending=new Map();let stderr='';child.stderr.on('data',chunk=>stderr+=chunk);
 readline.createInterface({input:child.stdout}).on('line',line=>{const result=JSON.parse(line),p=pending.get(result.id);if(p){clearTimeout(p.timer);pending.delete(result.id);p.resolve(result);}});
 const closed=new Promise(resolve=>child.once('close',(code,signal)=>{for(const p of pending.values()){clearTimeout(p.timer);p.reject(new Error(`Installed MCP closed during ${p.label} (code ${code}, signal ${signal}): ${stderr}`));}pending.clear();resolve(code);}));

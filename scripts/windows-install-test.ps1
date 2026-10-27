@@ -40,6 +40,8 @@ try {
     $packet = bypass context --project $app --task $task --json | ConvertFrom-Json
     Assert-Bypass ($LASTEXITCODE -eq 0 -and $packet.kind -eq 'feature-security-context' -and $packet.task -ceq $task) 'Installed CLI did not preserve arguments or produce feature context.'
     $node = Join-Path $first.bundle 'plugin\runtime\node.exe'
+    & $node (Join-Path $PSScriptRoot 'smoke-plugin-launch.mjs') $first.bundle $app
+    Assert-Bypass ($LASTEXITCODE -eq 0) 'Installed plugin manifest could not launch from the application directory.'
     & $node (Join-Path $PSScriptRoot 'smoke-installed-windows.mjs') $first.bundle $app
     Assert-Bypass ($LASTEXITCODE -eq 0) 'Installed plugin/runtime verification failed.'
     # A corrupt download must not replace the active configuration.
