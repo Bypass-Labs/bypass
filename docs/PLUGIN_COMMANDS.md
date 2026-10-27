@@ -26,7 +26,7 @@ CLI global `--project` maps to the selected repository; `--json` maps to structu
 | CLI command | Muse tool | Behavior |
 | --- | --- | --- |
 | `poc` | `bypass_demo_start` · {"kind":"real"} | Conversational real demo replaces the standalone terminal screen. |
-| `poc start` | `bypass_demo_start` · {"kind":"real"} | Create a separate POC app with public accounts and real Docker agents. |
+| `poc start` | `bypass_demo_start` · {"kind":"real"} | Create a separate real fixture for Muse to investigate; no plugin API key or Docker required. |
 | `poc stop` | `bypass_demo_control` · {"action":"stop"} | Stop this POC fixture app; preserve its evidence. |
 | `demo` | `bypass_demo_start` · {"kind":"preview"} | Muse guides the same six-step walkthrough. |
 | `onboard` | `bypass_onboarding` | Conversational checklist, with bypass_connect_repository for repository and config input. |
@@ -56,18 +56,18 @@ CLI global `--project` maps to the selected repository; `--json` maps to structu
 | `identity test` | `bypass_test_identity` | Make one authorized request to the configured identity-check path. |
 | `identity update` | `bypass_update_identity` | Update a credential reference. |
 | `identity remove` | `bypass_remove_identity` | Remove an identity reference; dependent tests become blocked. |
-| `model add` | `bypass_add_model` | Add a standalone API-key provider profile. |
-| `model list` | `bypass_models` | List model profiles and inference destinations. |
-| `model use` | `bypass_use_model` | Select the model profile. |
-| `model test` | `bypass_test_model` | Send a synthetic smoke prompt, without repository content. |
+| `model add` | `bypass_add_model` | Explains host-owned reasoning; cannot configure API inference inside Muse. API profiles are standalone-only. |
+| `model list` | `bypass_models` | Inspect saved standalone profiles; these are not used for plugin reasoning. |
+| `model use` | `bypass_use_model` | Explains host-owned reasoning; choose the active Muse model through host settings. |
+| `model test` | `bypass_test_model` | Explains host-owned reasoning without sending an independent model request. |
 | `model remove` | `bypass_remove_model` | Remove a model profile. |
-| `engine use` | `bypass_engine` | Select real Docker agents or the offline mocked preview. |
-| `engine doctor` | `bypass_engine_doctor` | Check Docker and the shared inference profile. |
-| `engine prepare` | `bypass_prepare_engine` | Build the agent image for both Docker services. |
+| `engine use` | `bypass_engine` | Set the standalone engine preference. Real plugin reviews remain Muse-directed. |
+| `engine doctor` | `bypass_engine_doctor` | Explain native host execution; no Docker or API profile is needed in Muse. |
+| `engine prepare` | `bypass_prepare_engine` | Optional preparation of standalone Docker workers; unnecessary for native plugin reviews. |
 | `probe add` | `bypass_add_probe` | Configure an exact authorized JSON resource and account controls. |
 | `probe test` | `bypass_test_probe` | Validate both logins and the exact owner resource with three GET requests; zero model calls. |
 | `probe list` | `bypass_probes` | List approved resources for live agent probes. |
-| `scan` | `bypass_prepare_scan` | Replay saved checks, then review with the selected analysis engine. |
+| `scan` | `bypass_scan` | Prepare a durable host review. Muse drives bypass_review_step read/source/probe/finish; no independent AI worker. |
 | `finding list` | `bypass_findings` | List findings, with simulation and evidence labels. |
 | `finding show` | `bypass_finding` | Show evidence, history, and remediation context. |
 | `verify` | `bypass_verify` | Reproduce a finding using its scoped HTTP controls. |
@@ -90,7 +90,7 @@ CLI global `--project` maps to the selected repository; `--json` maps to structu
 | `report` | `bypass_report` | Export a run as JSON or Markdown. |
 | `run list` | `bypass_runs` | List durable runs. |
 | `run show` | `bypass_run` | Inspect one run. |
-| `run watch` | `bypass_watch_run` | Bounded wait with progress cursor; repeat until terminal. Closing a wait does not stop the job. |
+| `run watch` | `bypass_watch_run` | Bounded progress for deterministic replay. For awaiting_host reviews use bypass_review_step status, then let Muse continue. |
 | `run stop` | `bypass_stop_run` | Request cancellation of a running worker. |
 | `monitor add` | `bypass_add_monitor` | Schedule saved regression replay. |
 | `monitor list` | `bypass_monitors` | Show schedules and local worker health. |

@@ -4,14 +4,22 @@ import { commands } from './catalog.mjs';
 // their shared service command; new CLI features must pass the parity test.
 export const pluginAliases={
   poc:{tool:'bypass_demo_start',arguments:{kind:'real'},note:'Conversational real demo replaces the standalone terminal screen.'},
-  'poc start':{tool:'bypass_demo_start',arguments:{kind:'real'}},
+  'poc start':{tool:'bypass_demo_start',arguments:{kind:'real'},note:'Create a separate real fixture for Muse to investigate; no plugin API key or Docker required.'},
   'poc stop':{tool:'bypass_demo_control',arguments:{action:'stop'}},
   demo:{tool:'bypass_demo_start',arguments:{kind:'preview'},note:'Muse guides the same six-step walkthrough.'},
   'demo start':{tool:'bypass_demo_start',arguments:{kind:'preview'}},
   onboard:{tool:'bypass_onboarding',note:'Conversational checklist, with bypass_connect_repository for repository and config input.'},
   init:{tool:'bypass_connect_repository'},'repo connect':{tool:'bypass_connect_repository'},
   'memory list':{tool:'bypass_memory'},
-  'run watch':{tool:'bypass_watch_run',note:'Bounded wait with progress cursor; repeat until terminal. Closing a wait does not stop the job.'},
+  scan:{tool:'bypass_scan',note:'Prepare a durable host review. Muse drives bypass_review_step read/source/probe/finish; no independent AI worker.'},
+  'model add':{tool:'bypass_add_model',note:'Explains host-owned reasoning; cannot configure API inference inside Muse. API profiles are standalone-only.'},
+  'model use':{tool:'bypass_use_model',note:'Explains host-owned reasoning; choose the active Muse model through host settings.'},
+  'model test':{tool:'bypass_test_model',note:'Explains host-owned reasoning without sending an independent model request.'},
+  'model list':{tool:'bypass_models',note:'Inspect saved standalone profiles; these are not used for plugin reasoning.'},
+  'engine use':{tool:'bypass_engine',note:'Set the standalone engine preference. Real plugin reviews remain Muse-directed.'},
+  'engine doctor':{tool:'bypass_engine_doctor',note:'Explain native host execution; no Docker or API profile is needed in Muse.'},
+  'engine prepare':{tool:'bypass_prepare_engine',note:'Optional preparation of standalone Docker workers; unnecessary for native plugin reviews.'},
+  'run watch':{tool:'bypass_watch_run',note:'Bounded progress for deterministic replay. For awaiting_host reviews use bypass_review_step status, then let Muse continue.'},
   'mcp serve':{hostOwned:true,note:'Muse starts this already-approved server. Starting a second stdio server is a transport action, not an application operation.'},
   ...Object.fromEntries(['status','fix','regress','add-route','reset','stop'].map(action=>['demo '+action,{tool:'bypass_demo_control',arguments:{action}}]))
 };
