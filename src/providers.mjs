@@ -43,14 +43,17 @@ export function checkedProfile(profile) {
   registerSecret(process.env[p.secretEnv]);
   return p;
 }
-function pinnedFetch(profile, onProgress) {
+function pinnedFetch(profile, apiKey, workspace, onProgress) {
   return (input, init={}) => new Promise((resolve,reject)=>{
     const url=new URL(typeof input==='string'?input:input.url||String(input)),base=new URL(profile.baseUrl);
     // SDK retries, redirects, proxies and alternate origins must not move keys.
     if(url.origin!==base.origin||!url.pathname.startsWith(base.pathname.replace(/\/$/,'')+'/')){reject(new Fault('Refused API credential redirection.',3));return;}
     let controller,opened=false,closed=false;
     const stream=new ReadableStream({start(c){controller=c;},cancel(){closed=true;}});
-    safeRequest(url.href,{allowLocal:loopback(url.hostname),allowPrivate:profile.allowPrivate,method:init.method||'POST',headers:Object.fromEntries(new Headers(init.headers)),body:init.body,
+    // Do not forward SDK/environment custom headers, routing overrides or keys.
+    // Only the explicitly selected credential and optional Claude workspace cross this boundary.
+    const headers={accept:'application/json','content-type':'application/json',authorization:`Bearer ${apiKey}`,...(workspace?{'anthropic-workspace-id':workspace}:{})};
+    safeRequest(url.href,{allowLocal:loopback(url.hostname),allowPrivate:profile.allowPrivate,method:init.method||'POST',headers,body:init.body,
       signal:init.signal,timeout:profile.timeoutMs,maxBytes:1048576,
       onHeaders:({status,headers})=>{opened=true;onProgress?.({kind:'phase',phase:'response',message:`${profile.provider}: receiving API response`});resolve(new Response([204,205,304].includes(status)?null:stream,{status,headers:Object.fromEntries(Object.entries(headers).filter(([,v])=>typeof v==='string'))}));},
       onChunk:chunk=>{if(!closed)controller.enqueue(new Uint8Array(chunk));}
@@ -69,15 +72,15 @@ export class ProviderSession {
   constructor(profile){this.profile=profile;this.history=[];this.pending=null;this.turns=0;}
   async turn(messages,{schema,signal,onProgress,timeoutMs}={}) {
     const p=checkedProfile(this.profile);
-    const credentialDigest=hash(process.env[p.secretEnv]);need(!this.credentialDigest||this.credentialDigest===credentialDigest,'API credential changed during this run. Start a new review explicitly.',3,{reason:'credential_changed'});this.credentialDigest=credentialDigest;
+    const credentialDigest=hash({key:process.env[p.secretEnv],workspace:p.workspaceEnv?process.env[p.workspaceEnv]:null});need(!this.credentialDigest||this.credentialDigest===credentialDigest,'API credential or workspace changed during this run. Start a new review explicitly.',3,{reason:'credential_changed'});this.credentialDigest=credentialDigest;
     need(++this.turns<=10,'Provider session exceeded ten turns.',3);
     need(Array.isArray(messages)&&messages.length&&Buffer.byteLength(JSON.stringify(messages))<=700000,'Model input exceeds the bounded context budget.',3);
     const deadline=AbortSignal.timeout(timeoutMs||p.timeoutMs),active=signal?AbortSignal.any([signal,deadline]):deadline;
     if(active.aborted)throw abortFault(active);
     let client;
     try {
-      const headers=p.workspaceEnv?{'anthropic-workspace-id':need(process.env[p.workspaceEnv],`Set ${p.workspaceEnv} for the selected Anthropic workspace.`,3)}:{};
-      client=new OpenAI({apiKey:process.env[p.secretEnv],baseURL:p.baseUrl,maxRetries:0,timeout:timeoutMs||p.timeoutMs,defaultHeaders:headers,fetch:pinnedFetch(p,onProgress)});
+      const workspace=p.workspaceEnv?need(process.env[p.workspaceEnv],`Set ${p.workspaceEnv} for the selected Anthropic workspace.`,3):null;
+      client=new OpenAI({apiKey:process.env[p.secretEnv],adminAPIKey:null,organization:null,project:null,webhookSecret:null,logLevel:'off',baseURL:p.baseUrl,maxRetries:0,timeout:timeoutMs||p.timeoutMs,fetch:pinnedFetch(p,process.env[p.secretEnv],workspace,onProgress)});
       const clean=redact(messages);
       if(!this.history.length)this.history=structuredClone(clean);
       else if(this.pending){const output=clean.at(-1).content;this.history.push(p.transport==='responses'?{type:'function_call_output',call_id:this.pending,output}:{role:'tool',tool_call_id:this.pending,content:output});this.pending=null;}

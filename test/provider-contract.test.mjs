@@ -114,3 +114,13 @@ test('release-bundled official SDK executes the same API contract without node_m
   const {profile}=await endpoint(t,(_req,res)=>chat(res,{role:'assistant',content:'BYPASS_MODEL_OK'}));
   assert.equal(await new BundledSession(profile).turn([{role:'user',content:'Reply with exactly BYPASS_MODEL_OK.'}]),'BYPASS_MODEL_OK');
 });
+
+test('SDK environment headers, billing identifiers, alternate credentials and debug logging cannot override the profile',async t=>{
+  const inherited={OPENAI_API_KEY:'unselected-key',OPENAI_ADMIN_KEY:'unselected-admin',OPENAI_ORG_ID:'other-org',OPENAI_PROJECT_ID:'other-project',OPENAI_WEBHOOK_SECRET:'unused-webhook',OPENAI_BASE_URL:'https://unselected.example/v1',OPENAI_LOG:'debug',OPENAI_CUSTOM_HEADERS:'Authorization: Bearer wrong-key\nOpenAI-Project: wrong-billing\nX-Private-Value: do-not-forward'};
+  const previous=Object.fromEntries(Object.keys(inherited).map(k=>[k,process.env[k]]));Object.assign(process.env,inherited);
+  t.after(()=>{for(const [key,value] of Object.entries(previous)){if(value===undefined)delete process.env[key];else process.env[key]=value;}});
+  const {profile,calls}=await endpoint(t,(_req,res)=>chat(res,{role:'assistant',content:'BYPASS_MODEL_OK'}));
+  assert.equal(await new ProviderSession(profile).turn([{role:'user',content:'synthetic'}]),'BYPASS_MODEL_OK');
+  assert.equal(calls[0].headers.authorization,'Bearer contract-test-value');
+  for(const header of ['openai-organization','openai-project','x-private-value'])assert.equal(calls[0].headers[header],undefined);
+});

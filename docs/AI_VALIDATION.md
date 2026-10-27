@@ -24,7 +24,7 @@ An initial candidate install exceeded its timeout when the SDK was copied as tho
 
 ## Automated and packaged checks
 
-- Full local suite with Docker enabled: **114 passed, zero failures, zero skips**. A subsequently added packaged-SDK test also passed; the final source contains **115 tests** for CI.
+- Final full local suite with Docker enabled: **116 passed, zero failures, zero skips**, including the packaged SDK and inherited-environment isolation tests.
 - The API transport tests use local, scripted HTTP servers. They exercise the actual official SDK, Chat and Responses replay, provider reasoning state, streamed tools, cancellation, malformed arguments, authentication and rate-limit errors, redaction, redirect refusal, credential changes, and provider-specific request settings.
 - The standalone loop test uses the actual SDK, **two real Docker workers**, and the actual vulnerable HTTP fixture. Five requests to a **scripted local API** share one configured model; the source read/tool round trip, observed finding, fix and replay pass. This is an integration test, not live-provider reasoning evidence.
 - Host-mode tests run with inherited provider keys and an old selected profile present. Independent provider requests are blocked before credential lookup; native source/probe/fix/replay operations still work. Workspace reuse, source-change rejection and cancellation retain evidence.
