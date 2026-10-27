@@ -98,9 +98,14 @@ try{
                     status = value
                     break
             if status is None:
-                done, value = os.waitpid(pid, os.WNOHANG)
-                if done:
-                    status = value
+                # PTY EOF can precede the child's reapable exit on Linux.
+                deadline = time.monotonic() + 2
+                while time.monotonic() < deadline:
+                    done, value = os.waitpid(pid, os.WNOHANG)
+                    if done:
+                        status = value
+                        break
+                    time.sleep(0.01)
             if status is None:
                 os.killpg(pid, signal.SIGKILL)
                 os.waitpid(pid, 0)

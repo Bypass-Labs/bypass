@@ -32,8 +32,13 @@ def run(args,cwd,check,timeout=60):
             done,value=os.waitpid(pid,os.WNOHANG)
             if done:status=value;break
         if status is None:
-            done,value=os.waitpid(pid,os.WNOHANG)
-            if done:status=value
+            # Linux may report PTY EOF just before waitpid can reap the child.
+            # Give normal process teardown a bounded grace period after EOF.
+            deadline=time.monotonic()+2
+            while time.monotonic()<deadline:
+                done,value=os.waitpid(pid,os.WNOHANG)
+                if done:status=value;break
+                time.sleep(.01)
         if status is None:
             os.killpg(pid,signal.SIGTERM)
             time.sleep(.5)
