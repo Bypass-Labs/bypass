@@ -6,7 +6,7 @@ Global: --project <path>, --json, --non-interactive, --help, --version.
 
 ## Interactive shortcuts
 
-Run `./bypass --project /path/to/your/app` to open the persistent workspace. Press Enter for the suggested action. Type `/` for a searchable command list: `/engine`, `/poc`, `/repo`, `/review`, `/results`, `/demo`, `/tests`, `/app`, `/models`, `/status`, `/history`, `/plugin`, `/settings`, `/help`, and `/quit`. The slash is optional. `?`, `back`, and `q` still work. `/help all` shows the complete catalog.
+Run `./bypass --project /path/to/your/app` to open the persistent workspace. Press Enter for the suggested action. Type `/` for a searchable command list: `/engine`, `/poc`, `/repo`, `/review`, `/results`, `/demo`, `/tests`, `/app`, `/models`, `/status`, `/memory`, `/context`, `/history`, `/plugin`, `/settings`, `/help`, and `/quit`. The slash is optional. `?`, `back`, and `q` still work. `/help all` shows the complete catalog.
 
 Use ↑↓ and Enter in menus, Tab to complete a slash command, ↑↓ on an empty command bar to recall session commands, Ctrl+O to expand operation details, PgUp/PgDn to scroll, and Esc to clear a draft, go back, or stop a running operation. Ctrl+C exits with saved project state retained. Enter skips a running model connection check. A local fixture startup finishes its short setup before cleanup; its footer says when it cannot be interrupted.
 
@@ -266,9 +266,21 @@ Show behavior-level checks, gaps, stale, and blocked evidence.
 
 ## context
 
-Show history and monitor results for the next coding session.
+Read current session evidence. Add `--task "Add invoice export"` and optionally `--files "src/routes.js,src/auth.js"` / `--target staging` for feature-specific security context. No model call, Docker or app request. Use `--json` to pass the packet to a coding agent. Source knowledge, prior investigations, saved behavior requirements and freshness are explicit. The host agent implements the feature; new routes need new tests.
 
-Options: --finding.
+Options: --finding, --task, --files, --target.
+
+## memory / memory list
+
+Inspect local memory, including disabled memory. Filter with `--query` or inspect target applicability with `--target`. Records show citations, provenance and freshness. Automatic retrieval excludes another origin and source now outside the eligible inventory.
+
+## memory show <id> / memory forget <id>
+
+Read a single record or forget it. Forgetting excludes that record identity from relearning but preserves original findings, checks and run logs.
+
+## memory use <on|off>
+
+Enable or disable recording and automatic retrieval. Disabling retains inspectable records and does not disable saved-test replay. See [Security memory](SECURITY_MEMORY.md).
 
 ## report
 

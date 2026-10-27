@@ -48,8 +48,9 @@ export async function inventory(root, base) {
   const digests=[], routes=new Set(),routeLocations=[];
   for(const file of files){
     const full=path.join(root,file);if(!fs.existsSync(full)||fs.lstatSync(full).isSymbolicLink()||fs.statSync(full).size>1_000_000)continue;
+    if(!fs.realpathSync(full).startsWith(fs.realpathSync(root)+path.sep))continue;
     const source=fs.readFileSync(full,'utf8');digests.push([file,hash(source)]);
     for(const m of source.matchAll(/(?:\.get|\.post|\.put|\.delete|\.patch|url\s*===|pathname\s*===)\s*\(?\s*['"`]([^'"`\s]+)['"`]/g))if(m[1].startsWith('/')){routes.add(m[1]);if(routeLocations.length<1000)routeLocations.push({path:m[1],file,line:source.slice(0,m.index).split('\n').length});}
   }
-  return {fingerprint:hash(digests),files:digests.map(([file])=>file),sourceFileCount:digests.length,truncated,routes:[...routes],routeLocations,routeDiscovery:'heuristic inventory; not proof of complete coverage',changedFiles};
+  return {fingerprint:hash(digests),fileHashes:Object.fromEntries(digests),files:digests.map(([file])=>file),sourceFileCount:digests.length,truncated,routes:[...routes],routeLocations,routeDiscovery:'heuristic inventory; not proof of complete coverage',changedFiles};
 }

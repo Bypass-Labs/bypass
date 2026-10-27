@@ -2,8 +2,8 @@
   "schemaVersion": 1,
   "name": "bypass",
   "displayName": "Bypass",
-  "version": "0.2.4",
-  "description": "Real source and HTTP review with shared-model Docker agents; prove fixes and keep regression tests.",
+  "version": "0.3.0",
+  "description": "Give coding agents evidence-backed security context for new features; prove fixes and keep regression tests.",
   "compat": {
     "source": "native",
     "manifestDir": ".muse-plugin"
@@ -28,6 +28,10 @@
       {
         "id": "context",
         "path": "commands/context.md"
+      },
+      {
+        "id": "build",
+        "path": "commands/build.md"
       }
     ],
     "mcpServers": [

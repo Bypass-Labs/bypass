@@ -1,8 +1,9 @@
+import { consolidateMemory } from './project-memory.mjs';
 import { read, change, event, writeEvidence } from './store.mjs';
 import { inventory } from './repository.mjs';
 import { runChecks, saveCheck, specFor } from './checks.mjs';
 import { replay } from './portable-check.mjs';
-import { id, now, named, need, outcome, aggregate, delay, redact } from './util.mjs';
+import { id, now, hash, named, need, outcome, aggregate, delay, redact } from './util.mjs';
 import { scopeReady } from './network.mjs';
 import { demoConfig } from './demo.mjs';
 import { realEngine, realPlan, executeRealScan } from './real-engine.mjs';
@@ -97,7 +98,9 @@ export async function executeRun(root,runId,externalSignal,onProgress,{runtime}=
   const partial=named(read(root).runs,runId,'Run').partialRegression;
   if(partial)result.regression??=partial.results;
   if(partial?.exitCode===1&&result.exitCode!==130){result.exitCode=1;result.regression??=partial.results;}
-  const final=await change(root,s=>{const r=named(s.runs,runId,'Run');Object.assign(r,{status:result.exitCode===130?'cancelled':failed?'failed':result.exitCode===3?'incomplete':'completed',finishedAt:now(),exitCode:result.exitCode,result,modelCalls:result.modelCalls||0});event(s,'run-finished',`${r.kind}: ${r.status}`,{runId,exitCode:r.exitCode});return r;});
+  let final=await change(root,s=>{const r=named(s.runs,runId,'Run');Object.assign(r,{status:result.exitCode===130?'cancelled':failed?'failed':result.exitCode===3?'incomplete':'completed',finishedAt:now(),exitCode:result.exitCode,result,modelCalls:result.modelCalls||0});event(s,'run-finished',`${r.kind}: ${r.status}`,{runId,exitCode:r.exitCode});return r;});
+  await consolidateMemory(root,{runId});
+  final=named(read(root).runs,runId,'Run');
   writeEvidence(root,final);return outcome({run:final},final.exitCode);
 }
 export async function verifyFinding(root,findingId,{target,build,retest=false,signal}={}){
@@ -117,8 +120,9 @@ export async function verifyFinding(root,findingId,{target,build,retest=false,si
   const real=finding.engine==='docker';
   const previouslyConfirmed=finding.history.some(h=>h.status==='failed')||finding.verification?.status==='failed';
   const status=result.status==='failed'?(real?'confirmed':'confirmed_fixture'):retest&&result.status==='passed'&&(!real||previouslyConfirmed)?'fixed_verified':result.status==='passed'?(real?'not_reproduced':'not_reproduced_fixture'):'blocked';
-  await change(root,s=>{const f=named(s.findings,findingId,'Finding');f.status=status;f.verification={...result,fixture:!!finding.fixture,simulation:false,at:now(),build:build?{value:build,source:'operator-supplied, not attested'}:null};f.history.push({action:retest?'retest':'verify',...f.verification});f.sourceFingerprint=inv.fingerprint;event(s,status,`${f.title}: ${status}`,{findingId});});
+  await change(root,s=>{const f=named(s.findings,findingId,'Finding');f.status=status;f.verification={...result,origin:t.url,fixture:!!finding.fixture,simulation:false,at:now(),build:build?{value:build,source:'operator-supplied, not attested'}:null};f.history.push({action:retest?'retest':'verify',...f.verification});f.sourceFingerprint=inv.fingerprint;event(s,status,`${f.title}: ${status}`,{findingId});});
   let saved=null;
-  if(status==='fixed_verified'&&state.settings.autoSave){saved=await saveCheck(root,findingId);await change(root,s=>{const c=named(s.checks,saved.id,'Check');c.sourceFingerprint=inv.fingerprint;c.lastResult={...result,checkedAt:now(),target};});saved=named(read(root).checks,saved.id,'Check');}
+  if(status==='fixed_verified'&&state.settings.autoSave){saved=await saveCheck(root,findingId);await change(root,s=>{const c=named(s.checks,saved.id,'Check');c.sourceFingerprint=inv.fingerprint;c.lastResult={...result,origin:t.url,bindingFingerprint:hash(finding.binding),resourcePath:finding.binding.resourcePath,checkedAt:now(),target};});saved=named(read(root).checks,saved.id,'Check');}
+  if(real)await consolidateMemory(root);
   return outcome({findingId,status,verification:result,fixtureOnly:!!finding.fixture,savedCheck:saved,build:build||null},result.status==='failed'?1:result.status==='passed'?0:3);
 }

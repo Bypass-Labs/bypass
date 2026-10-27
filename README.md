@@ -1,6 +1,6 @@
 # Bypass for Muse
 
-**Find an account-access bug. Prove it against your app. Keep the fix as a regression test.**
+**Find an account-access bug. Keep the fix as a test. Give your coding agent that security context for the next feature.**
 
 Use Bypass inside **Muse Code**, or in its standalone CLI. A source-review agent and an HTTP-testing agent run in separate Docker containers and share one model profile.
 
@@ -90,6 +90,34 @@ An observed failure followed by a passing fix creates a reusable check. Saved an
 
 **Return later:** `/bypass:review` starts or resumes a review; `/bypass:context` shows saved setup, findings and tests. You do not need to reset or reclone.
 
+## Build your next feature with security context
+
+Open Muse in your connected application folder and describe the feature:
+
+> Use Bypass's security context while adding invoice export. Check relevant past findings, preserve the account-access rules, and run the relevant regression tests.
+
+Or use **`/bypass:build`**, then describe the feature. The coding agent retrieves relevant memory, checks current source, implements the change, and tests it. Reading memory needs **no Docker, model connection, DNS or test accounts**; live replay still needs valid authorization and credentials. If you open Muse from a different folder, select the application again when asked.
+
+You should see something like this (illustrative, not a result for your app):
+
+```text
+Building   Invoice export
+Remembered Owner access must work; other accounts must be denied
+Evidence   Saved invoice-read regression + cited ownership policy
+Recheck    policy.mjs changed since the previous source review
+Next       Read current policy → implement export → test new route
+           → replay the existing invoice-read regression
+```
+
+What Bypass retains:
+
+- **Application knowledge:** authentication, ownership, routing and data-model interpretations, anchored to lines actually read during a real review.
+- **Security history:** hypotheses, observed HTTP controls, verified fixes, incomplete investigations and saved tests, with provenance.
+- **Context for new work:** relevant records ranked by the feature and files, with changed source marked for revalidation. An existing test does not cover a newly added endpoint automatically.
+- **Your model choice:** compatible local Muse/local inference for enhanced privacy, your self-hosted endpoint, or your Muse Code subscription. Memory stays in the project locally; retrieved content follows the model using it. A hosted coding session can receive memory even if Bypass's review model is local.
+
+`/memory` in the CLI or “show Bypass memory” in Muse lets you inspect it. You can disable it or forget individual records. Source interpretations are not verified guarantees; past passes never become current passes without replay. There is no cross-project or cloud memory service. See [how security memory works](docs/SECURITY_MEMORY.md).
+
 ## Standalone CLI
 
 Use this if you prefer Bypass's own terminal interface. **Plugin installation is not required.**
@@ -113,6 +141,8 @@ Inside the Bypass workspace:
 | `/engine` | Configure the two accounts and JSON resource for real HTTP proof |
 | `/results` | Inspect findings and retest a fix |
 | `/tests` | Replay or export saved regression tests |
+| `/memory` | Inspect security knowledge, citations and freshness |
+| `/context` | Read context for the next coding session |
 | `/models` | Choose or test a model connection |
 | `/` | Browse commands |
 | `/quit` | Exit with progress saved |
@@ -160,3 +190,12 @@ Updating can leave the plugin listed as installed while its tool server is disab
 - [Architecture and boundaries](docs/ARCHITECTURE.md) · [DNS walkthrough](docs/WALKTHROUGH.md) · [Validation record](docs/VALIDATION.md)
 
 Developers: `npm run check` and `npm test` run local checks. `npm run plugin:build` refreshes the bundled runtime. **`npm run test:live` is opt-in and uses your Muse allowance:** it exercises the packaged plugin over MCP, real Docker/model source discovery, HTTP proof, fix verification, exported tests and deliberate regression against the local fixture. It reports failure if any required step fails and retains its evidence. It does not validate the whole conversational Muse interface or a production app.
+
+For feature-specific context in the CLI (or JSON for another coding agent):
+
+```bash
+~/bypass-for-muse/bypass context --project /path/to/your/app \
+  --task "Add invoice export" --files "src/routes.js,src/auth.js" --json
+```
+
+The standalone CLI returns context; your coding agent performs the implementation.

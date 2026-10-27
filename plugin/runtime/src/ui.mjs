@@ -20,10 +20,21 @@ export function printResult(data){
   if(!data)return;
   const value=redact(data);
   if(value.error){console.error(paint('31',value.error));if(value.details&&Object.keys(value.details).length)console.error(JSON.stringify(value.details,null,2));return;}
+  if(value.kind==='feature-security-context'){
+    console.log(`\n${bold('Build with security context')}\n${value.task}\nRepository: ${value.repository}\n${value.next}`);
+    for(const requirement of value.securityRequirements)console.log(`  Preserve owner access; deny other-account and anonymous access · ${requirement.resourcePath}\n    ${requirement.id} · ${requirement.enabled?'enabled':'disabled'} · last ${requirement.lastResult} · replay required`);
+    printResult(value.memory);console.log('\nNext: re-read relevant citations, implement the feature, then test new behavior and replay the relevant saved checks.');return;
+  }
+  if(value.kind==='project-memory'){
+    console.log(`\n${bold('Security memory')} · ${value.enabled?'on':'off'} · ${value.records} stored · ${value.entries.length} shown`);
+    for(const e of value.entries){console.log(`  ${e.title}\n    ${e.id} · ${e.validity.status} · ${e.confidence}\n    ${e.summary}`);for(const f of e.evidence.files||[])console.log(`    ${f.path}:${f.line} · ${f.quote}`);console.log(`    ${e.retrievalReason} ${e.validity.reason}`);}
+    if(!value.records)console.log('  No security memory yet. A real source review saves cited knowledge; verified fixes add reusable behavior checks.');
+    console.log('\nLocal storage · historical evidence, not a current security verdict\nInspect: memory show <id> · Search: memory --query "auth"\nBuild context: context --task "Add a feature" --files "src/api.js"\nForget: memory forget <id> · Disable: memory use off');return;
+  }
   if(value.kind==='environment-diagnostics'){console.log(`\nBypass ${value.runtime.version} · ${value.runtime.sourcePath}\nEnvironment checks`);for(const c of value.checks)console.log(`  ${c.ok?'✓':'!'} ${c.name} · ${c.ok?c.version?.trim()||'available':c.message||'unavailable'}${c.optional?' (optional)':''}`);console.log(value.message);return;}
   if(value.models){console.log('\nModel connections');for(const m of value.models)console.log(`  ${m.name===value.active?'●':'○'} ${m.name} · ${m.provider} · ${m.lastAttempt?.status||m.lastTest?.status||'not tested'}\n    ${m.dataDestination}`);return;}
   if(value.targets){console.log('\nConnected apps');for(const t of value.targets)console.log(`  ${t.name===value.active?'●':'○'} ${t.name} · ${t.url}\n    ${t.environment} · ownership ${t.ownership?.status||'pending'}`);if(!value.targets.length)console.log('  No app yet. Use /app to connect one.');return;}
-  if(value.project&&value.review){console.log(`\nBypass ${value.runtime.version} · ${value.runtime.sourcePath}\n`+reviewSummary(value.review));console.log(`Model: ${value.model?.name||'not configured'} · ${value.model?.connection||'optional for the preview'}\nSaved tests: ${value.checks.enabled} · passed ${value.checks.passed} · failed ${value.checks.failed}\nNext: ${value.next}`);return;}
+  if(value.project&&value.review){console.log(`\nBypass ${value.runtime.version} · ${value.runtime.sourcePath}\n`+reviewSummary(value.review));console.log(`Model: ${value.model?.name||'not configured'} · ${value.model?.connection||'optional for the preview'}\nSaved tests: ${value.checks.enabled} · passed ${value.checks.passed} · failed ${value.checks.failed}\nSecurity memory: ${value.memory?.records||0} records · ${value.memory?.enabled===false?'off':'on'} · /memory\nNext: ${value.next}`);return;}
   if(value.plan){
     const p=value.plan;
     console.log(`\n${bold('Review plan')} · ${p.mode==='code'?'code only':p.mode}\n`);

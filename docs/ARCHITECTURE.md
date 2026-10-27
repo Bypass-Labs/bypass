@@ -27,6 +27,7 @@ No npm runtime dependencies. Node 22 supplies HTTP/TLS, DNS, child processes, re
 | `ui.mjs` | Setup wizard and terminal navigation |
 | `store.mjs` | Local canonical state, locks, atomic writes, summaries, audit events |
 | `network.mjs` | Exact-origin scope, ownership challenges, address checks, pinned DNS requests |
+| `project-memory.mjs` | Cited application knowledge, historical investigation consolidation, freshness and feature-context retrieval |
 | `repository.mjs` | Git connection and nonexecuting local source inventory |
 | `project-selection.mjs` | Read-only workspace inspection, explicit application selection, and tooling-repository detection |
 | `models.mjs` | Provider profiles and synthetic connection smoke tests |
@@ -103,3 +104,9 @@ Hosted Bypass authentication, cloud evidence storage, remote worker provisioning
 - [Muse subscription documentation](https://dev.meta.ai/docs/muse-code/subscriptions): use the official CLI account rather than extracting subscription credentials.
 - [OWASP SSRF guidance](https://cheatsheetseries.owasp.org/cheatsheets/Server_Side_Request_Forgery_Prevention_Cheat_Sheet.html): address validation and redirect restrictions.
 - [DNS/HTTP challenge tradeoffs](https://letsencrypt.org/docs/challenge-types/): propagation and exact challenge content; Bypass uses its own namespace and is not an ACME implementation.
+
+## Feature-development context
+
+`bypass_feature_context` retrieves local security history before the host coding agent implements a feature. It does not require review readiness, call inference or send HTTP requests. The source worker returns bounded `knowledge` interpretations with exact read citations, separate from vulnerability candidates. Host checks accept/reject those citations; deterministic consolidation adds real findings, HTTP observations and saved regressions. No mock findings are learned.
+
+Memory is namespaced by project ID inside canonical state. Source hashes and the eligible repository fingerprint govern freshness; immutable observed origins prevent evidence being silently reassigned when a target URL changes. Retrieval is bounded, ranks task/files, reserves room for saved regressions, and treats records as untrusted data. Review evidence retains a retrieval receipt; UI and MCP expose inspection, forget and disable. See [Security memory](SECURITY_MEMORY.md) for limits, privacy and migration behavior.

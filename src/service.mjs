@@ -1,3 +1,4 @@
+import { memorySummary, recallMemory, featureContext, forgetMemory, setMemory, consolidateMemory } from './project-memory.mjs';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -35,7 +36,7 @@ export function readiness(root){
     ready:{repository:true,model:realEngine(s)?shared.modelReady:!!model,source:realEngine(s)?shared.source:true,target:!!target,authorized:liveReady,liveTesting:liveReview,liveReview,canValidateLive:shared.canValidateLive},probes:shared.probes,blockers:{source:shared.sourceBlockers,live:shared.liveBlockers},
     findings:{total:findings.length,hiddenSimulated:s.findings.length-findings.length,confirmed:findings.filter(f=>f.status==='confirmed').length,fixtureConfirmed:findings.filter(f=>f.status==='confirmed_fixture').length,simulated:findings.filter(f=>f.status==='simulated_unproven').length,fixed:findings.filter(f=>f.status==='fixed_verified').length},
     checks:{total:s.checks.length,enabled:s.checks.filter(c=>c.enabled).length,passed:s.checks.filter(c=>c.lastResult?.status==='passed').length,failed:s.checks.filter(c=>c.lastResult?.status==='failed').length},
-    worker:workerStatus(root),monitors:s.monitors.length,latestRun:summarizeRun(latest),
+    memory:memorySummary(s),worker:workerStatus(root),monitors:s.monitors.length,latestRun:summarizeRun(latest),
     privacy:{evidence:'local',sourceUpload:realEngine(s),analysisInference:realEngine(s)?'Selected source excerpts sent to the active model':'not invoked (mock engine)',secretStorage:'environment variable references; public fixture credentials only in demo'},
     next,
     limitations:[realEngine(s)?'Bounded JSON API account-boundary POC; incomplete coverage.':'White-box and black-box engines are simulated.','Hosted Bypass account, cloud scheduler, and deployment attestation are not connected.','No passing result implies complete security coverage.']};
@@ -52,6 +53,7 @@ export async function execute(key,args=[],o={},context={}){
       if(config.model&&!read(root).models.some(m=>m.name===config.model.name))await execute('model add',[config.model.name],{...config.model,project:root},context);
       if(config.target&&!read(root).targets.some(t=>t.name===config.target.name))await execute('target add',[config.target.name],{...config.target,project:root},context);
     }
+    await consolidateMemory(root);
     return outcome({root,resumed,message:resumed?'Existing project resumed; settings and evidence retained.':'Repository connected. No source code was executed.',readiness:readiness(root)});
   }
   if(key==='poc start'){const {startPOC}=await import('./poc.mjs');return outcome(await startPOC(o));}
@@ -186,7 +188,11 @@ export async function execute(key,args=[],o={},context={}){
     case 'coverage':{
       const inv=await inventory(root);result={scope:'Specific saved HTTP behaviors only',complete:false,sourceFingerprint:inv.fingerprint,checks:s.checks.map(c=>({id:c.id,behavior:c.title,target:c.target,status:!c.enabled?'disabled':['failed','blocked'].includes(c.lastResult?.status)?c.lastResult.status:c.sourceFingerprint!==inv.fingerprint?'stale':c.lastResult?.status||'not-run',sourceChanged:c.sourceFingerprint!==inv.fingerprint,lastResult:c.lastResult})),unproven:s.findings.filter(f=>f.status==='simulated_unproven').map(f=>({id:f.id,title:f.title,simulation:true})),message:'A route is not fully covered just because one behavior on that route has a test.'};break;
     }
-    case 'context':result={project:s.project.name,engine:realEngine(s)?'docker':'mock',summary:readiness(root),latestMonitor:monitorSummary(s),finding:o.finding?named(s.findings,o.finding,'Finding'):null,recentEvents:s.events.slice(-15),attention:s.checks.filter(c=>c.enabled&&['failed','blocked','stale'].includes(c.lastResult?.status)),next:readiness(root).next};break;
+    case 'memory':case 'memory list':result=await recallMemory(root,{query:o.query,target:o.target});break;
+    case 'memory show':{const packet=await recallMemory(root,{query:args[0],limit:1});result=packet.entries.find(e=>e.id===args[0]);need(result,'Memory record not found in this project.');result={kind:'memory-record',entry:result};break;}
+    case 'memory forget':result=await forgetMemory(root,args[0]);break;
+    case 'memory use':need(['on','off'].includes(args[0]),'Use memory use on or off.');result=await setMemory(root,args[0]==='on');break;
+    case 'context':if(o.task!==undefined){result=await featureContext(root,{task:o.task,files:o.files,target:o.target});break;}need(!o.files,'Supply --task with --files.');result={project:s.project.name,engine:realEngine(s)?'docker':'mock',summary:readiness(root),memory:await recallMemory(root,{forAgent:true,limit:8,maxBytes:10000}),latestMonitor:monitorSummary(s),finding:o.finding?named(s.findings,o.finding,'Finding'):null,recentEvents:s.events.slice(-15),attention:s.checks.filter(c=>c.enabled&&['failed','blocked','stale'].includes(c.lastResult?.status)),next:readiness(root).next};break;
     case 'report':{
       const r=named(s.runs,o.run||s.runs.at(-1)?.id,'Run'),format=o.format||'json';need(['json','md'].includes(format),'Report format must be json or md.');
       const content=format==='json'?JSON.stringify(redact(r),null,2):`# Bypass run ${r.id}\n\nStatus: ${r.status}. Exit: ${r.exitCode}.\n\nAnalysis simulated: ${r.simulation}. Model calls: ${r.result?.modelCalls??0}.\n\n${r.result?.message||''}\n\n## Evidence\n\n\`\`\`json\n${JSON.stringify(redact(r.result),null,2)}\n\`\`\`\n`;

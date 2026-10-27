@@ -16,6 +16,8 @@ export const commands = [
   ['app', 'Connect an app or finish DNS verification'],
   ['models', 'Choose or test a model connection'],
   ['status', 'Show the repository and app pairing'],
+  ['memory', 'Inspect remembered security rules and evidence'],
+  ['context', 'Read security context for the next coding session'],
   ['history', 'Show saved project activity'],
   ['settings', 'All settings and advanced controls'],
   ['plugin', 'Check or install the Muse plugin'],

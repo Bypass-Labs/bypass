@@ -1,3 +1,6 @@
+import { inventory } from '../src/repository.mjs';
+import { sourceReader } from '../src/real-engine.mjs';
+import { rememberSource } from '../src/project-memory.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
@@ -22,6 +25,8 @@ test('MCP negotiates, validates typed tools, shares CLI state, and closes cleanl
   child.stdin.write(JSON.stringify({jsonrpc:'2.0',method:'notifications/initialized'})+'\n');
   const listed=await request('tools/list');assert.equal(listed.result.tools.length,toolDefinitions.length);assert.ok(listed.result.tools.find(t=>t.name==='bypass_status').annotations.readOnlyHint);
   const selected=await request('tools/call',{name:'bypass_connect_repository',arguments:{repository:root,confirmed:true}});assert.equal(selected.result.isError,false);
+  const feature=await request('tools/call',{name:'bypass_feature_context',arguments:{task:'Add a feature',files:'api.mjs'}});assert.equal(feature.result.isError,false);assert.equal(JSON.parse(feature.result.content[0].text).kind,'feature-security-context');assert.equal(read(root).models.length,0);
+  const invalidFeature=await request('tools/call',{name:'bypass_feature_context',arguments:{task:'Add export',files:['api.mjs']}});assert.equal(invalidFeature.error.code,-32602);
   const status=await request('tools/call',{name:'bypass_status',arguments:{},_meta:{progressToken:'status-1'}});assert.equal(status.result.isError,false);assert.equal(JSON.parse(status.result.content[0].text).engine.mode,'mock');
   assert.equal(notifications.filter(n=>n.method==='notifications/progress').length,2);
   const invalid=await request('tools/call',{name:'bypass_add_target',arguments:{name:'app',url:'http://127.0.0.1:4444',environment:'local',evil:'ignored?'}});assert.equal(invalid.error.code,-32602);
@@ -99,10 +104,16 @@ test('plugin setup resumes across real MCP processes without copying permissions
   await c.call('bypass_update_identity',{name:'owner','check-path':'/api/me'});
   await c.call('bypass_add_identity',{name:'other',target:'local',type:'bearer','secret-env':'BYPASS_MCP_OTHER_TOKEN','check-path':'/api/me'});
   await c.call('bypass_add_probe',{name:'item',target:'local',path:'/api/items/1','resource-id':'1',owner:'owner',outsider:'other'});
+  fs.writeFileSync(path.join(app,'auth.mjs'),'export const requireUser = true;\n');
+  const inv=await inventory(app),reader=sourceReader(app,inv);reader.read(['auth.mjs']);
+  const learned=await rememberSource(app,[{topic:'authentication',title:'User required',summary:'The auth module exports a user requirement.',file:'auth.mjs',line:1,quote:'export const requireUser = true;'}],reader,inv,'run_past');
   const before=await c.call('bypass_onboarding');assert.equal(before.steps.find(s=>s.id==='resource').status,'complete');
   assert.equal(await c.close(),0);
   c=client();await c.request('initialize',{protocolVersion:'2025-11-25'});
   const resumed=await c.call('bypass_onboarding');assert.equal(resumed.selectedRepository,app);assert.equal(resumed.engine,'docker');
+  const feature=await c.call('bypass_feature_context',{task:'Add a new authenticated endpoint',files:'auth.mjs'});assert.equal(feature.memory.entries[0].id,learned.saved[0]);assert.equal(feature.repository,app);assert.equal(feature.memory.entries[0].validity.status,'current');
+  await c.call('bypass_memory_mode',{mode:'off'});assert.equal((await c.call('bypass_feature_context',{task:'Add endpoint'})).memory.entries.length,0);
+  await c.call('bypass_memory_mode',{mode:'on'});await c.call('bypass_forget_memory',{id:learned.saved[0]});assert.equal((await c.call('bypass_memory')).entries.length,0);
   assert.equal(resumed.steps.find(s=>s.id==='model').profile.name,'muse');assert.equal(resumed.steps.find(s=>s.id==='scope').status,'complete');
   assert.equal(resumed.steps.find(s=>s.id==='resource').status,'complete');assert.equal(resumed.pluginVersion,VERSION);
   assert.doesNotMatch(JSON.stringify(resumed),/owner-test-only|other-test-only/);

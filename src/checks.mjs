@@ -1,9 +1,10 @@
+import { consolidateMemory } from './project-memory.mjs';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { replay } from './portable-check.mjs';
 import { read, change, atomic, event } from './store.mjs';
-import { named, need, id, now, aggregate, Fault } from './util.mjs';
+import { named, need, id, now, hash, aggregate, Fault } from './util.mjs';
 import { inventory } from './repository.mjs';
 import { scopeReady, pathAllowed } from './network.mjs';
 
@@ -26,7 +27,7 @@ export async function runChecks(root,{checkId,all=false,target,signal,runId}={})
     let result;
     try{result=await replay(specFor(state,check,target),{signal});}catch(e){result={status:'blocked',reason:e.message,modelCalls:0,requests:0};}
     const stale=result.status==='passed'&&check.sourceFingerprint!==current.fingerprint;
-    results.push({id:check.id,title:check.title,target:target||check.target,...result,assertionStatus:result.status,status:stale?'stale':result.status,reason:stale?'HTTP assertions passed, but source changed since verification; review before counting coverage.':result.reason,checkedAt:now(),runId:runId||null});
+    results.push({id:check.id,title:check.title,target:target||check.target,origin:state.targets.find(t=>t.name===(target||check.target))?.url||null,bindingFingerprint:hash(check.bindings[target||check.target]||{}),resourcePath:check.bindings[target||check.target]?.resourcePath,...result,assertionStatus:result.status,status:stale?'stale':result.status,reason:stale?'HTTP assertions passed, but source changed since verification; review before counting coverage.':result.reason,checkedAt:now(),runId:runId||null});
     await change(root,s=>{
       const c=named(s.checks,check.id,'Check');c.lastResult=results.at(-1);
       const finding=s.findings.find(f=>f.id===c.findingId);
@@ -37,6 +38,7 @@ export async function runChecks(root,{checkId,all=false,target,signal,runId}={})
       event(s,'regression',`${check.title}: ${results.at(-1).status}`,{checkId:check.id,target:target||check.target});
     });
   }
+  if(checks.some(c=>c.engine==='docker'))await consolidateMemory(root);
   return {results,exitCode:checks.length?aggregate(results):3,modelCalls:0,empty:checks.length===0,message:checks.length?'Saved tests replayed without a model.':'No enabled saved tests. No coverage has been established.'};
 }
 export async function saveCheck(root,findingId){
@@ -45,7 +47,7 @@ export async function saveCheck(root,findingId){
   const inv=await inventory(root);
   return change(root,s=>{
     const existing=s.checks.find(c=>c.findingId===findingId);if(existing)return existing;
-    const check={id:id('check'),findingId,title:finding.title,kind:'cross-account-resource',target:finding.target,fixture:!!finding.fixture,engine:finding.engine||'mock',enabled:true,createdAt:now(),sourceFingerprint:inv.fingerprint,bindings:{[finding.target]:finding.binding},lastResult:null};
+    const check={id:id('check'),findingId,title:finding.title,kind:'cross-account-resource',target:finding.target,fixture:!!finding.fixture,engine:finding.engine||'mock',enabled:true,createdAt:now(),sourceFingerprint:inv.fingerprint,bindings:{[finding.target]:finding.binding},verifiedOrigins:{[finding.target]:finding.verification?.origin||null},verifiedBindings:{[finding.target]:finding.binding},lastResult:null};
     s.checks.push(check);event(s,'check-saved',`Saved regression: ${check.title}`,{checkId:check.id});return check;
   });
 }

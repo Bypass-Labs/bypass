@@ -27,6 +27,8 @@ export const quickCommands=`Commands you can type here (no IDs needed; / prefix 
   models     Manage model connections
   plugin     Check or install the Muse plugin
   status     Show the source / app pairing and analysis scope
+  memory     Inspect remembered security knowledge and evidence
+  context    Read security context for the next coding session
   history    Read saved project activity
   settings   Open all configuration and advanced controls
   back       Return to the project home

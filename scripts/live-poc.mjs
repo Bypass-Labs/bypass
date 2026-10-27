@@ -53,8 +53,17 @@ try{
   const finding=(await call('bypass_finding',{id:run.result.confirmed[0]})).finding;
   assert.equal(finding.sourceEvidence.kind,'source','Live gate requires actual source attribution');
   report.source=finding.sourceEvidence;report.controls=finding.verification.controls;
+  const learned=await call('bypass_memory');assert.ok(learned.entries.some(e=>e.kind==='source-knowledge'),'Real model must return cited application knowledge');
+  report.memory={learned:learned.records,sourceKnowledge:learned.sourceKnowledge};
   fs.writeFileSync(path.join(root,'policy.mjs'),'export function mayReadInvoice(account, invoice) { return account === invoice.ownerId; }\n');
   const retest=await call('bypass_retest',{id:finding.id});assert.equal(retest.status,'fixed_verified');report.savedCheck=retest.savedCheck.id;
+  const feature=await call('bypass_feature_context',{task:'Add invoice export while preserving account ownership',files:'policy.mjs,server.mjs'});
+  assert.ok(feature.securityRequirements.some(c=>c.id===report.savedCheck));assert.ok(feature.revalidateBeforeCoding.length);
+  report.memory.featureContext={records:feature.memory.entries.length,requirements:feature.securityRequirements,stale:feature.revalidateBeforeCoding};
+  runId=(await call('bypass_scan',{mode:'code'})).runId;const second=await wait(runId);runId=null;
+  assert.notEqual(second.status,'failed',second.result.message);assert.ok(second.agentEvidence.memory.selected.length);assert.ok(second.agentEvidence.memory.learned.saved.length);
+  report.memory.secondReview={id:second.id,modelCalls:second.modelCalls,receipt:second.agentEvidence.memory};
+  const refreshed=await call('bypass_feature_context',{task:'Add invoice export',files:'policy.mjs'});assert.ok(refreshed.memory.entries.some(e=>e.kind==='source-knowledge'&&e.validity.status==='current'));
   const exported=await call('bypass_export_tests',{all:true});
   const fixed=await execFile(process.execPath,['--test',...exported.files],{timeout:15000,env:{NODE_TEST_CONTEXT:undefined}});assert.equal(fixed.code,0,fixed.stdout+fixed.stderr);
   fs.writeFileSync(path.join(root,'policy.mjs'),'export function mayReadInvoice(account, invoice) { return Boolean(account); }\n');

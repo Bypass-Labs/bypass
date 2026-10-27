@@ -1,5 +1,15 @@
 # Verification record
 
+## v0.3.0 — security memory for feature development, 2026-10-27
+
+**94/94 tests pass, zero skipped**, including Docker and real local HTTP checks. Syntax checked 54 modules; Muse's native plugin manifest validator accepts the new `/bypass:build` command. CLI and fresh MCP process tests prove persisted feature-context retrieval without a model or app connection, exact-citation rejection, stale/ignored source handling, credential redaction, target/origin isolation, changed resource bindings, bounded retrieval, disable and forget behavior. The final origin/binding hardening is covered by the automated suite.
+
+The packaged-plugin live gate used actual Muse inference and Docker against the deliberately vulnerable local fixture. It learned five cited source facts, confirmed an HTTP account-boundary failure, verified the fix, exposed the saved requirement through `bypass_feature_context`, then supplied eight memory records to a second source review. That review refreshed six cited interpretations after the source change. The deliberately reintroduced regression failed both saved and exported checks with zero inference during replay. Two reviews used six model calls in total.
+
+One preceding attempt timed out at the 30-second connection preflight, before source upload. Muse allowance was available. A single bounded retry passed; this does not establish reliable provider latency. The complete successful walkthrough took 98.1 seconds. See [the recorded evidence](evidence/security-memory-2026-10-27.json).
+
+This verifies context learning, retrieval and reuse through MCP, not a measured end-to-end autonomous implementation of a new feature. The Muse command/skill directs the host coding agent to implement using that context. Production Job Radar remains outside this fixture validation. No cross-agent quality benchmark or security guarantee is claimed.
+
 ## v0.2.4 — critical feedback fixes, 2026-10-27
 
 Failed execution now ends as `failed`; a bounded/inconclusive exit-3 result is `incomplete`. Watchers stop on either. Failure evidence retains the stage, call number, native exit/HTTP code when available, source ranges already read, orchestration guidance and worker attempts. Provider text, prompts and secrets are not dumped into diagnostics. Status/context use a compact summary and link to the full run.
