@@ -5,6 +5,7 @@ import { spawn } from 'node:child_process';
 import { commandInvocation } from './command.mjs';
 import { execFile, Fault } from './util.mjs';
 import { museInstallState } from './muse-install-state.mjs';
+import { createTheme } from './terminal-theme.mjs';
 
 export const setupPrompt='Use Bypass to start setup for this application folder. Read the bypass skill and call bypass_onboarding. Reuse saved setup, ask one question at a time for missing information, and do not start live testing until ownership and scope are configured.';
 const required=['plugin:bypass:hook:session-context','plugin:bypass:mcp_server:security'];
@@ -55,7 +56,7 @@ export async function finishMuseSetup({cwd,inspect=()=>inspectMuse(cwd),approve=
   }
   const verified=await inspect();
   if(fingerprint(verified)!==fingerprint(initial)||museInstallState(verified).state!=='ready_for_new_session')throw new Fault('Muse has not confirmed both permissions. '+fallback,3);
-  write('\nReady. Opening Muse…');
+  write('\n03 / START   Ready. Opening Muse…');
   const exitCode=await launch(setupPrompt);
   if(exitCode)write('Muse exited. Your plugin remains installed. To continue, reopen Muse in this folder and use /bypass:start.');
   return {state:'opened',opened:true,exitCode};
@@ -68,13 +69,14 @@ export function setupTerminal({cwd=process.cwd(),env=process.env}={}){
     if(process.platform==='win32')return null;
     try{fd=fs.openSync('/dev/tty','r+');input=new tty.ReadStream(fd);owned=true;}catch{return null;}
   }
+  const theme=createTheme({env});
   const rl=readline.createInterface({input,output:process.stdout,terminal:true});
   const controller=new AbortController();
   rl.on('SIGINT',()=>controller.abort());rl.on('close',()=>controller.abort());
   let paused=false;
   const pause=()=>{if(paused)return;paused=true;rl.close();input.pause();input.setRawMode?.(false);};
   return {
-    ask:async text=>{try{return await rl.question(text,{signal:controller.signal});}catch{return null;}},
+    ask:async text=>{try{return await rl.question(theme.paint('accent',text),{signal:controller.signal});}catch{return null;}},
     launch:async prompt=>{
       pause();
       let childInput=fd;

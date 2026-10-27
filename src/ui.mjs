@@ -12,10 +12,12 @@ import { homeActions, previewRun, quickCommands, reviewSummary } from './experie
 import { appOriginInput } from './network.mjs';
 import { isBypassSource } from './project-selection.mjs';
 import { createTerminalSession } from './terminal-session.mjs';
+import { createTheme, brandHeading } from './terminal-theme.mjs';
 
-const color=!!process.stdout.isTTY&&!process.env.NO_COLOR;
-const paint=(n,s)=>color?`\x1b[${n}m${s}\x1b[0m`:s;
-const accent=s=>paint('38;5;150',s),muted=s=>paint('90',s),bold=s=>paint('1',s);
+const theme=createTheme();
+const tones={'31':'error','33':'warning','90':'muted','1':'title'};
+const paint=(n,s)=>theme.paint(tones[n]||'accent',s);
+const accent=s=>theme.paint('accent',s),muted=s=>theme.paint('muted',s),bold=s=>theme.paint('title',s);
 const label=s=>String(s).replace(/_/g,' ');
 export function printResult(data){
   if(!data)return;
@@ -126,7 +128,7 @@ export async function modelTestWizard(root,name,{interactive=process.stdin.isTTY
 function updateWorkspace(prompt,root){
   if(!prompt.setContext)return;
   const info=readiness(root);
-  prompt.setContext({engine:info.engine.mode,title:info.project.name,repo:root,branch:info.project.repository.branch,app:info.target?`${info.target.url} · ${info.target.authorized?'authorized':info.target.ownership==='verified'?'scope required':'DNS pending'}`:'not connected · code preview available',model:info.model?`${info.model.name} · ${info.model.provider} · ${info.model.connection}`:'not configured · optional for this preview'});
+  prompt.setContext({demo:false,engine:info.engine.mode,title:info.project.name,repo:root,branch:info.project.repository.branch,app:info.target?`${info.target.url} · ${info.target.authorized?'authorized':info.target.ownership==='verified'?'scope required':'DNS pending'}`:'not connected · code preview available',model:info.model?`${info.model.name} · ${info.model.provider} · ${info.model.connection}`:'not configured · /models for API setup',checks:info.checks.enabled,memory:info.memory?.records||0});
 }
 async function modelWizard(ask,root,io){
   const setup=await promptAPIProfile(ask,(title,options)=>choose(ask,options,title));if(!setup)return;
@@ -149,7 +151,7 @@ async function authorizeWizard(ask,root,name){
   printResult(await execute('target authorize',[name],{project:root,paths,accept:true,production}));
 }
 function dashboard(root){
-  console.log(`\n${accent('━'.repeat(Math.min(76,process.stdout.columns||76)))}\n${bold('BYPASS')}  /  security checks that stay with your code\n`);
+  console.log('\n'+brandHeading('Security that stays with your code.')+'\n');
   let info;try{info=readiness(root);}catch{console.log('No project connected. Choose Setup or Demo to begin.');return;}
   console.log(`${bold(info.project.name)}\n${muted(root)}\n`);
   console.log(`  REPOSITORY   ${info.project.repository.kind==='git'?'Git connected':'Directory connected'}`);
@@ -157,7 +159,7 @@ function dashboard(root){
   console.log(`  MODEL        ${info.model?`${info.model.name} · ${info.model.provider} · ${info.model.connection}`:'choose a provider'}`);
   console.log(`  EVIDENCE     local · ${info.findings.total} findings · ${info.checks.enabled} saved tests`);
   console.log(`  MONITOR      ${info.worker.status} · ${info.monitors} schedules`);
-  console.log(`\n${paint('33','  MOCK ANALYSIS')}  ${muted('Real onboarding, HTTP fixture proof, tests, and scheduler.')}`);
+  console.log(`\n${theme.paint(info.engine.mode==='docker'?'accent':'warning',info.engine.mode==='docker'?'  REAL AI · Docker agents':'  PREVIEW · simulated discovery')}  ${muted('Evidence and saved checks stay in this project.')}`);
   const next=homeActions(read(root))[0].label;
   console.log(`  Next: ${accent(next)}\n`);
 }
@@ -173,15 +175,16 @@ export async function terminal(options={},io){
     if(prompt.rich&&key==='monitor worker'&&!flags.once&&!flags.stop&&!flags.detach)flags={...flags,detach:true};
     let lastStage=-1;
     const real=read(root).settings.analysisEngine==='docker';
-    const stages=real?['replay','containers','orchestrator','white-box','black-box']:['replay','inventory','mock-analysis'];
-    if(key==='scan')prompt.setTasks?.(real?'Real AI review':'Review preview',real?['Saved checks','Docker services','Shared-model plan','White-box source review','Black-box HTTP proof']:['Saved checks / scope','Local source inventory','Simulated discovery']);
+    const stages=real?['replay','containers','orchestrator',...(flags.mode==='live'?[]:['white-box']),...(flags.mode==='code'?[]:['black-box'])]:['replay','inventory','mock-analysis'];
+    const stageLabels={'replay':'Saved checks / scope','containers':'Docker services','orchestrator':'Shared-model plan','white-box':'White-box source review','black-box':'Black-box HTTP proof','inventory':'Local source inventory','mock-analysis':'Simulated discovery'};
+    if(key==='scan')prompt.setTasks?.(real?'Real AI review':'Review preview',stages.map(stage=>stageLabels[stage]));
     const work=async signal=>{
       const result=await execute(key,args,{project:root,...flags},{signal,onProgress:step=>{
         prompt.write?.(step.message);
-        if(key==='scan'){if(lastStage>=0)prompt.task?.(lastStage,'done');lastStage=stages.indexOf(step.stage);prompt.task?.(lastStage,'running');}
+        if(key==='scan'){const nextStage=stages.indexOf(step.stage);if(nextStage>=0&&nextStage!==lastStage){if(lastStage>=0)prompt.task?.(lastStage,'done');lastStage=nextStage;prompt.task?.(lastStage,'running');}}
       }});
       if(result.exitCode===130)throw new Fault('Run stopped. Partial evidence is saved.',130,{cancelled:true});
-      if(key==='scan'&&lastStage>=0)prompt.task?.(lastStage,previewRun(result.run)?'done':'attention');
+      if(key==='scan'&&lastStage>=0)prompt.task?.(lastStage,previewRun(result.run)||result.run?.status==='completed'?'done':'attention');
       return result;
     };
     const result=prompt.activity?await prompt.activity(key==='scan'?(real?'Review repository · real Docker agents':'Review repository · simulated discovery'):key==='test run'?'Replay saved checks · no model':key,work,{verdict:r=>r.exitCode&&!(previewRun(r.run)&&r.exitCode===3)?'attention':'done'}):await work(prompt.signal);

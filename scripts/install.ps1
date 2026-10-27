@@ -4,13 +4,19 @@
     param([switch]$Muse)
     $ErrorActionPreference = 'Stop'
     $ProgressPreference = 'SilentlyContinue'
+    function Write-BypassStage([string]$Message) {
+        if ((Test-Path Env:NO_COLOR) -or [Console]::IsOutputRedirected) { Write-Host $Message }
+        else { Write-Host $Message -ForegroundColor Red }
+    }
     if ($env:OS -ne 'Windows_NT' -or $PSVersionTable.PSVersion -lt [version]'5.1') {
         throw 'Use Windows PowerShell 5.1 or PowerShell 7 on Windows 10/11 or Windows Server 2016+.'
     }
     if ($Muse) {
         if (-not (Get-Command muse -ErrorAction SilentlyContinue)) { throw 'Muse Code was not found on PATH. Install Muse from https://dev.meta.ai, open it and sign in, then retry this same installer. No Bypass files were changed.' }
-        Write-Host 'Installing Bypass for Muse'
     }
+    Write-BypassStage "`nBYPASS LABS"
+    if ($Muse) { Write-Host 'Installing Bypass for Muse' }
+    else { Write-Host 'Security that stays with your code.' }
     function Write-AtomicText([string]$File, [string]$Value, [bool]$Bom = $false) {
         $temporary = $File + '.new-' + [guid]::NewGuid().ToString('N')
         $backup = $temporary + '.previous'
@@ -81,7 +87,7 @@
         if (-not $release) { Download-Bypass "$base/channels/main.txt" (Join-Path $work 'channel'); $release = [IO.File]::ReadAllText((Join-Path $work 'channel')).Trim() }
         if ($release -cnotmatch '^main-[a-f0-9]{40}-[1-9][0-9]{0,15}-[1-9][0-9]{0,15}$') { throw 'Invalid release metadata; installation stopped.' }
         $asset = "bypass-win-$cpu.zip"
-        Write-Host "Downloading Bypass for Windows $cpu..."
+        Write-BypassStage "`n01 / DOWNLOAD   Bypass for Windows $cpu..."
         $checksums = Join-Path $work 'SHASUMS256.txt'
         Download-Bypass "$base/releases/$release/SHASUMS256.txt" $checksums
         $hashes = @(foreach ($line in [IO.File]::ReadAllLines($checksums)) { if ($line -cmatch ('^([a-f0-9]{64})  ' + [regex]::Escape($asset) + '$')) { $Matches[1] } })

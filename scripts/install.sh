@@ -6,13 +6,20 @@ bypass_install() {
   umask 022
   fail() { printf 'Bypass: %s\n' "$*" >&2; exit 1; }
   integration=cli
+  bypass_accent='' bypass_dim='' bypass_reset=''
+  if [ -t 1 ] && [ "${TERM:-}" != dumb ] && [ "${NO_COLOR+x}" != x ]; then
+    bypass_accent=$'\033[1;31m'; bypass_dim=$'\033[37m'; bypass_reset=$'\033[0m'
+    case "${COLORTERM:-}" in truecolor|24bit) bypass_accent=$'\033[1;38;2;255;74;44m' ;; *) case "${TERM:-}" in *256color*) bypass_accent=$'\033[1;38;5;202m' ;; esac ;; esac
+  fi
   for argument in "$@"; do
     case "$argument" in --muse) integration=muse ;; --help|-h) printf 'Usage: install.sh [--muse]\nInstall Bypass, optionally register the full Muse plugin. Runtime approval stays in Muse.\n'; return ;; *) fail "Unknown option: $argument. Use --muse to install the Muse plugin." ;; esac
   done
   if [ "$integration" = muse ]; then
     command -v muse >/dev/null 2>&1 || fail 'Muse Code was not found on PATH. Install Muse from https://dev.meta.ai, open it and sign in, then retry this same installer. No Bypass files were changed.'
-    printf 'Installing Bypass for Muse\n'
   fi
+  printf '\n%s▰╲▰  BYPASS LABS%s\n' "$bypass_accent" "$bypass_reset"
+  if [ "$integration" = muse ]; then printf '%sInstalling Bypass for Muse%s\n' "$bypass_dim" "$bypass_reset"
+  else printf '%sSecurity that stays with your code.%s\n' "$bypass_dim" "$bypass_reset"; fi
   case "$(uname -s)" in Darwin) platform=darwin ;; Linux) platform=linux ;; *) fail 'Supported platforms: macOS and glibc Linux (x64 or arm64).' ;; esac
   case "$(uname -m)" in x86_64|amd64) arch=x64 ;; arm64|aarch64) arch=arm64 ;; *) fail 'Supported CPUs: x64 and arm64.' ;; esac
   if [ "$platform" = linux ] && command -v ldd >/dev/null 2>&1 && ldd --version 2>&1 | grep -qi musl; then fail 'This download needs glibc Linux. Alpine/musl is not supported.'; fi
@@ -45,7 +52,7 @@ bypass_install() {
   if [ -z "$release" ]; then download "$base/channels/main.txt" "$work/channel"; release=$(cat "$work/channel"); fi
   printf '%s' "$release" | grep -Eq '^main-[a-f0-9]{40}-[1-9][0-9]{0,15}-[1-9][0-9]{0,15}$' || fail 'Invalid release metadata; installation stopped.'
   asset="bypass-$platform-$arch.tar.gz"
-  printf 'Downloading Bypass for %s-%s…\n' "$platform" "$arch"
+  printf '\n%s01 / DOWNLOAD%s   Bypass for %s-%s…\n' "$bypass_accent" "$bypass_reset" "$platform" "$arch"
   download "$base/releases/$release/SHASUMS256.txt" "$work/checksums"
   expected=$(awk -v file="$asset" '$2==file {print $1}' "$work/checksums")
   printf '%s' "$expected" | grep -Eq '^[a-f0-9]{64}$' || fail 'Missing or invalid artifact checksum.'

@@ -102,10 +102,16 @@ On Windows: `irm https://bypasslabs.ai/install.ps1 | iex`. On macOS/Linux, open 
 AI review requires Docker and **your provider API key**. Coding-agent subscriptions and login tokens are never used. Repository setup, reports, memory and saved tests do not require an AI key.
 
 ```bash
-bypass onboard
+bypass
 ```
 
-The wizard asks for provider → API-key **environment-variable name** → model → endpoint → optional connection check. It never asks for a secret value. Load the variable privately using your shell or secret manager; do not put the value in a command argument or project file.
+Choose **Connect my application**, or **See the full local walkthrough** to see the proof → fix → regression journey without a model. The workspace shows completed actions, the current step and what comes next. Type `/` to browse commands; use **Ctrl+O** for activity details and **Ctrl+T** to show or hide the task panel. Smaller terminals use a compact layout. Set `NO_COLOR=1` to disable color or `BYPASS_PLAIN=1` for a scrolling, line-based interface.
+
+![Bypass CLI showing HTTP proof, a verified fix, saved regression and next step](docs/images/cli-workspace.png)
+
+*Captured from the local walkthrough: discovery is seeded, while HTTP proof, fix verification and regression replay are real. The task panel reflects completed steps.*
+
+For your application, onboarding asks for repository → provider → API-key **environment-variable name** → model → optional running app. It never asks for a secret value. Load the variable privately using your shell or secret manager; do not put the value in a command argument or project file. `bypass onboard` also opens setup directly.
 
 Example with `OPENAI_API_KEY` already loaded:
 

@@ -7,6 +7,7 @@ import { createRun } from '../src/engine.mjs';
 import { watchRun } from '../src/jobs.mjs';
 import { read } from '../src/store.mjs';
 import { Fault } from '../src/util.mjs';
+import { createTheme } from '../src/terminal-theme.mjs';
 import { temp } from './helpers.mjs';
 
 function terminal(t,columns=90,rows=30) {
@@ -94,4 +95,28 @@ test('frames fit resized terminals, keep input visible and strip untrusted contr
   assert.equal(safeText(tty.ui.state.entries.at(-1).text),'unsafe');
   tty.key('return');await answer;
   tty.key('pageup');assert.ok(tty.ui.state.scroll>0);tty.key('o',{ctrl:true});assert.equal(tty.ui.state.expanded,true);
+});
+
+test('wide task panel can be collapsed without losing the project or active command',async t=>{
+  const tty=terminal(t,130,38);
+  tty.ui.setContext({title:'Application',repo:'/tmp/customer-app',engine:'docker',model:'review · openai'});
+  tty.ui.setTasks('Review progress',['Read source','Verify HTTP']);tty.ui.task(0,'done');tty.ui.task(1,'running');
+  const answer=tty.ui.command('review');tty.type('/sta');
+  let view=frame(tty.ui.state,130,38);
+  assert.match(view.lines.map(x=>x.text).join('\n'),/✓ Read source/);
+  assert.match(view.lines.map(x=>x.text).join('\n'),/◈ Verify HTTP/);
+  tty.key('t',{ctrl:true});
+  view=frame(tty.ui.state,130,38);
+  assert.doesNotMatch(view.lines.map(x=>x.text).join('\n'),/✓ Read source/);
+  assert.match(view.lines.map(x=>x.text).join('\n'),/customer-app/);
+  assert.equal(tty.ui.state.input,'/sta');tty.key('return');assert.equal(await answer,'/status');
+});
+
+test('terminal palette respects NO_COLOR, redirected output and color capability',()=>{
+  const output={isTTY:true,getColorDepth:()=>24};
+  assert.match(createTheme({output,env:{TERM:'xterm'}}).paint('brand','Bypass'),/38;2;255;74;44/);
+  for(const env of [{NO_COLOR:''},{TERM:'dumb'}])assert.equal(createTheme({output,env}).paint('brand','Bypass'),'Bypass');
+  assert.equal(createTheme({output:{isTTY:false},env:{}}).paint('brand','Bypass'),'Bypass');
+  const fallback=createTheme({output:{isTTY:true,getColorDepth:()=>8},env:{TERM:'xterm-256color'}});
+  assert.match(fallback.paint('selection','Choose',{surface:true}),/48;5;202/);
 });

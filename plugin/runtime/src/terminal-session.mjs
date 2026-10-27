@@ -3,7 +3,8 @@ import { format, stripVTControlCharacters } from 'node:util';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { Fault, redact } from './util.mjs';
+import { Fault, redact, VERSION } from './util.mjs';
+import { createTheme } from './terminal-theme.mjs';
 
 export const commands = [
   ['review', 'Review the connected repository'],
@@ -44,6 +45,19 @@ export function wrap(text, width) {
   }
   return lines;
 }
+function wrapWords(text,width){
+  const lines=[];
+  for(const paragraph of safeText(text).split('\n')){
+    let line='';
+    for(const word of paragraph.split(/\s+/)){
+      if(line&&cells(line+' '+word)>width){lines.push(line);line='';}
+      if(cells(word)>width){const parts=wrap(word,width);if(line){lines.push(line);line='';}lines.push(...parts.slice(0,-1));line=parts.at(-1);}
+      else line+=(line?' ':'')+word;
+    }
+    lines.push(line);
+  }
+  return lines;
+}
 const shortPath = value => String(value||'').replace(os.homedir()+'/', '~/');
 const duration = ms => ms<60000 ? `${(ms/1000).toFixed(1)}s` : `${Math.floor(ms/60000)}m ${Math.floor(ms/1000)%60}s`;
 const icons = {running:'◈',done:'✓',failed:'!',cancelled:'○',attention:'!',waiting:'◇'};
@@ -52,11 +66,11 @@ export function transcriptLines(state, width, {expanded=state.expanded, now=Date
   const lines=[];
   for(const entry of state.entries) {
     if(entry.type==='operation') {
-      lines.push(...wrap(`${icons[entry.status]} ${entry.label} · ${duration((entry.ended||now)-entry.started)}${entry.status==='cancelled'?' · stopped':entry.status==='attention'?' · needs attention':''}`,width));
+      lines.push(...wrapWords(`${icons[entry.status]} ${entry.label} · ${duration((entry.ended||now)-entry.started)}${entry.status==='cancelled'?' · stopped':entry.status==='attention'?' · needs attention':''}`,width));
       if(expanded || entry.status==='running' || entry.status==='failed' || entry.status==='attention') {
-        for(const detail of entry.details)lines.push(...wrap(detail,width-2).map(line=>'  '+line));
+        for(const detail of entry.details)lines.push(...wrapWords(detail,width-2).map(line=>'  '+line));
       }else if(entry.details.length)lines.push(`  ${entry.details.length} detail${entry.details.length===1?'':'s'} · Ctrl+O to expand`);
-    }else lines.push(...wrap(entry.text,width));
+    }else lines.push(...wrapWords(entry.text,width));
     lines.push('');
   }
   return lines;
@@ -64,75 +78,106 @@ export function transcriptLines(state, width, {expanded=state.expanded, now=Date
 
 // A pure frame builder keeps narrow terminals, scrolling and cursor placement testable.
 export function frame(state, columns, rows, now=Date.now()) {
-  const width=Math.max(8,columns-2), height=Math.max(6,rows), lines=[];
-  const put=(text='',tone='normal')=>lines.push({text:clip(text,width),tone});
-  const divider='─'.repeat(width);
-  put(`BYPASS  /  ${state.context.title||'Connect your application'}`, 'title');
-  if(height>=18) {
-    put(state.context.repo?`Repo   ${shortPath(state.context.repo)}${state.context.branch?' · '+state.context.branch:''}`:'Repo   choose the application you want to review','muted');
-    put(`App    ${state.context.app||'optional · add a deployed URL during setup'}`, 'muted');
-    put(`Model  ${state.context.model||'Muse subscription · local · self-hosted'}`, 'muted');
-  }
-  put(state.context.engine==='docker'?(width<70?'POC · real Docker agents · bounded scope':'POC · real Docker agents · source hypotheses + observed HTTP proof'):(width<70?'Offline preview · simulated discovery':'Offline preview · simulated discovery; use /engine for real AI'),'warning');
-  put(divider,'rule');
+  const width=Math.max(8,columns-2),height=Math.max(6,rows),lines=[];
+  const row=(text='',tone='normal')=>({text:clip(text,width),tone});
+  const put=(text='',tone='normal')=>lines.push(row(text,tone));
+  const join=parts=>({text:parts.map(p=>p.text).join(''),parts,tone:'normal'});
+  const divider='─'.repeat(width),wideLayout=width>=108&&height>=26;
+  const project=state.context.title||'Connect your application';
+  const mode=state.context.demo?'LOCAL DEMO · seeded discovery / real HTTP':state.context.engine==='docker'?'REAL AI · bounded scope':state.context.engine==='mock'?'PREVIEW · simulated discovery':'SETUP · progress saved';
+  const mark=[{text:'▰╲',tone:'brand'},{text:'▰  BYPASS LABS',tone:'title'}];
+  const version=`v${VERSION}`;
+  if(width>=42)mark.push({text:' '.repeat(Math.max(2,width-16-version.length))+version,tone:'muted'});
+  lines.push(width>=16?join(mark):row('BYPASS','brand'));
+  put(`${project}${state.context.branch?' · '+state.context.branch:''}  /  ${mode}`,'muted');
+  if(height>=20)put('─ ACTIVITY '+ '─'.repeat(Math.max(0,width-11)),'rule');
 
-  const bottom=[];
-  const add=(text='',tone='normal')=>bottom.push({text:clip(text,width),tone});
-  if(state.tasks.length&&height>=22) {
-    const done=state.tasks.filter(task=>task.status==='done').length;
-    add(`${state.taskTitle}  ${done}/${state.tasks.length} completed`,'accent');
-    let index=state.tasks.findIndex(task=>task.status==='running');
-    if(index<0)index=state.tasks.findIndex(task=>task.status==='waiting');
-    if(index<0)index=state.tasks.length-1;
-    const visible=height>=34?state.tasks:state.tasks.slice(Math.max(0,index-1),Math.max(0,index-1)+2);
-    for(const task of visible)add(` ${icons[task.status]||'◇'} ${task.label}`,task.status==='running'?'accent':'muted');
+  const bottom=[],add=(text='',tone='normal')=>bottom.push(row(text,tone));
+  const activeTask=state.tasks.find(task=>task.status==='running');
+  const completed=state.tasks.filter(task=>task.status==='done').length;
+  if(!wideLayout&&state.tasks.length&&height>=24&&state.tasksExpanded!==false){
+    add(`${state.taskTitle} · ${completed}/${state.tasks.length} done`,'accent');
+    const current=activeTask||state.tasks.find(task=>['failed','attention','cancelled'].includes(task.status))||state.tasks.find(task=>task.status==='waiting')||state.tasks.at(-1);
+    add(` ${icons[current.status]||'◇'} ${current.label}`,taskTone(current.status));
   }
-  if(height>=16) {
-    add(`Now   ${state.operation?.label||state.tasks.find(task=>task.status==='running')?.label||(state.pending?.kind==='command'?'Ready for your next action':'Waiting for your choice')}`,state.operation?'accent':'normal');
-    add(`Next  ${state.next||'Choose a command below'}`,'muted');
+  if(height>=20){
+    const current=state.operation?.label||activeTask?.label||(state.pending?.kind==='command'?'Ready for your next action':'Waiting for your choice');
+    add(`NOW   ${current}`,state.operation?'accent':'normal');
+    add(`NEXT  ${state.next||'Choose an action below'}`,'info');
   }
   const menu=state.menu||[];
-  if(menu.length) {
-    const count=Math.min(height>=28?5:3,menu.length), start=Math.max(0,Math.min(state.selected-1,menu.length-count));
-    for(let i=start;i<start+count;i++) {
-      const item=menu[i], prefix=i===state.selected?'›':' ';
-      add(`${prefix} ${state.pending?.kind==='select'?i+1+'  ':''}${item.label}${item.description?'  '+item.description:''}`,i===state.selected?'selection':'muted');
+  if(menu.length){
+    const count=Math.min(height>=30?5:height>=20?3:2,menu.length),start=Math.max(0,Math.min(state.selected-1,menu.length-count));
+    for(let i=start;i<start+count;i++){
+      const item=menu[i],selected=i===state.selected;
+      add(`${selected?'›':' '} ${state.pending?.kind==='select'?i+1+'  ':''}${item.label}${item.description&&width>=60?'  '+item.description:''}`,selected?'selection':'muted');
     }
     if(menu.length>count)add(`  ${state.selected+1}/${menu.length} · ↑↓ browse · Enter select`,'muted');
-  }else if(state.input.startsWith('/')&&state.pending?.kind==='command')add('No matching command · Esc clears · /help lists commands','warning');
+  }else if(state.input.startsWith('/')&&state.pending?.kind==='command')add('No match · Esc clears · /help lists commands','warning');
   add(divider,'rule');
-  if(state.pending?.kind==='question' || state.pending?.kind==='select') {
-    for(const line of wrap(state.pending.title,width).slice(0,height<20?1:2))add(line,'title');
-    if(state.pending.fallback&&height>=20)add(`Enter uses: ${state.pending.fallback}`,'muted');
+  if(['question','select'].includes(state.pending?.kind)){
+    for(const line of wrapWords(state.pending.title.trim(),width).slice(0,height>=30?2:1))add(line,'title');
+    if(state.pending.fallback&&height>=30)add(`Enter uses: ${state.pending.fallback}`,'muted');
   }
   const placeholder=state.pending?.kind==='command'?`Enter: ${state.recommended||'/review'}  ·  / commands`:state.pending?.kind==='select'?'↑↓ choose · Enter confirm':state.operation?'Working…':'Type your answer';
-  // Horizontal scrolling keeps the caret visible, even on long pasted paths.
-  const before=state.input.slice(0,state.cursor), budget=width-3;
+  const before=state.input.slice(0,state.cursor),budget=width-3;
   let offset=0;
   while(cells(before.slice(offset))>=budget&&offset<before.length)offset++;
-  const shown=clip(state.input.slice(offset),budget);
-  const composerRow=bottom.length;
-  add(`› ${shown||(!state.input?placeholder:'')}`,state.input?'normal':'muted');
+  const shown=clip(state.input.slice(offset),budget),composerRow=bottom.length;
+  add(`› ${shown||(!state.input?placeholder:'')}`,state.input?'title':'muted');
   const hint=state.pending?.kind==='command'?'/ commands':state.pending?.kind==='select'?'↑↓ select':'Enter continue';
-  add(state.operation?`${state.operation.cancelable?'Esc stop':'Finishing step'}${state.operation.skipOnEnter?' · Enter skip':''} · Ctrl+C exit`:height<18?'Ctrl+C exit · Esc back':`${hint} · Ctrl+O details${width>=78?' · PgUp/PgDn scroll':''} · Esc back · Ctrl+C exit`,'muted');
+  add(state.operation?`${state.operation.cancelable?'Esc stop':'Finishing step'}${state.operation.skipOnEnter?' · Enter skip':''} · Ctrl+O details · Ctrl+C exit`:height<18?'Ctrl+C exit · Esc back':`${hint} · Ctrl+O details${width>=100?' · Ctrl+T tasks':''} · Esc back · Ctrl+C exit`,'muted');
 
   const available=Math.max(0,height-lines.length-bottom.length);
-  const transcript=transcriptLines(state,width,{now});
-  const maxScroll=Math.max(0,transcript.length-available);
-  const scroll=Math.min(state.scroll,maxScroll);
-  const end=transcript.length-scroll;
+  const sideWidth=wideLayout?32:0,mainWidth=wideLayout?width-sideWidth-3:width;
+  const transcript=transcriptLines(state,mainWidth,{now}),maxScroll=Math.max(0,transcript.length-available);
+  const scroll=Math.min(state.scroll,maxScroll),end=transcript.length-scroll;
   const visible=transcript.slice(Math.max(0,end-available),end);
-  if(scroll&&visible.length)visible[0]=`↑ Earlier activity · ${scroll} lines above latest · PgDn to return`;
-  for(const text of visible)put(text,text.startsWith('✓')?'success':text.startsWith('!')?'warning':'normal');
-  while(lines.length<height-bottom.length)put();
+  if(scroll&&visible.length)visible[0]=`↑ Earlier activity · PgDn to return to latest`;
+  while(visible.length<available)visible.push('');
+  const sidebar=[];
+  const side=(text='',tone='muted')=>wrapWords(text,sideWidth-2).forEach(text=>sidebar.push({text:' '+text,tone}));
+  if(wideLayout){
+    if(state.tasks.length&&state.tasksExpanded!==false){
+      side(state.taskTitle.toUpperCase(),'title');
+      const filled=Math.round(completed/state.tasks.length*12);
+      side(`${'━'.repeat(filled)}${'─'.repeat(12-filled)}  ${completed}/${state.tasks.length} done`,'accent');
+      const index=Math.max(0,state.tasks.findIndex(task=>task.status==='running'));
+      const tasks=available>=19?state.tasks:state.tasks.slice(Math.max(0,index-1),Math.max(0,index-1)+3);
+      for(const task of tasks)side(`${icons[task.status]||'◇'} ${task.label}`,taskTone(task.status));
+      if(tasks.length<state.tasks.length)side('Ctrl+T hide tasks · /status');
+      side();
+    }
+    side('PROJECT','title');
+    side(shortPath(state.context.repo)||'Choose your application source');
+    side();side('LIVE APP','title');side(state.context.app||'Optional · connect with /app');
+    side();side('MODEL','title');side(state.context.model||'API key for CLI · /models');
+    if(state.context.checks!==undefined){side();side(`${state.context.checks} saved tests · ${state.context.memory||0} memories`,'success');}
+    if(!state.tasks.length){side();side('EXPLORE','title');side('/demo     Guided proof loop','info');side('/help     All commands','info');}
+  }
+  for(let i=0;i<available;i++){
+    const text=clip(visible[i],mainWidth),tone=activityTone(text);
+    if(wideLayout){
+      const right=sidebar[i]||{text:'',tone:'muted'};
+      lines.push(join([{text:text+' '.repeat(Math.max(0,mainWidth-cells(text))),tone},{text:' │ ',tone:'rule'},{text:clip(right.text,sideWidth),tone:right.tone}]));
+    }else put(text,tone);
+  }
   const inputRow=lines.length+composerRow+1;
   lines.push(...bottom);
   return {lines:lines.slice(0,height),cursor:{row:Math.min(height,inputRow),column:Math.min(columns,4+cells(before.slice(offset)))},maxScroll};
 }
+const taskTone=status=>status==='done'?'success':status==='running'?'accent':status==='failed'?'error':['attention','cancelled'].includes(status)?'warning':'muted';
+const activityTone=text=>/^✓/.test(text)?'success':/^!|^Error|failed/i.test(text)?'warning':/^›/.test(text)?'accent':/^Step \d|^BYPASS|^Setup saved/.test(text)?'title':/^  \d+ details?/.test(text)?'muted':'normal';
 
-export function createTerminalSession({input=process.stdin,output=process.stdout,captureConsole=true,clock=Date.now}={}) {
+export function paintFrameLine(line,theme,width){
+  const parts=line.parts||[{text:line.text,tone:line.tone}];
+  const content=parts.map(part=>theme.paint(part.tone,part.text,{surface:true})).join('');
+  return theme.paint('normal',' ',{surface:true})+content+theme.paint(line.tone||'normal',' '.repeat(Math.max(0,width-cells(line.text))),{surface:true});
+}
+
+export function createTerminalSession({input=process.stdin,output=process.stdout,captureConsole=true,clock=Date.now,env=process.env}={}) {
   const controller=new AbortController();
-  const state={context:{},entries:[],tasks:[],taskTitle:'Progress',next:'Connect your repository, then preview or try /demo',recommended:'/review',input:'',cursor:0,pending:null,operation:null,menu:[],selected:0,expanded:false,scroll:0};
+  const state={context:{},entries:[],tasks:[],taskTitle:'Progress',next:'Connect your repository, then preview or try /demo',recommended:'/review',input:'',cursor:0,pending:null,operation:null,menu:[],selected:0,expanded:false,tasksExpanded:true,scroll:0};
   let closed=false,dirty=true,pasting=false,pasteBuffer='',historyIndex=0,historyDraft='',transcriptPath;
   const history=[],original={log:console.log,error:console.error,warn:console.warn},wasRaw=input.isRaw;
   const mark=()=>{dirty=true;};
@@ -145,13 +190,13 @@ export function createTerminalSession({input=process.stdin,output=process.stdout
     state.scroll=0;mark();
   };
   if(captureConsole)for(const key of Object.keys(original))console[key]=(...args)=>write(format(...args));
-  const colors={title:'1;38;5;153',accent:'38;5;153',success:'38;5;150',warning:'38;5;222',muted:'90',rule:'38;5;238',selection:'1;38;5;150',normal:'0'};
+  const theme=createTheme({output,env});
   const render=()=>{
     if(closed||!dirty&&!state.operation)return;
     dirty=false;
     const view=frame(state,output.columns||80,output.rows||24,clock());
     state.scroll=Math.min(state.scroll,view.maxScroll);
-    output.write('\x1b[?25l\x1b[H'+view.lines.map(line=>`\x1b[2K ${process.env.NO_COLOR?'':`\x1b[${colors[line.tone]}m`}${line.text}\x1b[0m`).join('\r\n')+`\x1b[${view.cursor.row};${view.cursor.column}H${state.pending?'\x1b[?25h':''}`);
+    output.write('\x1b[?25l\x1b[H'+view.lines.map(line=>'\x1b[2K'+paintFrameLine(line,theme,(output.columns||80)-1)).join('\r\n')+`\x1b[${view.cursor.row};${view.cursor.column}H${state.pending?'\x1b[?25h':''}`);
   };
   const setInput=value=>{state.input=value;state.cursor=value.length;updateMenu();mark();};
   const updateMenu=()=>{
@@ -164,7 +209,7 @@ export function createTerminalSession({input=process.stdin,output=process.stdout
     const pending=state.pending;if(!pending)return;
     state.pending=null;state.menu=[];setInput('');state.scroll=0;
     if(error)pending.reject(error);
-    else {write(`› ${pending.kind==='command'?answer:pending.title+'  '+(pending.items?.find(item=>item.value===answer)?.label||answer||'continue')}`);pending.resolve(answer);}
+    else {const title=pending.title.trim().replace(/ \(Enter to continue, q to leave\)$/,'');write(`› ${pending.kind==='command'?answer:title+'  '+(pending.items?.find(item=>item.value===answer)?.label||answer||'continue')}`);pending.resolve(answer);}
   };
   const cancel=()=>new Fault('Action stopped. Your saved progress is retained.',130,{cancelled:true});
   const shutdown=()=>{
@@ -180,6 +225,7 @@ export function createTerminalSession({input=process.stdin,output=process.stdout
     if(pasting){if(str)pasteBuffer+=str;return;}
     if(key.ctrl&&key.name==='c'){shutdown();return;}
     if(key.ctrl&&key.name==='o'){state.expanded=!state.expanded;mark();return;}
+    if(key.ctrl&&key.name==='t'){state.tasksExpanded=!state.tasksExpanded;mark();return;}
     if(key.name==='pageup'||key.name==='pagedown'){state.scroll=Math.max(0,state.scroll+(key.name==='pageup'?1:-1)*Math.max(3,(output.rows||24)-12));mark();return;}
     if(key.name==='escape'){
       if(state.operation){if(state.operation.cancelable)state.operation.controller.abort(cancel());else write('This step must finish before leaving.');}
@@ -264,7 +310,7 @@ export function createTerminalSession({input=process.stdin,output=process.stdout
     }
     if(transcriptPath)output.write(`Session transcript: ${transcriptPath}\n`);
   };
-  write('Your security workspace\nConnect source + app, review the evidence, and keep fixes as tests.\nType / to browse commands. Enter always shows the suggested next action.');
+  write('Security that stays with your code.\n\nConnect your source and app. Prove the issue. Keep the fix as a test.\n\n/ commands     /demo guided walkthrough     Ctrl+O activity details');
   render();
   return {rich:true,ask,select,write,activity,run:work=>activity('Check model connection',work,{skipOnEnter:true}),signal:controller.signal,
     command:(fallback)=>{state.recommended='/'+fallback;historyIndex=history.length;return question('Choose your next action',fallback,{kind:'command'});},

@@ -39,7 +39,7 @@ export async function guidedDemo(options={},io={}) {
     started=true; // Also clean up if startup creates the fixture but fails its health check.
     const launch=()=>execute('demo start',[],{dir:root,port});
     const demo=io.activity?await io.activity('Start the isolated local Ledger app',launch,{cancelable:false}):await launch();
-    io.setContext?.({title:'Ledger · isolated walkthrough',repo:root,branch:'',app:`${demo.url} · local fixture`,model:'no model calls · no login needed'});
+    io.setContext?.({title:'Ledger · isolated walkthrough',engine:'mock',demo:true,repo:root,branch:'',app:`${demo.url} · local fixture`,model:'no model calls · no login needed'});
     say(`Local app: ${demo.url}\nYou can open it in a browser while following the terminal.`);
 
     await next('\n1 / 6 · Run the example review');

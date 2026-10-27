@@ -36,6 +36,6 @@ export const quickCommands=`Commands you can type here (no IDs needed; / prefix 
 
 Press Enter for the suggested next action. Type / to browse commands.
 ↑↓ select or recall commands · Tab complete · Esc back / stop current action
-Ctrl+O expand details · PgUp/PgDn scroll · Ctrl+C exit
+Ctrl+O expand details · Ctrl+T show/hide tasks · PgUp/PgDn scroll · Ctrl+C exit
 Use BYPASS_PLAIN=1 ./bypass for a plain scrolling interface.
-Use help all for the full CLI command reference. You can also type raw commands such as target list or model test muse.`;
+Use help all for the full CLI command reference. You can also type raw commands such as target list or model test review.`;

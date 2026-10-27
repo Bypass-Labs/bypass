@@ -34,7 +34,7 @@ export async function onboard(options={}, args=[], io={}) {
     const work=signal=>execute(key,argv,{...flags,project:root},{signal});
     return io.activity?io.activity(key,work):work(io.signal);
   };
-  say('\nBYPASS / Get started\nConnect your application for a real AI review. Docker and a working model are required.');
+  say('\nBYPASS / Get started\nConnect your source first. Add a running app for HTTP proof.');
   say('Press Enter for the recommended next action. Your progress is saved.');
   const flow=options.flow||((options.repo||options.project||args[0])?'quickstart':(await pick('How would you like to start?',[
     {label:'Connect my application (recommended) — repository + live app',id:'quickstart'},
@@ -46,7 +46,7 @@ export async function onboard(options={}, args=[], io={}) {
   if(flow==='demo') {
     return {...await guidedDemo(options,io),interactive:true,openDashboard:false};
   }
-  say('Repository → model → optional app connection → first review.\nDNS, test accounts, and the Muse plugin can all be finished later.');
+  say('CLI AI review uses Docker and your provider API key. Setup, saved tests and the local walkthrough need no model.\nRepository → model → optional app → first review.\nDNS, test accounts, and the Muse plugin can all be finished later.');
   io.setTasks?.('Setup',['Connect application source','Choose inference connection','Connect app / optional DNS','Save setup and open project']);
   io.task?.(0,'running');io.setNext?.('Choose model → connect app → first review');
 
