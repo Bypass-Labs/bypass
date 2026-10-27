@@ -141,9 +141,10 @@ cd ~/bypass-for-muse
 git pull --ff-only
 muse plugins update bypass
 muse plugins inspect bypass
+muse plugins approve bypass
 ```
 
-If Muse requests renewed capability approval, run `muse plugins approve bypass`. **Close the old Muse session and open a new one** to load the updated plugin. `/bypass:start` reports the loaded version. CLI-only users need just `git pull --ff-only`.
+Updating can leave the plugin listed as installed while its tool server is disabled. The inspect/approve steps above review and enable the updated capabilities. **Close the old Muse session and open a new one** to load the updated plugin. `/bypass:start` reports the loaded version. CLI-only users need just `git pull --ff-only`.
 
 ## Optional examples and technical details
 

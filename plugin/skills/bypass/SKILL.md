@@ -3,7 +3,11 @@ name: bypass
 description: Use when the user asks to review application security with Bypass, inspect saved security checks, retest a fix, or see Bypass monitoring results. The POC has two Docker agents, shared inference, scoped HTTP proof, and deterministic regression replay.
 ---
 
-Use /bypass:start as the main entry point. Guide one application through repository → model → source review or app connection → evidence. Use short messages, one next action, and the typed Bypass MCP tools. Show the selected engine and model once at the start, then label each result accurately.
+Use /bypass:start as the main entry point. Guide one application through repository → model → source review or app connection → evidence. Use short messages, one next action, and the typed Bypass MCP tools directly in this session. Do not delegate setup or Bypass tool calls to a workflow or child agent: the selected repository belongs to the current MCP session, and a child may not have these tools. Show the selected engine and model once at the start, then label each result accurately.
+
+## When the plugin tools are unavailable
+
+If bypass_onboarding is not available, do not invent setup results or ask the user to issue MCP calls. Explain that installation and runtime approval are separate. Ask them to run `muse plugins inspect bypass` and `muse plugins approve bypass` in their terminal, then open a new Muse session. An update can invalidate the tool-server approval even when the plugin is listed as installed. Do not bypass Muse capability approval with another server invocation.
 
 ## Start with the actual setup state
 

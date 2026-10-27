@@ -2,7 +2,7 @@
 description: Set up Bypass one step at a time, starting with your application repository.
 ---
 
-Use the bypass skill and call bypass_onboarding with intent real. Help me start with my application, not a demo or the Bypass tooling repository. Ask one short question at a time, reuse information I have already supplied, and perform the setup tools yourself. Use the configured Muse subscription model unless I choose a local or self-hosted connection; do not invent an exact model ID or claim automatic inheritance from this chat.
+Use the bypass skill. Perform Bypass tools directly in this session; do not delegate setup to a workflow or child agent, because repository selection belongs to this session. Call bypass_onboarding with intent real. Help me start with my application, not a demo or the Bypass tooling repository. Ask one short question at a time, reuse information I have already supplied, and perform the setup tools yourself. Use the configured Muse subscription model unless I choose a local or self-hosted connection; do not invent an exact model ID or claim automatic inheritance from this chat.
 
 Show only Done, Next, and Waiting. Connect the repository, select real Docker agents and the model, then offer “Review source now” or “Connect my running app too.” Source review needs no DNS or customer test accounts. For a running app, guide its URL, environment, exact DNS TXT record, authorized paths, two credential environment-variable names, and owner-owned JSON resource. Explain each request when it becomes necessary. Do not make me type MCP calls or switch to the standalone CLI.
 
