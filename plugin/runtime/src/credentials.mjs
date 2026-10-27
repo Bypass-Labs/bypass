@@ -24,10 +24,23 @@ function directory(state,create=false){
     try{
       // Replace the DACL, including any explicit grants on an existing folder.
       // The path is data in an environment variable, never PowerShell source.
-      const prefix="$ErrorActionPreference='Stop'; $sid=[Security.Principal.WindowsIdentity]::GetCurrent().User; ";
-      const script=prefix+(create?"$acl=New-Object Security.AccessControl.DirectorySecurity; $acl.SetOwner($sid); $acl.SetAccessRuleProtection($true,$false); $rule=New-Object Security.AccessControl.FileSystemAccessRule($sid,'FullControl','ContainerInherit,ObjectInherit','None','Allow'); $acl.AddAccessRule($rule); Set-Acl -LiteralPath $env:BYPASS_ACL_DIRECTORY -AclObject $acl":"$acl=Get-Acl -LiteralPath $env:BYPASS_ACL_DIRECTORY; if($acl.Owner -ne $sid.Value -and ([Security.Principal.NTAccount]$acl.Owner).Translate([Security.Principal.SecurityIdentifier]).Value -ne $sid.Value){throw 'Wrong owner'}; foreach($rule in $acl.Access){if($rule.AccessControlType -eq 'Allow' -and $rule.IdentityReference.Translate([Security.Principal.SecurityIdentifier]).Value -ne $sid.Value){throw 'Store is not private'}}");
-      execFileSync('powershell.exe',['-NoProfile','-NonInteractive','-EncodedCommand',Buffer.from(script,'utf16le').toString('base64')],{stdio:'ignore',windowsHide:true,timeout:15000,env:{...process.env,BYPASS_ACL_DIRECTORY:dir}});
-    }catch{throw new Fault('Could not restrict the credential store to your Windows account.',3);}
+      const operation=create?`
+        $acl = [System.Security.AccessControl.DirectorySecurity]::new()
+        $acl.SetOwner($sid)
+        $acl.SetAccessRuleProtection($true, $false)
+        $rule = [System.Security.AccessControl.FileSystemAccessRule]::new($sid, [System.Security.AccessControl.FileSystemRights]::FullControl, [System.Security.AccessControl.InheritanceFlags]'ContainerInherit,ObjectInherit', [System.Security.AccessControl.PropagationFlags]::None, [System.Security.AccessControl.AccessControlType]::Allow)
+        $acl.AddAccessRule($rule)
+        Set-Acl -LiteralPath $env:BYPASS_ACL_DIRECTORY -AclObject $acl
+      `:`
+        $acl = Get-Acl -LiteralPath $env:BYPASS_ACL_DIRECTORY
+        if ($acl.GetOwner([System.Security.Principal.SecurityIdentifier]).Value -ne $sid.Value) { throw 'Wrong directory owner' }
+        foreach ($rule in $acl.GetAccessRules($true, $true, [System.Security.Principal.SecurityIdentifier])) {
+          if ($rule.AccessControlType -eq 'Allow' -and $rule.IdentityReference.Value -ne $sid.Value) { throw 'Directory grants another account access' }
+        }
+      `;
+      const script=`$ErrorActionPreference='Stop'; $ProgressPreference='SilentlyContinue'; try { $sid=[System.Security.Principal.WindowsIdentity]::GetCurrent().User; ${operation} } catch { [Console]::Error.WriteLine($_.Exception.Message); exit 1 }`;
+      execFileSync('powershell.exe',['-NoProfile','-NonInteractive','-EncodedCommand',Buffer.from(script,'utf16le').toString('base64')],{stdio:['ignore','pipe','pipe'],windowsHide:true,timeout:15000,env:{...process.env,BYPASS_ACL_DIRECTORY:dir}});
+    }catch(error){throw new Fault(`Could not restrict the credential store to your Windows account. ${String(error.stderr||error.code||'Permission update failed').replace(/[\r\n]+/g,' ').slice(0,1000)}`,3);}
     windowsDirectories.add(dir);
   }
   return dir;
