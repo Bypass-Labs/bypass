@@ -56,7 +56,7 @@ $marker = Join-Path $PSScriptRoot 'installed.json'
 switch ($args[1]) {
   'inspect' { if (Test-Path $marker) { Get-Content $marker -Raw; exit 0 }; Write-Output '{"error":{"message":"not installed"}}'; exit 1 }
   'validate' { Write-Output '{"valid":true}'; exit 0 }
-  'install' { @{valid=$true; active=$true; record=@{id='bypass'; cache_path=$args[2]}} | ConvertTo-Json -Depth 5 | Set-Content $marker; Write-Output '{"installed":true}'; exit 0 }
+  'install' { @{valid=$true; active=$true; record=@{id='bypass'; cache_path=$args[2]}} | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath $marker -Encoding UTF8; Write-Output '{"installed":true}'; exit 0 }
   default { throw 'Unexpected operation (automatic approval is forbidden)' }
 }
 '@
@@ -67,6 +67,8 @@ switch ($args[1]) {
         $museInstaller = irm "https://bypasslabs.ai/downloads/bypass/releases/$ReleaseId/install-muse.ps1"
         $museInstaller | iex
         Assert-Bypass (Test-Path (Join-Path $museFixture 'installed.json')) 'Muse installer did not register the native plugin.'
+        $registered = bypass integrate status --json | ConvertFrom-Json
+        Assert-Bypass ($registered.integration.record.cache_path -ceq (Join-Path $first.bundle 'plugin')) 'The native-host fixture did not round-trip the Unicode installation path.'
         $museInstaller | iex
         $status = bypass integrate status --json | ConvertFrom-Json
         Assert-Bypass ($status.state -eq 'review_required') 'Muse installer incorrectly claimed runtime approval.'
