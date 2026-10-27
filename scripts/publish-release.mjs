@@ -13,9 +13,9 @@ async function token(){
   if(!response.ok)throw new Error('GitHub OIDC token unavailable');
   const result=await response.json();if(typeof result.value!=='string')throw new Error('Missing GitHub OIDC identity');return result.value;
 }
-const files=[...release.assets.map(a=>a.file),'install.sh','SHASUMS256.txt','release.json'];
+const files=[...release.assets.map(a=>a.file),'install.sh','install.ps1','SHASUMS256.txt','release.json'];
 if(process.argv.includes('--promote')){
-  const response=await fetch(publisher+'/_publish/promote',{method:'POST',headers:{Authorization:`Bearer ${await token()}`},signal:AbortSignal.timeout(30000)});
+  const response=await fetch(publisher+'/_publish/promote',{method:'POST',body:JSON.stringify({releaseId:release.releaseId}),headers:{Authorization:`Bearer ${await token()}`,'Content-Type':'application/json'},signal:AbortSignal.timeout(30000)});
   if(!response.ok)throw new Error(`Promotion failed: HTTP ${response.status}: ${(await response.text()).slice(0,200)}`);
   console.log(await response.text());
 }else{

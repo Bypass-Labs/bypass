@@ -8,17 +8,25 @@ Use Bypass inside **Muse Code**, or in its standalone CLI. A source-review agent
 
 ## Start with the Muse plugin
 
-The installer supports **macOS and glibc Linux, x64 and arm64**, and includes Node.js. For reviews, you also need **Git**, **Muse Code**, and a running **Docker Desktop or Colima**. Sign in to Muse with `muse login` if needed.
+The installer supports **Windows, macOS and glibc Linux, x64 and arm64**, and includes Node.js. Windows requires Windows 10/11 or Server 2016+ and PowerShell 5.1 or 7. For reviews, you also need **Git**, **Muse Code**, and running **Docker Desktop** (Linux containers on Windows), or Colima on macOS. Sign in to Muse with `muse login` if needed.
 
 ### 1. Install Bypass — one terminal command
+
+**Windows — PowerShell:**
+
+```powershell
+irm https://bypasslabs.ai/install.ps1 | iex
+```
+
+**macOS / Linux — terminal:**
 
 ```bash
 curl -fsSL https://bypasslabs.ai/install | bash
 ```
 
-This downloads the tested `main` build from Cloudflare R2, verifies its SHA-256 checksum, and installs it locally. No GitHub access, clone, npm install, system Node or sudo is needed to install the tool. **The installer adds Bypass to your Bash or Zsh PATH automatically**, including login terminals, and preserves your existing shell configuration. Repeated installs do not add duplicate entries.
+This downloads the tested `main` build from Cloudflare R2, verifies its SHA-256 checksum, and installs it locally. No GitHub access, clone, npm install, system Node or administrator rights are needed. **PATH is configured automatically**: Windows updates the current PowerShell session and your user PATH; Bash and Zsh receive startup-file entries. Repeated installs do not add duplicate entries.
 
-Open a new terminal after installing, or run the activation command printed by the installer to use `bypass` in the current terminal. A `curl | bash` child process cannot change its parent terminal's PATH.
+On Windows, `bypass` works immediately in the same PowerShell session. On macOS/Linux, open a new terminal or run the printed activation command; a `curl | bash` child process cannot change its parent terminal's PATH.
 
 ### 2. Connect the Muse plugin — in your terminal
 
@@ -28,7 +36,7 @@ muse plugins inspect bypass
 muse plugins approve bypass
 ```
 
-Use `~/.local/bin/bypass` if the short command is not on your PATH. `--replace` switches an existing plugin to the bundled version; application settings and evidence stay in their project folders. `inspect` and `approve` use Muse's native capability review. Open a new Muse session after installing or updating.
+If PATH setup is restricted, use `~/.local/bin/bypass` on macOS/Linux, or `& "$env:LOCALAPPDATA\Bypass\bin\bypass.cmd"` in Windows PowerShell. `--replace` switches an existing plugin to the bundled version; application settings and evidence stay in their project folders. `inspect` and `approve` use Muse's native capability review. Open a new Muse session after installing or updating.
 
 ### 3. Open Muse, then start Bypass
 
@@ -170,7 +178,7 @@ A timeout means **review incomplete**. The screen shows the failed stage and evi
 
 ## Update an existing installation
 
-Run the installer again, then refresh the Muse integration if you use it:
+Run the installer again (`irm https://bypasslabs.ai/install.ps1 | iex` on Windows, or the curl command below on macOS/Linux), then refresh the Muse integration if you use it:
 
 ```bash
 curl -fsSL https://bypasslabs.ai/install | bash

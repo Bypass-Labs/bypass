@@ -1,8 +1,9 @@
 import { randomUUID, createHash } from 'node:crypto';
 import { spawn } from 'node:child_process';
 import { setTimeout as delay } from 'node:timers/promises';
+import { commandInvocation } from './command.mjs';
 
-export const VERSION = '0.3.2';
+export const VERSION = '0.3.3';
 export const SCHEMA = 'bypass.v1';
 export const now = () => new Date().toISOString();
 export const id = prefix => `${prefix}_${randomUUID().slice(0, 8)}`;
@@ -43,7 +44,9 @@ export function execFile(command, args = [], options = {}) {
   return new Promise((resolve, reject) => {
     if(options.signal?.aborted){reject(abortFault(options.signal));return;}
     const group=!!options.killGroup && process.platform!=='win32';
-    const child = spawn(command, args, { cwd: options.cwd, env: {...process.env, MUSE_NO_AUTO_UPDATE:'1', ...options.env}, stdio:['pipe','pipe','pipe'], shell:false, detached:group });
+    const env={...process.env,MUSE_NO_AUTO_UPDATE:'1',...options.env};
+    const invocation=commandInvocation(command,args,env);
+    const child = spawn(invocation.command, invocation.args, { cwd: options.cwd, env, stdio:['pipe','pipe','pipe'], shell:false, detached:group });
     let stdout = '', stderr = '', size = 0, failure=null, closed=false, killTimer;
     const kill=signal=>{try{if(group&&child.pid)process.kill(-child.pid,signal);else child.kill(signal);}catch{/* already exited */}};
     const stop=error=>{if(closed||failure)return;failure=error;kill('SIGTERM');killTimer=setTimeout(()=>kill('SIGKILL'),500);};

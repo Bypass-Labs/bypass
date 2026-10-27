@@ -3,6 +3,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { spawn } from 'node:child_process';
+import { commandInvocation } from './command.mjs';
 import { rootFrom, read, change, initStore, snapshot, atomic, event } from './store.mjs';
 import { need, named, safeName, envName, now, duration, outcome, execFile, Fault, redact } from './util.mjs';
 import { connectRepository, repositoryInfo, inventory } from './repository.mjs';
@@ -63,7 +64,7 @@ export async function execute(key,args=[],o={},context={}){
     if(o.device)throw new Fault('A hosted Bypass identity service is not configured. Local mode needs no Bypass account. Use --provider muse-code for the official Muse login.',3,{implemented:false});
     if(o.provider==='muse-code'){
       need(!o.json&&!o['non-interactive'],'Muse login is interactive. Run muse login in your terminal.',3);
-      const code=await new Promise((resolve,reject)=>{const p=spawn('muse',['login'],{stdio:'inherit',env:{...process.env,MUSE_NO_AUTO_UPDATE:'1'},cwd:working});p.on('error',reject);p.on('close',resolve);});
+      const code=await new Promise((resolve,reject)=>{const env={...process.env,MUSE_NO_AUTO_UPDATE:'1'},invocation=commandInvocation('muse',['login'],env);const p=spawn(invocation.command,invocation.args,{stdio:'inherit',env,cwd:working});p.on('error',reject);p.on('close',resolve);});
       return outcome({provider:'muse-code',message:'Official Muse login completed. Bypass does not read or store Muse credentials.'},code===0?0:3);
     }
     need(!o.provider||o.provider==='local','Supported account modes: local or muse-code.');

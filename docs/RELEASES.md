@@ -1,5 +1,13 @@
 # R2 releases and one-line installation
 
+Windows PowerShell 5.1 / PowerShell 7:
+
+```powershell
+irm https://bypasslabs.ai/install.ps1 | iex
+```
+
+macOS / Linux:
+
 ```bash
 curl -fsSL https://bypasslabs.ai/install | bash
 ```
@@ -12,7 +20,17 @@ Open a new terminal, or run the printed `export PATH=…` command to activate By
 
 Startup-file references: [Bash](https://www.gnu.org/software/bash/manual/html_node/Bash-Startup-Files), [Zsh](https://zsh.sourceforge.io/Doc/Release/Files.html).
 
-Artifacts contain the CLI, native Muse plugin, and an official checksum-pinned Node.js runtime. Four builds are published: macOS x64/arm64 and Linux x64/arm64. Node 22 requires macOS 11+ or glibc 2.28+ Linux. Alpine/musl and Windows are not supported by this installer. Git, Muse and Docker remain separate prerequisites for the workflows that use them; downloading Bypass itself requires neither GitHub access nor a system Node installation.
+Artifacts contain the CLI, native Muse plugin, and an official checksum-pinned Node.js runtime. Six builds are published: Windows x64/arm64 ZIPs, macOS x64/arm64 archives, and Linux x64/arm64 archives. Node 22 requires Windows 10/Server 2016+, macOS 11+, or glibc 2.28+ Linux. Alpine/musl and 32-bit systems are not supported. Git, Muse and Docker remain separate prerequisites for the workflows that use them; downloading Bypass itself requires neither GitHub access nor a system Node installation.
+
+## Windows installation
+
+The PowerShell installer defaults to `%LOCALAPPDATA%\Bypass` with `bin\bypass.cmd` on PATH. It updates both the current process PATH and user PATH, preserving machine PATH. No administrator rights, symlinks, profile edits, or persistent execution-policy changes are needed. The launcher uses a process-scoped execution-policy flag to run its local script, as the official Muse launcher does. Corporate policies may still restrict PowerShell execution.
+
+Windows releases include `node.exe`; the native plugin manifest uses it directly. The CLI recognizes the official Muse `muse.cmd` / `.muse-launcher.ps1` installation and invokes its PowerShell script without interpolating repository paths into a command shell. Authentication remains Muse's own login.
+
+Downloads must pass SHA-256 and a CLI startup check before the launcher configuration changes. The configuration is replaced atomically; old version directories are retained. Repeating installation reuses the release and does not duplicate PATH entries. Corrupt downloads, overlapping installs, unrelated files, and ZIP path traversal are rejected. `BYPASS_INSTALL_DIR`, `BYPASS_BIN_DIR`, `BYPASS_RELEASE`, and `BYPASS_NO_MODIFY_PATH=1` can be set as PowerShell environment variables before running the installer. Directories containing semicolons cannot be used as executable directories because Windows PATH uses semicolons as separators.
+
+CI runs the downloaded x64 package on Windows Server 2022 in both Windows PowerShell 5.1 and PowerShell 7. It checks current/persistent PATH, a fresh terminal, repeat installation, CLI initialization and feature context, raw MCP startup, the Muse launcher adapter with a fixture, corrupt-download recovery, and preservation of unrelated directories. Native Windows arm64 execution and live Muse account/Docker security reviews are not exercised by this gate. Windows Docker reviews require Docker Desktop using Linux containers.
 
 ## Muse integration
 
@@ -31,13 +49,15 @@ The CLI-only path is `bypass onboard`. Existing app state stays in the app's `.b
 `.github/workflows/release.yml` runs on pushes to `main` and manual dispatches of `main`:
 
 1. Run syntax checks and the full test suite, including real fixture HTTP requests and Docker agent tests. CI does not call a paid model or test a production application.
-2. Build four archives using the pinned runtime/checksums in `scripts/node-runtime.json`. Include Node's upstream license.
+2. Build six archives using the pinned runtime/checksums in `scripts/node-runtime.json`. Include Node's upstream license.
 3. Upload archives, checksum list, installer and release manifest to private R2 bucket `bypass-releases` through Worker `bypass-distribution`.
-4. Install the candidate through its public versioned URL on the GitHub Linux runner. Exercise CLI version/help, repository initialization and feature-context retrieval.
+4. Install the candidate through its public versioned URLs on Linux and Windows runners. Exercise CLI version/help, repository initialization, feature-context retrieval, and platform-specific PATH checks. Windows must pass in PowerShell 5.1 and 7 before promotion.
 5. Validate the complete manifest and every asset, then atomically promote `channels/main.json`. An older CI run cannot replace a newer promoted run.
-6. Test the public `https://bypasslabs.ai/install` entry point.
+6. Test the public `https://bypasslabs.ai/install` entry point and check that `https://bypasslabs.ai/install.ps1` serves the exact PowerShell script tested on Windows.
 
 Every release has an immutable ID `main-<commit SHA>-<GitHub run ID>-<attempt>`. A retry has its own version prefix. Previous releases remain available. There is no automatic retention/deletion policy yet, either in R2 or in the local install directory; old plugin installations may still reference them. A partial upload never becomes the `main` download. A failure before promotion leaves the prior main release active. The final post-promotion smoke check reports a failure for investigation; it does not silently roll back.
+
+Re-running a failed test/promotion job can reuse an upload from an earlier attempt of the same GitHub run and commit. Signed publishing identity cannot promote another run's artifacts. Re-running the build produces a new attempt prefix.
 
 Pull requests run tests through `check.yml` with no publishing permission.
 

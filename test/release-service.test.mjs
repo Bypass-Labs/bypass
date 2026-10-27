@@ -33,15 +33,21 @@ test('R2 uploads are immutable, promotion requires every verified asset, and old
   const bucket=new Bucket(),identity={...claims,releaseId},handler=createHandler(async()=>identity),bindings={RELEASES:bucket};
   const upload=async(file,bytes)=>handler(new Request(`https://bypasslabs.ai/downloads/bypass/_publish/releases/${releaseId}/${file}`,{method:'PUT',body:bytes,headers:{'content-length':String(bytes.length),'x-bypass-sha256':digest(bytes)}}),bindings);
   const assets=[];
-  for(const platform of platforms){const file=`bypass-${platform}.tar.gz`,bytes=Buffer.from(platform);assert.equal((await upload(file,bytes)).status,201);assets.push({file,sha256:digest(bytes),size:bytes.length});}
+  for(const platform of platforms){const file=`bypass-${platform}`+(platform.startsWith('win-')?'.zip':'.tar.gz'),bytes=Buffer.from(platform);assert.equal((await upload(file,bytes)).status,201);assets.push({file,sha256:digest(bytes),size:bytes.length});}
   assert.equal((await upload(assets[0].file,Buffer.from('changed'))).status,409);
   const installer=Buffer.from('#!/bin/bash\necho install\n'),checksums=Buffer.from(assets.map(a=>`${a.sha256}  ${a.file}`).join('\n')+'\n');
-  const release={schemaVersion:1,releaseId,commit,version:'0.3.1',assets,installer:{file:'install.sh',sha256:digest(installer),size:installer.length},checksums:{file:'SHASUMS256.txt',sha256:digest(checksums),size:checksums.length}};
+  const windowsInstaller=Buffer.from('Write-Host "Windows install"\n');
+  const release={schemaVersion:1,releaseId,commit,version:'0.3.3',assets,installer:{file:'install.sh',sha256:digest(installer),size:installer.length},windowsInstaller:{file:'install.ps1',sha256:digest(windowsInstaller),size:windowsInstaller.length},checksums:{file:'SHASUMS256.txt',sha256:digest(checksums),size:checksums.length}};
   await upload('release.json',Buffer.from(JSON.stringify(release)));
   const promote=()=>handler(new Request('https://bypasslabs.ai/downloads/bypass/_publish/promote',{method:'POST'}),bindings);
   assert.equal((await promote()).status,409);assert.equal(await bucket.get('channels/main.json'),null);
-  await upload('install.sh',installer);await upload('SHASUMS256.txt',checksums);assert.equal((await promote()).status,200);
+  await upload('install.sh',installer);await upload('SHASUMS256.txt',checksums);assert.equal((await promote()).status,409);
+  await upload('install.ps1',windowsInstaller);assert.equal((await promote()).status,200);
   const installed=await handler(new Request('https://bypasslabs.ai/install'),bindings);assert.equal(await installed.text(),installer.toString());assert.equal(installed.headers.get('cache-control'),'no-store');
+  const windows=await handler(new Request('https://bypasslabs.ai/install.ps1'),bindings);assert.equal(await windows.text(),windowsInstaller.toString());assert.match(windows.headers.get('content-type'),/text\/plain/);
+  const promotion=releaseId=>handler(new Request('https://bypasslabs.ai/downloads/bypass/_publish/promote',{method:'POST',body:JSON.stringify({releaseId})}),bindings);
+  assert.equal((await promotion(`main-${commit}-9999-1`)).status,403);assert.equal((await promotion(`main-${commit}-1234-2`)).status,403);
+  identity.run_attempt='2';assert.equal((await promotion(releaseId)).status,200);
   assert.equal(await (await handler(new Request('https://bypasslabs.ai/downloads/bypass/channels/main.txt'),bindings)).text(),releaseId+'\n');
   const publicAsset=await handler(new Request(`https://bypasslabs.ai/downloads/bypass/releases/${releaseId}/${assets[0].file}`),bindings);assert.match(publicAsset.headers.get('cache-control'),/immutable/);
   identity.run_number='1';assert.equal((await promote()).status,409);
