@@ -72,7 +72,7 @@ export async function execute(key,args=[],o={},context={}){
     return outcome({mode:'local',accountRequired:false,message:'Local mode is ready. No Bypass account or cloud upload is required.'});
   }
   if(key==='mcp serve'){const {serveMCP}=await import('./mcp.mjs');await serveMCP(working);return null;}
-  if(key==='integrate muse'||key==='integrate status'||key==='integrate remove')return integrate(key,args,o,working,context.signal);
+  if(key==='integrate muse'||key==='integrate status'||key==='integrate remove')return integrate(key,args,o,working,context);
   if(key==='doctor'){
     const root=rootFrom(working,false);let s;try{s=read(root);}catch{}
     const checks=[{name:'Node >=22',ok:Number(process.versions.node.split('.')[0])>=22,version:process.version}];
@@ -228,8 +228,13 @@ export async function execute(key,args=[],o={},context={}){
   return wrap(result);
 }
 
-async function integrate(key,args,o,working,signal){
-  const native=(...args)=>execFile('muse',args,{cwd:working,signal,killGroup:true});
+async function integrate(key,args,o,working,{signal,onProgress}={}){
+  const native=(...args)=>{
+    const operation=args[1],message=`Muse plugin ${operation}${operation==='install'?' — retaining the bundled runtime; this can take up to two minutes':''}`;
+    onProgress?.({message});
+    const timer=setInterval(()=>onProgress?.({message:`Still waiting for ${message}`}),10000);
+    return execFile('muse',args,{cwd:working,signal,killGroup:true,timeout:120000}).finally(()=>clearInterval(timer));
+  };
   if(key==='integrate status'){
     const r=await native('plugins','inspect','bypass','--json');let data;try{data=JSON.parse(r.stdout);}catch{data={message:r.stderr||r.stdout};}return outcome({integration:data},r.code===0?0:3);
   }
@@ -249,9 +254,19 @@ async function integrate(key,args,o,working,signal){
   const scope=o.scope||'project';need(['user','project'].includes(scope),'Scope must be user or project.');
   let replaced=false;
   if(o.replace&&existing?.record?.id==='bypass'){const removed=await native('plugins','remove','bypass','--json');need(removed.code===0,'Could not replace the existing Muse plugin. Run muse plugins inspect bypass for details.',3);replaced=true;}
-  const installed=await native('plugins','install',plugin,'--scope',scope,'--json');
-  if(installed.code!==0&&replaced&&existing.record.source?.path)await native('plugins','install',existing.record.source.path,'--scope',scope,'--json');
-  let diagnostic;try{diagnostic=JSON.parse(installed.stdout).error?.message;}catch{}
-  need(installed.code===0,`Muse plugin installation did not finish: ${redact(String(diagnostic||installed.stderr||'Run muse plugins inspect bypass for details.')).replace(/[\x00-\x1f\x7f]/g,' ').slice(0,500)}`,3);
+  let installed,installationError;
+  try{installed=await native('plugins','install',plugin,'--scope',scope,'--json');}catch(error){installationError=error;}
+  if(installationError||installed.code!==0){
+    let restored=false;
+    if(replaced&&existing.record.source?.path){
+      onProgress?.({message:'Restoring the previous Muse plugin after an interrupted or failed installation.'});
+      // Rollback must still run after cancellation. It restores the user's prior
+      // source through Muse, with its own bound and without granting runtime trust.
+      try{const rollback=await execFile('muse',['plugins','install',existing.record.source.path,'--scope',scope,'--json'],{cwd:working,killGroup:true,timeout:120000});restored=rollback.code===0;}catch{}
+    }
+    let diagnostic;try{diagnostic=JSON.parse(installed?.stdout).error?.message;}catch{}
+    const reason=redact(String(installationError?.message||diagnostic||installed?.stderr||'Run muse plugins inspect bypass for details.')).replace(/[\x00-\x1f\x7f]/g,' ').slice(0,500);
+    throw new Fault(`Muse plugin installation did not finish: ${reason}${replaced?restored?' Previous plugin source restored; inspect its native approval state.':' Previous plugin could not be restored automatically; inspect Muse before retrying.':''}`,installationError?.code===130?130:3,{previousPluginRestored:restored,previousSource:existing?.record?.source?.path});
+  }
   return outcome({plugin,scope,installed:JSON.parse(installed.stdout),next:'Review with muse plugins inspect bypass, then muse plugins approve bypass. Start a new Muse session and use /bypass:review.',message:'Installation does not grant runtime trust. Muse’s native capability review remains visible.'});
 }

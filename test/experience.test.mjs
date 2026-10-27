@@ -107,7 +107,9 @@ if(args[1]==='inspect'){
 if(args[1]==='validate'){console.log('{"valid":true}');process.exit(${scenario==='replace-invalid'?1:0});}
 if(args[1]==='remove'){console.log('{"removed":true}');process.exit(0);}
 if(args[1]==='install'&&(${scenario==='replace-success'}||args[2]==='/other/checkout/plugin')){console.log('{"installed":true}');process.exit(0);}
+if(args[1]==='install'&&${scenario==='replace-cancel'}){setInterval(()=>{},1000);}else{
 console.log(JSON.stringify({error:{message:'plugin bypass is already installed from a different source'}}));process.exit(1);
+}
 `,{mode:0o755});
   const previous=process.env.PATH;process.env.PATH=bin+path.delimiter+previous;
   t.after(()=>{process.env.PATH=previous;fs.rmSync(root,{recursive:true,force:true});});
@@ -149,4 +151,16 @@ test('failed plugin replacement attempts to restore the prior source and reports
   const commands=fs.readFileSync(calls,'utf8').trim().split('\n');
   assert.deepEqual(commands.map(c=>c.split(' ')[1]),['inspect','validate','remove','install','install']);
   assert.equal(commands[4],'plugins install /other/checkout/plugin --scope user --json');
+});
+
+test('interrupted native plugin installation restores the prior source despite the cancelled request',async t=>{
+  const {root,calls}=await fakeMuse(t,'replace-cancel'),controller=new AbortController(),progress=[];
+  const timer=setInterval(()=>{if(fs.existsSync(calls)&&fs.readFileSync(calls,'utf8').includes('plugins install '))controller.abort();},10);
+  try{
+    await assert.rejects(execute('integrate muse',[],{project:root,scope:'user',replace:true},{signal:controller.signal,onProgress:step=>progress.push(step.message)}),error=>error.code===130&&error.details.previousPluginRestored===true);
+    const commands=fs.readFileSync(calls,'utf8').trim().split('\n');
+    assert.deepEqual(commands.map(c=>c.split(' ')[1]),['inspect','validate','remove','install','install']);
+    assert.equal(commands[4],'plugins install /other/checkout/plugin --scope user --json');
+    assert.ok(progress.some(message=>message.startsWith('Restoring the previous Muse plugin')));
+  }finally{clearInterval(timer);}
 });
