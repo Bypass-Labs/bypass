@@ -1,6 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import net from 'node:net';
+import { randomUUID } from 'node:crypto';
 import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { execute } from './service.mjs';
@@ -16,14 +17,16 @@ export async function startPOC(options={}){
   await execFile('git',['init','--quiet',root]);
   await execute('init',[root],{});
   await execute('model add',['muse'],{project:root,provider:'muse-code',model:options.model||'Muse session default'});
-  if(options.project){try{const source=read(options.project);if(source.activeModel)await change(root,s=>{s.models=[structuredClone(source.models.find(m=>m.name===source.activeModel))];s.activeModel=source.activeModel;});}catch{}}
+  if(options.project&&!options.model){try{const source=read(options.project);if(source.activeModel)await change(root,s=>{s.models=[structuredClone(source.models.find(m=>m.name===source.activeModel))];s.activeModel=source.activeModel;});}catch{}}
   const port=options.port?Number(options.port):await new Promise((resolve,reject)=>{const server=net.createServer();server.on('error',reject);server.listen(0,'127.0.0.1',()=>{const p=server.address().port;server.close(()=>resolve(p));});});
   need(Number.isInteger(port)&&port>=1024&&port<=65535,'Choose a port between 1024 and 65535.');
   const log=fs.openSync(path.join(root,'.bypass/poc-api.log'),'a',0o600);
-  const child=spawn(process.execPath,[path.join(root,'server.mjs')],{cwd:root,env:{...process.env,PORT:String(port)},detached:true,stdio:['ignore',log,log]});child.unref();fs.closeSync(log);
+  const instanceId=randomUUID(),control=path.join(root,'.bypass/poc-control.json');
+  fs.writeFileSync(control,JSON.stringify({instanceId,stop:false}),{mode:0o600});
+  const child=spawn(process.execPath,[path.join(root,'server.mjs')],{cwd:root,env:{...process.env,PORT:String(port),BYPASS_POC_CONTROL_FILE:control,BYPASS_POC_INSTANCE:instanceId},detached:true,stdio:['ignore',log,log]});child.unref();fs.closeSync(log);
   const url=`http://127.0.0.1:${port}`;let ready=false;
   try{
-    for(let i=0;i<40;i++){await delay(100);try{const r=await safeRequest(url+'/api/me',{allowLocal:true,headers:{Authorization:'Bearer poc-owner-token'}});if(JSON.parse(r.body).id==='account-alice'){ready=true;break;}}catch{}}
+    for(let i=0;i<40;i++){await delay(100);try{const r=await safeRequest(url+'/health',{allowLocal:true});if(JSON.parse(r.body).instanceId===instanceId){ready=true;break;}}catch{}}
     need(ready,'The local POC app could not start. Inspect .bypass/poc-api.log.',3);
     await execute('target add',['poc'],{project:root,url,environment:'local'});
     await execute('target verify',['poc'],{project:root,method:'local'});
@@ -33,7 +36,7 @@ export async function startPOC(options={}){
       await change(root,s=>{s.identities.find(i=>i.name===name).fixtureValue=token;});
     }
     // Only public fixture tokens; this is distinct from deployed credentials.
-    await change(root,s=>{s.poc={pid:child.pid,url,createdAt:now()};s.targets.find(t=>t.name==='poc').pocFixture=true;});
+    await change(root,s=>{s.poc={pid:child.pid,url,instanceId,createdAt:now()};s.targets.find(t=>t.name==='poc').pocFixture=true;});
     await execute('probe add',['invoice'],{project:root,path:'/api/invoices/inv-101','resource-id':'inv-101',owner:'owner',outsider:'outsider'});
     await execute('engine use',['docker'],{project:root});
     return {root,url,pid:child.pid,engine:'docker',message:'Real AI POC ready. Public fixture accounts only. Run scan, inspect evidence, edit policy.mjs, then retest.',fix:'In policy.mjs require account === invoice.ownerId.',next:`bypass --project ${root}`};
@@ -41,8 +44,20 @@ export async function startPOC(options={}){
 }
 export async function stopPOC(root){
   const state=read(root);need(state.poc,'This is not a POC fixture.');
-  // Confirm the process command before stopping; never kill a reused PID.
-  const processInfo=await execFile('ps',['-p',String(state.poc.pid),'-o','command=']);
-  if(processInfo.stdout.includes(path.join(root,'server.mjs')))try{process.kill(state.poc.pid,'SIGTERM');}catch{}
+  if(state.poc.instanceId){
+    // The generated server watches its own instance-bound file. Works on Windows
+    // without ps, and cannot signal an unrelated process after PID reuse.
+    fs.writeFileSync(path.join(root,'.bypass/poc-control.json'),JSON.stringify({instanceId:state.poc.instanceId,stop:true}),{mode:0o600});
+    for(let i=0;i<30;i++){
+      await delay(100);
+      try{const r=await safeRequest(state.poc.url+'/health',{allowLocal:true,timeout:1000});if(JSON.parse(r.body).instanceId!==state.poc.instanceId)break;}
+      catch{break;}
+      need(i<29,'Fixture shutdown is still pending; retry poc stop.',3);
+    }
+  }else{
+    need(process.platform!=='win32','This older fixture lacks portable shutdown. Stop its original server terminal.');
+    const processInfo=await execFile('ps',['-p',String(state.poc.pid),'-o','command=']);
+    if(processInfo.stdout.includes(path.join(root,'server.mjs')))try{process.kill(state.poc.pid,'SIGTERM');}catch{}
+  }
   await change(root,s=>{s.poc.stoppedAt=now();});return {stopped:true,root};
 }

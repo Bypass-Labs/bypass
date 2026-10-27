@@ -6,11 +6,12 @@ const port=Number(process.env.PORT||4329);
 const tokens=new Map([['poc-owner-token','account-alice'],['poc-outsider-token','account-bob']]);
 const invoice={id:'inv-101',ownerId:'account-alice',amount:120};
 const policy=new URL('./policy.mjs',import.meta.url);
-http.createServer(async(req,res)=>{
+const server=http.createServer(async(req,res)=>{
   res.setHeader('Content-Type','application/json');res.setHeader('Cache-Control','no-store');
   const send=(status,value)=>{res.writeHead(status);res.end(JSON.stringify(value));};
   const account=tokens.get((req.headers.authorization||'').replace(/^Bearer /,''));
   if(req.method!=='GET')return send(405,{error:'Read only'});
+  if(req.url==='/health')return send(200,{fixture:true,instanceId:process.env.BYPASS_POC_INSTANCE||null});
   if(req.url==='/api/me')return account?send(200,{id:account}):send(401,{error:'Sign in'});
   if(req.url==='/api/invoices/inv-101'){
     if(!account)return send(401,{error:'Sign in'});
@@ -22,3 +23,10 @@ http.createServer(async(req,res)=>{
   }
   return send(404,{error:'Not found'});
 }).listen(port,'127.0.0.1',()=>console.log(`POC API http://127.0.0.1:${port}`));
+if(process.env.BYPASS_POC_CONTROL_FILE){
+  const timer=setInterval(()=>{
+    try{const control=JSON.parse(fs.readFileSync(process.env.BYPASS_POC_CONTROL_FILE,'utf8'));if(control.instanceId===process.env.BYPASS_POC_INSTANCE&&control.stop){clearInterval(timer);server.close();}}
+    catch{clearInterval(timer);server.close();}
+  },200);
+  server.once('close',()=>clearInterval(timer));
+}

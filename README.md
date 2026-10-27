@@ -60,6 +60,29 @@ You can also use one ordinary prompt:
 
 > Use Bypass to review my application. Help me connect its repository and running app, one step at a time. Use my Muse subscription for inference.
 
+**For the demo, stay in Muse:**
+
+```text
+/bypass:demo
+```
+
+Muse creates and selects a separate local app with two public accounts. It guides **real Docker/AI review → HTTP proof → fixture fix → verified regression → exported test → deliberate regression → one monitor tick → security context**, then stops the fixture and restores your application selection. Your app is untouched. The configured model is shared across the orchestrator and both agents; model usage applies. Ask for an **offline preview** explicitly if you want seeded discovery with zero Bypass analysis calls; the Muse conversation still uses its own provider.
+
+During the journey, Muse shows **Done / Now / Next**, actual stages and model-call counts. A confirmed vulnerability or caught regression is shown as a security result; a provider failure is shown as an incomplete review. `/bypass:status` shows the current state at any time.
+
+| Inside Muse | What it does |
+| --- | --- |
+| `/bypass:start` | Connect your repository and finish missing model/app/DNS/account setup |
+| `/bypass:demo` | Run the complete isolated demonstration inside Muse |
+| `/bypass:status` | Show completed work, active progress, evidence and next steps |
+| `/bypass:review` | Start or resume a review |
+| `/bypass:tests` | Inspect, replay, bind, export, enable or disable saved tests |
+| `/bypass:monitor` | Configure schedules and start, stop or inspect the local worker |
+| `/bypass:build` / `/bypass:context` | Use or inspect saved security context |
+| `/bypass:help` | Discover all operations, including reports, CI and configuration |
+
+The plugin uses the same services and project state as the CLI. CI checks coverage of **all public CLI commands and their options**. Muse sign-in, native capability approval and restarting the host remain explicit Muse steps. [Complete capability mapping](docs/PLUGIN_COMMANDS.md).
+
 ### 4. Follow the conversation
 
 | Bypass asks | Your answer | What happens next |
@@ -174,7 +197,7 @@ The Muse subscription adapter uses native `muse exec`; it does not extract your 
 - **Inside Bypass CLI:** type `model test`. If it fails, use `/models` to choose another connection; after it passes, use `/review`.
 - **In your terminal:** `muse usage` checks allowance. Use `muse login` when the error actually reports authentication failure.
 
-A timeout means **review incomplete**. The screen shows the failed stage and evidence location. Bypass does not silently substitute mocked findings. `doctor` distinguishes missing executables, an unavailable Docker daemon and denied Docker socket access. Run `~/bypass-for-muse/bypass doctor --project /path/to/your/app` in the terminal that launches Muse. A daemon can be running while a sandboxed process cannot reach it.
+A timeout means **review incomplete**. The screen shows the failed stage and evidence location. Bypass does not silently substitute mocked findings. Ask Muse to **“Run Bypass diagnostics”**; its doctor tool distinguishes missing executables, an unavailable Docker daemon and denied Docker socket access. A daemon can be running while a sandboxed process cannot reach it. CLI users can run `bypass doctor --project /path/to/your/app`.
 
 ## Update an existing installation
 
@@ -201,8 +224,8 @@ An existing source checkout can use `git pull --ff-only` and `npm run plugin:bui
 
 ## Optional examples and technical details
 
-- **Real AI example:** `~/bypass-for-muse/bypass poc` creates a separate vulnerable local app with two public test accounts. It uses real inference and Docker. [Prove → fix → retest walkthrough](docs/REAL_POC.md).
-- **Offline example:** `~/bypass-for-muse/bypass demo` demonstrates the journey with seeded discovery. HTTP checks and regression replay are real; discovery is mocked.
+- **Real AI example:** `/bypass:demo` inside Muse, or `bypass poc` in a terminal. [Prove → fix → retest walkthrough](docs/REAL_POC.md).
+- **Offline example:** ask Muse for the offline Bypass preview, or run `bypass demo`. HTTP checks and regression replay are real; discovery is seeded.
 - [Architecture and boundaries](docs/ARCHITECTURE.md) · [DNS walkthrough](docs/WALKTHROUGH.md) · [Validation record](docs/VALIDATION.md)
 
 Developers: `npm run check` and `npm test` run local checks. `npm run plugin:build` refreshes the bundled runtime. **`npm run test:live` is opt-in and uses your Muse allowance:** it exercises the packaged plugin over MCP, real Docker/model source discovery, HTTP proof, fix verification, exported tests and deliberate regression against the local fixture. It reports failure if any required step fails and retains its evidence. It does not validate the whole conversational Muse interface or a production app.

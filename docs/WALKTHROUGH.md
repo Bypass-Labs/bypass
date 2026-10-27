@@ -1,6 +1,10 @@
 # Connect your application with Bypass
 
-**For the real AI version:** start with [`bypass poc` or `/engine`](REAL_POC.md). The setup below also supports the optional offline preview; seeded results in that mode are not real discoveries.
+**Primary experience: the Muse plugin.** Start with `/bypass:start` to connect your app, or `/bypass:demo` for the complete isolated demonstration. [Plugin setup and commands](../README.md#start-with-the-muse-plugin) · [Real demo](REAL_POC.md) · [All capabilities](PLUGIN_COMMANDS.md).
+
+Inside Muse, setup follows repository → shared model → source-only or running app → DNS ownership → authorized scope → two accounts → exact resource → review. Muse performs the tools and asks only for missing inputs. `/bypass:status` shows Done / Now / Next; `/bypass:help` discovers the rest. No switch to the standalone CLI is required for those operations.
+
+The remainder of this page describes the **standalone CLI alternative** and the DNS record format. Seeded offline previews remain an explicit optional mode; they are not real discoveries.
 
 Choose the application source, connect its deployed app, then review the white-box and black-box stages together.
 
@@ -62,11 +66,11 @@ Basic setup leaves account/resource configuration to `/engine`. Choose real Dock
 
 The Muse plugin is optional. If Bypass is already installed from another checkout, setup recognizes it and does not try to install a conflicting copy. Review native capabilities with `muse plugins inspect bypass`, approve those you want with `muse plugins approve bypass`, and start a new session in your connected repository. Use `/bypass:review` there. To refresh an existing plugin later, use `muse plugins update bypass`.
 
-### 5. Your first preview
+### 5. Your first review
 
-Setup opens your workspace automatically; press Enter for **/review**. Bypass inventories source locally, shows **Review preview complete**, and opens the result directly. Setup history remains in the same timeline. No IDs or separate finding command are needed. The plain interface asks **Open my project** first.
+Setup opens your workspace automatically; press Enter for **/review**. New projects select real Docker agents. Bypass validates configured accounts/resources before AI for a live review, checks the model, then reviews source and permitted HTTP behavior. Source-only review can proceed while live setup is pending. Setup history remains in the same timeline; the plain interface asks **Open my project** first.
 
-**The scenario is simulated; it is not a vulnerability discovered in your repository.** DNS verification does not change this boundary. Choose the offered local walkthrough to experience real HTTP proof, the fix, and saved-test replay now.
+If you explicitly selected the offline engine, the screen says **Review preview complete** and labels discovery as seeded. DNS verification does not turn those examples into discovered vulnerabilities. The real demo uses actual AI; the offline walkthrough demonstrates real fixture HTTP proof and replay with seeded discovery.
 
 ## Finding commands without memorizing them
 

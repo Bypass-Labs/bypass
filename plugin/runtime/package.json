@@ -1,6 +1,6 @@
 {
   "name": "@bypass-labs/cli-skeleton",
-  "version": "0.3.3",
+  "version": "0.4.0",
   "private": true,
   "description": "Bypass POC: shared-model Docker agents, scoped HTTP proof, and deterministic security regressions.",
   "type": "module",
@@ -12,8 +12,8 @@
   },
   "scripts": {
     "start": "node bin/bypass.mjs",
-    "test": "node --test test/*.test.mjs",
-    "check": "node scripts/check.mjs",
+    "test": "node --test --test-concurrency=4 test/*.test.mjs",
+    "check": "node scripts/check.mjs && node scripts/check-plugin-parity.mjs",
     "demo": "node bin/bypass.mjs demo",
     "plugin:build": "node scripts/build-plugin.mjs",
     "plugin:validate": "MUSE_NO_AUTO_UPDATE=1 muse plugins validate plugin --json",

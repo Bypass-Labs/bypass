@@ -4,7 +4,15 @@ Version 0.2 adds two separate Docker agent services. They use the same Bypass mo
 
 The first supported scope is **missing authentication and cross-account access to JSON resources**. This is a bounded POC, not a general-purpose production scanner. Browser login, arbitrary exploit execution, SSRF testing, deployment attestation and broad framework coverage are not implemented.
 
-## Fastest start: a real AI exercise
+## Primary demo: inside Muse
+
+Install and approve the plugin using the [README](../README.md), start a new Muse session, and type **`/bypass:demo`**. A separate local app and two public accounts are prepared for you. The plugin reuses the selected Bypass model profile, or the Muse default when no profile is selected. All three roles use that profile; this is not automatic inheritance of the chat model.
+
+Stay in the conversation. Muse calls the tools to review, follow progress, inspect proof, change the generated fixture's policy, retest, export/replay a regression, deliberately bring the fixture bug back, and record one monitor tick. It restores the fix, shows feature security context, stops the fixture and restores the prior application selection. **`/bypass:status`** shows Done / Now / Next and actual worker health. **`/bypass:help`** finds any operation, including reports, CI, bindings, model settings and monitor controls.
+
+Docker and a working provider are required for real review. A failure remains an incomplete review with saved evidence. An explicit offline-preview request selects seeded discovery; no automatic fallback occurs. Official Muse login and capability approval remain host actions. [All CLI-to-plugin equivalents](PLUGIN_COMMANDS.md).
+
+## Alternative: standalone CLI
 
 Requires Node 22+, Git, a running Docker engine, and a working model connection. Docker Desktop or Colima works. For Muse subscription inference, install Muse and sign in with `muse login`.
 
@@ -14,7 +22,7 @@ Requires Node 22+, Git, a running Docker engine, and a working model connection.
 
 This creates a separate local app and opens the terminal workspace with the Docker engine selected. Its two public test accounts, authorized local URL and owner-owned invoice are already configured. Your customer repository is untouched. With no existing project profile, the POC uses your Muse subscription's default model; `/models` lets you select local or self-hosted inference instead. When started from an initialized Bypass project, its active profile is copied without credential values.
 
-1. **Press Enter to review.** First-run Docker image preparation may take a minute. The transcript shows orchestrator, white-box and black-box progress and model-call counts. Model calls may take up to two minutes each.
+1. **Press Enter to review.** First-run Docker image preparation may take a minute. The transcript shows orchestrator, white-box and black-box progress and model-call counts. Each review model response is bounded to 60 seconds; the automatic connection preflight has a 30-second limit.
 2. **Open the finding.** Expect an exact source citation in `policy.mjs` and five real controls: owner identity 200, outsider identity 200, owner resource access 200, outsider resource access 200, anonymous access 401. A model hypothesis alone cannot confirm a bug.
 3. **Fix the application.** Open the displayed project folder and change `policy.mjs` to:
 

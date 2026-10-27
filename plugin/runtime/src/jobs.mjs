@@ -40,7 +40,7 @@ export async function startWorker(root,{detach=false,once=false,stop=false,signa
   const file=path.join(root,'.bypass/worker.json');
   if(stop){if(fs.existsSync(file)){const state=JSON.parse(fs.readFileSync(file,'utf8'));state.stopRequested=true;atomic(file,state);}return outcome({message:'Stop requested. Local worker will exit after its current check.'});}
   if(detach){
-    if(fs.existsSync(file)){const w=JSON.parse(fs.readFileSync(file,'utf8'));if(Date.now()-Date.parse(w.heartbeatAt)<10000)return outcome({message:'Worker is already active.',worker:w});}
+    if(fs.existsSync(file)){const w=JSON.parse(fs.readFileSync(file,'utf8'));if(w.status==='running'&&Date.now()-Date.parse(w.heartbeatAt)<10000)return outcome({message:'Worker is already active.',worker:w});}
     const log=fs.openSync(path.join(root,'.bypass/worker.log'),'a',0o600);
     const child=spawn(process.execPath,[CLI,'monitor','worker','--project',root],{detached:true,stdio:['ignore',log,log],env:process.env});child.unref();fs.closeSync(log);
     for(let i=0;i<30;i++){await delay(100);if(fs.existsSync(file)){const w=JSON.parse(fs.readFileSync(file,'utf8'));if(w.pid===child.pid)return outcome({message:'Local monitor worker is running. This machine must remain awake.',worker:w});}}

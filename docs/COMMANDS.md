@@ -2,6 +2,8 @@
 
 Generated from the parser catalog. Add --help to any command. Values are required for flags unless listed as booleans below.
 
+**Muse is the primary experience.** Use `/bypass:help` to discover these operations conversationally. Every public CLI command and option has an explicit [plugin mapping](PLUGIN_COMMANDS.md), checked by CI. `/bypass:demo` runs the complete real demonstration inside Muse; `/bypass:status` shows Done / Now / Next.
+
 Global: --project <path>, --json, --non-interactive, --help, --version.
 
 ## Interactive shortcuts
@@ -90,7 +92,7 @@ Clear Bypass-local account metadata; Muse account is separate.
 
 Reuse an existing valid Muse plugin, including one from another checkout, or install the bundled native plugin if missing. Does not approve capabilities or change the existing installation source. Refresh an existing installation with `muse plugins update bypass`. Native installation failures include their diagnostic reason.
 
-Options: --scope, --install.
+Options: --scope, --install, --replace. `--replace` validates the new bundled plugin, replaces the old source, and attempts restoration if installation fails. Native approval and a new Muse session are still required.
 
 ## integrate status
 
@@ -380,7 +382,7 @@ Stop the local fixture server.
 
 ## Boolean flags
 
---json, --help, --version, --non-interactive, --plan, --full, --detach, --all, --force, --accept, --production, --renew, --once, --stop, --device, --install, --allow-private.
+--json, --help, --version, --non-interactive, --plan, --full, --detach, --all, --force, --accept, --production, --renew, --once, --stop, --device, --install, --replace, --allow-private.
 
 ## Exit codes
 

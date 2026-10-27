@@ -6,7 +6,7 @@ import readline from 'node:readline';
 import { spawn } from 'node:child_process';
 import assert from 'node:assert/strict';
 import { fileURLToPath } from 'node:url';
-import { startPOC, stopPOC } from '../src/poc.mjs';
+import { stopPOC } from '../src/poc.mjs';
 import { execFile, delay } from '../src/util.mjs';
 
 const checkout=fileURLToPath(new URL('../',import.meta.url));
@@ -15,8 +15,7 @@ const root=path.join(directory,'app');
 let child,runId,call;
 const report={startedAt:new Date().toISOString(),transport:'packaged plugin MCP',inference:'real Muse subscription',mocked:false,root};
 try{
-  await startPOC({dir:root});
-  child=spawn(process.execPath,[path.join(checkout,'plugin/mcp/server.mjs')],{cwd:root,env:{...process.env,BYPASS_PLUGIN_STATE_DIR:path.join(directory,'selection')},stdio:['pipe','pipe','pipe']});
+  child=spawn(process.execPath,[path.join(checkout,'plugin/mcp/server.mjs')],{cwd:directory,env:{...process.env,BYPASS_PLUGIN_STATE_DIR:path.join(directory,'selection')},stdio:['pipe','pipe','pipe']});
   child.stderr.resume();let sequence=0;const pending=new Map();
   readline.createInterface({input:child.stdout}).on('line',line=>{
     const message=JSON.parse(line),entry=pending.get(message.id);
@@ -34,16 +33,15 @@ try{
     assert.equal(message.result.isError,false,JSON.stringify(result));return result;
   };
   await request('initialize',{protocolVersion:'2025-11-25',capabilities:{},clientInfo:{name:'bypass-live-validation',version:'1'}});
-  await call('bypass_connect_repository',{repository:root,confirmed:true});
+  await call('bypass_demo_start',{kind:'real',dir:root});
   await call('bypass_test_probe',{name:'invoice'});
   const setup=await call('bypass_onboarding');assert.equal(setup.ready.live,true);report.pluginVersion=setup.pluginVersion;
   const wait=async id=>{
     const end=Date.now()+240000;let shown=0;
     while(Date.now()<end){
-      const {run}=await call('bypass_run',{id});
-      for(const step of run.steps.slice(shown))console.log(step.message);shown=run.steps.length;
-      if(['completed','failed','incomplete','cancelled','interrupted'].includes(run.status))return run;
-      await delay(1500);
+      const progress=await call('bypass_watch_run',{id,after:shown,timeout:'10s'});
+      for(const step of progress.events)console.log(step.message);shown=progress.cursor;
+      if(progress.terminal)return (await call('bypass_run',{id})).run;
     }
     await call('bypass_stop_run',{id});throw new Error('Live validation exceeded four minutes; stop requested');
   };
@@ -55,7 +53,7 @@ try{
   report.source=finding.sourceEvidence;report.controls=finding.verification.controls;
   const learned=await call('bypass_memory');assert.ok(learned.entries.some(e=>e.kind==='source-knowledge'),'Real model must return cited application knowledge');
   report.memory={learned:learned.records,sourceKnowledge:learned.sourceKnowledge};
-  fs.writeFileSync(path.join(root,'policy.mjs'),'export function mayReadInvoice(account, invoice) { return account === invoice.ownerId; }\n');
+  await call('bypass_demo_control',{action:'fix'});
   const retest=await call('bypass_retest',{id:finding.id});assert.equal(retest.status,'fixed_verified');report.savedCheck=retest.savedCheck.id;
   const feature=await call('bypass_feature_context',{task:'Add invoice export while preserving account ownership',files:'policy.mjs,server.mjs'});
   assert.ok(feature.securityRequirements.some(c=>c.id===report.savedCheck));assert.ok(feature.revalidateBeforeCoding.length);
@@ -66,12 +64,18 @@ try{
   const refreshed=await call('bypass_feature_context',{task:'Add invoice export',files:'policy.mjs'});assert.ok(refreshed.memory.entries.some(e=>e.kind==='source-knowledge'&&e.validity.status==='current'));
   const exported=await call('bypass_export_tests',{all:true});
   const fixed=await execFile(process.execPath,['--test',...exported.files],{timeout:15000,env:{NODE_TEST_CONTEXT:undefined}});assert.equal(fixed.code,0,fixed.stdout+fixed.stderr);
-  fs.writeFileSync(path.join(root,'policy.mjs'),'export function mayReadInvoice(account, invoice) { return Boolean(account); }\n');
+  await call('bypass_demo_control',{action:'regress'});
   runId=(await call('bypass_run_tests',{all:true})).runId;
   const replay=await wait(runId);runId=null;assert.equal(replay.exitCode,1);assert.equal(replay.result.modelCalls,0);
   const broken=await execFile(process.execPath,['--test',...exported.files],{timeout:15000,env:{NODE_TEST_CONTEXT:undefined}});assert.equal(broken.code,1,broken.stdout+broken.stderr);
-  fs.writeFileSync(path.join(root,'policy.mjs'),'export function mayReadInvoice(account, invoice) { return account === invoice.ownerId; }\n');
+  await call('bypass_add_monitor',{name:'plugin-demo',target:'poc',every:'1h'});
+  const tick=await call('bypass_monitor_worker',{action:'once'});assert.equal(tick.runs.length,1);report.monitor={runId:tick.runs[0],worker:'one tick, then stopped'};
+  await call('bypass_pause_monitor',{name:'plugin-demo'});
+  await call('bypass_demo_control',{action:'fix'});
   await call('bypass_retest',{id:finding.id});
+  report.dashboard=await call('bypass_dashboard');
+  report.exportedReport=(await call('bypass_report',{run:second.id,format:'md',out:'reports/plugin-demo.md'})).path;
+  await call('bypass_demo_control',{action:'stop'});
   report.passed=true;report.exportedTest={fixedExit:fixed.code,regressedExit:broken.code};report.replay={regressedExit:replay.exitCode,modelCalls:0};
 }catch(error){report.passed=false;report.error=error.message;process.exitCode=1;}
 finally{

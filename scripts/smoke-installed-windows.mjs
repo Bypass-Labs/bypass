@@ -36,5 +36,15 @@ try{
   const tools=await request('tools/list');assert.ok(tools.result.tools.find(t=>t.name==='bypass_feature_context'));
   const connected=await request('tools/call',{name:'bypass_connect_repository',arguments:{repository:app,confirmed:true}});assert.equal(connected.result.isError,false);
   const context=await request('tools/call',{name:'bypass_feature_context',arguments:{task:'Add invoices & reports'}});assert.equal(context.result.isError,false);assert.equal(JSON.parse(context.result.content[0].text).kind,'feature-security-context');
+  const call=async(name,args={})=>{const response=await request('tools/call',{name,arguments:args});assert.equal(response.result.isError,false,JSON.stringify(response));return JSON.parse(response.result.content[0].text);};
+  assert.equal((await call('bypass_dashboard')).selectedRepository,app);
+  const guide=await call('bypass_help',{query:'monitor worker'});assert.equal(guide.capabilities[0].tool,'bypass_monitor_worker');
+  const fixture=await call('bypass_demo_start',{kind:'real',dir:path.join(path.dirname(app),'plugin fixture')});
+  try{
+    assert.equal((await call('bypass_test_probe',{name:'invoice'})).validation.status,'ready');
+    await call('bypass_demo_control',{action:'fix'});
+    assert.equal((await fetch(fixture.url+'/api/invoices/inv-101',{headers:{Authorization:'Bearer poc-outsider-token'}})).status,403);
+  }finally{await call('bypass_demo_control',{action:'stop'});}
+  assert.equal((await call('bypass_dashboard')).selectedRepository,app);
   console.log('Installed Windows MCP and native Muse launcher adapter passed (Muse account/model calls not exercised).');
 }finally{child.stdin.end();await new Promise(resolve=>child.once('close',resolve));}

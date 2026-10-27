@@ -60,6 +60,7 @@ export async function execute(key,args=[],o={},context={}){
   if(key==='poc start'){const {startPOC}=await import('./poc.mjs');return outcome(await startPOC(o));}
   if(key==='poc stop'){const {stopPOC}=await import('./poc.mjs');return outcome(await stopPOC(rootFrom(working)));}
   if(key==='demo start')return outcome(await startDemo(o.dir||path.join(PACKAGE_ROOT,'.demo/ledger'),{port:o.port||4317}));
+  if(key==='auth status')return outcome({mode:'local',accountRequired:false,muse:'Uses official Muse account when the muse-code provider is selected. Credentials are never extracted.',cloud:'not configured'});
   if(key==='auth login'){
     if(o.device)throw new Fault('A hosted Bypass identity service is not configured. Local mode needs no Bypass account. Use --provider muse-code for the official Muse login.',3,{implemented:false});
     if(o.provider==='muse-code'){
@@ -110,7 +111,6 @@ export async function execute(key,args=[],o={},context={}){
       else if(key==='project.name'){need(value.length<=100,'Project name is too long.');state.project.name=value;}
       else throw new Fault('Supported settings: autoSave, requestTimeoutMs, project.name. Use target/model commands for their settings.');
       return {key,value};});break;
-    case 'auth status':result={mode:'local',accountRequired:false,muse:'Uses official Muse account when the muse-code provider is selected. Credentials are never extracted.',cloud:'not configured'};break;
     case 'auth logout':result=await change(root,state=>{state.auth=null;return {message:'Bypass-local account metadata cleared. Use muse logout to sign out of Muse itself.'};});break;
     case 'target add':{
       safeName(args[0]);need(o.url,'--url is required.');const environment=o.environment||'staging',url=targetURL(o.url,environment);
