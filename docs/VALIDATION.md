@@ -1,5 +1,19 @@
 # Verification record
 
+## v0.2.2 — actual Job Radar plugin integration, 2026-10-26
+
+Validated the installed plugin against `Bypass-Labs/job-finder` at commit `1f5684f9d1b051187ec6be40e981ba489d6240a8` and the real production origin `https://job-radar.app`. Reused `/Users/maksim/Projects/job-finder-3`; no new clone or application-source edits. The published DNS TXT matched this checkout's challenge and passed the plugin's actual ownership verification. A bounded scope was recorded from the user's production testing request. One anonymous `GET /api/profile` returned 401; this is an authentication-gate observation, not account-isolation proof.
+
+An actual fresh Muse session from the Downloads tooling folder restored the selected application, version, real Docker engine, existing model, verified ownership and authorized scope, then identified accounts as the next missing step. A preceding longer native session successfully called setup/context tools but did not finish its final reply within 180 seconds. The host model still used “Top finding” for setup readiness despite plugin guidance; setup gaps are not security findings.
+
+Actual repository integration exposed three source/response handling gaps: the main server exceeds 64 KB, requested line ranges may extend beyond a file or page, and resource IDs are nested. The fixes provide bounded source pages with route locations, atomic citation bookkeeping, recoverable read errors across the real Docker RPC boundary, and dot-path/JSON-Pointer selectors in both live and exported checks. Provider failures now have sanitized diagnostic categories rather than always suggesting login problems.
+
+**72 automated tests passed, zero failed/skipped**, including real Docker startup/recovery/cancellation, actual local HTTP controls, and standalone regression replay. Inference in automated suites is scripted or served by a controlled endpoint; actual Muse attempts are recorded separately. Syntax checks cover 45 modules. Authored, bundled and installed runtime contents match across 34 files.
+
+Real Muse/Docker source-review attempts read actual source but encountered intermittent inference failures/timeouts. A separate real inference diagnostic on the same source excerpts completed successfully. Reported Muse allowance was not exhausted. See the individual attempts and their final outcomes in the [machine-readable Job Radar record](evidence/job-radar-plugin-2026-10-26.json); none of these errors is a security finding.
+
+**Production end-to-end proof is still pending.** No two dedicated test-account token references or existing private resource ID were supplied. No production vulnerability, fix, or saved production regression is claimed. Domain ownership does not attest the deployed commit. Follow the [exact Job Radar plugin journey](JOB_RADAR.md) to finish those steps.
+
 ## v0.2 real Docker-agent POC — 2026-10-26
 
 Verified with the installed Muse subscription CLI and a local Docker VM. Both workers ran in separate containers using the same immutable model profile as the orchestrator. The live scan used **4 real model calls**, took **45 seconds**, read actual `policy.mjs` / `server.mjs`, cited `policy.mjs:2`, and reproduced unauthorized invoice access.

@@ -52,7 +52,11 @@ export async function runContainer(role,task,rpc,{image,signal,onProgress,timeou
             busy=true;
             Promise.resolve().then(()=>rpc(message.method,message.params,combined)).then(value=>{
               child.stdin.write(JSON.stringify({type:'response',id:message.id,result:value})+'\n');
-            }).catch(error=>stop(error)).finally(()=>{busy=false;});
+            }).catch(error=>{
+              if(role==='white-box'&&message.method==='read_files'&&!combined.aborted){
+                child.stdin.write(JSON.stringify({type:'response',id:message.id,error:String(error.message).slice(0,1000)})+'\n');
+              }else stop(error);
+            }).finally(()=>{busy=false;});
           }else if(message.type==='result'&&!busy&&!result){result=message.result;child.stdin.end();}
           else if(message.type==='failure')stop(new Fault(String(message.message).slice(0,300),3));
           else stop(new Fault('Unexpected agent protocol message.',3));

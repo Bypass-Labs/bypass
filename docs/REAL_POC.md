@@ -57,7 +57,7 @@ Equivalent automation commands, after repository/model/app setup:
 ./bypass --project /path/to/app scan --mode combined
 ```
 
-The server must return the configured resource identifier as a top-level scalar JSON field (default `id`). Change it with `--id-field`; change the login identity field with `--identity-field`. Up to six resources per target are supported. The agent cannot invent or widen the allowed resource paths.
+The server must return the configured resource identifier as a scalar JSON value. Use `--id-field id` for a top-level field, `--id-field run.id` for a nested field, or a JSON Pointer such as `/run/id`. Set the login account selector with `--identity-field` (for Job Radar, `/api/profile` returns `owner_uid`). Selectors only read JSON data; they do not evaluate expressions. Up to six resources per target are supported. The agent cannot invent or widen the allowed resource paths.
 
 Source-only: `scan --mode code`. HTTP-only: `scan --mode live`. Use `/results` or `finding show <id>` to inspect evidence, and `retest <id>` after a fix. Saved checks run before investigation; only exact, valid, passing checks are excluded from repeat HTTP probes. Stale, failed and blocked checks return to investigation.
 
@@ -102,7 +102,7 @@ Each worker is a separate short-lived container with no direct network, source m
 
 The host calls the selected model: compatible local inference stays local; self-hosted inference goes to your endpoint; Muse subscription inference uses the installed native CLI in an empty temporary workspace. Source excerpts are sent only for real analysis. Environment-referenced secrets are redacted from source excerpts; `.env`, keys, ignored files and symlinks outside the project are excluded. Inspect your eligible source before using a remote model: this is not a comprehensive secret scanner.
 
-A run permits at most 17 model calls across the three roles, eight turns per worker, 192 KB of source reads and six resource probes. Each probe uses five GET requests. Requests honor existing exact-origin, authorization, expiry, path, DNS-pinning and rate-limit controls. Raw HTTP bodies and credential values are not persisted or sent to the model. Findings, citations, control statuses, container identities, selected model and call counts are saved locally.
+A run permits at most 17 model calls across the three roles, eight turns per worker, 192 KB of source excerpts and six resource probes. Source files up to 1 MB are read in pages of at most 400 lines / 64 KB; findings can cite only lines actually delivered to the agent. Route locations help it select the relevant pages. Each probe uses five GET requests. Requests honor existing exact-origin, authorization, expiry, path, DNS-pinning and rate-limit controls. Raw HTTP bodies and credential values are not persisted or sent to the model. Findings, citations, control statuses, container identities, selected model and call counts are saved locally.
 
 ## Troubleshooting
 

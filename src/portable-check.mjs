@@ -32,8 +32,22 @@ function identityHeaders(identity,env,fixture){
   assert(/^[A-Za-z][A-Za-z0-9-]*$/.test(identity.header)&&!['host','connection','content-length','transfer-encoding'].includes(identity.header.toLowerCase()),'Invalid identity header');
   return {[identity.header]:value};
 }
+// Data selectors only: no expression evaluation, wildcards or inherited properties.
+export function jsonField(data,selector='id'){
+  if(typeof selector!=='string'||!selector||selector.length>256)return undefined;
+  if(data&&typeof data==='object'&&Object.hasOwn(data,selector))return data[selector];
+  let parts;
+  if(selector.startsWith('/')){
+    if(/~(?![01])/u.test(selector))return undefined;
+    parts=selector.slice(1).split('/').map(p=>p.replace(/~1/g,'/').replace(/~0/g,'~'));
+  }else{parts=selector.split('.');if(parts.some(p=>!/^[A-Za-z0-9_$-]+$/.test(p)))return undefined;}
+  if(parts.length>16)return undefined;
+  let value=data;
+  for(const part of parts){if(!value||typeof value!=='object'||!Object.hasOwn(value,part))return undefined;value=value[part];}
+  return value;
+}
 function resourceMatches(response,spec){
-  try{const data=JSON.parse(response.body);const field=spec.idField||'id';return Object.hasOwn(data,field)&&['string','number'].includes(typeof data[field])&&String(data[field])===String(spec.resourceId);}catch{return false;}
+  try{const value=jsonField(JSON.parse(response.body),spec.idField||'id');return ['string','number'].includes(typeof value)&&String(value)===String(spec.resourceId);}catch{return false;}
 }
 export async function replay(spec,{env=process.env,signal}={}){
   const started=Date.now();let requests=0;const controls=[];
@@ -66,7 +80,7 @@ export async function replay(spec,{env=process.env,signal}={}){
       const other=await send(outsider,'outsider identity',identityURL(spec.outsider));
       assert(own.status===200&&other.status===200,'Both account login controls must return HTTP 200; refresh credentials');
       const field=spec.identityField||'id';let a,b;
-      try{a=JSON.parse(own.body)[field];b=JSON.parse(other.body)[field];}catch{}
+      try{a=jsonField(JSON.parse(own.body),field);b=jsonField(JSON.parse(other.body),field);}catch{}
       assert(['string','number'].includes(typeof a)&&['string','number'].includes(typeof b)&&String(a)!==String(b),'Identity controls must identify two different accounts; check identityField');
     }
     const ownerResponse=await send(owner,'owner access');

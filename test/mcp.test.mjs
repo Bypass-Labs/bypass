@@ -9,7 +9,7 @@ import { CLI } from '../src/demo.mjs';
 import { execute } from '../src/service.mjs';
 import { toolDefinitions } from '../src/mcp.mjs';
 import { read } from '../src/store.mjs';
-import { delay } from '../src/util.mjs';
+import { delay, VERSION } from '../src/util.mjs';
 
 test('MCP negotiates, validates typed tools, shares CLI state, and closes cleanly',async t=>{
   const root=temp();await execute('init',[root]);
@@ -104,7 +104,7 @@ test('plugin setup resumes across real MCP processes without copying permissions
   c=client();await c.request('initialize',{protocolVersion:'2025-11-25'});
   const resumed=await c.call('bypass_onboarding');assert.equal(resumed.selectedRepository,app);assert.equal(resumed.engine,'docker');
   assert.equal(resumed.steps.find(s=>s.id==='model').profile.name,'muse');assert.equal(resumed.steps.find(s=>s.id==='scope').status,'complete');
-  assert.equal(resumed.steps.find(s=>s.id==='resource').status,'complete');assert.equal(resumed.pluginVersion,'0.2.1');
+  assert.equal(resumed.steps.find(s=>s.id==='resource').status,'complete');assert.equal(resumed.pluginVersion,VERSION);
   assert.doesNotMatch(JSON.stringify(resumed),/owner-test-only|other-test-only/);
   const resource=await c.request('resources/read',{uri:'bypass://context'});assert.equal(JSON.parse(resource.result.contents[0].text).summary.root,app);
   assert.equal(fs.readFileSync(path.join(host,'.bypass/state.json'),'utf8'),hostBefore);assert.equal(read(app).runs.length,0);

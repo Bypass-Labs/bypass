@@ -159,6 +159,7 @@ If Muse requests renewed capability approval, review the changes and run `muse p
 ## Documentation
 
 - [Real Docker-agent POC and proof-to-regression walkthrough](docs/REAL_POC.md)
+- [Job Radar: the actual production plugin journey](docs/JOB_RADAR.md)
 - [Application setup and DNS walkthrough](docs/WALKTHROUGH.md)
 - [Interactive workspace and controls](docs/CLI_EXPERIENCE.md)
 - [CLI commands and automation flags](docs/COMMANDS.md)

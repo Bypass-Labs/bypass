@@ -45,11 +45,11 @@ export async function inventory(root, base) {
   if(base){need(!base.startsWith('-'),'Invalid base reference.'); const r=await execFile('git',['-C',root,'diff','--name-only','-z',base,'--']);need(r.code===0,`Cannot compare against Git reference '${base}'.`);changedFiles=r.stdout.split('\0').filter(Boolean);}
   files=[...new Set(files)].filter(f=>sourcePattern.test(f)&&!ignored(f,patterns)).sort();
   const truncated=files.length>2000; files=files.slice(0,2000);
-  const digests=[], routes=new Set();
+  const digests=[], routes=new Set(),routeLocations=[];
   for(const file of files){
     const full=path.join(root,file);if(!fs.existsSync(full)||fs.lstatSync(full).isSymbolicLink()||fs.statSync(full).size>1_000_000)continue;
     const source=fs.readFileSync(full,'utf8');digests.push([file,hash(source)]);
-    for(const m of source.matchAll(/(?:\.get|\.post|\.put|\.delete|\.patch|url\s*===|pathname\s*===)\s*\(?\s*['"`]([^'"`\s]+)['"`]/g))if(m[1].startsWith('/'))routes.add(m[1]);
+    for(const m of source.matchAll(/(?:\.get|\.post|\.put|\.delete|\.patch|url\s*===|pathname\s*===)\s*\(?\s*['"`]([^'"`\s]+)['"`]/g))if(m[1].startsWith('/')){routes.add(m[1]);if(routeLocations.length<1000)routeLocations.push({path:m[1],file,line:source.slice(0,m.index).split('\n').length});}
   }
-  return {fingerprint:hash(digests),files:digests.map(([file])=>file),sourceFileCount:digests.length,truncated,routes:[...routes],routeDiscovery:'heuristic inventory; not proof of complete coverage',changedFiles};
+  return {fingerprint:hash(digests),files:digests.map(([file])=>file),sourceFileCount:digests.length,truncated,routes:[...routes],routeLocations,routeDiscovery:'heuristic inventory; not proof of complete coverage',changedFiles};
 }

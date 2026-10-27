@@ -1,6 +1,6 @@
 {
   "name": "@bypass-labs/cli-skeleton",
-  "version": "0.2.1",
+  "version": "0.2.2",
   "private": true,
   "description": "Bypass POC: shared-model Docker agents, scoped HTTP proof, and deterministic security regressions.",
   "type": "module",
