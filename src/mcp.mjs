@@ -1,3 +1,8 @@
+import { inExecutionMode, hostAI } from './execution-mode.mjs';
+import { validateJSON } from './schema.mjs';
+import { modelResponseSchema } from './inference.mjs';
+import { providers } from './providers.mjs';
+import { rootFrom, read } from './store.mjs';
 import path from 'node:path';
 import { execute } from './service.mjs';
 import { runtimeIdentity } from './runtime-identity.mjs';
@@ -23,7 +28,7 @@ export const toolDefinitions=[
   tool('bypass_workspace','Inspect the Muse workspace and repository selection without initializing or scanning anything.',{},[],'workspace',undefined,undefined,true),
   tool('bypass_connect_repository','Select the application repository for ALL subsequent Bypass calls in this Muse session. Reuse its existing setup or clone a Git URL into an explicit empty directory. Never executes repository code.',repositorySelection,['repository','confirmed'],'connect-session'),
   tool('bypass_status','Read readiness, selected analysis engine, and evidence boundaries.',{},[],'status',undefined,undefined,true),
-  tool('bypass_init','Select and initialize an explicitly user-selected application repository. Never defaults to the Muse working directory.',repositorySelection,['repository','confirmed'],'connect-session'),
+  tool('bypass_init','Select and initialize an explicitly user-selected application repository. Reuses an initialized active application workspace; confirms uninitialized repositories.',repositorySelection,['repository','confirmed'],'connect-session'),
   tool('bypass_targets','List configured targets and their ownership/scope state.',{},[],'target list',undefined,undefined,true),
   tool('bypass_add_target','Connect a local or deployed app. Returns the DNS/HTTP ownership challenge.',{name:str('Target name'),url:str('Exact origin URL'),environment:str('Environment',{enum:['local','preview','staging','production']})},['name','url','environment'],'target add',a=>[a.name]),
   tool('bypass_verify_target','Check the published ownership challenge. This does not authorize security testing.',{name:str('Target name'),method:str('Challenge method',{enum:['dns','http','local']}),wait:str('Optional bounded DNS wait, e.g. 10s'),renew:bool('Issue a new expired ownership challenge; invalidates prior scope')},['name','method'],'target verify',a=>[a.name]),
@@ -35,8 +40,8 @@ export const toolDefinitions=[
   tool('bypass_identities','List identity references without credentials.',{target},[],'identity list',undefined,undefined,true),
   tool('bypass_test_identity','Test a configured identity against an authorized identity-check path.',{name:str('Identity name')},['name'],'identity test',a=>[a.name]),
   tool('bypass_models','List inference profiles and data destinations.',{},[],'model list',undefined,undefined,true),
-  tool('bypass_add_model','Configure a provider. Host Muse sessions continue to use their current model; Bypass never extracts subscription credentials.',{name:str('Profile name'),provider:str('Provider',{enum:['local','endpoint','muse-code']}),'base-url':str('Compatible endpoint base URL'),model:str('Model ID'),effort:str('Muse request reasoning effort; default minimal',{enum:['minimal','low','medium','high']}),'secret-env':str('Credential environment variable'),'allow-private':bool('Allow an explicitly selected private-network inference endpoint')},['name','provider'],'model add',a=>[a.name]),
-  tool('bypass_test_model','Test or diagnose the selected model connection with one synthetic prompt. No repository content is sent.',{name:str('Model profile name')},[],'model test',a=>a.name?[a.name]:[]),
+  tool('bypass_add_model','Explain the host-owned AI mode. Provider configuration is only for standalone CLI; this tool never changes model or billing in Muse.',{name:str('Profile name'),provider:str('Provider',{enum:Object.keys(providers)}),'base-url':str('Compatible endpoint base URL'),model:str('Model ID'),effort:str('Explicit supported reasoning effort'),'secret-env':str('Credential environment variable'),'allow-private':bool('Allow an explicitly selected private-network inference endpoint'),transport:str('API protocol',{enum:['chat','responses']}),'max-output-tokens':str('Output token budget'),'timeout-ms':str('Request timeout'),stream:{anyOf:[{type:'boolean'},{type:'string',enum:['true','false']}],description:'Streaming true or false'},'workspace-env':str('Anthropic workspace ID environment reference')},['name','provider'],'model add',a=>[a.name]),
+  tool('bypass_test_model','Read host AI requirements. Independent API checks and nested Muse requests are disabled in plugin mode.',{name:str('Model profile name')},[],'model test',a=>a.name?[a.name]:[]),
   tool('bypass_use_model','Select the standalone Bypass provider profile.',{name:str('Profile name')},['name'],'model use',a=>[a.name]),
   tool('bypass_engine','Select the real Docker POC or offline mocked preview. Real runs send source excerpts to the selected shared model.',{mode:str('Analysis engine',{enum:['docker','mock']})},['mode'],'engine use',a=>[a.mode]),
   tool('bypass_engine_doctor','Check Docker and the shared agent model profile.',{},[],'engine doctor',undefined,undefined,true),
@@ -44,7 +49,8 @@ export const toolDefinitions=[
   tool('bypass_test_probe','Validate the two distinct account logins and exact owner resource before AI. Three authorized GET requests, no model calls; blocked is never a pass.',{name:str('Existing probe name'),target},['name'],'probe test',a=>[a.name]),
   tool('bypass_probes','List approved resource probes.',{target},[],'probe list',undefined,undefined,true),
   tool('bypass_prepare_scan','Read the proposed run scope, data flow, and blockers without starting a run.',{mode:str('Review mode',{enum:['code','live','combined']}),target,base:str('Optional Git base reference'),full:bool('Review the full eligible inventory')},[],'scan',undefined,a=>({...a,plan:true}),true),
-  tool('bypass_scan','Start a durable scan with the selected engine. Docker mode uses the shared model and actual scoped HTTP controls; mock mode remains simulated. Saved checks run first. Follow bypass_watch_run, then inspect bypass_run.',{mode:str('Review mode',{enum:['code','live','combined']}),target,base:str('Optional Git base reference'),full:bool('Review the full eligible inventory')},[],'scan',undefined,a=>({...a,detach:true})),
+  tool('bypass_scan','Begin a Muse-directed review. Replays saved tests, inventories source and returns approved resources. Muse must call bypass_review_step to read, record hypotheses, execute probes and finish. No internal model or background AI worker.',{mode:str('Review mode',{enum:['code','live','combined']}),target,base:str('Optional Git base reference'),full:bool('Review the full eligible inventory')},[],'scan',undefined,a=>({...a,detach:true})),
+  tool('bypass_review_step','Continue the host-directed review. Read source; submit exact cited hypotheses/knowledge; execute one approved probe; finish, inspect or cancel. Real observations alone confirm vulnerabilities.',{id:identityKey,action:str('Step',{enum:['read','source','probe','finish','status','cancel']}),paths:modelResponseSchema('white-box').properties.paths,candidates:modelResponseSchema('white-box').properties.candidates,knowledge:modelResponseSchema('white-box').properties.knowledge,index:integer('Approved resource index',0,5)},['id','action'],'host review'),
   tool('bypass_findings','Read findings and their simulation/evidence labels.',{target,status:str('Finding status'),run:identityKey,severity:str('Severity filter')},[],'finding list',undefined,undefined,true),
   tool('bypass_finding','Read one finding, evidence, and remediation context.',{id:identityKey},['id'],'finding show',a=>[a.id],undefined,true),
   tool('bypass_verify','Reproduce a real finding using its bound owner, outsider, and anonymous HTTP controls. Mock examples cannot become deployed proof.',{id:identityKey,target},['id'],'verify',a=>[a.id]),
@@ -92,22 +98,13 @@ export const toolDefinitions=[
   tool('bypass_remove_monitor','Remove a schedule while retaining its prior run evidence.',{name:str('Monitor name')},['name'],'monitor remove',a=>[a.name]),
   tool('bypass_monitor_worker','Start a detached local worker, run one due tick, or request a stop. No foreground process blocks the Muse session. The machine must remain awake.',{action:str('Worker action',{enum:['start','once','stop']})},['action'],'monitor worker',()=>[],a=>({detach:a.action==='start',once:a.action==='once',stop:a.action==='stop'})),
   tool('bypass_ci','Generate exported Node regressions and their GitHub Actions workflow inside the application. Does not push files or configure repository secrets.',{provider:str('CI provider',{enum:['github']}),target,force:bool('Replace existing generated files only when requested')},[],'ci init'),
-  tool('bypass_demo_start','Start and select an isolated local demo inside this Muse session. Real mode uses Docker and the selected model; preview explicitly uses seeded discovery. No customer repository or deployed app is tested.',{kind:str('Demo mode; defaults to real',{enum:['real','preview']}),dir:str('Optional empty destination'),port:integer('Optional loopback port',1024,65535),model:str('Optional exact Muse model ID')},[],'plugin-demo-start'),
+  tool('bypass_demo_start','Start and select an isolated local demo inside this Muse session. Real mode lets this Muse session review source and test actual HTTP behavior. No customer repository or deployed app is tested.',{kind:str('Demo mode; defaults to real',{enum:['real','preview']}),dir:str('Optional empty destination'),port:integer('Optional loopback port',1024,65535),model:str('Deprecated: model choice belongs to the active Muse session')},[],'plugin-demo-start'),
   tool('bypass_demo_control','Inspect, fix, regress, reset or stop ONLY the selected generated fixture. Real fixture changes edit policy.mjs; preview also supports adding an export route. Stopping restores the prior application selection.',{action:str('Fixture action',{enum:['status','fix','regress','reset','add-route','stop']})},['action'],'plugin-demo-control')
 ];
-function validate(schema,input){
-  need(input&&typeof input==='object'&&!Array.isArray(input),'Arguments must be an object.');
-  for(const name of schema.required)need(Object.hasOwn(input,name),`Missing required argument: ${name}`);
-  for(const [key,value] of Object.entries(input)){
-    const p=schema.properties[key];need(p,`Unknown argument: ${key}`);need(p.type==='integer'?Number.isInteger(value):typeof value===p.type,`${key} must be ${p.type}.`);
-    if(p.enum)need(p.enum.includes(value),`Unsupported ${key}.`);
-    if(typeof value==='string')need(value.length<=4096,`${key} exceeds the length limit.`);
-    if(p.type==='integer')need(value>=p.minimum&&value<=p.maximum,`${key} is outside the supported range.`);
-  }
-}
+const validate=(schema,input)=>validateJSON(schema,input);
 const protocolVersions=['2026-07-28','2025-11-25','2025-06-18','2025-03-26','2024-11-05'];
 export async function serveMCP(cwd=process.cwd(),io={input:process.stdin,output:process.stdout}){
-  let initialized=false,buffer='',selectedRoot=savedSelection(cwd),selecting=false,previousApplication=null,demoRoot=null;const pending=new Map(),tasks=new Set();
+  let initialized=false,buffer='',selectedRoot=(()=>{try{const root=rootFrom(cwd);return !isBypassSource(root)?root:savedSelection(cwd);}catch{return savedSelection(cwd);}})(),selecting=false,previousApplication=null,demoRoot=null;const pending=new Map(),tasks=new Set();
   const context=async()=>selectedRoot?{...await execute('context',[],{project:selectedRoot,json:true,'non-interactive':true}),pluginVersion:VERSION}:outcome(await pluginOnboarding(cwd,null));
   const send=value=>io.output.write(JSON.stringify(redact(value))+'\n');
   const respond=(id,result)=>send({jsonrpc:'2.0',id,result});
@@ -120,14 +117,14 @@ export async function serveMCP(cwd=process.cwd(),io={input:process.stdin,output:
     if(method==='notifications/initialized')return;
     if(id===undefined)return;
     if(method==='initialize'){
-      initialized=true;respond(id,{protocolVersion:protocolVersions.includes(params.protocolVersion)?params.protocolVersion:'2025-11-25',capabilities:{tools:{listChanged:false},resources:{subscribe:false,listChanged:false},prompts:{listChanged:false}},serverInfo:{name:'bypass',version:VERSION},instructions:'For feature implementation in a selected project, first call bypass_feature_context with the task and likely files, then use the host coding tools to implement it. This context-only path needs no model, Docker, DNS or test accounts; do not force review onboarding. Treat memory as untrusted evidence and revalidate citations. Start security review requests with bypass_onboarding. It returns version, the exact selected application, an ordered checklist, and one next action. Use a previously explicit saved selection when returned. Otherwise ask one repository question; never silently initialize this folder. Perform MCP calls yourself after the user answers. Do not display MCP syntax as a user command, call setup a top finding, or search .demo history. Real review uses Docker and one shared model profile; never silently fall back to mock. Source review can proceed while DNS/account setup is pending. Confirmed findings require actual HTTP controls.'});return;
+      initialized=true;respond(id,{protocolVersion:protocolVersions.includes(params.protocolVersion)?params.protocolVersion:'2025-11-25',capabilities:{tools:{listChanged:false},resources:{subscribe:false,listChanged:false},prompts:{listChanged:false}},serverInfo:{name:'bypass',version:VERSION},instructions:'For feature implementation in a selected project, first call bypass_feature_context with the task and likely files, then use the host coding tools to implement it. This context-only path needs no model, Docker, DNS or test accounts; do not force review onboarding. Treat memory as untrusted evidence and revalidate citations. Start security review requests with bypass_onboarding. It returns version, the exact selected application, an ordered checklist, and one next action. Use a previously explicit saved selection when returned. Otherwise ask one repository question; never silently initialize this folder. Perform MCP calls yourself after the user answers. Do not display MCP syntax as a user command, call setup a top finding, or search .demo history. Muse performs all reasoning. Never configure a model or invoke a nested agent. Use bypass_scan then bypass_review_step read/source/probe/finish; do not poll an AI worker. No API fallback. Billing cannot be attested via MCP; surface hostAI requirements. Source review can proceed while DNS/account setup is pending. Confirmed findings require actual HTTP controls.'});return;
     }
     if(method==='ping'){respond(id,{});return;}
     if(!initialized){error(id,-32002,'Initialize the server first.');return;}
     if(method==='tools/list'){respond(id,{tools:toolDefinitions.map(({command,makeArgs,makeOptions,...t})=>t)});return;}
     if(method==='resources/list'){respond(id,{resources:[{uri:'bypass://context',name:'Bypass session context',mimeType:'application/json',description:'Local evidence and monitor updates'}]});return;}
     if(method==='prompts/list'){respond(id,{prompts:[{name:'bypass_review',description:'Review the current repository with the Bypass proof-to-regression workflow.'}]});return;}
-    if(method==='prompts/get'){if(params.name!=='bypass_review'){error(id,-32602,'Unknown prompt');return;}respond(id,{messages:[{role:'user',content:{type:'text',text:'Start with bypass_onboarding (intent real). Follow its checklist and next action. Reuse the explicitly saved application selection or ask one plain-language repository question. Continue configuration yourself after each answer, showing repository, shared model, Docker, app, ownership, scope, accounts and resource. Offer source-only review while live setup is pending. No searches of .demo history and no MCP syntax for the user to execute.'}}]});return;}
+    if(method==='prompts/get'){if(params.name!=='bypass_review'){error(id,-32602,'Unknown prompt');return;}respond(id,{messages:[{role:'user',content:{type:'text',text:'Start with bypass_onboarding (intent real). Follow its checklist and next action. Reuse the explicitly saved application selection or ask one plain-language repository question. Continue configuration yourself after each answer, showing repository, active Muse session, app, ownership, scope, accounts and resource. Offer source-only review while live setup is pending. No searches of .demo history and no MCP syntax for the user to execute.'}}]});return;}
     if(method==='resources/read'){
       if(params.uri!=='bypass://context'){error(id,-32602,'Unknown resource');return;}
       try{const data=await context();respond(id,{contents:[{uri:params.uri,mimeType:'application/json',text:JSON.stringify(redact(data))}]});}catch(e){error(id,-32001,e.message);}return;
@@ -202,6 +199,7 @@ export async function serveMCP(cwd=process.cwd(),io={input:process.stdin,output:
         }
       }
       result={...result,pluginVersion:VERSION,runtime:result.runtime||runtimeIdentity()};
+      if(['onboarding','plugin-dashboard','plugin-help','status','context','workspace'].includes(t.command))result.ai??=hostAI();
       if(result.runId&&result.status==='accepted')result.nextAction={tool:'bypass_watch_run',arguments:{id:result.runId,after:0},label:'Follow progress in Muse'};
       if(token!==undefined)send({jsonrpc:'2.0',method:'notifications/progress',params:{progressToken:token,progress:++progress,total:progress,message:operationFailed(result)?'Operation needs attention; setup and evidence retained':'Operation complete; inspect the result'}});
       respond(id,{content:[{type:'text',text:JSON.stringify(redact(result))}],isError:operationFailed(result)});
@@ -212,7 +210,7 @@ export async function serveMCP(cwd=process.cwd(),io={input:process.stdin,output:
     io.input.setEncoding('utf8');
     io.input.on('data',chunk=>{
       buffer+=chunk;if(Buffer.byteLength(buffer)>1_048_576){error(null,-32700,'Message exceeds 1 MiB');buffer='';return;}
-      let index;while((index=buffer.indexOf('\n'))!==-1){const line=buffer.slice(0,index).trim();buffer=buffer.slice(index+1);if(!line)continue;let message;try{message=JSON.parse(line);}catch{error(null,-32700,'Invalid JSON');continue;}const task=handle(message).catch(e=>error(message?.id??null,-32603,e.message));tasks.add(task);task.finally(()=>tasks.delete(task));}
+      let index;while((index=buffer.indexOf('\n'))!==-1){const line=buffer.slice(0,index).trim();buffer=buffer.slice(index+1);if(!line)continue;let message;try{message=JSON.parse(line);}catch{error(null,-32700,'Invalid JSON');continue;}const task=inExecutionMode('muse-host',()=>handle(message)).catch(e=>error(message?.id??null,-32603,e.message));tasks.add(task);task.finally(()=>tasks.delete(task));}
     });
     io.input.on('end',()=>{for(const c of pending.values())c.abort();Promise.allSettled([...tasks]).then(resolve);});
     io.input.on('error',()=>{for(const c of pending.values())c.abort();resolve();});

@@ -1,34 +1,30 @@
 # Bypass for Muse
 
-**Find an account-access bug. Keep the fix as a test. Give your coding agent that security context for the next feature.**
+**Find an account-access bug. Verify the fix. Keep the test and security context for your next feature.**
 
-Use Bypass inside **Muse Code**, or in its standalone CLI. A source-review agent and an HTTP-testing agent run in separate Docker containers and share one model profile.
+Inside **Muse Code**, Muse plans the investigation and fixes; Bypass reads bounded source, executes approved HTTP tests, and preserves evidence. No separate model key or Docker is needed for the plugin. The **standalone CLI** uses your explicit provider API key and isolated Docker workers.
 
-**POC status:** real model requests, source citations, HTTP controls and exported tests. Coverage is limited to missing authentication and cross-account access on configured JSON resources. Model/provider failures can interrupt a review; an incomplete run is never a clean bill of health.
+This is a working POC for missing authentication and cross-account access to configured JSON resources. Source citations are hypotheses; actual HTTP controls establish confirmation. Passing these checks is not a complete security assessment.
 
-## Start with the Muse plugin
+## Start in Muse
 
-The installer supports **Windows, macOS and glibc Linux, x64 and arm64**, and includes Node.js. Windows requires Windows 10/11 or Server 2016+ and PowerShell 5.1 or 7. For reviews, you also need **Git**, **Muse Code**, and running **Docker Desktop** (Linux containers on Windows), or Colima on macOS. Sign in to Muse with `muse login` if needed.
+**1. Install Bypass.**
 
-### 1. Install Bypass — one terminal command
+macOS / Linux:
 
-**Windows — PowerShell:**
+```bash
+curl -fsSL https://bypasslabs.ai/install | bash
+```
+
+Windows PowerShell:
 
 ```powershell
 irm https://bypasslabs.ai/install.ps1 | iex
 ```
 
-**macOS / Linux — terminal:**
+The installer includes Node.js and configures PATH. On macOS/Linux, open a new terminal or use the activation command printed by the installer. Windows updates the current PowerShell session and user PATH. The download supports macOS, glibc Linux and Windows, x64/arm64; Windows requires PowerShell 5.1+.
 
-```bash
-curl -fsSL https://bypasslabs.ai/install | bash
-```
-
-This downloads the tested `main` build from Cloudflare R2, verifies its SHA-256 checksum, and installs it locally. No GitHub access, clone, npm install, system Node or administrator rights are needed. **PATH is configured automatically**: Windows updates the current PowerShell session and your user PATH; Bash and Zsh receive startup-file entries. Repeated installs do not add duplicate entries.
-
-On Windows, `bypass` works immediately in the same PowerShell session. On macOS/Linux, open a new terminal or run the printed activation command; a `curl | bash` child process cannot change its parent terminal's PATH.
-
-### 2. Connect the Muse plugin — in your terminal
+**2. Enable the native plugin.** You need Git and a signed-in Muse Code host; the integration is tested against Muse 1.4.13.
 
 ```bash
 bypass integrate muse --scope user --replace
@@ -36,205 +32,87 @@ muse plugins inspect bypass
 muse plugins approve bypass
 ```
 
-If PATH setup is restricted, use `~/.local/bin/bypass` on macOS/Linux, or `& "$env:LOCALAPPDATA\Bypass\bin\bypass.cmd"` in Windows PowerShell. `--replace` switches an existing plugin to the bundled version; application settings and evidence stay in their project folders. `inspect` and `approve` use Muse's native capability review. Open a new Muse session after installing or updating.
+Open a new Muse session in your application folder. Native approval stays under your control. If `bypass` is not on PATH yet, use `~/.local/bin/bypass` or Windows `& "$env:LOCALAPPDATA\Bypass\bin\bypass.cmd"`.
 
-### 3. Open Muse, then start Bypass
+**3. Ask once, inside Muse:**
 
-In your terminal:
+> Use Bypass to review this application. Inspect its source, help me connect its running app, prove any account-access issue, and help fix and save a regression test. Keep me informed about what is done and what comes next.
 
-```bash
-muse --reasoning-effort minimal
-```
+Or type **`/bypass:start`**. An initialized application workspace is reused; otherwise Muse confirms the repository once. For live testing it guides the app URL → exact DNS TXT ownership record → explicit testing scope → two account credential references → an owner-owned resource. Source review can start while live setup is pending. Never paste app credentials into chat.
 
-This optional setting applies only to this Muse session. It was used in the live POC checks; it is not a demonstrated fix for provider delays or timeouts.
+**Account/privacy boundary:** Bypass uses the active Muse session and makes no independent model requests. The current MCP interface does not attest session billing, so Bypass cannot verify subscription usage. Confirm subscription mode in Muse; if the host shows API billing, switch to subscription mode. For confidential/personal code, turn Contributor mode off in Muse `/settings` and use Standard mode. Bypass does not change those settings. [Meta's requirements](https://dev.meta.ai/help/subscriptions/muse-code-contributor-mode).
 
-**Inside Muse**, type:
+## See the complete demo
 
-```text
-/bypass:start
-```
-
-Bypass asks for **your application folder or Git URL**. The installed tool is separate from your application; Bypass does not automatically select a repository.
-
-You can also use one ordinary prompt:
-
-> Use Bypass to review my application. Help me connect its repository and running app, one step at a time. Use my Muse subscription for inference.
-
-**For the demo, stay in Muse:**
+Inside Muse:
 
 ```text
 /bypass:demo
 ```
 
-Muse creates and selects a separate local app with two public accounts. It guides **real Docker/AI review → HTTP proof → fixture fix → verified regression → exported test → deliberate regression → one monitor tick → security context**, then stops the fixture and restores your application selection. Your app is untouched. The configured model is shared across the orchestrator and both agents; model usage applies. Ask for an **offline preview** explicitly if you want seeded discovery with zero Bypass analysis calls; the Muse conversation still uses its own provider.
+Muse creates an isolated public fixture, reads its actual source and finds the missing invoice ownership check. It chooses the approved probe; Bypass observes owner **200**, other account **200**, anonymous **401**. Muse interprets that evidence, applies the fixture fix and retests: owner **200**, other account **403**, anonymous **401**. Bypass saves and exports the regression. Reintroducing the bug makes replay fail with **zero plugin model calls**. The fixture is restored and stopped; evidence remains available.
 
-During the journey, Muse shows **Done / Now / Next**, actual stages and model-call counts. A confirmed vulnerability or caught regression is shown as a security result; a provider failure is shown as an incomplete review. `/bypass:status` shows the current state at any time.
+Muse drives every reasoning step. You do not copy JSON, configure a second model, or move to another terminal for the test loop. The fixture demo tests only its generated app. [Detailed walkthrough](docs/WALKTHROUGH.md).
 
-| Inside Muse | What it does |
+## What you keep
+
+- **Observed proof:** cited source plus scoped HTTP controls; suspected, confirmed, blocked and not-run states stay distinct.
+- **Reusable regressions:** fixed behavior becomes an independent Node test, replayed without AI or provider credentials.
+- **Security context for coding:** `/bypass:build` retrieves cited application knowledge, prior investigations and saved behavior requirements before a new feature. Changed source marks knowledge stale; history is not current proof.
+- **Local evidence and control:** evidence stays in `.bypass/`. Muse controls plugin reasoning/privacy; CLI users explicitly choose a provider or their own API-key-protected compatible endpoint.
+- **One execution engine:** plugin and CLI share source grounding, account-boundary proof, evidence, retest, export and monitoring operations.
+
+| In Muse | Purpose |
 | --- | --- |
-| `/bypass:start` | Connect your repository and finish missing model/app/DNS/account setup |
-| `/bypass:demo` | Run the complete isolated demonstration inside Muse |
-| `/bypass:status` | Show completed work, active progress, evidence and next steps |
-| `/bypass:review` | Start or resume a review |
-| `/bypass:tests` | Inspect, replay, bind, export, enable or disable saved tests |
-| `/bypass:monitor` | Configure schedules and start, stop or inspect the local worker |
-| `/bypass:build` / `/bypass:context` | Use or inspect saved security context |
-| `/bypass:help` | Discover all operations, including reports, CI and configuration |
+| `/bypass:start` | Resume missing setup |
+| `/bypass:review` | Muse-directed investigation and fix verification |
+| `/bypass:status` | Done / Now / Next and evidence |
+| `/bypass:tests` | Replay, export and manage saved checks |
+| `/bypass:build` / `/bypass:context` | Security context for feature work |
+| `/bypass:monitor` | Saved-test schedules and local worker |
+| `/bypass:help` | Discover tools, reports, CI and settings |
 
-The plugin uses the same services and project state as the CLI. CI checks coverage of **all public CLI commands and their options**. Muse sign-in, native capability approval and restarting the host remain explicit Muse steps. [Complete capability mapping](docs/PLUGIN_COMMANDS.md).
-
-### 4. Follow the conversation
-
-| Bypass asks | Your answer | What happens next |
-| --- | --- | --- |
-| Which repository? | Your app's local folder or Git URL | Connects it; offers an existing checkout or a new clone folder |
-| Where should AI run? | Muse subscription, local model or your self-hosted endpoint | Saves one profile for all three roles; shows where source excerpts will go |
-| Source only, or running app too? | **Review source now**, or your app URL and environment | Source review can start without DNS or test accounts |
-| Verify the deployed app | Add the exact **TXT name and value** shown in chat, then say “check DNS” | Verifies domain control; local apps use an ownership acknowledgment |
-| Which paths may we test? | Authorized paths, such as `/api`, and production acknowledgment if applicable | Saves bounded GET/HEAD permission, with rate and expiry limits |
-| Which two test accounts? | Credential **environment-variable names** and the signed-in JSON endpoint | Configures the owner and another account; never asks for token values in chat |
-| Which resource belongs to the owner? | One existing GET path and its expected JSON ID | Validates both logins and owner access with three GETs, before AI; a placeholder ID stops here |
-
-For DNS, copy the generated value exactly. If your DNS provider appends your domain, enter only the record-name prefix it needs. Say **“review source while DNS propagates”** to keep going.
-
-For authenticated HTTP proof, load both test-account credentials into the terminal **before launching Muse**. If they are missing, Bypass saves your progress and explains which variables to load; restart Muse after loading them. See [Job Radar's concrete setup](docs/JOB_RADAR.md) for an application example.
-
-### What you should see during a review
-
-```text
-Done     Repository connected · model selected · Docker ready
-Now      Validating two accounts + owner resource — three GETs, no AI
-Next     Checking model connection — one small prompt, no source sent
-Then     Source review → HTTP controls → evidence
-```
-
-For a live review, account/resource validation runs before AI. Missing tokens, expired logins or a nonexistent resource stop there with zero model calls. Source-only review skips those HTTP requests.
-
-The model preflight has a **30-second limit**; each review response has a **60-second limit**. Muse transport status, the resolved model, source reads and HTTP controls appear as the work progresses. A recent successful connection check is reused for 15 minutes. A passing preflight proves only that a small prompt worked.
-
-When a finding is confirmed, ask Muse to help fix it in your application folder, then say:
-
-> Retest the fix and export the saved regression test.
-
-An observed failure followed by a passing fix creates a reusable check. Saved and exported checks replay with **zero model calls**.
-
-**Return later:** `/bypass:review` starts or resumes a review; `/bypass:context` shows saved setup, findings and tests. You do not need to reset or reclone.
-
-## Build your next feature with security context
-
-Open Muse in your connected application folder and describe the feature:
-
-> Use Bypass's security context while adding invoice export. Check relevant past findings, preserve the account-access rules, and run the relevant regression tests.
-
-Or use **`/bypass:build`**, then describe the feature. The coding agent retrieves relevant memory, checks current source, implements the change, and tests it. Reading memory needs **no Docker, model connection, DNS or test accounts**; live replay still needs valid authorization and credentials. If you open Muse from a different folder, select the application again when asked.
-
-You should see something like this (illustrative, not a result for your app):
-
-```text
-Building   Invoice export
-Remembered Owner access must work; other accounts must be denied
-Evidence   Saved invoice-read regression + cited ownership policy
-Recheck    policy.mjs changed since the previous source review
-Next       Read current policy → implement export → test new route
-           → replay the existing invoice-read regression
-```
-
-What Bypass retains:
-
-- **Application knowledge:** authentication, ownership, routing and data-model interpretations, anchored to lines actually read during a real review.
-- **Security history:** hypotheses, observed HTTP controls, verified fixes, incomplete investigations and saved tests, with provenance.
-- **Context for new work:** relevant records ranked by the feature and files, with changed source marked for revalidation. An existing test does not cover a newly added endpoint automatically.
-- **Your model choice:** compatible local Muse/local inference for enhanced privacy, your self-hosted endpoint, or your Muse Code subscription. Memory stays in the project locally; retrieved content follows the model using it. A hosted coding session can receive memory even if Bypass's review model is local.
-
-`/memory` in the CLI or “show Bypass memory” in Muse lets you inspect it. You can disable it or forget individual records. Source interpretations are not verified guarantees; past passes never become current passes without replay. There is no cross-project or cloud memory service. See [how security memory works](docs/SECURITY_MEMORY.md).
+A monitor needs a running worker and an awake machine. A single tick is not an always-on service. [All operations and mode differences](docs/PLUGIN_COMMANDS.md).
 
 ## Standalone CLI
 
-Use this if you prefer Bypass's own terminal interface. **Plugin installation is not required.**
+AI review requires Docker and **your provider API key**. Coding-agent subscriptions and login tokens are never used. Repository setup, reports, memory and saved tests do not require an AI key.
 
 ```bash
 bypass onboard
 ```
 
-1. Choose **Connect my application**.
-2. Enter your app's folder or Git URL; accept the suggested clone folder if needed.
-3. Choose Muse, a local model, or a self-hosted endpoint.
-4. Enter your running app URL, or press Enter to add it later.
-5. Open the project and type **`/review`**. New setups select real Docker agents automatically. Source review can proceed while live setup is pending.
+The wizard asks for provider → API-key **environment-variable name** → model → endpoint → optional connection check. It never asks for a secret value. Load the variable privately using your shell or secret manager; do not put the value in a command argument or project file.
 
-Inside the Bypass workspace:
-
-| Type | Purpose |
-| --- | --- |
-| `/review` | Start a review; automatically check an untested/stale model connection |
-| `/app` | Connect your app or finish DNS verification |
-| `/engine` | Configure the two accounts and JSON resource for real HTTP proof |
-| `/results` | Inspect findings and retest a fix |
-| `/tests` | Replay or export saved regression tests |
-| `/memory` | Inspect security knowledge, citations and freshness |
-| `/context` | Read context for the next coding session |
-| `/models` | Choose or test a model connection |
-| `/` | Browse commands |
-| `/quit` | Exit with progress saved |
-
-Reopen with `bypass --project "/path/to/your/app"` (on Windows, use your application's Windows path). Existing offline-preview projects keep their selected engine; use `/engine` to switch them. [Full CLI reference](docs/COMMANDS.md).
-
-## Why use Bypass?
-
-- **Work inside Muse or the CLI.** Both use the same application settings, evidence and saved tests.
-- **Choose your model and privacy boundary.** Use a compatible **local Muse/local model server for greater privacy**, **bring your own self-hosted model**, or **use your Muse Code subscription**. No model weights are bundled and there is no automatic cloud fallback. A local Bypass profile does not change Muse chat's own provider.
-- **Separate suspicion from proof.** Source citations are hypotheses. Actual HTTP account controls establish confirmed findings.
-- **Keep a verified fix as a test.** Replay saved checks before AI; export ordinary Node tests without a model dependency.
-- **Resume your work.** Repository selection, DNS progress and evidence survive a new session. Local monitoring requires an awake machine and running worker.
-
-The Muse subscription adapter uses native `muse exec`; it does not extract your login credentials. It uses Muse's configured default unless you select an exact model ID. This is not automatic inheritance of the open chat's model. Bypass requests default to `minimal` reasoning; the model and provider are unchanged. Source excerpts go to the chosen inference destination during real reviews.
-
-## If the model stops responding
-
-**Do not keep restarting the review or reinstalling the plugin.** Your setup is saved.
-
-- **Inside Muse:** say “Check Bypass's model connection and tell me the failing step.”
-- **Inside Bypass CLI:** type `model test`. If it fails, use `/models` to choose another connection; after it passes, use `/review`.
-- **In your terminal:** `muse usage` checks allowance. Use `muse login` when the error actually reports authentication failure.
-
-A timeout means **review incomplete**. The screen shows the failed stage and evidence location. Bypass does not silently substitute mocked findings. Ask Muse to **“Run Bypass diagnostics”**; its doctor tool distinguishes missing executables, an unavailable Docker daemon and denied Docker socket access. A daemon can be running while a sandboxed process cannot reach it. CLI users can run `bypass doctor --project /path/to/your/app`.
-
-## Update an existing installation
-
-Run the installer again (`irm https://bypasslabs.ai/install.ps1 | iex` on Windows, or the curl command below on macOS/Linux), then refresh the Muse integration if you use it:
+Example with `OPENAI_API_KEY` already loaded:
 
 ```bash
-curl -fsSL https://bypasslabs.ai/install | bash
-bypass integrate muse --scope user --replace
-muse plugins inspect bypass
-muse plugins approve bypass
+bypass init /path/to/app
+bypass model add review --provider openai --secret-env OPENAI_API_KEY --project /path/to/app
+bypass model use review --project /path/to/app
+bypass model test review --project /path/to/app
+bypass engine use docker --project /path/to/app
+bypass scan --mode code --project /path/to/app
 ```
 
-Restart Muse. The installer keeps previous versions and does not touch application repositories, model settings, ownership records or security memory. Check the active CLI with `bypass --version`. No cleanup or reclone is needed.
+For live proof, complete the app/scope/account/resource steps in onboarding, then use `scan --mode combined`. Use `finding list`, `finding show <id>`, edit the app, and `retest <id>`. `test run --all` replays saved checks; `test export --all` creates independent Node tests. Run `bypass help` or launch `bypass` for the interactive workspace.
 
-For source development instead of an installed release:
+Presets: **Meta/Muse, OpenAI, Anthropic/Claude, Moonshot/Kimi, DeepSeek, custom**. Models remain configurable. No automatic provider, credential, model, protocol or billing fallback. [Provider examples, capability matrix and migration](docs/AI_MODES.md).
+
+## Existing installations
+
+Version 0.5 separates host reasoning from CLI API billing. Existing `muse-code`, `local` and `endpoint` profiles remain on disk but cannot run standalone AI. Create/select a new explicit API profile, or use the Muse plugin without any model setup. Targets, findings, memory and saved regressions are retained. Reinstall/approve the updated plugin and start a fresh Muse session.
+
+## Develop and verify
 
 ```bash
-git clone https://github.com/Bypass-Labs/bypass-for-muse.git
-cd bypass-for-muse
-./bypass doctor
+npm ci --ignore-scripts
+npm run plugin:build
+npm run check
+npm test
+BYPASS_DOCKER_TESTS=1 npm test
 ```
 
-An existing source checkout can use `git pull --ff-only` and `npm run plugin:build`. [Release and installer details](docs/RELEASES.md) cover CI, platform support, custom install paths and rollback.
+`npm run test:live` is an opt-in **actual Muse host** fixture test: it installs a temporary candidate plugin under a distinct ID, uses normal host approvals, exercises the full reasoning/test/fix loop, retains evidence, then removes the candidate. It uses the host account's allowance or billing; the test does not attest subscription billing. `node scripts/provider-smoke.mjs` tests only explicitly available provider API-key environment variables with synthetic prompts.
 
-## Optional examples and technical details
-
-- **Real AI example:** `/bypass:demo` inside Muse, or `bypass poc` in a terminal. [Prove → fix → retest walkthrough](docs/REAL_POC.md).
-- **Offline example:** ask Muse for the offline Bypass preview, or run `bypass demo`. HTTP checks and regression replay are real; discovery is seeded.
-- [Architecture and boundaries](docs/ARCHITECTURE.md) · [DNS walkthrough](docs/WALKTHROUGH.md) · [Validation record](docs/VALIDATION.md)
-
-Developers: `npm run check` and `npm test` run local checks. `npm run plugin:build` refreshes the bundled runtime. **`npm run test:live` is opt-in and uses your Muse allowance:** it exercises the packaged plugin over MCP, real Docker/model source discovery, HTTP proof, fix verification, exported tests and deliberate regression against the local fixture. It reports failure if any required step fails and retains its evidence. It does not validate the whole conversational Muse interface or a production app.
-
-For feature-specific context in the CLI (or JSON for another coding agent):
-
-```bash
-bypass context --project /path/to/your/app \
-  --task "Add invoice export" --files "src/routes.js,src/auth.js" --json
-```
-
-The standalone CLI returns context; your coding agent performs the implementation.
+[Architecture and provider limits](docs/AI_MODES.md) · [POC execution details](docs/REAL_POC.md) · [Job Radar setup](docs/JOB_RADAR.md) · [Verification results](docs/AI_VALIDATION.md)

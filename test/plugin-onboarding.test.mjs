@@ -16,11 +16,11 @@ test('failed model preflight takes precedence over app questions without discard
   const root=await sourceReady();
   await change(root,s=>{s.models[0].lastAttempt={status:'failed',reason:'timeout',checkedAt:new Date().toISOString()};});
   const result=await checklist(root,root);
-  assert.equal(result.ready.source,false);assert.equal(result.nextAction.id,'connection');
-  assert.equal(result.nextAction.tool,'bypass_test_model');assert.equal(result.selectedRepository,root);
+  assert.equal(result.ready.source,true);assert.equal(result.nextAction.id,'app');
+  assert.equal(result.nextAction.tool,'bypass_add_target');assert.equal(result.selectedRepository,root);
 });
 function environment(t,values){for(const [key,value] of Object.entries(values)){const old=process.env[key];process.env[key]=value;t.after(()=>{if(old===undefined)delete process.env[key];else process.env[key]=old;});}}
-async function sourceReady(){const root=temp();await execute('init',[root]);await execute('engine use',['docker'],{project:root});await execute('model add',['muse'],{project:root,provider:'muse-code'});return root;}
+async function sourceReady(){const root=temp();await execute('init',[root]);await execute('engine use',['docker'],{project:root});await execute('model add',['muse'],{project:root,provider:'meta','secret-env':'BYPASS_UNIT_API_KEY',model:'test-model',stream:false});return root;}
 
 test('unselected context guides repository selection without leaking host demo history or mutating it',async t=>{
   const host=temp();environment(t,{BYPASS_PLUGIN_STATE_DIR:temp()});
@@ -39,22 +39,17 @@ test('saved explicit selection survives sessions but cannot cross workspaces or 
   environment(t,{BYPASS_PLUGIN_STATE_DIR:temp()});const host=temp(),other=temp(),app=await sourceReady();
   assert.equal(savedSelection(host),null);assert.equal(rememberSelection(host,app).remembered,true);
   assert.equal(savedSelection(host),app);assert.equal(savedSelection(other),null);
-  assert.equal(sessionHint(host).engine,'docker');assert.equal(sessionHint(host).version,VERSION);
+  assert.equal(sessionHint(host).engine,'host');assert.equal(sessionHint(host).version,VERSION);
   await change(app,s=>{s.project.id='replaced-project';});assert.equal(savedSelection(host),null);
   await change(app,s=>{s.poc={running:false};});assert.equal(rememberSelection(host,app).remembered,false);
   assert.equal(savedSelection(host),null);
 });
 
-test('real onboarding orders engine/model/Docker and never silently falls back to mock',async()=>{
-  const root=temp();await execute('init',[root]);let status=await checklist(root,root);
-  assert.equal(status.nextAction.id,'engine');assert.deepEqual(status.nextAction.arguments,{mode:'docker'});
-  await execute('engine use',['docker'],{project:root});status=await checklist(root,root);assert.equal(status.nextAction.id,'model');
-  await execute('model add',['muse'],{project:root,provider:'muse-code'});
-  status=await checklist(root,root,{checkDocker:async()=>({available:false,message:'Start Docker.'})});
-  assert.equal(status.nextAction.id,'docker');assert.equal(status.ready.source,false);assert.equal(read(root).settings.analysisEngine,'docker');
-  status=await checklist(root,root);assert.equal(status.nextAction.id,'app');assert.equal(status.ready.source,true);
-  assert.equal(status.steps.find(s=>s.id==='model').profile.connection,'not tested');
-  assert.deepEqual(status.alternatives[0].arguments,{mode:'code'});
+test('host onboarding does not require a model or Docker and offers source review',async()=>{
+  const root=temp();await execute('init',[root]);
+  const status=await checklist(root,root,{checkDocker:async()=>assert.fail('No Docker check in host mode')});
+  assert.equal(status.ready.source,true);assert.equal(status.nextAction.id,'app');assert.deepEqual(status.alternatives[0].arguments,{mode:'code'});
+  assert.equal(status.steps.some(s=>['model','docker'].includes(s.id)),false);assert.equal(read(root).models.length,0);
 });
 
 test('deployed DNS challenge is exact, renews when expired and never implies testing permission',async()=>{
@@ -87,9 +82,9 @@ test('local onboarding reaches combined readiness only after scope, account repa
 
 test('model credential absence repairs environment without duplicating the profile',async()=>{
   const root=temp();await execute('init',[root]);await execute('engine use',['docker'],{project:root});
-  await execute('model add',['private'],{project:root,provider:'endpoint','base-url':'https://model.example.com',model:'own-model','secret-env':'BYPASS_NONEXISTENT_ONBOARD_KEY'});
-  const status=await checklist(root,root);assert.equal(status.stage,'model');assert.equal(status.ready.source,false);
-  assert.equal(status.nextAction.tool,undefined);assert.deepEqual(status.nextAction.missingEnvironment,['BYPASS_NONEXISTENT_ONBOARD_KEY']);
+  await execute('model add',['private'],{project:root,provider:'custom','secret-env':'BYPASS_UNIT_API_KEY',stream:false,'base-url':'https://model.example.com',model:'own-model','secret-env':'BYPASS_NONEXISTENT_ONBOARD_KEY'});
+  const status=await checklist(root,root);assert.equal(status.stage,'app');assert.equal(status.ready.source,true);
+  assert.equal(status.nextAction.tool,'bypass_add_target');
   assert.equal(read(root).models.length,1);
 });
 

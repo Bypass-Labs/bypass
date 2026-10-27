@@ -18,8 +18,8 @@ export async function startPOC(options={}){
   for(const file of ['server.mjs','policy.mjs'])fs.copyFileSync(path.join(packageRoot,'examples/poc-api',file),path.join(root,file),fs.constants.COPYFILE_EXCL);
   await execFile('git',['init','--quiet',root]);
   await execute('init',[root],{});
-  await execute('model add',['muse'],{project:root,provider:'muse-code',model:options.model||'Muse session default'});
-  if(options.project&&!options.model){try{const source=read(options.project);if(source.activeModel)await change(root,s=>{s.models=[structuredClone(source.models.find(m=>m.name===source.activeModel))];s.activeModel=source.activeModel;});}catch{}}
+  if(options.project){try{const source=read(options.project);if(source.activeModel)await change(root,s=>{s.models=[structuredClone(source.models.find(m=>m.name===source.activeModel))];s.activeModel=source.activeModel;});}catch{}}
+  if(options.model){need(read(root).activeModel,'Select an API profile in --project before overriding its model. The Muse plugin uses the active host model.');await change(root,s=>{s.models[0].model=options.model;delete s.models[0].lastAttempt;delete s.models[0].lastTest;});}
   const port=options.port?Number(options.port):await new Promise((resolve,reject)=>{const server=net.createServer();server.on('error',reject);server.listen(0,'127.0.0.1',()=>{const p=server.address().port;server.close(()=>resolve(p));});});
   need(Number.isInteger(port)&&port>=1024&&port<=65535,'Choose a port between 1024 and 65535.');
   const log=fs.openSync(path.join(root,'.bypass/poc-api.log'),'a',0o600);

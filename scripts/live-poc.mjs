@@ -1,88 +1,45 @@
-// Opt-in: uses real Docker + Muse inference. Only the bundled local fixture is tested.
+// Opt-in real Muse host integration. No API key extraction and no mocked model.
+// This TEST launches Muse as the outer host; production plugin code never does.
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import readline from 'node:readline';
-import { spawn } from 'node:child_process';
-import assert from 'node:assert/strict';
 import { fileURLToPath } from 'node:url';
+import { execFile, VERSION } from '../src/util.mjs';
+import { read } from '../src/store.mjs';
 import { stopPOC } from '../src/poc.mjs';
-import { execFile, delay } from '../src/util.mjs';
-
-const checkout=fileURLToPath(new URL('../',import.meta.url));
-const directory=fs.mkdtempSync(path.join(os.tmpdir(),'bypass-live-poc-'));
-const root=path.join(directory,'app');
-let child,runId,call;
-const report={startedAt:new Date().toISOString(),transport:'packaged plugin MCP',inference:'real Muse subscription',mocked:false,root};
-try{
-  child=spawn(process.execPath,[path.join(checkout,'plugin/mcp/server.mjs')],{cwd:directory,env:{...process.env,BYPASS_PLUGIN_STATE_DIR:path.join(directory,'selection')},stdio:['pipe','pipe','pipe']});
-  child.stderr.resume();let sequence=0;const pending=new Map();
-  readline.createInterface({input:child.stdout}).on('line',line=>{
-    const message=JSON.parse(line),entry=pending.get(message.id);
-    if(entry){clearTimeout(entry.timer);pending.delete(message.id);entry.resolve(message);}
+const checkout=fileURLToPath(new URL('../',import.meta.url)),directory=fs.mkdtempSync(path.join(os.tmpdir(),'bypass-host-validation-'));
+const plugin=path.join(directory,'plugin'),workspace=path.join(directory,'workspace'),fixture=path.join(workspace,'fixture');
+fs.mkdirSync(workspace);fs.cpSync(path.join(checkout,'plugin'),plugin,{recursive:true});
+const manifestFile=path.join(plugin,'.muse-plugin/plugin.json'),manifest=JSON.parse(fs.readFileSync(manifestFile));
+manifest.name='bypass-host-audit-'+Date.now();manifest.displayName='Bypass host integration audit';fs.writeFileSync(manifestFile,JSON.stringify(manifest,null,2));
+const report={version:VERSION,kind:'real Muse host integration',billingVerified:false,subscription:'Not attested by MCP; no subscription credential inspection',apiProviderSmoke:'Not performed by this harness',directory,fixture};
+let installed=false;
+try {
+  for(const args of [['plugins','validate',plugin,'--json'],['plugins','install',plugin,'--scope','user','--json'],['plugins','approve',manifest.name,'--json']]){
+    const r=await execFile('muse',args,{timeout:120000,env:{MUSE_NO_AUTO_UPDATE:'1'}});if(r.code!==0)throw new Error(`Native plugin ${args[1]} failed: ${r.stderr}`);if(args[1]==='install')installed=true;
+    const data=JSON.parse(r.stdout);if(args[1]==='validate'&&(!data.valid||data.diagnostics?.length))throw new Error('Native manifest validation failed');
+  }
+  const prefix='mcp__plugin_'+manifest.name.replaceAll('-','_')+'_security__';
+  const prompt=path.join(directory,'prompt.txt');
+  fs.writeFileSync(prompt,`Validate the installed Bypass candidate ${manifest.name} using ONLY its ${prefix} tools (ignore any older bypass plugin). This is a public synthetic fixture and I authorize its full local demo and fixture-only edits. Contributor mode is off for this test run. We acknowledge subscription billing cannot be attested through MCP; do not inspect credentials or claim verified billing. Do not configure a provider, invoke a nested agent or use the shell.\nStart bypass_demo_start kind real dir ${fixture}. Call bypass_onboarding. Then bypass_scan combined. You are the reasoning agent: read policy.mjs and server.mjs through bypass_review_step, analyze the actual source, submit the exact cited authentication/ownership hypothesis and one useful cited source knowledge record, choose the approved resource index and execute the probe, then finish. Inspect the finding. Fix the isolated fixture with bypass_demo_control fix and retest that finding. Export all saved tests and run them via bypass_run_tests; watch this deterministic job to completion. Regress the fixture and rerun saved tests to demonstrate failure with zero plugin model calls, then restore the fixture fix and retest. Finish by stopping the demo. Show observed source citation, owner/other-account/anonymous controls, saved check and regression result. Do not stop after setup or ask routine fixture permission questions. This entire workflow is already authorized.\n`);
+  let output='';
+  const result=await execFile('muse',['exec','--json','--provider','meta','--preset','native-basic','--workspace',workspace,'--contributor-mode','off','--no-session-log','--disable-web-tools','--disable-reminders','--disable-request-user-input','--disable-shell','--disable-write','--reasoning-effort','minimal','--max-model-steps','35','--prompt-file',prompt],{
+    cwd:workspace,timeout:600000,killGroup:true,env:{MUSE_NO_AUTO_UPDATE:'1'},onStdout:chunk=>{output+=chunk;fs.appendFileSync(path.join(directory,'host.jsonl'),chunk,{mode:0o600});}
   });
-  const request=(method,params={})=>new Promise((resolve,reject)=>{
-    const id=++sequence,timer=setTimeout(()=>{pending.delete(id);reject(new Error(`MCP ${method} timed out`));},20000);
-    pending.set(id,{resolve,reject,timer});child.stdin.write(JSON.stringify({jsonrpc:'2.0',id,method,params})+'\n');
-  });
-  child.on('close',()=>{for(const item of pending.values()){clearTimeout(item.timer);item.reject(new Error('MCP exited'));}pending.clear();});
-  call=async(name,args={})=>{
-    const message=await request('tools/call',{name,arguments:args});
-    assert.ok(message.result,JSON.stringify(message));
-    const result=JSON.parse(message.result.content[0].text);
-    assert.equal(message.result.isError,false,JSON.stringify(result));return result;
-  };
-  await request('initialize',{protocolVersion:'2025-11-25',capabilities:{},clientInfo:{name:'bypass-live-validation',version:'1'}});
-  await call('bypass_demo_start',{kind:'real',dir:root});
-  await call('bypass_test_probe',{name:'invoice'});
-  const setup=await call('bypass_onboarding');assert.equal(setup.ready.live,true);report.pluginVersion=setup.pluginVersion;
-  const wait=async id=>{
-    const end=Date.now()+240000;let shown=0;
-    while(Date.now()<end){
-      const progress=await call('bypass_watch_run',{id,after:shown,timeout:'10s'});
-      for(const step of progress.events)console.log(step.message);shown=progress.cursor;
-      if(progress.terminal)return (await call('bypass_run',{id})).run;
-    }
-    await call('bypass_stop_run',{id});throw new Error('Live validation exceeded four minutes; stop requested');
-  };
-  runId=(await call('bypass_scan',{mode:'combined'})).runId;
-  const run=await wait(runId);report.scan={id:run.id,exitCode:run.exitCode,result:run.result,agents:run.agentEvidence};runId=null;
-  assert.ok(run.result.confirmed?.length,run.result.message||'No HTTP-confirmed fixture finding');
-  const finding=(await call('bypass_finding',{id:run.result.confirmed[0]})).finding;
-  assert.equal(finding.sourceEvidence.kind,'source','Live gate requires actual source attribution');
-  report.source=finding.sourceEvidence;report.controls=finding.verification.controls;
-  const learned=await call('bypass_memory');assert.ok(learned.entries.some(e=>e.kind==='source-knowledge'),'Real model must return cited application knowledge');
-  report.memory={learned:learned.records,sourceKnowledge:learned.sourceKnowledge};
-  await call('bypass_demo_control',{action:'fix'});
-  const retest=await call('bypass_retest',{id:finding.id});assert.equal(retest.status,'fixed_verified');report.savedCheck=retest.savedCheck.id;
-  const feature=await call('bypass_feature_context',{task:'Add invoice export while preserving account ownership',files:'policy.mjs,server.mjs'});
-  assert.ok(feature.securityRequirements.some(c=>c.id===report.savedCheck));assert.ok(feature.revalidateBeforeCoding.length);
-  report.memory.featureContext={records:feature.memory.entries.length,requirements:feature.securityRequirements,stale:feature.revalidateBeforeCoding};
-  runId=(await call('bypass_scan',{mode:'code'})).runId;const second=await wait(runId);runId=null;
-  assert.notEqual(second.status,'failed',second.result.message);assert.ok(second.agentEvidence.memory.selected.length);assert.ok(second.agentEvidence.memory.learned.saved.length);
-  report.memory.secondReview={id:second.id,modelCalls:second.modelCalls,receipt:second.agentEvidence.memory};
-  const refreshed=await call('bypass_feature_context',{task:'Add invoice export',files:'policy.mjs'});assert.ok(refreshed.memory.entries.some(e=>e.kind==='source-knowledge'&&e.validity.status==='current'));
-  const exported=await call('bypass_export_tests',{all:true});
-  const fixed=await execFile(process.execPath,['--test',...exported.files],{timeout:15000,env:{NODE_TEST_CONTEXT:undefined}});assert.equal(fixed.code,0,fixed.stdout+fixed.stderr);
-  await call('bypass_demo_control',{action:'regress'});
-  runId=(await call('bypass_run_tests',{all:true})).runId;
-  const replay=await wait(runId);runId=null;assert.equal(replay.exitCode,1);assert.equal(replay.result.modelCalls,0);
-  const broken=await execFile(process.execPath,['--test',...exported.files],{timeout:15000,env:{NODE_TEST_CONTEXT:undefined}});assert.equal(broken.code,1,broken.stdout+broken.stderr);
-  await call('bypass_add_monitor',{name:'plugin-demo',target:'poc',every:'1h'});
-  const tick=await call('bypass_monitor_worker',{action:'once'});assert.equal(tick.runs.length,1);report.monitor={runId:tick.runs[0],worker:'one tick, then stopped'};
-  await call('bypass_pause_monitor',{name:'plugin-demo'});
-  await call('bypass_demo_control',{action:'fix'});
-  await call('bypass_retest',{id:finding.id});
-  report.dashboard=await call('bypass_dashboard');
-  report.exportedReport=(await call('bypass_report',{run:second.id,format:'md',out:'reports/plugin-demo.md'})).path;
-  await call('bypass_demo_control',{action:'stop'});
-  report.passed=true;report.exportedTest={fixedExit:fixed.code,regressedExit:broken.code};report.replay={regressedExit:replay.exitCode,modelCalls:0};
-}catch(error){report.passed=false;report.error=error.message;process.exitCode=1;}
-finally{
-  if(runId&&call)try{await call('bypass_stop_run',{id:runId});await delay(1000);}catch{}
-  child?.stdin.end();child?.kill();
-  try{await stopPOC(root);}catch{}
-  report.finishedAt=new Date().toISOString();
-  fs.writeFileSync(path.join(directory,'validation.json'),JSON.stringify(report,null,2)+'\n',{mode:0o600});
-  console.log(JSON.stringify({passed:report.passed,evidence:path.join(directory,'validation.json'),error:report.error},null,2));
+  fs.writeFileSync(path.join(directory,'host.jsonl'),output,{mode:0o600});
+  report.hostExit=result.code;
+  const state=read(fixture),review=state.runs.find(r=>r.executionMode==='muse-host');
+  report.review={id:review?.id,status:review?.status,modelCalls:review?.modelCalls,steps:review?.steps};
+  report.findings=state.findings.map(f=>({id:f.id,status:f.status,sourceEvidence:f.sourceEvidence,history:f.history}));
+  report.checks=state.checks.map(c=>({id:c.id,lastResult:c.lastResult}));
+  report.replays=state.runs.filter(r=>r.kind==='tests').map(r=>({id:r.id,exitCode:r.exitCode,modelCalls:r.modelCalls}));
+  report.exported=fs.existsSync(path.join(fixture,'tests/security/bypass'));
+  report.passed=result.code===0&&review?.status==='completed'&&review?.modelCalls===0&&state.findings.some(f=>f.sourceEvidence.kind==='source'&&f.status==='fixed_verified')&&state.checks.length>0&&report.exported&&report.replays.some(r=>r.exitCode===0)&&report.replays.some(r=>r.exitCode===1)&&report.replays.every(r=>r.modelCalls===0);
+  if(!report.passed)process.exitCode=1;
+} catch(error){report.passed=false;report.error=error.message;process.exitCode=1;}
+finally {
+  try{await stopPOC(fixture);}catch{}
+  if(installed)await execFile('muse',['plugins','remove',manifest.name,'--json'],{timeout:120000}).catch(()=>{});
+  report.finishedAt=new Date().toISOString();fs.writeFileSync(path.join(directory,'validation.json'),JSON.stringify(report,null,2));
+  console.log(JSON.stringify({passed:report.passed,evidence:path.join(directory,'validation.json'),error:report.error}));
 }

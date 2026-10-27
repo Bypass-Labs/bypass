@@ -76,7 +76,7 @@ export async function rememberObservation(root,{target,binding,result,runId,sour
 export async function consolidateMemory(root,{runId}={}){
   return change(root,state=>{
     const memory=initialize(state);if(!memory.enabled)return memorySummary(state);
-    for(const f of state.findings.filter(f=>f.engine==='docker'&&!f.simulation&&f.sourceEvidence?.kind!=='mock')){
+    for(const f of state.findings.filter(f=>['docker','host'].includes(f.engine)&&!f.simulation&&f.sourceEvidence?.kind!=='mock')){
       const evidence={kind:'finding',findingId:f.id,runId:f.lastRunId,observedAt:f.history?.at(-1)?.at||f.verification?.at||f.createdAt,
         controls:(f.history?.at(-1)?.controls||f.verification?.controls||[]).map(({label,status})=>({label,status})),source:f.sourceEvidence?.kind==='source'?{file:f.sourceEvidence.file,line:f.sourceEvidence.line,quote:f.sourceEvidence.quote}:null,
         history:(f.history||[]).slice(-5).map(h=>({action:h.action,status:h.status,at:h.at,reason:short(h.reason)}))};
@@ -84,7 +84,7 @@ export async function consolidateMemory(root,{runId}={}){
         outcome:f.status,confidence:'historical investigation; not current proof',target:historicalTarget(state,f.target,f.verification?.origin||f.targetOrigin,`finding:${f.id}`),resourcePath:f.binding?.resourcePath||f.resourcePath||null,
         sourceFingerprint:f.sourceEvidence?.sourceFingerprint||f.sourceFingerprint,bindingFingerprint:f.binding?hash(f.binding):null,evidence});
     }
-    for(const c of state.checks.filter(c=>c.engine==='docker'))for(const [target,binding] of Object.entries(c.bindings)){
+    for(const c of state.checks.filter(c=>['docker','host'].includes(c.engine)))for(const [target,binding] of Object.entries(c.bindings)){
       const key=`check:${c.id}:${target}`,result=c.lastResult?.target===target?c.lastResult:null;
       // A replay for another environment must not overwrite this environment's history.
       if(!result&&memory.entries.some(e=>e.id===memoryId(key)))continue;
@@ -176,7 +176,7 @@ export async function featureContext(root,{task,files='',target}={}){
   const state=read(root),inv=await inventory(root);
   const memory=await recallMemory(root,{task,files:paths,target,inv,forAgent:true,limit:12,maxBytes:14000});
   const checks=memory.entries.filter(e=>e.kind==='regression').flatMap(entry=>{
-    const check=state.checks.find(c=>c.id===entry.evidence.checkId&&c.engine==='docker'&&c.kind==='cross-account-resource');
+    const check=state.checks.find(c=>c.id===entry.evidence.checkId&&['docker','host'].includes(c.engine)&&c.kind==='cross-account-resource');
     return check&&hash(check.bindings[entry.target.name]||{})===entry.bindingFingerprint?[{memoryId:entry.id,id:check.id,enabled:check.enabled,target:entry.target,resourcePath:entry.resourcePath,
       expectedBehavior:{owner:'can read their resource',otherAccount:'cannot read that resource',anonymous:'cannot read that resource'},
       lastResult:entry.outcome,lastCheckedAt:entry.evidence.observedAt||null,validity:entry.validity,replayRequired:true,

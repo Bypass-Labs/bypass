@@ -1,3 +1,4 @@
+import { addTestModel } from './helpers.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -78,7 +79,7 @@ test('memory does not cross project or origin boundaries or accept escaping file
 });
 
 test('real HTTP proof and fixed regression become feature requirements; next review receives memory and replay still catches regression',async()=>{
-  const root=path.join(temp(),'app');await startPOC({dir:root});const calls=[];
+  const root=path.join(temp(),'app');await startPOC({dir:root});await addTestModel(root);const calls=[];
   const runtime={prepareAgents:async()=>({image:'controlled-test'}),runContainer:async(role,task,rpc)=>({result:await runAgent(role,task,rpc),container:{role,image:'controlled-test'}}),infer:async(profile,messages)=>{
     calls.push(messages);const system=messages[0].content;
     if(system.startsWith('Plan a bounded'))return {focus:'Read the ownership policy; history is evidence.'};

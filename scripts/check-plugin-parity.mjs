@@ -11,18 +11,18 @@ const document=`# Muse plugin capability reference
 
 The Muse plugin is the primary experience. Use ordinary requests or its slash commands; Muse calls these tools for you. You do not need to learn MCP syntax or leave Muse for project operations.
 
-This reference is generated from the CLI catalog and plugin definitions. CI checks all ${catalog.length} public CLI commands and their options; there are ${toolDefinitions.length} typed tools. Regenerate with \`node scripts/check-plugin-parity.mjs --write\` after intentionally changing the catalog.
+Standalone model setup has a deliberate mode boundary: plugin model tools explain host ownership and cannot configure or invoke API inference. This reference is generated from the CLI catalog and plugin definitions. CI checks all ${catalog.length} public CLI commands and their options; there are ${toolDefinitions.length} typed tools. Regenerate with \`node scripts/check-plugin-parity.mjs --write\` after intentionally changing the catalog.
 
 ## Start inside Muse
 
-- \`/bypass:start\`: connect your repository, choose the shared model, and finish only missing app/DNS/scope/account setup.
-- \`/bypass:demo\`: a real local Docker/AI demonstration, through proof, fixture fix, saved test, deliberate regression, one monitor tick and security context. Ask for an offline preview explicitly to use seeded discovery.
+- \`/bypass:start\`: reuse your repository and active Muse reasoning, and finish only missing app/DNS/scope/account setup.
+- \`/bypass:demo\`: a real local Muse-directed demonstration, through proof, fixture fix, saved test, deliberate regression, one monitor tick and security context. Ask for an offline preview explicitly to use seeded discovery.
 - \`/bypass:status\`: Done / Now / Next, progress, evidence and actual worker health.
 - \`/bypass:review\`, \`/bypass:tests\`, \`/bypass:monitor\`, \`/bypass:build\`, \`/bypass:context\`, \`/bypass:help\`: the remaining workflows.
 
 ## Shared behavior and deliberate UI differences
 
-The plugin calls the same application services and reads/writes the same project state as the CLI. Repository selection is explicit and scoped to the Muse session. Review and replay run durably; bounded progress calls replace a blocking terminal watch. Monitor workers run detached, or for one tick. Demo creation selects a separate fixture, and stopping it restores the prior application selection while retaining evidence.
+The plugin calls the same application services and reads/writes the same project state as the CLI. An initialized application workspace is reused; other repository selection is explicit. Host reviews use durable read/source/probe/finish steps directed by Muse. Deterministic replay uses bounded progress calls. Monitor workers run detached, or for one tick. Demo creation selects a separate fixture, and stopping it restores the prior application selection while retaining evidence.
 
 An observed vulnerability or failed regression retains CLI exit code 1 but is a successful MCP operation with a security result. Execution errors, blocked requests and incomplete reviews stay explicit. A configured model, accepted job or saved monitor schedule is never shown as a successful review or running monitor.
 

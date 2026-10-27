@@ -41,7 +41,7 @@ test('menus accept arrows, numbers and Escape without abandoning the workspace',
   let answer=tty.ui.select('Choose',items,{back:true});tty.key('down');tty.key('return');assert.equal((await answer).id,2);
   answer=tty.ui.select('Choose',items,{back:true});tty.key('escape');assert.equal(await answer,null);
   answer=tty.ui.select('Choose',items);tty.type('1');tty.key('return');assert.equal((await answer).id,1);
-  answer=tty.ui.select('Model',[{name:'local',provider:'local'}]);assert.equal(tty.ui.state.menu[0].label,'local');tty.key('return');assert.equal((await answer).name,'local');
+  answer=tty.ui.select('Model',[{name:'local',provider:'custom','secret-env':'BYPASS_UNIT_API_KEY',stream:false}]);assert.equal(tty.ui.state.menu[0].label,'local');tty.key('return');assert.equal((await answer).name,'local');
 });
 
 test('a real Escape byte resolves promptly before the next typed command',async t=>{

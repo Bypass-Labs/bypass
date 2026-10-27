@@ -47,7 +47,6 @@ export async function startDemo(location,{port=4317}={}){
       const identity={name,target:'demo',type:'bearer',secretEnv,fixtureValue,checkPath:'/api/me',createdAt:now()};
       s.identities=s.identities.filter(x=>x.name!==name);s.identities.push(identity);
     }
-    if(!s.models.length){s.models.push({name:'muse',provider:'muse-code',model:'Muse session default',dataDestination:'Muse Code account/provider',createdAt:now()});s.activeModel='muse';}
     event(s,'demo-start','Created isolated Ledger fixture. All credentials are public demo values.');
   });
   const log=fs.openSync(path.join(root,'.bypass/demo.log'),'a',0o600);

@@ -48,7 +48,7 @@ export function scopeReady(target, pathname, method = 'GET') {
   if (pathname) need(pathAllowed(pathname,auth.paths), `Path ${pathname} is outside the authorized scope.`, 3);
   return true;
 }
-export async function safeRequest(value, {allowLocal=false,allowPrivate=false,method='GET',headers={},body,timeout=8000,maxBytes=131072,signal} = {}) {
+export async function safeRequest(value, {allowLocal=false,allowPrivate=false,method='GET',headers={},body,timeout=8000,maxBytes=131072,signal,onHeaders,onChunk} = {}) {
   if(signal?.aborted)throw abortFault(signal);
   const url = new URL(value);
   need(!url.username && !url.password, 'URL credentials are not allowed.');
@@ -67,8 +67,9 @@ export async function safeRequest(value, {allowLocal=false,allowPrivate=false,me
     const request = client.request(url, {method,headers:{Accept:'application/json','User-Agent':'Bypass-Skeleton/0.1',...headers},
       agent:false, family:chosen.family, servername:net.isIP(host) ? undefined : host,
       lookup:(_host,opts,cb)=>opts?.all ? cb(null,[chosen]) : cb(null,chosen.address,chosen.family), signal}, response => {
+      onHeaders?.({status:response.statusCode,headers:response.headers});
       let bytes=0; const chunks=[];
-      response.on('data',chunk=>{ bytes+=chunk.length; if(bytes>maxBytes) request.destroy(new Error('Response exceeds size limit')); else chunks.push(chunk); });
+      response.on('data',chunk=>{ bytes+=chunk.length; if(bytes>maxBytes) request.destroy(new Error('Response exceeds size limit')); else if(onChunk)onChunk(chunk); else chunks.push(chunk); });
       response.on('end',()=>resolve({status:response.statusCode,body:Buffer.concat(chunks).toString('utf8'),headers:response.headers}));
       response.on('error',()=>reject(new Fault('Response interrupted.',3)));
     });

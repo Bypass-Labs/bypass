@@ -77,12 +77,12 @@ test('complete preview demo stays inside MCP: proof, fix, test controls, exports
 
 test('plugin management, config import, scope file, output containment and confirmation guards use the selected app',async t=>{
   const host=temp(),app=temp(),outside=temp(),c=await mcpClient(host,{stateDir:temp()});t.after(()=>c.child.kill());
-  const config=path.join(host,'setup.json');fs.writeFileSync(config,JSON.stringify({name:'Configured application',model:{name:'local',provider:'local','base-url':'http://127.0.0.1:9999',model:'fixture'}}));
+  const config=path.join(host,'setup.json');fs.writeFileSync(config,JSON.stringify({name:'Configured application',model:{name:'local',provider:'custom','secret-env':'BYPASS_UNIT_API_KEY',stream:false,'base-url':'http://127.0.0.1:9999',model:'fixture'}}));
   await c.call('bypass_connect_repository',{repository:app,confirmed:true,config});
   assert.equal((await c.call('bypass_repository')).repository.path,app);
   assert.equal((await c.call('bypass_config')).project.name,'Configured application');
-  await c.call('bypass_add_model',{name:'private',provider:'endpoint','base-url':'https://model.example.com',model:'private','allow-private':true});
-  assert.equal(read(app).models.find(m=>m.name==='private').allowPrivate,true);await c.call('bypass_remove_model',{name:'private'});
+  await c.call('bypass_add_model',{name:'private',provider:'custom','secret-env':'BYPASS_UNIT_API_KEY',stream:false,'base-url':'https://model.example.com',model:'private','allow-private':true});
+  assert.equal(read(app).models.length,0); // Host model configuration is a no-op, including imported config.
   await c.call('bypass_add_target',{name:'local',url:'http://127.0.0.1:45678',environment:'local'});
   await c.call('bypass_verify_target',{name:'local',method:'local'});
   fs.writeFileSync(path.join(app,'scope.json'),JSON.stringify({paths:['/api'],maxRequestsPerSecond:1}));
@@ -97,7 +97,7 @@ test('plugin management, config import, scope file, output containment and confi
   assert.equal((await c.raw('bypass_demo_control',{action:'fix'})).result.isError,true);
   assert.equal((await c.raw('bypass_demo_start',{kind:'preview',dir:app})).result.isError,true);
   assert.equal((await c.raw('bypass_demo_start',{port:12})).error.code,-32602);
-  await c.call('bypass_auth_logout');assert.equal((await c.call('bypass_auth_status')).mode,'local');
+  await c.call('bypass_auth_logout');assert.equal((await c.call('bypass_auth_status')).ai.mode,'muse-host');
   assert.equal(await c.close(),0);
 });
 

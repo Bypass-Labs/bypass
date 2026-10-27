@@ -1,3 +1,5 @@
+import { executionMode, hostAI, requireStandaloneAPI } from './execution-mode.mjs';
+import { beginHostReview, hostPlan, hostReviewStep } from './host-review.mjs';
 import { memorySummary, recallMemory, featureContext, forgetMemory, setMemory, consolidateMemory } from './project-memory.mjs';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -27,24 +29,28 @@ function filter(list,options,keys){return list.filter(item=>keys.every(k=>!optio
 const wrap=value=>value?.schemaVersion==='bypass.v1'?value:outcome(value);
 export function readiness(root){
   const s=read(root),target=s.targets.find(t=>t.name===s.activeTarget),model=s.models.find(m=>m.name===s.activeModel);
-  const shared=reviewReadiness(s),liveReady=shared.authorized,liveReview=realEngine(s)?shared.live:liveReady;
+  const host=executionMode()==='muse-host';
+  const shared=reviewReadiness(s),liveReady=shared.authorized,liveReview=host||realEngine(s)?shared.live:liveReady;
   const findings=activeFindings(s),latest=s.runs.at(-1),active=latest&&!terminalRun(latest);
-  const next=active?`run watch ${latest.id}`:realEngine(s)&&shared.sourceBlockers.length?'model test':latest?.status==='failed'?(latest.result?.details?.next||`run show ${latest.id}`):s.checks.some(c=>c.enabled)?'test run --all':realEngine(s)&&shared.canValidateLive&&!shared.live?`probe test ${shared.probes.find(p=>!p.ready).name}`:findings.length?'finding list':liveReview?'scan --mode combined':'scan --mode code';
-  return {runtime:runtimeIdentity(),project:s.project,root,engine:{mode:realEngine(s)?'docker':'mock',analysisImplemented:realEngine(s),label:realEngine(s)?'Docker agents · real source review and scoped HTTP proof':'MOCK analysis · real setup and saved-test replay'},
-    review:scanPlan(s,{mode:liveReview?'combined':'code'}),
-    model:model?{name:model.name,provider:model.provider,destination:model.dataDestination,connection:model.lastAttempt?.status||model.lastTest?.status||'not tested'}:null,
+  const next=active?(latest.executionMode==='muse-host'?`Continue review ${latest.id} in Muse`:`run watch ${latest.id}`):realEngine(s)&&shared.sourceBlockers.length?'model test':latest?.status==='failed'?(latest.result?.details?.next||`run show ${latest.id}`):s.checks.some(c=>c.enabled)?'test run --all':realEngine(s)&&shared.canValidateLive&&!shared.live?`probe test ${shared.probes.find(p=>!p.ready).name}`:findings.length?'finding list':liveReview?'scan --mode combined':'scan --mode code';
+  return {runtime:runtimeIdentity(),project:s.project,root,ai:host?hostAI():{mode:'standalone-api'},engine:{mode:host?'host':realEngine(s)?'docker':'mock',analysisImplemented:host||realEngine(s),label:host?'Muse plans; Bypass executes':realEngine(s)?'Docker agents · real source review and scoped HTTP proof':'MOCK analysis · real setup and saved-test replay'},
+    review:(executionMode()==='muse-host'?hostPlan:scanPlan)(s,{mode:liveReview?'combined':'code'}),
+    model:host?{name:'Active Muse session',provider:'muse-host',destination:'Host session',connection:'host managed'}:model?{name:model.name,provider:model.provider,destination:model.dataDestination,connection:model.lastAttempt?.status||model.lastTest?.status||'not tested'}:null,
     target:target?{name:target.name,url:target.url,environment:target.environment,ownership:target.ownership?.status||'pending',authorized:liveReady}:null,
-    ready:{repository:true,model:realEngine(s)?shared.modelReady:!!model,source:realEngine(s)?shared.source:true,target:!!target,authorized:liveReady,liveTesting:liveReview,liveReview,canValidateLive:shared.canValidateLive},probes:shared.probes,blockers:{source:shared.sourceBlockers,live:shared.liveBlockers},
+    ready:{repository:true,model:host||realEngine(s)?shared.modelReady:!!model,source:host||realEngine(s)?shared.source:true,target:!!target,authorized:liveReady,liveTesting:liveReview,liveReview,canValidateLive:shared.canValidateLive},probes:shared.probes,blockers:{source:shared.sourceBlockers,live:shared.liveBlockers},
     findings:{total:findings.length,hiddenSimulated:s.findings.length-findings.length,confirmed:findings.filter(f=>f.status==='confirmed').length,fixtureConfirmed:findings.filter(f=>f.status==='confirmed_fixture').length,simulated:findings.filter(f=>f.status==='simulated_unproven').length,fixed:findings.filter(f=>f.status==='fixed_verified').length},
     checks:{total:s.checks.length,enabled:s.checks.filter(c=>c.enabled).length,passed:s.checks.filter(c=>c.lastResult?.status==='passed').length,failed:s.checks.filter(c=>c.lastResult?.status==='failed').length},
     memory:memorySummary(s),worker:workerStatus(root),monitors:s.monitors.length,latestRun:summarizeRun(latest),
-    privacy:{evidence:'local',sourceUpload:realEngine(s),analysisInference:realEngine(s)?'Selected source excerpts sent to the active model':'not invoked (mock engine)',secretStorage:'environment variable references; public fixture credentials only in demo'},
+    privacy:{evidence:'local',sourceUpload:host||realEngine(s),analysisInference:host?'Active Muse session receives requested excerpts; no plugin model requests':realEngine(s)?'Selected source excerpts sent to the active model':'not invoked (mock engine)',secretStorage:'environment variable references; public fixture credentials only in demo'},
     next,
-    limitations:[realEngine(s)?'Bounded JSON API account-boundary POC; incomplete coverage.':'White-box and black-box engines are simulated.','Hosted Bypass account, cloud scheduler, and deployment attestation are not connected.','No passing result implies complete security coverage.']};
+    limitations:[host||realEngine(s)?'Bounded JSON API account-boundary POC; incomplete coverage.':'White-box and black-box engines are simulated.','Hosted Bypass account, cloud scheduler, and deployment attestation are not connected.','No passing result implies complete security coverage.']};
 }
 
 export async function execute(key,args=[],o={},context={}){
   const working=path.resolve(o.project||context.cwd||process.cwd());
+  if(executionMode()==='muse-host'&&['model add','model test','model use'].includes(key))return outcome({ai:hostAI(),message:'Model setup and independent connection tests are disabled in the Muse plugin. Continue in the active host session.'});
+  if(executionMode()==='muse-host'&&key==='scan'&&!read(rootFrom(working)).demo)return o.plan?outcome({plan:hostPlan(read(rootFrom(working)),o)}):beginHostReview(rootFrom(working),o,context);
+  if(key==='host review')return hostReviewStep(rootFrom(working),o,context);
   if(key==='init'||key==='repo connect'){
     const config=o.config?loadJSON(o.config):null;
     const {root,repository}=await connectRepository(o.repo||args[0]||config?.repo||working,o.dir||config?.dir,context);
@@ -60,24 +66,15 @@ export async function execute(key,args=[],o={},context={}){
   if(key==='poc start'){const {startPOC}=await import('./poc.mjs');return outcome(await startPOC(o));}
   if(key==='poc stop'){const {stopPOC}=await import('./poc.mjs');return outcome(await stopPOC(rootFrom(working)));}
   if(key==='demo start')return outcome(await startDemo(o.dir||path.join(PACKAGE_ROOT,'.demo/ledger'),{port:o.port||4317}));
-  if(key==='auth status')return outcome({mode:'local',accountRequired:false,muse:'Uses official Muse account when the muse-code provider is selected. Credentials are never extracted.',cloud:'not configured'});
-  if(key==='auth login'){
-    if(o.device)throw new Fault('A hosted Bypass identity service is not configured. Local mode needs no Bypass account. Use --provider muse-code for the official Muse login.',3,{implemented:false});
-    if(o.provider==='muse-code'){
-      need(!o.json&&!o['non-interactive'],'Muse login is interactive. Run muse login in your terminal.',3);
-      const code=await new Promise((resolve,reject)=>{const env={...process.env,MUSE_NO_AUTO_UPDATE:'1'},invocation=commandInvocation('muse',['login'],env);const p=spawn(invocation.command,invocation.args,{stdio:'inherit',env,cwd:working});p.on('error',reject);p.on('close',resolve);});
-      return outcome({provider:'muse-code',message:'Official Muse login completed. Bypass does not read or store Muse credentials.'},code===0?0:3);
-    }
-    need(!o.provider||o.provider==='local','Supported account modes: local or muse-code.');
-    return outcome({mode:'local',accountRequired:false,message:'Local mode is ready. No Bypass account or cloud upload is required.'});
-  }
+  if(key==='auth login'&&o.device)throw new Fault('Hosted device authentication is unavailable. Standalone AI uses explicit provider API keys.',3);
+  if(key==='auth status'||key==='auth login')return outcome(executionMode()==='muse-host'?{ai:hostAI()}:{mode:'standalone-api',accountRequired:false,message:'AI requires a provider API key. Configure it with model add; installed-agent logins are never used.'});
   if(key==='mcp serve'){const {serveMCP}=await import('./mcp.mjs');await serveMCP(working);return null;}
   if(key==='integrate muse'||key==='integrate status'||key==='integrate remove')return integrate(key,args,o,working,context);
   if(key==='doctor'){
     const root=rootFrom(working,false);let s;try{s=read(root);}catch{}
     const checks=[{name:'Node >=22',ok:Number(process.versions.node.split('.')[0])>=22,version:process.version}];
       for(const binary of ['git','muse']){try{const r=await execFile(binary,['--version']);checks.push({name:binary,ok:r.code===0,version:r.stdout});}catch(e){checks.push({name:binary,ok:false,message:e.message,optional:binary==='muse'&&s?.models.find(m=>m.name===s.activeModel)?.provider!=='muse-code'});}}
-      if(!s||realEngine(s)){const docker=await dockerStatus(context);checks.push({name:'Docker',ok:docker.available,version:docker.version,message:docker.message});}
+      if(executionMode()!=='muse-host'&&(!s||realEngine(s))){const docker=await dockerStatus(context);checks.push({name:'Docker',ok:docker.available,version:docker.version,message:docker.message});}
       return outcome({kind:'environment-diagnostics',checks,runtime:runtimeIdentity(),readiness:s?readiness(root):null,message:'Doctor checks configuration and executables. It does not prove model access or app security.'},checks.some(c=>!c.ok&&!c.optional)?3:0);
   }
   const root=rootFrom(working);const s=read(root);const targetName=o.target||s.activeTarget;
@@ -87,7 +84,7 @@ export async function execute(key,args=[],o={},context={}){
       need(['docker','mock'].includes(args[0]),'Choose docker or mock.');
       result=await change(root,state=>{state.settings.analysisEngine=args[0];return {engine:args[0],message:args[0]==='docker'?'Real agents selected. Source excerpts go to your shared model. Use engine doctor and probe add, then scan.':'Offline mocked preview selected.'};});break;
     }
-    case 'engine doctor':result={...(await dockerStatus(context)),engine:realEngine(s)?'docker':'mock',model:s.models.find(m=>m.name===s.activeModel)||null};break;
+    case 'engine doctor':result=executionMode()==='muse-host'?{available:true,engine:'host',ai:hostAI(),message:'Plugin test execution needs no Docker or model profile.'}:{...(await dockerStatus(context)),engine:realEngine(s)?'docker':'mock',model:s.models.find(m=>m.name===s.activeModel)||null};break;
     case 'engine prepare':result=await prepareAgents(context);break;
     case 'probe test':{const validation=await validateProbe(root,args[0],{target:targetName,signal:context.signal});return outcome({validation},validation.status==='ready'?0:3);}
     case 'probe list':result={target:targetName,probes:named(s.targets,targetName,'Target').probes||[]};break;
@@ -157,7 +154,7 @@ export async function execute(key,args=[],o={},context={}){
     case 'model add':{
       safeName(args[0]);const profile=modelProfile(args[0],o);result=await change(root,state=>{need(!state.models.some(m=>m.name===args[0]),'Model profile already exists.');state.models.push(profile);state.activeModel??=profile.name;return {model:profile};});break;
     }
-    case 'model list':result={models:s.models,active:s.activeModel,privacy:'Local inference is available with a compatible local server. A Muse-hosted session can still use its own remote provider.'};break;
+    case 'model list':result={models:s.models,active:s.activeModel,privacy:'Standalone profiles use explicit API keys. Muse plugin reasoning stays in the active host session.'};break;
     case 'model use':result=await change(root,state=>{state.activeModel=named(state.models,args[0],'Model').name;return {activeModel:state.activeModel};});break;
     case 'model test':{
       const m=named(s.models,args[0]||s.activeModel,'Model');
@@ -202,7 +199,7 @@ export async function execute(key,args=[],o={},context={}){
     case 'run list':result={runs:s.runs.map(({result,steps,...r})=>r)};break;
     case 'run show':result={run:named(s.runs,args[0],'Run')};break;
     case 'run watch':return watchRun(root,args[0],o.timeout?duration(o.timeout):300000,context.signal);
-    case 'run stop':result=await change(root,state=>{const r=named(state.runs,args[0],'Run');if(['queued','running'].includes(r.status))r.cancelRequested=true;return {runId:r.id,status:r.status,cancelRequested:r.cancelRequested};});break;
+    case 'run stop':if(s.runs.find(r=>r.id===args[0])?.executionMode==='muse-host')return hostReviewStep(root,{id:args[0],action:'cancel'},context);result=await change(root,state=>{const r=named(state.runs,args[0],'Run');if(['queued','running'].includes(r.status))r.cancelRequested=true;return {runId:r.id,status:r.status,cancelRequested:r.cancelRequested};});break;
     case 'monitor add':{
       safeName(args[0]);need((o.runner||'local')==='local','Hosted cloud workers are not configured. Use --runner local.',3,{implemented:false});const everyMs=duration(o.every||'1h',10000);
       result=await change(root,state=>{const t=named(state.targets,targetName,'Target');scopeReady(t);need(!state.monitors.some(m=>m.name===args[0]),'Monitor name already exists.');const m={name:args[0],target:targetName,everyMs,runner:'local',enabled:true,createdAt:now(),nextRunAt:now()};state.monitors.push(m);return {monitor:m,worker:workerStatus(root),next:'bypass monitor worker --detach'};});break;
@@ -233,7 +230,10 @@ async function integrate(key,args,o,working,{signal,onProgress}={}){
     const operation=args[1],message=`Muse plugin ${operation}${operation==='install'?' — retaining the bundled runtime; this can take up to two minutes':''}`;
     onProgress?.({message});
     const timer=setInterval(()=>onProgress?.({message:`Still waiting for ${message}`}),10000);
-    return execFile('muse',args,{cwd:working,signal,killGroup:true,timeout:120000}).finally(()=>clearInterval(timer));
+    return execFile('muse',args,{cwd:working,signal,killGroup:true,timeout:120000}).catch(error=>{
+      if(error.details?.causeCode==='ENOENT')throw new Fault('Muse Code is not available on PATH. Install or update Muse Code, sign in through its account flow, then retry integration. Native integration was tested with Muse 1.4.13.',3,{reason:'host_unavailable'});
+      throw error;
+    }).finally(()=>clearInterval(timer));
   };
   if(key==='integrate status'){
     const r=await native('plugins','inspect','bypass','--json');let data;try{data=JSON.parse(r.stdout);}catch{data={message:r.stderr||r.stdout};}return outcome({integration:data},r.code===0?0:3);
@@ -250,7 +250,7 @@ async function integrate(key,args,o,working,{signal,onProgress}={}){
   }
   const plugin=fs.existsSync(path.join(PACKAGE_ROOT,'../.muse-plugin/plugin.json'))?path.resolve(PACKAGE_ROOT,'..'):path.join(PACKAGE_ROOT,'plugin');
   need(fs.existsSync(path.join(plugin,'runtime/bin/bypass.mjs')),'The bundled Muse plugin runtime is missing. In the Bypass checkout, run npm run plugin:build, then retry.',3);
-  const validation=await native('plugins','validate',plugin,'--json');need(validation.code===0,'Muse rejected plugin validation.',3,{validation:validation.stdout});
+  const validation=await native('plugins','validate',plugin,'--json');need(validation.code===0,'Muse rejected plugin validation. Use a host with native plugins support (tested with Muse 1.4.13), update Muse if needed, then inspect the validation diagnostics and retry. The installed plugin has not been removed.',3,{validation:validation.stdout});
   const scope=o.scope||'project';need(['user','project'].includes(scope),'Scope must be user or project.');
   let replaced=false;
   if(o.replace&&existing?.record?.id==='bypass'){const removed=await native('plugins','remove','bypass','--json');need(removed.code===0,'Could not replace the existing Muse plugin. Run muse plugins inspect bypass for details.',3);replaced=true;}

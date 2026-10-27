@@ -1,10 +1,12 @@
+import { providerFailure, apiProfile } from '../src/providers.mjs';
+import { addTestModel } from './helpers.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import { runAgent } from '../agents/worker.mjs';
 import { containerArgs } from '../src/agent-runtime.mjs';
-import { parseModelJSON, inferenceFailure } from '../src/inference.mjs';
+import { parseModelJSON } from '../src/inference.mjs';
 import { sourceReader, groundCandidates, executeRealScan } from '../src/real-engine.mjs';
 import { createRun, verifyFinding } from '../src/engine.mjs';
 import { execute } from '../src/service.mjs';
@@ -37,7 +39,7 @@ function controlledRuntime(){
 }
 
 test('real engine consumes source, proves HTTP failure, exports a fixed test, catches regression without AI',async()=>{
-  const root=path.join(temp(),'app');await startPOC({dir:root});
+  const root=path.join(temp(),'app');await startPOC({dir:root});await addTestModel(root);
   try{
     const runtime=controlledRuntime(),run=await createRun(root,'scan',{mode:'combined'});
     const result=await executeRealScan(root,run.id,{mode:'combined'},{runtime,report:async()=>{}});
@@ -152,20 +154,11 @@ test('model output is data: reject executable/non-JSON output and unsupported wo
   assert.ok(!args.includes('-v')&&!args.includes('--privileged'));
 });
 
-test('inference errors retain useful categories without leaking provider text or confusing source with diagnostics',()=>{
-  for(const [diagnostic,reason] of [['HTTP 429 quota exceeded','usage_limit'],['HTTP 401 unauthorized','authentication'],['context length exceeded','context_limit'],['maximum model steps reached','model_step_limit'],['HTTP 503 upstream unavailable','provider_unavailable']]){
-    const error=inferenceFailure({code:1,stderr:diagnostic+' private-value'},[]);
-    assert.equal(error.details.reason,reason);assert.doesNotMatch(JSON.stringify(error)+error.message,/private-value/);
-  }
-  const generic=inferenceFailure({code:1,stderr:''},[{kind:'run_terminal',terminal:'failed',text:'HTTP 401 unauthorized source example'}]);
-  assert.equal(generic.details.reason,'muse_failed');assert.doesNotMatch(generic.message,/login/);
-});
-
 test('real source-only planning is available without DNS; HTTP proof needs approved resource and model',async()=>{
   const root=temp();await execute('init',[root],{});await execute('engine use',['docker'],{project:root});
   let plan=(await execute('scan',[],{project:root,mode:'code',plan:true})).plan;
-  assert.match(plan.blockers.join(' '),/shared model/);
-  await execute('model add',['local'],{project:root,provider:'local','base-url':'http://127.0.0.1:1234',model:'test-model'});
+  assert.match(plan.blockers.join(' '),/API-key profile/);
+  await execute('model add',['local'],{project:root,provider:'custom','secret-env':'BYPASS_UNIT_API_KEY',stream:false,'base-url':'http://127.0.0.1:1234',model:'test-model'});
   plan=(await execute('scan',[],{project:root,mode:'code',plan:true})).plan;
   assert.deepEqual(plan.blockers,[]);assert.equal(plan.simulation,false);assert.equal(plan.blackBox.status,'deferred');
   const combined=(await execute('scan',[],{project:root,mode:'combined',plan:true})).plan;
@@ -193,18 +186,6 @@ test('Docker worker protocol completes and cancellation removes the actual conta
 test('black-box skips model calls when all approved behaviors already pass',async()=>{
   let calls=0;const result=await runAgent('black-box',{resources:[]},async()=>{calls++;throw new Error('Unexpected model call');});
   assert.equal(calls,0);assert.match(result.summary,/Exact passing checks/);
-});
-
-test('compatible local inference sends the configured model and rejects invalid output without fallback',async()=>{
-  const http=await import('node:http'),{infer}=await import('../src/inference.mjs');let payload,invalid=false;
-  const server=http.createServer(async(req,res)=>{let body='';for await(const chunk of req)body+=chunk;payload=JSON.parse(body);res.setHeader('Content-Type','application/json');res.end(JSON.stringify({choices:[{message:{content:invalid?'invented prose':'{"action":"finish","candidates":[]}'}}]}));});
-  await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));
-  try{
-    const profile={provider:'local',baseUrl:`http://127.0.0.1:${server.address().port}/v1`,model:'my-local-model'};
-    const messages=[{role:'user',content:'Inspect the provided source.'}];
-    assert.equal((await infer(profile,messages)).action,'finish');assert.equal(payload.model,'my-local-model');assert.deepEqual(payload.messages,messages);
-    invalid=true;await assert.rejects(infer(profile,messages),/JSON object/);
-  }finally{await new Promise(resolve=>server.close(resolve));}
 });
 
 test('anonymous exposure is confirmed independently of a correctly denied outsider',async()=>{

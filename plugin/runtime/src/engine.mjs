@@ -1,3 +1,4 @@
+import { requireStandaloneAPI } from './execution-mode.mjs';
 import { consolidateMemory } from './project-memory.mjs';
 import { read, change, event, writeEvidence } from './store.mjs';
 import { inventory } from './repository.mjs';
@@ -47,6 +48,7 @@ function mockCandidate(state,inv,targetName){
     sourceFingerprint:inv.fingerprint,createdAt:now(),history:[]};
 }
 export async function executeRun(root,runId,externalSignal,onProgress,{runtime}={}){
+  if(read(root).runs.find(r=>r.id===runId)?.kind==='scan'&&realEngine(read(root)))requireStandaloneAPI();
   const controller=new AbortController();
   const report=async(stage,message)=>{await progress(root,runId,stage,message);onProgress?.({stage,message});};
   const cancel=()=>controller.abort();externalSignal?.addEventListener('abort',cancel,{once:true});
@@ -108,7 +110,7 @@ export async function verifyFinding(root,findingId,{target,build,retest=false,si
   target=target||finding.target||state.activeTarget;
   const t=named(state.targets,target,'Target');scopeReady(t);
   need(finding.target===target,'Finding is bound to another target. Add an explicit saved-test binding for another environment.',3);
-  if(finding.engine!=='docker'&&(!finding.fixture||!state.demo||target!==state.demo.target)){
+  if(!['docker','host'].includes(finding.engine)&&(!finding.fixture||!state.demo||target!==state.demo.target)){
     const verification={status:'simulated_unproven',simulation:true,requests:0,modelCalls:0,reason:'The live verification engine is mocked. No exploit was sent to this deployed application.'};
     await change(root,s=>{const f=named(s.findings,findingId,'Finding');f.history.push({at:now(),action:retest?'retest':'verify',...verification});f.verification=verification;});
     return outcome({findingId,verification},3);
@@ -117,7 +119,7 @@ export async function verifyFinding(root,findingId,{target,build,retest=false,si
   const check={target,fixture:!!finding.fixture,engine:finding.engine,bindings:{[target]:finding.binding}};
   const result=await replay(specFor(state,check,target),{signal});
   const inv=await inventory(root);
-  const real=finding.engine==='docker';
+  const real=['docker','host'].includes(finding.engine);
   const previouslyConfirmed=finding.history.some(h=>h.status==='failed')||finding.verification?.status==='failed';
   const status=result.status==='failed'?(real?'confirmed':'confirmed_fixture'):retest&&result.status==='passed'&&(!real||previouslyConfirmed)?'fixed_verified':result.status==='passed'?(real?'not_reproduced':'not_reproduced_fixture'):'blocked';
   await change(root,s=>{const f=named(s.findings,findingId,'Finding');f.status=status;f.verification={...result,origin:t.url,fixture:!!finding.fixture,simulation:false,at:now(),build:build?{value:build,source:'operator-supplied, not attested'}:null};f.history.push({action:retest?'retest':'verify',...f.verification});f.sourceFingerprint=inv.fingerprint;event(s,status,`${f.title}: ${status}`,{findingId});});

@@ -1,3 +1,4 @@
+import { addTestModel } from './helpers.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -11,11 +12,11 @@ import { pluginOnboarding } from '../src/plugin-onboarding.mjs';
 import { startPOC, stopPOC } from '../src/poc.mjs';
 import { printResult } from '../src/ui.mjs';
 import { comparePlugin } from '../src/runtime-identity.mjs';
-import { inferenceFailure } from '../src/inference.mjs';
+import { providerFailure } from '../src/providers.mjs';
 import { Fault } from '../src/util.mjs';
 
 const onboarding=root=>pluginOnboarding(root,root,{checkDocker:async()=>({available:true})});
-async function fixture(t){const root=path.join(temp(),'app');await startPOC({dir:root});t.after(()=>stopPOC(root));return root;}
+async function fixture(t){const root=path.join(temp(),'app');await startPOC({dir:root});await addTestModel(root);t.after(()=>stopPOC(root));return root;}
 const noAI={prepareAgents:async()=>assert.fail('No Docker before valid accounts/resource'),infer:async()=>assert.fail('No AI before valid accounts/resource'),testModel:async()=>assert.fail('No model preflight before valid accounts/resource')};
 
 test('missing credentials are blocked consistently in plan, status and onboarding, with zero model calls',async t=>{
@@ -59,7 +60,7 @@ test('positive preflight validates only three controls; changing token, binding 
 
 test('failed white-box run preserves source reads and structured cause, terminates watch and stays compact in context',async()=>{
   const root=temp();fs.writeFileSync(path.join(root,'app.js'),'export const route = "/api/items";\n');
-  await execute('init',[root]);await execute('engine use',['docker'],{project:root});await execute('model add',['muse'],{project:root,provider:'muse-code'});
+  await execute('init',[root]);await execute('engine use',['docker'],{project:root});await execute('model add',['muse'],{project:root,provider:'meta','secret-env':'BYPASS_UNIT_API_KEY',model:'test-model',stream:false});
   const run=await createRun(root,'scan',{mode:'code'});
   const result=await executeRun(root,run.id,null,null,{runtime:{
     prepareAgents:async()=>({image:'scripted'}),
@@ -77,9 +78,9 @@ test('failed white-box run preserves source reads and structured cause, terminat
 });
 
 test('failed model configuration never shows ready and active runs outrank old findings',async()=>{
-  const root=temp();await execute('init',[root]);await execute('engine use',['docker'],{project:root});await execute('model add',['muse'],{project:root,provider:'muse-code'});
+  const root=temp();await execute('init',[root]);await execute('engine use',['docker'],{project:root});await execute('model add',['muse'],{project:root,provider:'meta','secret-env':'BYPASS_UNIT_API_KEY',model:'test-model',stream:false});
   await change(root,s=>{s.models[0].lastAttempt={status:'failed',checkedAt:new Date().toISOString()};s.findings.push({id:'mock',simulation:true,status:'simulated_unproven'});});
-  assert.equal(readiness(root).ready.model,false);assert.equal(scanPlan(read(root),{mode:'code'}).whiteBox.status,'blocked');assert.equal((await onboarding(root)).stage,'connection');
+  assert.equal(readiness(root).ready.model,false);assert.equal(scanPlan(read(root),{mode:'code'}).whiteBox.status,'blocked');assert.equal((await onboarding(root)).stage,'app');
   assert.equal(readiness(root).findings.total,0);assert.equal(readiness(root).findings.hiddenSimulated,1);
   assert.equal((await execute('finding list',[],{project:root})).findings.length,0);assert.equal(read(root).findings.length,1,'historical evidence retained');
   const run=await createRun(root,'scan',{mode:'code'});assert.equal(readiness(root).next,`run watch ${run.id}`);
@@ -98,8 +99,8 @@ test('installed versus loaded cache detects stale session even at the same versi
 });
 
 test('provider diagnostic retains HTTP cause without returning provider text or tokens',()=>{
-  const error=inferenceFailure({code:1,stderr:'PRIVATE_TOKEN source body'},[{kind:'task_lifecycle',event:{details:{facets:[{kind:'external_attempt',http_status:429}]}}}]);
-  assert.equal(error.details.reason,'usage_limit');assert.equal(error.details.httpStatus,429);assert.doesNotMatch(JSON.stringify(error),/PRIVATE_TOKEN|source body/);
+  const error=providerFailure({status:429,message:'PRIVATE_TOKEN source body'});
+  assert.equal(error.details.reason,'rate_limit');assert.equal(error.details.httpStatus,429);assert.doesNotMatch(JSON.stringify(error),/PRIVATE_TOKEN|source body/);
 });
 
 

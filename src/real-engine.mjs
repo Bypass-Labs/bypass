@@ -1,3 +1,5 @@
+import { saveSourceCandidates, executeProbe } from './security-execution.mjs';
+import { ProviderSession } from './providers.mjs';
 import { consolidateMemory, recallMemory, rememberSource, rememberObservation } from './project-memory.mjs';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -81,15 +83,17 @@ export async function executeRealScan(root,runId,options,{signal,report,runtime=
   const profile=structuredClone(named(initial.models,initial.activeModel,'Model'));
   let modelCalls=0,focus=null,sourceFingerprint=null,memoryReceipt=null;const modelUsage=[],containers=[],probes=[],candidateIds=[],sourceReads=[],preflight=[];
   const persist=async()=>change(root,s=>{const run=named(s.runs,runId,'Run');run.modelCalls=modelCalls;run.simulation=false;run.agentEvidence={model:{name:profile.name,provider:profile.provider,model:profile.model},modelUsage,containers,probes,sourceReads,preflight,focus,sourceFingerprint,memory:memoryReceipt};});
+  const sessions=new Map();
   const model=async(role,messages,activeSignal=signal)=>{
+    if(!sessions.has(role))sessions.set(role,new ProviderSession(profile));
     need(modelCalls<18,'Shared model call budget exceeded.',3);modelCalls++;const usage={role,call:modelCalls,at:now(),status:'started'};modelUsage.push(usage);await persist();
     await report(role,`${role}: model call ${modelCalls} · ${profile.name} / ${profile.model}`);
     const started=Date.now(),progress=[];let lastPhase;
     const heartbeat=setInterval(()=>{report(role,`${role}: waiting for ${profile.name} · ${Math.floor((Date.now()-started)/1000)}s / ${INFERENCE_TIMEOUT_MS/1000}s · cancel to stop`).catch(()=>{});},10000);
-    try{const result=await runtime.infer(profile,messages,{signal:activeSignal,schema:modelResponseSchema(role),onProgress:event=>{
+    try{const result=await runtime.infer(profile,messages,{signal:activeSignal,schema:modelResponseSchema(role),session:sessions.get(role),onProgress:event=>{
       if(event.kind==='model'){
         usage.resolvedModel=event.model;
-        if(profile.model==='Muse session default'){profile.model=event.model;progress.push(report(role,`Using ${event.model} for this run`));}
+
       }else if(event.phase!==lastPhase){lastPhase=event.phase;usage.lastPhase=event.phase;if(event.httpStatus)usage.httpStatus=event.httpStatus;progress.push(report(role,`${role}: ${event.message}`));}
     }});usage.status='completed';return result;}
     catch(error){usage.status='failed';usage.reason=error.details?.reason||'model_response';error.details={...error.details,stage:role,call:modelCalls,lastPhase:usage.lastPhase,...(usage.httpStatus?{httpStatus:usage.httpStatus}:{}),next:'model test'};throw error;}
@@ -114,7 +118,7 @@ export async function executeRealScan(root,runId,options,{signal,report,runtime=
     try{
       const check=await runtime.testModel(profile,root,{signal,timeoutMs:30000});
       await change(root,s=>{const m=named(s.models,profile.name,'Model');m.lastAttempt=check;m.lastTest=check;});
-      if(profile.provider==='muse-code'&&profile.model==='Muse session default'&&check.model)profile.model=check.model;
+
       usage.status='completed';usage.resolvedModel=check.model;
       await report('connection',`Model connection passed in ${((Date.now()-started)/1000).toFixed(1)}s · ${profile.model}. Starting review.`);
     }catch(error){
@@ -122,7 +126,7 @@ export async function executeRealScan(root,runId,options,{signal,report,runtime=
       await change(root,s=>{named(s.models,profile.name,'Model').lastAttempt={status:'failed',checkedAt:now(),reason:usage.reason,repositorySent:false};});
       error.details={...error.details,stage:'connection',next:'model test'};throw error;
     }finally{usage.elapsedMs=Date.now()-started;usage.finishedAt=now();await persist();}
-  }else if(profile.provider==='muse-code'&&profile.model==='Muse session default'&&last?.model)profile.model=last.model;
+  }
   const inv=plan.mode==='live'?{fingerprint:null,files:[],sourceFileCount:0,routes:[],skipped:true}:await inventory(root,options.base);
   sourceFingerprint=inv.fingerprint;
   await consolidateMemory(root);
@@ -164,16 +168,7 @@ export async function executeRealScan(root,runId,options,{signal,report,runtime=
     candidates=groundCandidates(worker.result.candidates,reader,inv).filter(candidate=>!scope.exactPassingChecks.some(check=>check.binding?.resourcePath===candidate.resourcePath));await persist();
     await report('white-box',`${candidates.length} source hypothesis(es) grounded in actual file lines.`);
   }
-  // Save genuine source hypotheses even if the later HTTP phase is blocked.
-  for(const candidate of candidates){
-    const binding=bindings.find(b=>b.resourcePath===candidate.resourcePath);
-    const fingerprint=hash({kind:'source',file:candidate.sourceEvidence.file,line:candidate.sourceEvidence.line,category:candidate.category,target:plan.target,resourcePath:candidate.resourcePath});
-    const saved=await change(root,s=>{
-      let finding=s.findings.find(f=>f.fingerprint===fingerprint);
-      if(!finding){finding={id:id('finding'),fingerprint,createdAt:now(),history:[]};s.findings.push(finding);}
-      Object.assign(finding,redact({...candidate,status:'unproven',simulation:false,engine:'docker',fixture:!!(initial.demo||initial.poc),target:plan.target,targetOrigin:target?.url||null,severity:'high',binding:binding?Object.fromEntries(Object.entries(binding).filter(([key])=>key!=='name')):null,sourceFingerprint:inv.fingerprint,lastRunId:runId}));return finding;
-    });candidateIds.push(saved.id);
-  }
+  await saveSourceCandidates(root,{candidates,bindings,targetName:plan.target,sourceFingerprint:inv.fingerprint,runId,candidateIds});
   if(plan.mode!=='code'){
     const visited=new Set();
     const worker=await runWorker('black-box',{projectMemory,resources:scope.resources,candidates,focus:orchestration.focus},async(method,params,activeSignal)=>{
@@ -181,26 +176,7 @@ export async function executeRealScan(root,runId,options,{signal,report,runtime=
       need(method==='probe'&&Number.isInteger(params.bindingIndex)&&bindings[params.bindingIndex],'Black-box requested an unavailable probe.',3);
       need(!visited.has(params.bindingIndex),'Each resource probe may run once per investigation.',3);visited.add(params.bindingIndex);
       const rawBinding=bindings[params.bindingIndex],binding=Object.fromEntries(Object.entries(rawBinding).filter(([key])=>key!=='name'));
-      const state=read(root); // honor revocation and changes immediately before each probe
-      const result=await replay(specFor(state,{target:plan.target,engine:'docker',fixture:!!(state.demo||state.poc),bindings:{[plan.target]:binding}},plan.target),{signal:activeSignal});
-      const observed={resource:rawBinding.name,bindingIndex:params.bindingIndex,...result};probes.push(observed);await rememberObservation(root,{target:state.targets.find(t=>t.name===plan.target),binding,result,runId,sourceFingerprint:inv.fingerprint});await persist();
-      await report('black-box',`${rawBinding.name}: ${result.status} · ${result.controls.map(c=>`${c.label} HTTP ${c.status}`).join(' / ')}`);
-      if(result.status==='failed'){
-        const saved=await change(root,s=>{
-          let finding=s.findings.find(f=>candidateIds.includes(f.id)&&f.binding?.resourcePath===binding.resourcePath);
-          const fingerprint=hash({kind:'http-account-boundary',target:plan.target,binding});
-          finding??=s.findings.find(f=>f.fingerprint===fingerprint);
-          if(!finding){finding={id:id('finding'),fingerprint,title:`Unauthorized access to ${binding.resourcePath}`,category:'cross-account-access',severity:'high',hypothesis:result.reason,recommendation:'Authenticate the caller and enforce resource ownership; preserve authorized access.',sourceEvidence:{kind:'http',message:'Discovered through observed HTTP controls; no source attribution.'},createdAt:now(),history:[]};s.findings.push(finding);}
-          Object.assign(finding,{category:result.reason.startsWith('Unauthenticated')?'missing-authentication':'cross-account-access',status:'confirmed',simulation:false,engine:'docker',fixture:!!(state.demo||state.poc),target:plan.target,binding,sourceFingerprint:inv.fingerprint,lastRunId:runId,verification:{...result,origin:state.targets.find(t=>t.name===plan.target).url,at:now(),simulation:false}});finding.history.push({action:'verify',...finding.verification});event(s,'confirmed',finding.title,{findingId:finding.id});return finding;
-        });if(!candidateIds.includes(saved.id))candidateIds.push(saved.id);
-      }
-      if(result.status!=='failed')await change(root,s=>{
-        for(const finding of s.findings.filter(f=>candidateIds.includes(f.id)&&f.binding?.resourcePath===binding.resourcePath)){
-          finding.status=result.status==='passed'?'not_reproduced':'blocked';
-          finding.verification={...result,origin:state.targets.find(t=>t.name===plan.target).url,at:now(),simulation:false};finding.history.push({action:'verify',...finding.verification});
-        }
-      });
-      return observed;
+      return executeProbe(root,{binding,rawBinding,bindingIndex:params.bindingIndex,targetName:plan.target,sourceFingerprint:inv.fingerprint,runId,candidateIds,probes,signal:activeSignal,persist,report});
     });
     await persist();
   }

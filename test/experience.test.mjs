@@ -29,7 +29,7 @@ test('walkthrough advances on Enter through real proof, independent pass/fail, s
   assert.equal(state.monitors[0].enabled,false);
   assert.ok(result.files.every(file=>fs.existsSync(file)));
   assert.ok(state.runs.every(r=>r.result?.modelCalls===0));
-  assert.equal(state.models[0].lastTest,undefined);
+  assert.equal(state.models.length,0);
   assert.match(output.join('\n'),/Independent Node test passed/);
   assert.match(output.join('\n'),/Regression caught by both/);
   assert.match(output.join('\n'),/WALKTHROUGH COMPLETE/);

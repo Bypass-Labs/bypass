@@ -3,7 +3,7 @@ import { spawn } from 'node:child_process';
 import { setTimeout as delay } from 'node:timers/promises';
 import { commandInvocation } from './command.mjs';
 
-export const VERSION = '0.4.2';
+export const VERSION = '0.5.0';
 export const SCHEMA = 'bypass.v1';
 export const now = () => new Date().toISOString();
 export const id = prefix => `${prefix}_${randomUUID().slice(0, 8)}`;
@@ -32,11 +32,14 @@ export function duration(value, min = 1000) {
   need(ms >= min && ms <= 365 * 86400000, `Invalid duration '${value}'. Use e.g. 30s, 5m, 1h (minimum ${min}ms).`); return ms;
 }
 export function cleanText(value) { return String(value).replace(/[\x00-\x08\x0b-\x1f\x7f]/g, '').slice(0, 2000); }
+const registeredSecrets=new Set();
+export function registerSecret(value){if(typeof value==='string'&&value.length>=4)registeredSecrets.add(value);}
 export function redact(value) {
   let text = typeof value === 'string' ? value : JSON.stringify(value);
   for (const [key, secret] of Object.entries(process.env)) {
     if (/(TOKEN|SECRET|PASSWORD|API_KEY|COOKIE)/i.test(key) && secret?.length >= 4) text = text.split(secret).join('[REDACTED]');
   }
+  for(const secret of registeredSecrets)text=text.split(secret).join('[REDACTED]');
   text = text.replace(/(Bearer\s+)[^\s"<>]+/gi, '$1[REDACTED]');
   return typeof value === 'string' ? text : JSON.parse(text);
 }

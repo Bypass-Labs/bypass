@@ -1,3 +1,4 @@
+import { promptAPIProfile } from './provider-setup.mjs';
 import { execute, readiness } from './service.mjs';
 import { connectProject } from './onboarding-repository.mjs';
 import { checkModelConnection } from './model-check.mjs';
@@ -60,27 +61,16 @@ export async function onboard(options={}, args=[], io={}) {
 
   say('\nStep 2 of 4 / Choose your model connection');
   let model=read(root).models.find(m=>m.name===read(root).activeModel);
+  if(model&&model.executionMode!=='standalone-api'){say('Your old model profile is retained but cannot run standalone AI. Choose an API-key profile below, or use /bypass:review inside Muse.');model=null;}
   if(model) say(`Keeping ${model.name} · ${model.provider} · ${model.lastAttempt?.status||model.lastTest?.status||'connection not tested'}. Change it later in Models & privacy.`);
   else await addModel();
   async function addModel(){await recover(async()=>{
-    const selection=await pick('How would you like to connect to a model?',[
-      {label:'Muse Code subscription — use your existing account',provider:'muse-code',name:'muse'},
-      {label:'Local Muse / local model — compatible server on this machine',provider:'local',name:'local'},
-      {label:'Self-hosted model — your compatible HTTPS endpoint',provider:'endpoint',name:'selfhosted'}
-    ]);
-    const config={provider:selection.provider};
-    if(selection.provider!=='muse-code'){
-      config['base-url']=await ask('Model server URL',selection.provider==='local'?'http://127.0.0.1:1234/v1':'');
-      config.model=await ask('Model ID on that server');
-      const secret=await ask('API-token environment variable (Enter if not needed)');if(secret)config['secret-env']=secret;
-      if(advanced&&selection.provider==='endpoint')config['allow-private']=await yes('Allow this model endpoint on a private network?');
-    }
+    const {selection,config}=await promptAPIProfile(ask,pick);
     const name=advanced?await ask('Profile name',selection.name):unique(selection.name,read(root).models);
     const result=await call(root,'model add',[name],config);await call(root,'model use',[name]);model=result.model;
     io.setContext?.({model:`${model.name} · ${model.provider} · not tested`});
     say(`✓ Model choice saved: ${model.name}\nModel runs through: ${model.dataDestination}\nConnection has not been checked yet.`);
-    if(selection.provider==='muse-code')say('Uses the official Muse login. If needed, run muse login in your terminal.');
-    else if(selection.provider==='local')say('Requires your running compatible local server. No weights are downloaded and there is no cloud fallback.');
+    say('Only the environment-variable reference is saved. Set its value privately before running an AI review.');
   });}
   if(model&&(model.lastAttempt||model.lastTest)?.status!=='connected'){
     say('Optional: send one small test prompt. Provider usage may apply. You can finish setup without this check.');

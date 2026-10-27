@@ -15,7 +15,7 @@ export function specFor(state,check,targetName){
   const owner=named(state.identities,b.owner,'Identity'),outsider=named(state.identities,b.outsider,'Identity');
   need(owner.target===target.name&&outsider.target===target.name,'Identities belong to a different target.',3);
   return {schemaVersion:1,title:check.title,origin:target.url,environment:target.environment,authorization:target.authorization,ownershipExpiresAt:target.ownership.expiresAt,timeoutMs:state.settings.requestTimeoutMs,
-    requireIdentityControl:check.engine==='docker',identityField:b.identityField||'id',resourcePath:b.resourcePath,resourceId:b.resourceId,idField:b.idField||'id',owner,outsider,fixture:!!(check.fixture&&((state.demo&&state.demo.target===target.name)||(state.poc&&target.pocFixture)))};
+    requireIdentityControl:['docker','host'].includes(check.engine),identityField:b.identityField||'id',resourcePath:b.resourcePath,resourceId:b.resourceId,idField:b.idField||'id',owner,outsider,fixture:!!(check.fixture&&((state.demo&&state.demo.target===target.name)||(state.poc&&target.pocFixture)))};
 }
 export async function runChecks(root,{checkId,all=false,target,signal,runId}={}){
   let state=read(root);const checks=state.checks.filter(c=>c.enabled&&(all||c.id===checkId));
@@ -32,13 +32,13 @@ export async function runChecks(root,{checkId,all=false,target,signal,runId}={})
       const c=named(s.checks,check.id,'Check');c.lastResult=results.at(-1);
       const finding=s.findings.find(f=>f.id===c.findingId);
       if(result.status==='failed'&&finding&&finding.target===(target||check.target)){
-        finding.status=finding.engine==='docker'?'confirmed':finding.fixture?'confirmed_fixture':'regression_failed';
+        finding.status=['docker','host'].includes(finding.engine)?'confirmed':finding.fixture?'confirmed_fixture':'regression_failed';
         finding.history.push({at:now(),action:'regression',...results.at(-1)});
       }
       event(s,'regression',`${check.title}: ${results.at(-1).status}`,{checkId:check.id,target:target||check.target});
     });
   }
-  if(checks.some(c=>c.engine==='docker'))await consolidateMemory(root);
+  if(checks.some(c=>['docker','host'].includes(c.engine)))await consolidateMemory(root);
   return {results,exitCode:checks.length?aggregate(results):3,modelCalls:0,empty:checks.length===0,message:checks.length?'Saved tests replayed without a model.':'No enabled saved tests. No coverage has been established.'};
 }
 export async function saveCheck(root,findingId){

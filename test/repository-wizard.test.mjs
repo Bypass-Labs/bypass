@@ -10,7 +10,7 @@ import { execFile } from '../src/util.mjs';
 import { temp } from './helpers.mjs';
 
 const remote='https://example.test/team/job-finder';
-const remainingSetup=['1','n','','n']; // Muse, no connection test, defer app/dashboard; plugin is a separate flow.
+const remainingSetup=['1','','','','n','','n']; // Muse, no connection test, defer app/dashboard; plugin is a separate flow.
 
 async function fixture(t) {
   const home=temp(), source=path.join(home,'source'), config=path.join(home,'gitconfig');
@@ -52,7 +52,7 @@ test('Git URL plus Enter clones into the suggested project folder and continues 
   assert.equal(actual.prompts.find(p=>p.label==='Clone into folder').fallback,'~/Projects/job-finder');
   assert.equal(fs.readFileSync(path.join(actual.result.root,'README.md'),'utf8'),'Fixture source; never executed.');
   assert.equal(read(actual.result.root).project.repository.kind,'git');
-  assert.equal(read(actual.result.root).models[0].provider,'muse-code');
+  assert.equal(read(actual.result.root).models[0].provider,'meta');
 });
 
 test('an occupied parent suggests a child and retries only the folder, preserving existing files',async t=>{

@@ -14,7 +14,7 @@ test('repository onboarding is idempotent, never executes source, and holds live
   const root=temp();fs.writeFileSync(path.join(root,'app.mjs'),`throw new Error('Repository code must never run during init');`);
   const first=await cli(root,'init',root);assert.equal(first.code,0);assert.equal(first.data.resumed,false);
   const second=await cli(root,'init',root);assert.equal(second.data.resumed,true);assert.equal(first.data.readiness.project.id,second.data.readiness.project.id);
-  assert.equal((await cli(root,'model','add','local','--provider','local','--base-url','http://127.0.0.1:1234/v1','--model','muse-local')).code,0);
+  assert.equal((await cli(root,'model','add','local','--provider','custom','--base-url','http://127.0.0.1:1234/v1','--model','muse-local')).code,0);
   assert.equal((await cli(root,'target','add','app','--url','http://127.0.0.1:4521','--environment','local')).code,0);
   const blocked=await cli(root,'scan');assert.equal(blocked.code,3);assert.match(blocked.data.run.result.message,/ownership/i);
   assert.equal((await cli(root,'target','verify','app','--method','local')).code,0);
@@ -67,11 +67,11 @@ test('DNS ownership checks require the complete fresh project-bound challenge; p
 });
 
 test('model smoke uses a real compatible endpoint and sends only a synthetic prompt; redirects are not followed',async t=>{
-  const requests=[];const server=http.createServer((req,res)=>{let body='';req.on('data',b=>body+=b);req.on('end',()=>{requests.push({url:req.url,body,authorization:req.headers.authorization});if(req.url==='/redirect'){res.writeHead(302,{Location:'/secret'});res.end();}else{res.writeHead(200,{'Content-Type':'application/json'});res.end(JSON.stringify({choices:[{message:{content:'BYPASS_MODEL_OK'}}]}));}});});
+  const requests=[];const server=http.createServer((req,res)=>{let body='';req.on('data',b=>body+=b);req.on('end',()=>{requests.push({url:req.url,body,authorization:req.headers.authorization});if(req.url==='/redirect'){res.writeHead(302,{Location:'/secret'});res.end();}else{res.writeHead(200,{'Content-Type':'application/json'});res.end(JSON.stringify({choices:[{finish_reason:'stop',message:{role:'assistant',content:'BYPASS_MODEL_OK'}}]}));}});});
   await new Promise(res=>server.listen(0,'127.0.0.1',res));t.after(()=>new Promise(res=>server.close(res)));
   const origin=`http://127.0.0.1:${server.address().port}`;const root=temp();await execute('init',[root]);
   process.env.BYPASS_TEST_API_KEY='unique-secret-for-test-only';t.after(()=>delete process.env.BYPASS_TEST_API_KEY);
-  await execute('model add',['local'],{project:root,provider:'local','base-url':origin+'/v1',model:'fixture-model','secret-env':'BYPASS_TEST_API_KEY'});
+  await execute('model add',['local'],{project:root,provider:'custom','secret-env':'BYPASS_UNIT_API_KEY',stream:false,'base-url':origin+'/v1',model:'fixture-model','secret-env':'BYPASS_TEST_API_KEY'});
   const check=await execute('model test',['local'],{project:root});assert.equal(check.check.status,'connected');assert.equal(requests[0].url,'/v1/chat/completions');
   assert.equal(JSON.parse(requests[0].body).messages[0].content,'Reply with exactly BYPASS_MODEL_OK.');
   assert.equal(requests[0].authorization,'Bearer unique-secret-for-test-only');

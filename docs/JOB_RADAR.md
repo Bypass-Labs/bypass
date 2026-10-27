@@ -8,13 +8,13 @@ This walkthrough uses `https://github.com/Bypass-Labs/job-finder` and `https://j
 
 Start with `/bypass:start`, then say:
 
-> Review https://github.com/Bypass-Labs/job-finder with Bypass. Its production app is https://job-radar.app. Reuse my existing checkout and saved setup if available. Use my Muse subscription and real Docker agents. I authorize read-only testing of /api/profile and /api/run. Guide me through anything missing.
+> Review https://github.com/Bypass-Labs/job-finder with Bypass. Its production app is https://job-radar.app. Reuse my existing checkout and saved setup if available. Use this Muse session for reasoning and Bypass tools for actual source and HTTP evidence. I authorize read-only testing of /api/profile and /api/run. Guide me through anything missing.
 
 Bypass should show the **actual selected folder**, loaded version/source, model and next step. An old walkthrough's DNS date is not current proof: check the selected project's saved ownership and scope. If needed, publish the generated TXT record, then ask Bypass to verify it. Source-only review can run while DNS propagates.
 
 ## 2. Finish ownership, scope and model setup first
 
-Confirm your two dedicated test accounts work in the app. Complete DNS, testing permission, Docker and the model connection before fetching short-lived tokens. Then create or open one recent run owned by the first account and keep its exact ID. Run data is held in application memory and can disappear after an app restart.
+Confirm your two dedicated test accounts work in the app. Confirm host subscription/Standard settings and complete DNS and testing permission before fetching short-lived tokens. Then create or open one recent run owned by the first account and keep its exact ID. Run data is held in application memory and can disappear after an app restart.
 
 ## 3. Get the two Firebase ID tokens privately
 

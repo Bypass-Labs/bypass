@@ -27,12 +27,12 @@ test('MCP negotiates, validates typed tools, shares CLI state, and closes cleanl
   const selected=await request('tools/call',{name:'bypass_connect_repository',arguments:{repository:root,confirmed:true}});assert.equal(selected.result.isError,false);
   const feature=await request('tools/call',{name:'bypass_feature_context',arguments:{task:'Add a feature',files:'api.mjs'}});assert.equal(feature.result.isError,false);assert.equal(JSON.parse(feature.result.content[0].text).kind,'feature-security-context');assert.equal(read(root).models.length,0);
   const invalidFeature=await request('tools/call',{name:'bypass_feature_context',arguments:{task:'Add export',files:['api.mjs']}});assert.equal(invalidFeature.error.code,-32602);
-  const status=await request('tools/call',{name:'bypass_status',arguments:{},_meta:{progressToken:'status-1'}});assert.equal(status.result.isError,false);assert.equal(JSON.parse(status.result.content[0].text).engine.mode,'mock');
+  const status=await request('tools/call',{name:'bypass_status',arguments:{},_meta:{progressToken:'status-1'}});assert.equal(status.result.isError,false);assert.equal(JSON.parse(status.result.content[0].text).engine.mode,'host');
   assert.equal(notifications.filter(n=>n.method==='notifications/progress').length,2);
   const invalid=await request('tools/call',{name:'bypass_add_target',arguments:{name:'app',url:'http://127.0.0.1:4444',environment:'local',evil:'ignored?'}});assert.equal(invalid.error.code,-32602);
   const added=await request('tools/call',{name:'bypass_add_target',arguments:{name:'app',url:'http://127.0.0.1:4444',environment:'local'}});assert.equal(added.result.isError,false);
   assert.equal((await execute('target list',[],{project:root})).targets.length,1);
-  const resource=await request('resources/read',{uri:'bypass://context'});assert.match(resource.result.contents[0].text,/mock/);
+  const resource=await request('resources/read',{uri:'bypass://context'});assert.match(resource.result.contents[0].text,/muse-host/);
   const prompt=await request('prompts/get',{name:'bypass_review'});assert.equal(prompt.result.messages[0].role,'user');
   const unknown=await request('does/not/exist');assert.equal(unknown.error.code,-32601);
   child.stdin.write('null\nnot-json\n[]\n');await request('ping');assert.deepEqual(protocolErrors.map(e=>e.error.code),[-32600,-32700,-32600]);
@@ -66,13 +66,13 @@ test('plugin selects the application explicitly, keeps host state untouched, and
   assert.equal(pendingPlan.result.isError,false,'a readable blocked plan is not a tool failure');
   assert.equal(data(pendingPlan).plan.repository.path,app);
   assert.equal(data(pendingPlan).plan.app.url,'https://job-radar.app');
-  assert.equal(data(pendingPlan).plan.whiteBox.status,'simulated');assert.equal(data(pendingPlan).plan.blackBox.status,'blocked');
+  assert.equal(data(pendingPlan).plan.whiteBox.status,'host_plans');assert.equal(data(pendingPlan).plan.blackBox.status,'blocked');
   const codePlan=data(await call('bypass_prepare_scan',{mode:'code'}));
-  assert.equal(codePlan.plan.blockers.length,0);assert.equal(codePlan.plan.blackBox.status,'deferred');
+  assert.equal(codePlan.plan.blockers.length,0);assert.equal(codePlan.plan.blackBox.status,'not_run');
   const started=data(await call('bypass_scan',{mode:'code'}));
-  let run;for(let i=0;i<100;i++){run=data(await call('bypass_run',{id:started.runId})).run;if(['completed','incomplete','failed'].includes(run.status))break;await delay(30);}
-  assert.equal(run.status,'incomplete');assert.deepEqual(run.result.inventory.files,['job-search.js']);
-  assert.equal(run.result.plan.repository.path,app);assert.equal(run.result.modelCalls,0);
+  assert.equal(started.status,'awaiting_host');assert.deepEqual(started.inventory.files,['job-search.js']);
+  await call('bypass_review_step',{id:started.runId,action:'finish'});
+  const run=data(await call('bypass_run',{id:started.runId})).run;assert.equal(run.status,'completed');assert.equal(run.modelCalls,0);
   assert.equal(read(app).targets[0].ownership.status,'pending');
   assert.equal(read(app).identities.length,0);
   const context=await request('resources/read',{uri:'bypass://context'});
@@ -95,7 +95,7 @@ test('plugin setup resumes across real MCP processes without copying permissions
   let c=client();await c.request('initialize',{protocolVersion:'2025-11-25'});
   const context=await c.call('bypass_context');assert.equal(context.stage,'repository');assert.equal(context.recentEvents,undefined);
   await c.call('bypass_connect_repository',{repository:app,confirmed:true});
-  await c.call('bypass_engine',{mode:'docker'});await c.call('bypass_add_model',{name:'muse',provider:'muse-code'});
+  await c.call('bypass_engine',{mode:'docker'});await c.call('bypass_add_model',{name:'muse',provider:'meta','secret-env':'BYPASS_UNIT_API_KEY',model:'test-model',stream:false});
   await c.call('bypass_add_target',{name:'local',url:'http://127.0.0.1:4567',environment:'local'});
   await c.call('bypass_verify_target',{name:'local',method:'local'});
   assert.equal((await c.call('bypass_onboarding')).steps.find(s=>s.id==='scope').status,'needed');
@@ -110,11 +110,11 @@ test('plugin setup resumes across real MCP processes without copying permissions
   const before=await c.call('bypass_onboarding');assert.equal(before.steps.find(s=>s.id==='resource').status,'complete');
   assert.equal(await c.close(),0);
   c=client();await c.request('initialize',{protocolVersion:'2025-11-25'});
-  const resumed=await c.call('bypass_onboarding');assert.equal(resumed.selectedRepository,app);assert.equal(resumed.engine,'docker');
+  const resumed=await c.call('bypass_onboarding');assert.equal(resumed.selectedRepository,app);assert.equal(resumed.engine,'host');
   const feature=await c.call('bypass_feature_context',{task:'Add a new authenticated endpoint',files:'auth.mjs'});assert.equal(feature.memory.entries[0].id,learned.saved[0]);assert.equal(feature.repository,app);assert.equal(feature.memory.entries[0].validity.status,'current');
   await c.call('bypass_memory_mode',{mode:'off'});assert.equal((await c.call('bypass_feature_context',{task:'Add endpoint'})).memory.entries.length,0);
   await c.call('bypass_memory_mode',{mode:'on'});await c.call('bypass_forget_memory',{id:learned.saved[0]});assert.equal((await c.call('bypass_memory')).entries.length,0);
-  assert.equal(resumed.steps.find(s=>s.id==='model').profile.name,'muse');assert.equal(resumed.steps.find(s=>s.id==='scope').status,'complete');
+  assert.equal(resumed.steps.some(s=>s.id==='model'),false);assert.equal(resumed.steps.find(s=>s.id==='scope').status,'complete');
   assert.equal(resumed.steps.find(s=>s.id==='resource').status,'complete');assert.equal(resumed.pluginVersion,VERSION);
   assert.doesNotMatch(JSON.stringify(resumed),/owner-test-only|other-test-only/);
   const resource=await c.request('resources/read',{uri:'bypass://context'});assert.equal(JSON.parse(resource.result.contents[0].text).summary.root,app);

@@ -29,7 +29,7 @@ try{
   ];
   const output=launch(manifest.capabilities.mcpServers[0],messages.map(m=>JSON.stringify({jsonrpc:'2.0',...m})).join('\n')+'\n');
   const rows=output.split('\n').map(JSON.parse),tools=rows.find(r=>r.id===2).result.tools;
-  assert.equal(tools.length,77);
+  assert.equal(tools.length,78);
   for(const id of [3,4]){
     const result=rows.find(r=>r.id===id).result;
     assert.equal(result.isError,false,JSON.stringify(result));

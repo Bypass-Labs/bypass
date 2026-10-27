@@ -1,3 +1,4 @@
+import { promptAPIProfile } from './provider-setup.mjs';
 import readline from 'node:readline/promises';
 import path from 'node:path';
 import { read, rootFrom } from './store.mjs';
@@ -124,10 +125,9 @@ function updateWorkspace(prompt,root){
   prompt.setContext({engine:info.engine.mode,title:info.project.name,repo:root,branch:info.project.repository.branch,app:info.target?`${info.target.url} · ${info.target.authorized?'authorized':info.target.ownership==='verified'?'scope required':'DNS pending'}`:'not connected · code preview available',model:info.model?`${info.model.name} · ${info.model.provider} · ${info.model.connection}`:'not configured · optional for this preview'});
 }
 async function modelWizard(ask,root,io){
-  const choice=await choose(ask,[{label:'Muse Code subscription',provider:'muse-code'},{label:'Local model · inference on this machine',provider:'local'},{label:'Your self-hosted compatible endpoint',provider:'endpoint'}],'Where should model inference run?');if(!choice)return;
-  const name=await ask('Profile name',choice.provider==='muse-code'?'muse':choice.provider==='local'?'local':'selfhosted');
-  const options={project:root,provider:choice.provider};
-  if(choice.provider!=='muse-code'){options['base-url']=await ask('Base URL',choice.provider==='local'?'http://127.0.0.1:1234/v1':'');options.model=await ask('Model ID');const env=await ask('Credential environment variable (leave blank if none)');if(env)options['secret-env']=env;}
+  const setup=await promptAPIProfile(ask,(title,options)=>choose(ask,options,title));if(!setup)return;
+  const name=await ask('Profile name',setup.selection.name);
+  const options={project:root,...setup.config};
   printResult(await execute('model add',[name],options));
   if((await ask('Check the model connection now? (y/n)','n')).toLowerCase()==='y')await checkModelConnection(root,name,io);
 }

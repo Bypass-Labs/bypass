@@ -28,6 +28,7 @@ jobs:
       - name: Check source and exercise HTTP and Docker regressions
         run: |
           command -v zsh || (sudo apt-get update && sudo apt-get install -y zsh)
+          npm ci --ignore-scripts
           npm run check
           BYPASS_DOCKER_TESTS=1 npm test
       - name: Build self-contained macOS, Linux, and Windows artifacts

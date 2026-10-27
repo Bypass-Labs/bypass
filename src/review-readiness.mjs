@@ -1,9 +1,10 @@
+import { executionMode as currentExecutionMode } from './execution-mode.mjs';
 import { scopeReady } from './network.mjs';
 import { specFor } from './checks.mjs';
 import { hash } from './util.mjs';
 
 export const credentialHelp=name=>`Load ${name} in the terminal that launches Muse or Bypass, then restart that session. Keep token values out of chat; refresh expired app tokens. See docs/JOB_RADAR.md for Firebase instructions.`;
-export const activeFindings=state=>state.settings?.analysisEngine==='docker'?state.findings.filter(f=>!f.simulation&&f.sourceEvidence?.kind!=='mock'):state.findings;
+export const activeFindings=state=>currentExecutionMode()==='muse-host'||state.settings?.analysisEngine==='docker'?state.findings.filter(f=>!f.simulation&&f.sourceEvidence?.kind!=='mock'):state.findings;
 
 export function probeConfiguration(state,target,probe,env=process.env){
   const fixture=target?.environment==='local'&&(state.demo?.target===target.name||(state.poc&&target.pocFixture));
@@ -26,13 +27,14 @@ export function probeConfiguration(state,target,probe,env=process.env){
 
 // Read-only and shared by onboarding, status and scan planning. HTTP validation
 // is explicit; every live run repeats it before any model invocation.
-export function reviewReadiness(state,{targetName=state.activeTarget,env=process.env,dockerAvailable}={}){
+export function reviewReadiness(state,{targetName=state.activeTarget,env=process.env,dockerAvailable,executionMode=currentExecutionMode()}={}){
   const target=state.targets.find(t=>t.name===targetName),model=state.models.find(m=>m.name===state.activeModel),sourceBlockers=[],liveBlockers=[];
-  if(!model)sourceBlockers.push('Choose a shared model with model add / model use.');
-  if(model?.secretEnv&&!env[model.secretEnv])sourceBlockers.push(credentialHelp(model.secretEnv));
-  if(model?.lastAttempt?.status==='failed')sourceBlockers.push('The last model connection check failed. Run model test before retrying, or select another model.');
-  const modelReady=!!model&&!sourceBlockers.length;
-  if(dockerAvailable===false)sourceBlockers.push('Docker is unavailable to this process. Run engine doctor.');
+  if(executionMode!=='muse-host'&&!model)sourceBlockers.push('Choose an API-key profile with model add / model use.');
+  if(executionMode!=='muse-host'&&model&&model.executionMode!=='standalone-api')sourceBlockers.push('Legacy model profile requires migration. Create an explicit API-key profile or use the Muse plugin.');
+  if(executionMode!=='muse-host'&&model?.secretEnv&&!env[model.secretEnv])sourceBlockers.push(`Set ${model.secretEnv} to the chosen provider API key before a standalone AI review. No subscription login is used.`);
+  if(executionMode!=='muse-host'&&model?.lastAttempt?.status==='failed')sourceBlockers.push('The last model connection check failed. Run model test before retrying, or select another model.');
+  const modelReady=executionMode==='muse-host'||!!model&&!sourceBlockers.length;
+  if(executionMode!=='muse-host'&&dockerAvailable===false)sourceBlockers.push('Docker is unavailable to this process. Run engine doctor.');
   let authorized=false;try{scopeReady(target||{});authorized=true;}catch(error){liveBlockers.push(error.message);}
   const fixture=target?.environment==='local'&&(state.demo?.target===target.name||(state.poc&&target.pocFixture));
   const identities=state.identities.filter(i=>i.target===target?.name);
