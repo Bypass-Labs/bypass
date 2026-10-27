@@ -35,13 +35,14 @@ try{
   };
   await request('initialize',{protocolVersion:'2025-11-25',capabilities:{},clientInfo:{name:'bypass-live-validation',version:'1'}});
   await call('bypass_connect_repository',{repository:root,confirmed:true});
+  await call('bypass_test_probe',{name:'invoice'});
   const setup=await call('bypass_onboarding');assert.equal(setup.ready.live,true);report.pluginVersion=setup.pluginVersion;
   const wait=async id=>{
     const end=Date.now()+240000;let shown=0;
     while(Date.now()<end){
       const {run}=await call('bypass_run',{id});
       for(const step of run.steps.slice(shown))console.log(step.message);shown=run.steps.length;
-      if(['completed','cancelled'].includes(run.status))return run;
+      if(['completed','failed','incomplete','cancelled','interrupted'].includes(run.status))return run;
       await delay(1500);
     }
     await call('bypass_stop_run',{id});throw new Error('Live validation exceeded four minutes; stop requested');

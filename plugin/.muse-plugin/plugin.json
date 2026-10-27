@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "name": "bypass",
   "displayName": "Bypass",
-  "version": "0.2.3",
+  "version": "0.2.4",
   "description": "Real source and HTTP review with shared-model Docker agents; prove fixes and keep regression tests.",
   "compat": {
     "source": "native",

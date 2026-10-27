@@ -9,7 +9,7 @@ export const agentTag=()=>`bypass-agent:${hash(fs.readFileSync(directory+'worker
 export async function dockerStatus({signal}={}){
   try{
     const result=await execFile('docker',['version','--format','{{.Server.Version}}'],{timeout:10000,signal});
-    return {available:result.code===0,version:result.code===0?result.stdout:null,message:result.code===0?'Docker is ready.':'Start Docker Desktop or Colima, then retry. No simulated fallback is used.'};
+    return {available:result.code===0,version:result.code===0?result.stdout:null,reason:result.code===0?null:/permission denied|operation not permitted|EACCES|EPERM/i.test(result.stderr)?'permission_denied':'unavailable',message:result.code===0?'Docker is ready.':/permission denied|operation not permitted|EACCES|EPERM/i.test(result.stderr)?'This process cannot access the Docker socket. Check host/plugin sandbox permissions and the Docker context in the terminal that launches Muse; the daemon may already be running.':'Start Docker Desktop or Colima, then retry. No simulated fallback is used.'};
   }catch(error){if(signal?.aborted)throw error;return {available:false,message:'Docker is unavailable. Install/start Docker Desktop or Colima and make docker available in this terminal.'};}
 }
 export async function prepareAgents({signal,onProgress}={}){

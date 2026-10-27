@@ -17,6 +17,8 @@ git clone https://github.com/Bypass-Labs/bypass-for-muse.git ~/bypass-for-muse
 cd ~/bypass-for-muse
 ```
 
+Check prerequisites with `./bypass doctor`; it works before connecting an application.
+
 Already have that folder? **Do not clone again.** Follow [Update an existing installation](#update-an-existing-installation).
 
 ### 2. Install and enable the plugin — in your terminal
@@ -37,7 +39,7 @@ In your terminal:
 muse --reasoning-effort minimal
 ```
 
-This is the startup setting used in the live POC checks. It applies to this session and does not change your saved Muse settings.
+This optional setting applies only to this Muse session. It was used in the live POC checks; it is not a demonstrated fix for provider delays or timeouts.
 
 **Inside Muse**, type:
 
@@ -61,7 +63,7 @@ You can also use one ordinary prompt:
 | Verify the deployed app | Add the exact **TXT name and value** shown in chat, then say “check DNS” | Verifies domain control; local apps use an ownership acknowledgment |
 | Which paths may we test? | Authorized paths, such as `/api`, and production acknowledgment if applicable | Saves bounded GET/HEAD permission, with rate and expiry limits |
 | Which two test accounts? | Credential **environment-variable names** and the signed-in JSON endpoint | Configures the owner and another account; never asks for token values in chat |
-| Which resource belongs to the owner? | One exact GET path and its expected JSON ID | Configures owner, other-account and anonymous controls |
+| Which resource belongs to the owner? | One existing GET path and its expected JSON ID | Validates both logins and owner access with three GETs, before AI; a placeholder ID stops here |
 
 For DNS, copy the generated value exactly. If your DNS provider appends your domain, enter only the record-name prefix it needs. Say **“review source while DNS propagates”** to keep going.
 
@@ -71,11 +73,14 @@ For authenticated HTTP proof, load both test-account credentials into the termin
 
 ```text
 Done     Repository connected · model selected · Docker ready
-Now      Checking model connection — one small prompt, no source sent
-Next     Source review → HTTP controls → evidence
+Now      Validating two accounts + owner resource — three GETs, no AI
+Next     Checking model connection — one small prompt, no source sent
+Then     Source review → HTTP controls → evidence
 ```
 
-The preflight has a **30-second limit**; each review response has a **60-second limit**. Muse transport status, the resolved model, source reads and HTTP controls appear as the work progresses. A recent successful connection check is reused for 15 minutes. A passing preflight proves only that a small prompt worked.
+For a live review, account/resource validation runs before AI. Missing tokens, expired logins or a nonexistent resource stop there with zero model calls. Source-only review skips those HTTP requests.
+
+The model preflight has a **30-second limit**; each review response has a **60-second limit**. Muse transport status, the resolved model, source reads and HTTP controls appear as the work progresses. A recent successful connection check is reused for 15 minutes. A passing preflight proves only that a small prompt worked.
 
 When a finding is confirmed, ask Muse to help fix it in your application folder, then say:
 
@@ -132,7 +137,7 @@ The Muse subscription adapter uses native `muse exec`; it does not extract your 
 - **Inside Bypass CLI:** type `model test`. If it fails, use `/models` to choose another connection; after it passes, use `/review`.
 - **In your terminal:** `muse usage` checks allowance. Use `muse login` when the error actually reports authentication failure.
 
-A timeout means **review incomplete**. The screen shows the failed stage and evidence location. Bypass does not silently substitute mocked findings. Docker errors require a running Docker server; `docker version` should show both client and server.
+A timeout means **review incomplete**. The screen shows the failed stage and evidence location. Bypass does not silently substitute mocked findings. `doctor` distinguishes missing executables, an unavailable Docker daemon and denied Docker socket access. Run `~/bypass-for-muse/bypass doctor --project /path/to/your/app` in the terminal that launches Muse. A daemon can be running while a sandboxed process cannot reach it.
 
 ## Update an existing installation
 
@@ -146,7 +151,7 @@ muse plugins inspect bypass
 muse plugins approve bypass
 ```
 
-Updating can leave the plugin listed as installed while its tool server is disabled. The inspect/approve steps above review and enable the updated capabilities. **Close the old Muse session and open a new one** to load the updated plugin. `/bypass:start` reports the loaded version. CLI-only users need just `git pull --ff-only`.
+Updating can leave the plugin listed as installed while its tool server is disabled. The inspect/approve steps above review and enable the updated capabilities. **Close the old Muse session and open a new one** to load the updated plugin. `/bypass:start` reports the loaded version, source folder and installed plugin version. A cached process from an earlier update reports that a new Muse session is required. Version 0.2.4 adds these checks; sessions still running older code must be closed first. CLI-only users need just `git pull --ff-only`.
 
 ## Optional examples and technical details
 

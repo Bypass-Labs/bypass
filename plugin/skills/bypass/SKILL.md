@@ -31,6 +31,8 @@ If bypass_onboarding is not available, do not invent setup results or ask the us
 
 After selecting an application, `bypass_context` returns its evidence only. Start with current saved-check failures, blockers or stale results. `latestMonitor` labels historical outcomes, active schedule count and whether a later passing retest superseded an old failure. Do not surface a superseded failure as a current incident or claim a stopped worker is monitoring. Example results remain labeled as examples even when explicitly selected. Keep the next step concrete and in plain language; call the tools yourself.
 
+Show the loaded version/source and installedVersion from runtime at startup. If restartRequired is true, explain that the user must exit Muse and open a new session. Do not claim the installed version is loaded.
+
 ## Show both stages before a review
 
 Present this compact summary from the selected project's plan:
@@ -43,9 +45,13 @@ Present this compact summary from the selected project's plan:
 
 For HTTP proof, guide `bypass_add_identity` for an owner and another account, each with an environment-variable reference and a signed-in identity endpoint. Never request raw tokens. Use `bypass_add_probe` for an exact owner-owned JSON resource, its expected ID and identifier fields. The identity endpoint must return distinct account IDs. Ownership verification and testing scope remain required. The current POC supports missing authentication and cross-account JSON resource access, not arbitrary browser workflows or every vulnerability class.
 
-Call `bypass_prepare_scan`, then `bypass_scan`. Poll the durable run with `bypass_run`; show the active stage and actual model-call count. Saved checks run before AI. Only exact passing checks are excluded from the live probe queue. Failed, blocked and stale checks return to investigation.
+After configuring each resource, call `bypass_test_probe` yourself. This makes three authorized GET requests to validate two distinct logins and owner access; it is not a vulnerability verdict. Stop if blocked. Missing credentials must be loaded in the terminal launching Muse, followed by a fresh session. For Job Radar/Firebase, point to docs/JOB_RADAR.md for the private browser Network-header and hidden terminal-prompt recipe; tokens expire in about one hour, so collect them last. Do not repeat DNS or repository setup for a token refresh.
+
+Call `bypass_prepare_scan`, then `bypass_scan`. Stop polling on completed, failed, incomplete, cancelled or interrupted. A completed execution still does not establish complete security coverage. Poll the durable run with `bypass_run`; show the active stage and actual model-call count. Saved checks run before AI. Only exact passing checks are excluded from the live probe queue. Failed, blocked and stale checks return to investigation.
 
 ## Recover from incomplete inference
+
+For account/resource failures, follow the returned probe/credential recovery action; do not test the model. For provider failures, use the model recovery below.
 
 When a run fails, say **Review incomplete**, name the failed stage, and show the saved evidence location. Do not say the app is safe or the review succeeded. Do not repeatedly restart the scan. Offer one small connection check with bypass_test_model; a request to troubleshoot authorizes that diagnostic. If it fails, explain the returned category and offer another model connection. Use muse login only for an authentication error; timeout is not proof of a bad login. Keep previous source/HTTP evidence labeled as partial. After a successful check, retry only when the user asks.
 

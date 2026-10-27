@@ -41,6 +41,7 @@ export const commands={
   'engine doctor':command('engine doctor','Check Docker and the shared inference profile.'),
   'engine prepare':command('engine prepare','Build the agent image for both Docker services.'),
   'probe add':command('probe add <name>','Configure an exact authorized JSON resource and account controls.','target path resource-id owner outsider id-field identity-field'),
+  'probe test':command('probe test <name>','Validate both logins and the exact owner resource with three GET requests; zero model calls.','target'),
   'probe list':command('probe list','List approved resources for live agent probes.','target'),
   scan:command('scan','Replay saved checks, then review with the selected analysis engine.','mode target base full plan detach'),
   'finding list':command('finding list','List findings, with simulation and evidence labels.','target run status severity'),

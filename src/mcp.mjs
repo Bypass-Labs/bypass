@@ -1,5 +1,6 @@
 import path from 'node:path';
 import { execute } from './service.mjs';
+import { runtimeIdentity } from './runtime-identity.mjs';
 import { SCHEMA, VERSION, redact, need, outcome } from './util.mjs';
 import { workspaceInfo, isBypassSource, projectPath } from './project-selection.mjs';
 import { pluginOnboarding } from './plugin-onboarding.mjs';
@@ -34,6 +35,7 @@ export const toolDefinitions=[
   tool('bypass_engine','Select the real Docker POC or offline mocked preview. Real runs send source excerpts to the selected shared model.',{mode:str('Analysis engine',{enum:['docker','mock']})},['mode'],'engine use',a=>[a.mode]),
   tool('bypass_engine_doctor','Check Docker and the shared agent model profile.',{},[],'engine doctor',undefined,undefined,true),
   tool('bypass_add_probe','Add a user-approved JSON resource for real GET proof. Two different valid accounts and positive-control endpoints are required.',{name:str('Probe name'),target,path:str('Exact resource path'),'resource-id':str('Expected JSON resource identifier'),owner:str('Owner identity name'),outsider:str('Other account identity name'),'id-field':str('Resource identifier field or nested selector, e.g. run.id or /run/id; default id'),'identity-field':str('Account identifier field or nested selector at identity endpoint, e.g. owner_uid; default id')},['name','path','resource-id','owner','outsider'],'probe add',a=>[a.name]),
+  tool('bypass_test_probe','Validate the two distinct account logins and exact owner resource before AI. Three authorized GET requests, no model calls; blocked is never a pass.',{name:str('Existing probe name'),target},['name'],'probe test',a=>[a.name]),
   tool('bypass_probes','List approved resource probes.',{target},[],'probe list',undefined,undefined,true),
   tool('bypass_prepare_scan','Read the proposed run scope, data flow, and blockers without starting a run.',{mode:str('Review mode',{enum:['code','live','combined']}),target},[],'scan',undefined,a=>({...a,plan:true}),true),
   tool('bypass_scan','Start a durable scan with the selected engine. Docker mode uses the shared model and actual scoped HTTP controls; mock mode remains simulated. Saved checks run first. Poll bypass_run.',{mode:str('Review mode',{enum:['code','live','combined']}),target,base:str('Optional Git base reference')},[],'scan',undefined,a=>({...a,detach:true})),
@@ -121,7 +123,7 @@ export async function serveMCP(cwd=process.cwd(),io={input:process.stdin,output:
         need(selectedRoot&&!selecting,'Choose the application repository first with bypass_connect_repository. The current Muse folder is not selected automatically.');
         result=await execute(t.command,t.makeArgs(args),{...t.makeOptions(args),project:selectedRoot,json:true,'non-interactive':true},{cwd:selectedRoot,signal:controller.signal});
       }
-      result={...result,pluginVersion:VERSION};
+      result={...result,pluginVersion:VERSION,runtime:result.runtime||runtimeIdentity()};
       if(token!==undefined)send({jsonrpc:'2.0',method:'notifications/progress',params:{progressToken:token,progress:1,total:1,message:'Operation complete'}});
       respond(id,{content:[{type:'text',text:JSON.stringify(redact(result))}],isError:!result?.plan&&(result?.exitCode??0)!==0});
     }catch(e){respond(id,{content:[{type:'text',text:JSON.stringify(redact({schemaVersion:SCHEMA,error:e.message,exitCode:e.code||2,details:e.details||{}}))}],isError:true});}

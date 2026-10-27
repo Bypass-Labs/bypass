@@ -25,7 +25,7 @@ async function request(url,headers,local,signal,timeout=8000){
 }
 function identityHeaders(identity,env,fixture){
   const value=env[identity.secretEnv] || (fixture?identity.fixtureValue:null);
-  assert(value,`Missing environment variable ${identity.secretEnv}`);
+  assert(value,`Missing environment variable ${identity.secretEnv}. Load it in the terminal that launches Muse or Bypass, then restart that session. Keep token values out of chat.`);
   assert(!/[\r\n]/.test(value),'Invalid credential value');
   if(identity.type==='bearer')return {Authorization:`Bearer ${value}`};
   if(identity.type==='cookie')return {Cookie:value};
@@ -49,7 +49,7 @@ export function jsonField(data,selector='id'){
 function resourceMatches(response,spec){
   try{const value=jsonField(JSON.parse(response.body),spec.idField||'id');return ['string','number'].includes(typeof value)&&String(value)===String(spec.resourceId);}catch{return false;}
 }
-export async function replay(spec,{env=process.env,signal}={}){
+export async function replay(spec,{env=process.env,signal,positiveOnly=false}={}){
   const started=Date.now();let requests=0;const controls=[];
   try{
     const url=new URL(env.BYPASS_TARGET_URL || spec.origin);
@@ -78,13 +78,14 @@ export async function replay(spec,{env=process.env,signal}={}){
       };
       const own=await send(owner,'owner identity',identityURL(spec.owner));
       const other=await send(outsider,'outsider identity',identityURL(spec.outsider));
-      assert(own.status===200&&other.status===200,'Both account login controls must return HTTP 200; refresh credentials');
+      assert(own.status===200&&other.status===200,'Both account login controls must return HTTP 200. Refresh the app credentials in the launching terminal, then restart Muse or Bypass. Firebase ID tokens last about one hour.');
       const field=spec.identityField||'id';let a,b;
       try{a=jsonField(JSON.parse(own.body),field);b=jsonField(JSON.parse(other.body),field);}catch{}
       assert(['string','number'].includes(typeof a)&&['string','number'].includes(typeof b)&&String(a)!==String(b),'Identity controls must identify two different accounts; check identityField');
     }
     const ownerResponse=await send(owner,'owner access');
-    assert(ownerResponse.status===200&&resourceMatches(ownerResponse,spec),'Owner positive control failed: check login, fixture ID, and deployment');
+    assert(ownerResponse.status===200&&resourceMatches(ownerResponse,spec),'Owner positive control failed: use an existing resource owned by this account and its exact JSON ID selector. Placeholder or deleted IDs cannot be tested.');
+    if(positiveOnly)return {status:'ready',reason:'Two distinct accounts and owner resource validated. No cross-account or anonymous test has run yet.',controls,requests,modelCalls:0,durationMs:Date.now()-started};
     const outsiderResponse=await send(outsider,'cross-account access');
     const unauthenticated=await send({},'unauthenticated access');
     const exposed=outsiderResponse.status===200&&resourceMatches(outsiderResponse,spec);

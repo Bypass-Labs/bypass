@@ -1,5 +1,19 @@
 # Verification record
 
+## v0.2.4 — critical feedback fixes, 2026-10-27
+
+Failed execution now ends as `failed`; a bounded/inconclusive exit-3 result is `incomplete`. Watchers stop on either. Failure evidence retains the stage, call number, native exit/HTTP code when available, source ranges already read, orchestration guidance and worker attempts. Provider text, prompts and secrets are not dumped into diagnostics. Status/context use a compact summary and link to the full run.
+
+Onboarding, review plans and status use shared account/resource/model readiness. The new `bypass_test_probe` / `probe test` validates two distinct signed-in accounts and the exact owner resource with three authorized GETs. Missing credentials and nonexistent resources block before any model or container work. Validation expires after five minutes, invalidates on credential/configuration changes, and is repeated before every live scan. It is not a security verdict. The README and Job Radar guide now provide a private Firebase token recipe, expiry/restart instructions, and source-only recovery while DNS is pending.
+
+Doctor renders actual environment checks, works before initialization, and distinguishes Docker socket permission failures from a stopped daemon. Startup exposes loaded version/source, installed version, and an old cached-session warning. Real finding lists/counts exclude historical simulated examples without deleting evidence. Active runs take precedence over stale next-action suggestions.
+
+Release verification: **87 automated tests, zero failures/skips**, with real Docker checks enabled; syntax checked 52 modules. The new cases include missing credentials, placeholder resources, invalidated preflight, failed source review with preserved evidence, terminal polling, compact context, mock/real separation, loaded-cache identity and doctor rendering/startup. Most inference in these automated cases is deliberately controlled.
+
+**The actual Muse-backed packaged-plugin proof loop passed in 81 seconds with four model calls.** Positive HTTP preflight → real source citation → unauthorized cross-account HTTP 200 → fix verified → exported Node test passes → deliberate regression fails saved and exported checks, with zero replay model calls. The fixture ended fixed and stopped. A subsequent bookkeeping-only change retained worker attempts and orchestration guidance on failure; the release tests cover it. See the [machine-readable evidence](evidence/critical-feedback-2026-10-27.json).
+
+This does not validate Job Radar production or guarantee Muse latency. Full conversational onboarding, global project deduplication across host folders, and consolidation of the separate legacy 0.1 skeleton remain outside this release. Production proof still needs actual test-account credentials and a real owner resource.
+
 ## v0.2.3 — plugin-first startup and live reliability checks, 2026-10-27
 
 The README now starts with terminal installation → native approval → a fresh Muse session → `/bypass:start`. Standalone CLI setup follows separately. Fresh CLI onboarding selects real Docker agents; source review proceeds when live resource setup is incomplete. Model failures display the failed stage and a concrete recovery action instead of inviting blind review retries.

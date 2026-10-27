@@ -373,3 +373,9 @@ Stop the local fixture server.
 ## Exit codes
 
 0: operation succeeded (detached means accepted). 1: confirmed fixture failure or failed regression. 2: usage/configuration error. 3: incomplete, blocked, no checks, or mock analysis without a real verdict. 130: cancelled.
+
+## Account/resource preflight
+
+`~/bypass-for-muse/bypass probe test <name> --project /path/to/app` checks the two signed-in account IDs and owner resource with three authorized GET requests, no model calls. The plugin performs this through `bypass_test_probe`. Status `ready` means those positive controls succeeded; it is not a security verdict. Every combined/live scan repeats this check before AI.
+
+Run status is `failed` for execution errors, `incomplete` for blocked/bounded results with exit 3, `cancelled` for cancellation and `completed` when the requested execution finished with a conclusive behavior result. `run watch` exits for all terminal statuses. `status` and `context` return a compact latest-run summary; `run show <id>` / `bypass_run` returns the detailed evidence.

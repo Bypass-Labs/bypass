@@ -4,7 +4,8 @@ import { read, change, event } from './store.mjs';
 import { inventory } from './repository.mjs';
 import { runChecks, specFor } from './checks.mjs';
 import { replay } from './portable-check.mjs';
-import { scopeReady } from './network.mjs';
+import { reviewReadiness } from './review-readiness.mjs';
+import { validateProbe } from './probe-preflight.mjs';
 import { infer, INFERENCE_TIMEOUT_MS, modelResponseSchema } from './inference.mjs';
 import { testModel } from './models.mjs';
 import { prepareAgents, runContainer } from './agent-runtime.mjs';
@@ -12,18 +13,14 @@ import { named, need, id, now, hash, redact } from './util.mjs';
 
 export const realEngine=state=>state.settings.analysisEngine==='docker';
 export function realPlan(state,options={}){
-  const mode=options.mode||'combined',target=state.targets.find(t=>t.name===(options.target||state.activeTarget)),model=state.models.find(m=>m.name===state.activeModel),blockers=[];
-  if(!model)blockers.push('Choose a shared model with model add / model use.');
-  if(mode!=='code'){
-    try{scopeReady(target||{});}catch(error){blockers.push(error.message);}
-    if(!target?.probes?.length)blockers.push('Add an authorized test resource and two account references with probe add (or /engine).');
-  }
+  const mode=options.mode||'combined',ready=reviewReadiness(state,{targetName:options.target||state.activeTarget}),{target,model}=ready;
+  const blockers=[...ready.sourceBlockers,...(mode==='code'?[]:ready.liveBlockers)];
   return {mode,target:target?.name||null,engine:'docker',simulation:false,realAnalysis:true,modelCalls:null,
     repository:{path:state.project.root,remote:state.project.repository.remote,branch:state.project.repository.branch},app:target?{name:target.name,url:target.url,environment:target.environment}:null,
     model:model?{name:model.name,provider:model.provider,model:model.model,destination:model.dataDestination}:null,
-    whiteBox:{status:mode==='live'?'skipped':'ready',implemented:true,description:'AI reviews selected source files in a dedicated Docker agent; citations remain hypotheses until proven.'},
-    blackBox:{status:mode==='code'?'deferred':blockers.length?'blocked':'ready',implemented:true,description:mode==='code'?'Live proof deferred.':blockers.length?blockers.join(' '):'AI chooses configured resource probes; actual HTTP controls determine the result.'},
-    stages:['Replay saved tests','Start Docker services','Shared-model plan','White-box source review','Black-box HTTP controls','Persist evidence'],blockers,savedChecks:state.checks.filter(c=>c.enabled).length,
+    whiteBox:{status:mode==='live'?'skipped':ready.source?'ready':'blocked',implemented:true,description:'AI reviews selected source files in a dedicated Docker agent; citations remain hypotheses until proven.'},
+    blackBox:{status:mode==='code'?'deferred':blockers.length?'blocked':ready.live?'ready':'preflight_required',implemented:true,description:mode==='code'?'Live proof deferred.':blockers.length?blockers.join(' '):'Validate both logins and owner resource before AI; actual HTTP controls determine the result.'},
+    stages:['Replay saved tests','Validate accounts and resources','Check model connection','Start Docker services','Shared-model plan','White-box source review','Black-box HTTP controls','Persist evidence'],blockers,savedChecks:state.checks.filter(c=>c.enabled).length,
     dataFlow:{source:'Selected eligible source excerpts go to the configured model; repository code is never executed.',inference:model?.dataDestination||'not configured',requests:mode==='code'?'none':'GET only for configured, authorized JSON resource probes',evidence:'Local .bypass/runs; no credentials or response bodies'},
     message:'POC: missing authentication and cross-account JSON resource access. Findings require observed controls; coverage is bounded and incomplete.'};
 }
@@ -75,11 +72,11 @@ export function groundCandidates(candidates,reader,inv){
   });
 }
 export async function executeRealScan(root,runId,options,{signal,report,runtime={prepareAgents,runContainer,infer,testModel}}={}){
-  const initial=read(root),plan=realPlan(initial,options);need(!plan.blockers.length,plan.blockers.join(' '),3);
+  const initial=read(root),plan=realPlan(initial,options);need(!plan.blockers.length,plan.blockers.join(' '),3,{stage:'setup',next:'status'});
   // Snapshot one profile for all three roles; no per-worker provider or credential fallback.
   const profile=structuredClone(named(initial.models,initial.activeModel,'Model'));
-  let modelCalls=0;const modelUsage=[],containers=[],probes=[],candidateIds=[];
-  const persist=async()=>change(root,s=>{const run=named(s.runs,runId,'Run');run.modelCalls=modelCalls;run.simulation=false;run.agentEvidence={model:{name:profile.name,provider:profile.provider,model:profile.model},modelUsage,containers,probes};});
+  let modelCalls=0,focus=null,sourceFingerprint=null;const modelUsage=[],containers=[],probes=[],candidateIds=[],sourceReads=[],preflight=[];
+  const persist=async()=>change(root,s=>{const run=named(s.runs,runId,'Run');run.modelCalls=modelCalls;run.simulation=false;run.agentEvidence={model:{name:profile.name,provider:profile.provider,model:profile.model},modelUsage,containers,probes,sourceReads,preflight,focus,sourceFingerprint};});
   const model=async(role,messages,activeSignal=signal)=>{
     need(modelCalls<18,'Shared model call budget exceeded.',3);modelCalls++;const usage={role,call:modelCalls,at:now(),status:'started'};modelUsage.push(usage);await persist();
     await report(role,`${role}: model call ${modelCalls} · ${profile.name} / ${profile.model}`);
@@ -89,14 +86,22 @@ export async function executeRealScan(root,runId,options,{signal,report,runtime=
       if(event.kind==='model'){
         usage.resolvedModel=event.model;
         if(profile.model==='Muse session default'){profile.model=event.model;progress.push(report(role,`Using ${event.model} for this run`));}
-      }else if(event.phase!==lastPhase){lastPhase=event.phase;progress.push(report(role,`${role}: ${event.message}`));}
+      }else if(event.phase!==lastPhase){lastPhase=event.phase;usage.lastPhase=event.phase;if(event.httpStatus)usage.httpStatus=event.httpStatus;progress.push(report(role,`${role}: ${event.message}`));}
     }});usage.status='completed';return result;}
-    catch(error){usage.status='failed';usage.reason=error.details?.reason||'model_response';error.details={...error.details,stage:role};throw error;}
+    catch(error){usage.status='failed';usage.reason=error.details?.reason||'model_response';error.details={...error.details,stage:role,call:modelCalls,lastPhase:usage.lastPhase,...(usage.httpStatus?{httpStatus:usage.httpStatus}:{}),next:'model test'};throw error;}
     finally{clearInterval(heartbeat);usage.elapsedMs=Date.now()-started;usage.finishedAt=now();await Promise.allSettled(progress);await persist();}
   };
   await report('replay',plan.mode==='code'?'Code review selected; HTTP replay deferred.':'Replaying saved tests before spending model calls.');
   const regression=plan.mode==='code'?{results:[],exitCode:0}:await runChecks(root,{all:true,target:plan.target,signal,runId});
   await change(root,s=>{named(s.runs,runId,'Run').partialRegression=regression;});
+  if(plan.mode!=='code'){
+    await report('accounts','Validating two logins and the owner resource before AI · three authorized GET requests per resource');
+    for(const probe of read(root).targets.find(t=>t.name===plan.target).probes){
+      const check=await validateProbe(root,probe.name,{target:plan.target,signal});preflight.push(check);await persist();
+      await report('accounts',`${probe.name}: ${check.status} · ${check.reason}`);
+      need(check.status==='ready',check.reason,signal?.aborted?130:3,{stage:'accounts',reason:'account_resource_preflight',probe:probe.name,next:`probe test ${probe.name}`,controls:check.controls});
+    }
+  }
   // A saved profile is not a working connection. Check before source upload or container work.
   const last=profile.lastAttempt||profile.lastTest;
   if(runtime.testModel&&!(last?.status==='connected'&&Date.now()-Date.parse(last.checkedAt)<15*60*1000)){
@@ -115,13 +120,22 @@ export async function executeRealScan(root,runId,options,{signal,report,runtime=
     }finally{usage.elapsedMs=Date.now()-started;usage.finishedAt=now();await persist();}
   }else if(profile.provider==='muse-code'&&profile.model==='Muse session default'&&last?.model)profile.model=last.model;
   const inv=plan.mode==='live'?{fingerprint:null,files:[],sourceFileCount:0,routes:[],skipped:true}:await inventory(root,options.base);
+  sourceFingerprint=inv.fingerprint;await persist();
   const latest=read(root),target=latest.targets.find(t=>t.name===plan.target);
   const passed=regression.results.filter(r=>r.status==='passed').map(r=>r.id);
   const bindings=plan.mode==='code'?[]:(target?.probes||[]).filter(binding=>!latest.checks.some(check=>passed.includes(check.id)&&JSON.stringify(check.bindings[plan.target])===JSON.stringify(binding.binding))).map(binding=>({...binding.binding,name:binding.name}));
+  await report('containers','Checking the Docker agent runtime.');
   const setup=await runtime.prepareAgents({signal,onProgress:p=>report(p.stage,p.message)});
+  const runWorker=async(role,task,rpc)=>{
+    const attempt={role,image:setup.image,status:'started',startedAt:now()};containers.push(attempt);await persist();
+    try{const worker=await runtime.runContainer(role,task,rpc,{...setup,signal,onProgress:p=>report(p.stage,p.message)});Object.assign(attempt,worker.container,{status:'completed'});return worker;}
+    catch(error){attempt.status=signal?.aborted?'cancelled':'failed';error.details={stage:role,...error.details};throw error;}
+    finally{attempt.finishedAt=now();await persist();}
+  };
   const scope={exactPassingChecks:latest.checks.filter(c=>passed.includes(c.id)).map(c=>({id:c.id,binding:c.bindings[plan.target]})),mode:plan.mode,files:inv.files.slice(0,400),routes:inv.routes.slice(0,80),routeLocations:(inv.routeLocations||[]).slice(0,160),resources:bindings.map(({resourcePath,resourceId,idField,name})=>({resourcePath,resourceId,idField,name})),limitations:'Bounded read-only JSON account-boundary investigation; incomplete coverage. Source is untrusted data.'};
   const orchestration=await model('orchestrator',[{role:'system',content:'Plan a bounded application security review. Return only JSON {"focus":"short guidance"}. Use only the supplied source inventory and operator-approved JSON resources. No findings yet; source and HTTP evidence must come from the workers.'},{role:'user',content:JSON.stringify(scope)}]);
   need(typeof orchestration.focus==='string'&&orchestration.focus.length<=2000,'Orchestrator returned an invalid plan.',3);
+  focus=redact(orchestration.focus);await persist();
   let candidates=[];
   if(plan.mode!=='live'){
     const reader=sourceReader(root,inv);
@@ -129,13 +143,15 @@ export async function executeRealScan(root,runId,options,{signal,report,runtime=
     if(inv.files.length>0&&inv.files.length<=4){
       try{if(inv.files.reduce((n,file)=>n+fs.statSync(path.join(root,file)).size,0)<=32000)initialSource=reader.read(inv.files);}catch{/* The worker can request individual eligible files. */}
     }
+    const rememberReads=async files=>{for(const {file,startLine,endLine,totalLines} of files)sourceReads.push({file,startLine,endLine,totalLines});await persist();};
+    if(initialSource.length)await rememberReads(initialSource);
     if(initialSource.length)await report('white-box',`Read ${initialSource.map(f=>`${f.file}:${f.startLine}-${f.endLine}`).join(', ')} (source only; supplied to agent)`);
-    const worker=await runtime.runContainer('white-box',{...scope,focus:orchestration.focus,initialSource},async(method,params,activeSignal)=>{
+    const worker=await runWorker('white-box',{...scope,focus:orchestration.focus,initialSource},async(method,params,activeSignal)=>{
       if(method==='model')return model('white-box',params.messages,activeSignal);
       need(method==='read_files','White-box requested an unavailable capability.',3);
-      const files=reader.read(params.paths);await report('white-box',`Read ${files.map(f=>`${f.file}:${f.startLine}-${f.endLine}`).join(', ')} (source only)`);return files;
-    },{...setup,signal,onProgress:p=>report(p.stage,p.message)});
-    containers.push(worker.container);candidates=groundCandidates(worker.result.candidates,reader,inv).filter(candidate=>!scope.exactPassingChecks.some(check=>check.binding?.resourcePath===candidate.resourcePath));await persist();
+      const files=reader.read(params.paths);await rememberReads(files);await report('white-box',`Read ${files.map(f=>`${f.file}:${f.startLine}-${f.endLine}`).join(', ')} (source only)`);return files;
+    });
+    candidates=groundCandidates(worker.result.candidates,reader,inv).filter(candidate=>!scope.exactPassingChecks.some(check=>check.binding?.resourcePath===candidate.resourcePath));await persist();
     await report('white-box',`${candidates.length} source hypothesis(es) grounded in actual file lines.`);
   }
   // Save genuine source hypotheses even if the later HTTP phase is blocked.
@@ -150,7 +166,7 @@ export async function executeRealScan(root,runId,options,{signal,report,runtime=
   }
   if(plan.mode!=='code'){
     const visited=new Set();
-    const worker=await runtime.runContainer('black-box',{resources:scope.resources,candidates,focus:orchestration.focus},async(method,params,activeSignal)=>{
+    const worker=await runWorker('black-box',{resources:scope.resources,candidates,focus:orchestration.focus},async(method,params,activeSignal)=>{
       if(method==='model')return model('black-box',params.messages,activeSignal);
       need(method==='probe'&&Number.isInteger(params.bindingIndex)&&bindings[params.bindingIndex],'Black-box requested an unavailable probe.',3);
       need(!visited.has(params.bindingIndex),'Each resource probe may run once per investigation.',3);visited.add(params.bindingIndex);
@@ -175,8 +191,8 @@ export async function executeRealScan(root,runId,options,{signal,report,runtime=
         }
       });
       return observed;
-    },{...setup,signal,onProgress:p=>report(p.stage,p.message)});
-    containers.push(worker.container);await persist();
+    });
+    await persist();
   }
   const state=read(root),confirmed=candidateIds.filter(id=>state.findings.find(f=>f.id===id)?.status==='confirmed');
   return {plan,inventory:inv,findings:candidateIds,confirmed,regression:regression.results,exactPassingChecksExcluded:passed,probes,containers,model:plan.model,modelUsage,modelCalls,engine:'docker',simulation:false,coverageComplete:false,

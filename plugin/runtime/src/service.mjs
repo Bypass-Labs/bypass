@@ -10,6 +10,10 @@ import { modelProfile, testModel } from './models.mjs';
 import { scanPlan, executeRun, verifyFinding } from './engine.mjs';
 import { monitorSummary } from './plugin-context.mjs';
 import { realEngine } from './real-engine.mjs';
+import { reviewReadiness, activeFindings, credentialHelp } from './review-readiness.mjs';
+import { validateProbe } from './probe-preflight.mjs';
+import { summarizeRun, terminalRun } from './run-state.mjs';
+import { runtimeIdentity } from './runtime-identity.mjs';
 import { dockerStatus, prepareAgents } from './agent-runtime.mjs';
 import { specFor, saveCheck, bindCheck, exportChecks } from './checks.mjs';
 import { dispatchRun, watchRun, startWorker, workerStatus, runMonitor } from './jobs.mjs';
@@ -21,18 +25,19 @@ function filter(list,options,keys){return list.filter(item=>keys.every(k=>!optio
 const wrap=value=>value?.schemaVersion==='bypass.v1'?value:outcome(value);
 export function readiness(root){
   const s=read(root),target=s.targets.find(t=>t.name===s.activeTarget),model=s.models.find(m=>m.name===s.activeModel);
-  let liveReady=false;try{scopeReady(target||{});liveReady=true;}catch{}
-  const liveReview=liveReady&&(!realEngine(s)||!!target?.probes?.length);
-  return {project:s.project,root,engine:{mode:realEngine(s)?'docker':'mock',analysisImplemented:realEngine(s),label:realEngine(s)?'Docker agents · real source review and scoped HTTP proof':'MOCK analysis · real setup and saved-test replay'},
+  const shared=reviewReadiness(s),liveReady=shared.authorized,liveReview=realEngine(s)?shared.live:liveReady;
+  const findings=activeFindings(s),latest=s.runs.at(-1),active=latest&&!terminalRun(latest);
+  const next=active?`run watch ${latest.id}`:realEngine(s)&&shared.sourceBlockers.length?'model test':latest?.status==='failed'?(latest.result?.details?.next||`run show ${latest.id}`):s.checks.some(c=>c.enabled)?'test run --all':realEngine(s)&&shared.canValidateLive&&!shared.live?`probe test ${shared.probes.find(p=>!p.ready).name}`:findings.length?'finding list':liveReview?'scan --mode combined':'scan --mode code';
+  return {runtime:runtimeIdentity(),project:s.project,root,engine:{mode:realEngine(s)?'docker':'mock',analysisImplemented:realEngine(s),label:realEngine(s)?'Docker agents · real source review and scoped HTTP proof':'MOCK analysis · real setup and saved-test replay'},
     review:scanPlan(s,{mode:liveReview?'combined':'code'}),
     model:model?{name:model.name,provider:model.provider,destination:model.dataDestination,connection:model.lastAttempt?.status||model.lastTest?.status||'not tested'}:null,
     target:target?{name:target.name,url:target.url,environment:target.environment,ownership:target.ownership?.status||'pending',authorized:liveReady}:null,
-    ready:{repository:true,model:!!model,target:!!target,liveTesting:liveReady,liveReview},
-    findings:{total:s.findings.length,confirmed:s.findings.filter(f=>f.status==='confirmed').length,fixtureConfirmed:s.findings.filter(f=>f.status==='confirmed_fixture').length,simulated:s.findings.filter(f=>f.status==='simulated_unproven').length,fixed:s.findings.filter(f=>f.status==='fixed_verified').length},
+    ready:{repository:true,model:realEngine(s)?shared.modelReady:!!model,source:realEngine(s)?shared.source:true,target:!!target,authorized:liveReady,liveTesting:liveReview,liveReview,canValidateLive:shared.canValidateLive},probes:shared.probes,blockers:{source:shared.sourceBlockers,live:shared.liveBlockers},
+    findings:{total:findings.length,hiddenSimulated:s.findings.length-findings.length,confirmed:findings.filter(f=>f.status==='confirmed').length,fixtureConfirmed:findings.filter(f=>f.status==='confirmed_fixture').length,simulated:findings.filter(f=>f.status==='simulated_unproven').length,fixed:findings.filter(f=>f.status==='fixed_verified').length},
     checks:{total:s.checks.length,enabled:s.checks.filter(c=>c.enabled).length,passed:s.checks.filter(c=>c.lastResult?.status==='passed').length,failed:s.checks.filter(c=>c.lastResult?.status==='failed').length},
-    worker:workerStatus(root),monitors:s.monitors.length,latestRun:s.runs.at(-1)||null,
+    worker:workerStatus(root),monitors:s.monitors.length,latestRun:summarizeRun(latest),
     privacy:{evidence:'local',sourceUpload:realEngine(s),analysisInference:realEngine(s)?'Selected source excerpts sent to the active model':'not invoked (mock engine)',secretStorage:'environment variable references; public fixture credentials only in demo'},
-    next:s.checks.some(c=>c.enabled)?'test run --all':s.findings.length?'finding list':liveReview?'scan --mode combined':'scan --mode code',
+    next,
     limitations:[realEngine(s)?'Bounded JSON API account-boundary POC; incomplete coverage.':'White-box and black-box engines are simulated.','Hosted Bypass account, cloud scheduler, and deployment attestation are not connected.','No passing result implies complete security coverage.']};
 }
 
@@ -64,6 +69,13 @@ export async function execute(key,args=[],o={},context={}){
   }
   if(key==='mcp serve'){const {serveMCP}=await import('./mcp.mjs');await serveMCP(working);return null;}
   if(key==='integrate muse'||key==='integrate status'||key==='integrate remove')return integrate(key,args,o,working,context.signal);
+  if(key==='doctor'){
+    const root=rootFrom(working,false);let s;try{s=read(root);}catch{}
+    const checks=[{name:'Node >=22',ok:Number(process.versions.node.split('.')[0])>=22,version:process.version}];
+      for(const binary of ['git','muse']){try{const r=await execFile(binary,['--version']);checks.push({name:binary,ok:r.code===0,version:r.stdout});}catch(e){checks.push({name:binary,ok:false,message:e.message,optional:binary==='muse'&&s?.models.find(m=>m.name===s.activeModel)?.provider!=='muse-code'});}}
+      if(!s||realEngine(s)){const docker=await dockerStatus(context);checks.push({name:'Docker',ok:docker.available,version:docker.version,message:docker.message});}
+      return outcome({kind:'environment-diagnostics',checks,runtime:runtimeIdentity(),readiness:s?readiness(root):null,message:'Doctor checks configuration and executables. It does not prove model access or app security.'},checks.some(c=>!c.ok&&!c.optional)?3:0);
+  }
   const root=rootFrom(working);const s=read(root);const targetName=o.target||s.activeTarget;
   let result;
   switch(key){
@@ -73,6 +85,7 @@ export async function execute(key,args=[],o={},context={}){
     }
     case 'engine doctor':result={...(await dockerStatus(context)),engine:realEngine(s)?'docker':'mock',model:s.models.find(m=>m.name===s.activeModel)||null};break;
     case 'engine prepare':result=await prepareAgents(context);break;
+    case 'probe test':{const validation=await validateProbe(root,args[0],{target:targetName,signal:context.signal});return outcome({validation},validation.status==='ready'?0:3);}
     case 'probe list':result={target:targetName,probes:named(s.targets,targetName,'Target').probes||[]};break;
     case 'probe add':{
       safeName(args[0]);const t=named(s.targets,targetName,'Target');scopeReady(t,o.path);
@@ -86,11 +99,6 @@ export async function execute(key,args=[],o={},context={}){
     }
     case 'status':result=readiness(root);break;
     case 'repo show':result={repository:await repositoryInfo(root)};break;
-    case 'doctor':{
-      const checks=[{name:'Node >=22',ok:Number(process.versions.node.split('.')[0])>=22,version:process.version}];
-      for(const binary of ['git','muse']){try{const r=await execFile(binary,['--version']);checks.push({name:binary,ok:r.code===0,version:r.stdout});}catch(e){checks.push({name:binary,ok:false,message:e.message,optional:binary==='muse'});}}
-      result={checks,readiness:readiness(root),message:'Doctor checks configuration and executables. It does not prove model access or app security.'};break;
-    }
     case 'config show':result=snapshot(s);break;
     case 'config set':result=await change(root,state=>{
       const [key,value]=args;
@@ -135,7 +143,7 @@ export async function execute(key,args=[],o={},context={}){
     case 'identity list':result={identities:filter(s.identities,o,['target']).map(({fixtureValue,...x})=>x)};break;
     case 'identity test':{
       const identity=named(s.identities,args[0],'Identity'),target=named(s.targets,identity.target,'Target');need(identity.checkPath,'Configure --check-path before testing this identity.');scopeReady(target,identity.checkPath);
-      const secret=process.env[identity.secretEnv]||(s.demo?.target===identity.target?identity.fixtureValue:null);need(secret,`Set ${identity.secretEnv} before testing.`,3);
+      const secret=process.env[identity.secretEnv]||(target.environment==='local'&&(s.demo?.target===identity.target||(s.poc&&target.pocFixture))?identity.fixtureValue:null);need(secret,credentialHelp(identity.secretEnv),3);
       const headers=identity.type==='bearer'?{Authorization:`Bearer ${secret}`}:identity.type==='cookie'?{Cookie:secret}:{[identity.header]:secret};
       const response=await safeRequest(target.url+identity.checkPath,{headers,allowLocal:target.environment==='local',timeout:s.settings.requestTimeoutMs});
       const check={httpStatus:response.status,status:response.status>=200&&response.status<300?'accepted':'blocked',checkedAt:now(),bodyStored:false,message:'Endpoint accepted the request; account role is not automatically attested.'};
@@ -165,7 +173,7 @@ export async function execute(key,args=[],o={},context={}){
       const plan=scanPlan(s,o);if(o.plan)return outcome({plan},plan.blockers.length?3:0);
       return dispatchRun(root,'scan',{mode:o.mode||'combined',target:targetName,base:o.base,full:!!o.full},!!o.detach,context.signal,context.onProgress);
     }
-    case 'finding list':result={findings:filter(s.findings,{...o,lastRunId:o.run},['target','status','severity','lastRunId'])};break;
+    case 'finding list':result={findings:filter(activeFindings(s),{...o,lastRunId:o.run},['target','status','severity','lastRunId'])};break;
     case 'finding show':result={finding:named(s.findings,args[0],'Finding')};break;
     case 'verify':case 'retest':return verifyFinding(root,args[0],{target:o.target,build:o.build,retest:key==='retest',signal:context.signal});
     case 'test list':result={checks:filter(s.checks,o,['target'])};break;
@@ -178,7 +186,7 @@ export async function execute(key,args=[],o={},context={}){
     case 'coverage':{
       const inv=await inventory(root);result={scope:'Specific saved HTTP behaviors only',complete:false,sourceFingerprint:inv.fingerprint,checks:s.checks.map(c=>({id:c.id,behavior:c.title,target:c.target,status:!c.enabled?'disabled':['failed','blocked'].includes(c.lastResult?.status)?c.lastResult.status:c.sourceFingerprint!==inv.fingerprint?'stale':c.lastResult?.status||'not-run',sourceChanged:c.sourceFingerprint!==inv.fingerprint,lastResult:c.lastResult})),unproven:s.findings.filter(f=>f.status==='simulated_unproven').map(f=>({id:f.id,title:f.title,simulation:true})),message:'A route is not fully covered just because one behavior on that route has a test.'};break;
     }
-    case 'context':result={project:s.project.name,engine:realEngine(s)?'docker':'mock',summary:readiness(root),latestMonitor:monitorSummary(s),finding:o.finding?named(s.findings,o.finding,'Finding'):null,recentEvents:s.events.slice(-15),attention:s.checks.filter(c=>c.enabled&&['failed','blocked','stale'].includes(c.lastResult?.status)),next:'Replay saved checks first. Investigate failed, blocked, stale, and uncovered behaviors. Never treat simulated candidates as verified issues.'};break;
+    case 'context':result={project:s.project.name,engine:realEngine(s)?'docker':'mock',summary:readiness(root),latestMonitor:monitorSummary(s),finding:o.finding?named(s.findings,o.finding,'Finding'):null,recentEvents:s.events.slice(-15),attention:s.checks.filter(c=>c.enabled&&['failed','blocked','stale'].includes(c.lastResult?.status)),next:readiness(root).next};break;
     case 'report':{
       const r=named(s.runs,o.run||s.runs.at(-1)?.id,'Run'),format=o.format||'json';need(['json','md'].includes(format),'Report format must be json or md.');
       const content=format==='json'?JSON.stringify(redact(r),null,2):`# Bypass run ${r.id}\n\nStatus: ${r.status}. Exit: ${r.exitCode}.\n\nAnalysis simulated: ${r.simulation}. Model calls: ${r.result?.modelCalls??0}.\n\n${r.result?.message||''}\n\n## Evidence\n\n\`\`\`json\n${JSON.stringify(redact(r.result),null,2)}\n\`\`\`\n`;

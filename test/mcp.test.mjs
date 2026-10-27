@@ -65,8 +65,8 @@ test('plugin selects the application explicitly, keeps host state untouched, and
   const codePlan=data(await call('bypass_prepare_scan',{mode:'code'}));
   assert.equal(codePlan.plan.blockers.length,0);assert.equal(codePlan.plan.blackBox.status,'deferred');
   const started=data(await call('bypass_scan',{mode:'code'}));
-  let run;for(let i=0;i<100;i++){run=data(await call('bypass_run',{id:started.runId})).run;if(run.status==='completed')break;await delay(30);}
-  assert.equal(run.status,'completed');assert.deepEqual(run.result.inventory.files,['job-search.js']);
+  let run;for(let i=0;i<100;i++){run=data(await call('bypass_run',{id:started.runId})).run;if(['completed','incomplete','failed'].includes(run.status))break;await delay(30);}
+  assert.equal(run.status,'incomplete');assert.deepEqual(run.result.inventory.files,['job-search.js']);
   assert.equal(run.result.plan.repository.path,app);assert.equal(run.result.modelCalls,0);
   assert.equal(read(app).targets[0].ownership.status,'pending');
   assert.equal(read(app).identities.length,0);

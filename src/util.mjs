@@ -2,7 +2,7 @@ import { randomUUID, createHash } from 'node:crypto';
 import { spawn } from 'node:child_process';
 import { setTimeout as delay } from 'node:timers/promises';
 
-export const VERSION = '0.2.3';
+export const VERSION = '0.2.4';
 export const SCHEMA = 'bypass.v1';
 export const now = () => new Date().toISOString();
 export const id = prefix => `${prefix}_${randomUUID().slice(0, 8)}`;

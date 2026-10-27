@@ -20,9 +20,10 @@ export function printResult(data){
   if(!data)return;
   const value=redact(data);
   if(value.error){console.error(paint('31',value.error));if(value.details&&Object.keys(value.details).length)console.error(JSON.stringify(value.details,null,2));return;}
+  if(value.kind==='environment-diagnostics'){console.log(`\nBypass ${value.runtime.version} · ${value.runtime.sourcePath}\nEnvironment checks`);for(const c of value.checks)console.log(`  ${c.ok?'✓':'!'} ${c.name} · ${c.ok?c.version?.trim()||'available':c.message||'unavailable'}${c.optional?' (optional)':''}`);console.log(value.message);return;}
   if(value.models){console.log('\nModel connections');for(const m of value.models)console.log(`  ${m.name===value.active?'●':'○'} ${m.name} · ${m.provider} · ${m.lastAttempt?.status||m.lastTest?.status||'not tested'}\n    ${m.dataDestination}`);return;}
   if(value.targets){console.log('\nConnected apps');for(const t of value.targets)console.log(`  ${t.name===value.active?'●':'○'} ${t.name} · ${t.url}\n    ${t.environment} · ownership ${t.ownership?.status||'pending'}`);if(!value.targets.length)console.log('  No app yet. Use /app to connect one.');return;}
-  if(value.project&&value.review){console.log('\n'+reviewSummary(value.review));console.log(`Model: ${value.model?.name||'not configured'} · ${value.model?.connection||'optional for the preview'}\nSaved tests: ${value.checks.enabled} · passed ${value.checks.passed} · failed ${value.checks.failed}\nNext: ${value.next}`);return;}
+  if(value.project&&value.review){console.log(`\nBypass ${value.runtime.version} · ${value.runtime.sourcePath}\n`+reviewSummary(value.review));console.log(`Model: ${value.model?.name||'not configured'} · ${value.model?.connection||'optional for the preview'}\nSaved tests: ${value.checks.enabled} · passed ${value.checks.passed} · failed ${value.checks.failed}\nNext: ${value.next}`);return;}
   if(value.plan){
     const p=value.plan;
     console.log(`\n${bold('Review plan')} · ${p.mode==='code'?'code only':p.mode}\n`);
@@ -40,12 +41,12 @@ export function printResult(data){
       for(const check of r.result.regression||[])console.log(`  Saved check: ${check.status} — ${check.reason}`);
       console.log('\nThis is a successful prototype preview. The example is simulated; it is not a verified vulnerability in your app.');return;
     }
-    const incomplete=r.result?.details?.stage||r.result?.details?.reason==='model_timeout';
+    const incomplete=['failed','incomplete','interrupted'].includes(r.status);
     console.log(`\n${bold(incomplete?'Review incomplete':r.id)}  ${label(r.kind)} · ${incomplete?'stopped':r.status}`);
     if(r.result?.message)console.log(`\n${r.result.message}`);
     for(const result of r.result?.results||r.result?.regression||[])console.log(`  ${result.status==='passed'?accent('✓'):paint('33','!')} ${result.id}  ${result.status} — ${result.reason}`);
     if(r.result?.findings?.length)console.log(`\nFindings: ${r.result.findings.join(', ')}\nNext: bypass finding show ${r.result.findings[0]}`);
-    if(incomplete)console.log(`\nStopped at: ${r.result.details.stage||'model response'}\nSetup and partial evidence are saved. No complete security result is available.\nNext inside Bypass: model test\nIf that fails, use /models to choose another connection. After it passes, /review retries.\nEvidence: .bypass/runs/${r.id}.json`);
+    if(incomplete)console.log(`\nStopped at: ${r.result?.details?.stage||r.stage||'review'}\nSetup and partial evidence are saved. No complete security result is available.\nNext inside Bypass: ${r.result?.details?.next||'status'}\nEvidence: .bypass/runs/${r.id}.json`);
     console.log(muted(`Exit ${value.exitCode} · model calls ${r.result?.modelCalls??0} · evidence stored locally`));return;
   }
   if(value.target?.challenge){const t=value.target;console.log(`\n${bold(t.name)} · ${t.url}\nOwnership: ${t.ownership?.status||'pending'}\n`);if(t.environment==='local')console.log(`Next: bypass target verify ${t.name} --method local`);else console.log(`Publish TXT record:\n  Name:  ${t.challenge.record}\n  Value: ${t.challenge.token}\n\nOr serve exactly that value at:\n  ${t.url}${t.challenge.httpPath}\n\nThen: bypass target verify ${t.name} --method dns`);if(t.authorization)console.log(`Scope: ${t.authorization.paths.join(', ')} · expires ${t.authorization.expiresAt}`);return;}
@@ -310,8 +311,8 @@ async function engineWizard(ask,root,run){
   const profile=state.models.find(m=>m.name===state.activeModel);
   console.log(`Orchestrator + white-box + black-box all use ${profile.name} / ${profile.model}. Selected source excerpts go to ${profile.dataDestination}.`);
   const target=state.targets.find(t=>t.name===state.activeTarget);
-  if(!target||!readiness(root).ready.liveTesting){console.log('Source review is ready. Use /app to finish ownership and scope before HTTP proof.');return;}
-  if(target.probes?.length){console.log(`${target.probes.length} authorized resource(s) configured. Use /review to begin.`);return;}
+  if(!target||!readiness(root).ready.authorized){console.log('Source review is ready. Use /app to finish ownership and scope before HTTP proof.');return;}
+  if(target.probes?.length){for(const p of target.probes)await run('probe test',[p.name]);return;}
   console.log('For real account-boundary proof, use two different test accounts and one resource belonging to the owner. Supply environment variable NAMES, never token values.');
   const identities=[];
   for(const role of ['owner','outsider']){
@@ -332,5 +333,6 @@ async function engineWizard(ask,root,run){
   const idField=await ask('JSON field identifying the resource','id');
   const identityField=await ask('JSON field identifying the account at the identity endpoint','id');
   await run('probe add',['primary'],{target:target.name,path:resourcePath,'resource-id':resourceId,owner:identities[0],outsider:identities[1],'id-field':idField,'identity-field':identityField});
+  await run('probe test',['primary']);
   console.log('Ready. Use /review for source analysis and real HTTP proof. Fix confirmed issues in your editor, then use /results → Retest a fix.');
 }

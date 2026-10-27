@@ -2,7 +2,7 @@ import { read, change, event, writeEvidence } from './store.mjs';
 import { inventory } from './repository.mjs';
 import { runChecks, saveCheck, specFor } from './checks.mjs';
 import { replay } from './portable-check.mjs';
-import { id, now, named, need, outcome, aggregate, delay } from './util.mjs';
+import { id, now, named, need, outcome, aggregate, delay, redact } from './util.mjs';
 import { scopeReady } from './network.mjs';
 import { demoConfig } from './demo.mjs';
 import { realEngine, realPlan, executeRealScan } from './real-engine.mjs';
@@ -45,13 +45,13 @@ function mockCandidate(state,inv,targetName){
     binding:fixture?{resourcePath:exportRoute?'/api/exports/invoice-acme-001':'/api/invoices/invoice-acme-001',resourceId:'invoice-acme-001',owner:'demo-owner',outsider:'demo-outsider',idField:'id'}:null,
     sourceFingerprint:inv.fingerprint,createdAt:now(),history:[]};
 }
-export async function executeRun(root,runId,externalSignal,onProgress){
+export async function executeRun(root,runId,externalSignal,onProgress,{runtime}={}){
   const controller=new AbortController();
   const report=async(stage,message)=>{await progress(root,runId,stage,message);onProgress?.({stage,message});};
   const cancel=()=>controller.abort();externalSignal?.addEventListener('abort',cancel,{once:true});
   if(externalSignal?.aborted)cancel();
   const timer=setInterval(()=>{try{if(named(read(root).runs,runId,'Run').cancelRequested)controller.abort();}catch{controller.abort();}},150);
-  let result;
+  let result,failed=false;
   try{
     await change(root,s=>{const r=named(s.runs,runId,'Run');r.status='running';r.startedAt=now();r.pid=process.pid;});
     const initial=read(root),run=named(initial.runs,runId,'Run'),options=run.options;
@@ -59,7 +59,7 @@ export async function executeRun(root,runId,externalSignal,onProgress){
       await report('replay','Running saved checks without a model.');
       result=await runChecks(root,{all:!options.checkId,checkId:options.checkId,target:options.target,signal:controller.signal,runId});
     }else if(realEngine(initial)){
-      result=await executeRealScan(root,runId,options,{signal:controller.signal,report});
+      result=await executeRealScan(root,runId,options,{signal:controller.signal,report,...(runtime?{runtime}:{})});
     }else{
       const plan=scanPlan(initial,options);
       need(!plan.blockers.length,plan.blockers.join(' '),3,{plan});
@@ -88,11 +88,16 @@ export async function executeRun(root,runId,externalSignal,onProgress){
         message:'Walkthrough scan complete. Analysis is simulated; no real security conclusion is available.'};
     }
     if(controller.signal.aborted){result.exitCode=130;result.message='Run cancelled.';}
-  }catch(e){result={exitCode:controller.signal.aborted?130:(e.code||3),message:e.message,details:e.details||{},modelCalls:named(read(root).runs,runId,'Run').modelCalls||0,simulation:!realEngine(read(root)),engine:realEngine(read(root))?'docker':'mock'};}
+  }catch(e){
+    failed=true;const state=read(root),run=named(state.runs,runId,'Run');
+    result=redact({exitCode:controller.signal.aborted?130:(Number.isInteger(e.code)?e.code:3),message:e.message,details:{stage:run.stage||'setup',next:'status',...e.details},modelCalls:run.modelCalls||0,simulation:!realEngine(state),engine:realEngine(state)?'docker':'mock',coverageComplete:false,
+      findings:state.findings.filter(f=>f.lastRunId===runId).map(f=>f.id),partial:true});
+  }
   finally{clearInterval(timer);externalSignal?.removeEventListener('abort',cancel);}
   const partial=named(read(root).runs,runId,'Run').partialRegression;
+  if(partial)result.regression??=partial.results;
   if(partial?.exitCode===1&&result.exitCode!==130){result.exitCode=1;result.regression??=partial.results;}
-  const final=await change(root,s=>{const r=named(s.runs,runId,'Run');Object.assign(r,{status:result.exitCode===130?'cancelled':'completed',finishedAt:now(),exitCode:result.exitCode,result});event(s,'run-finished',`${r.kind}: ${r.status}`,{runId,exitCode:r.exitCode});return r;});
+  const final=await change(root,s=>{const r=named(s.runs,runId,'Run');Object.assign(r,{status:result.exitCode===130?'cancelled':failed?'failed':result.exitCode===3?'incomplete':'completed',finishedAt:now(),exitCode:result.exitCode,result,modelCalls:result.modelCalls||0});event(s,'run-finished',`${r.kind}: ${r.status}`,{runId,exitCode:r.exitCode});return r;});
   writeEvidence(root,final);return outcome({run:final},final.exitCode);
 }
 export async function verifyFinding(root,findingId,{target,build,retest=false,signal}={}){

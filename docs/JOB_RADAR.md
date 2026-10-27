@@ -1,36 +1,45 @@
 # Job Radar through the Muse plugin
 
-This walkthrough uses `https://github.com/Bypass-Labs/job-finder` and `https://job-radar.app`. It describes real setup and the remaining production proof steps, not the Ledger fixture. Bypass 0.2.2 supports this app's large server file and nested JSON resource identifiers.
+This walkthrough uses `https://github.com/Bypass-Labs/job-finder` and `https://job-radar.app`. It describes real setup and the remaining production proof steps, not the Ledger fixture. Bypass supports this app's large server file and nested JSON resource identifiers.
 
 **Validation is partial:** native plugin setup/resumption and real DNS verification worked. Actual AI source-review attempts encountered intermittent Muse failures/timeouts, and production account-isolation proof still needs two test-account references and a known owner resource. Do not treat this walkthrough as a completed production test.
 
-## Continue the existing setup
+## 1. Connect the app inside Muse
 
-The application is already connected at `/Users/maksim/Projects/job-finder-3`. Its commit is `1f5684f9d1b051187ec6be40e981ba489d6240a8`. The installed plugin remembers this selection when Muse starts from `/Users/maksim/Downloads/bypass-for-muse`. Open a **new Muse session** to load the updated plugin. No new clone or DNS record is necessary for this saved setup.
+Start with `/bypass:start`, then say:
 
-Paste this:
+> Review https://github.com/Bypass-Labs/job-finder with Bypass. Its production app is https://job-radar.app. Reuse my existing checkout and saved setup if available. Use my Muse subscription and real Docker agents. I authorize read-only testing of /api/profile and /api/run. Guide me through anything missing.
 
-> Use Bypass to continue reviewing Job Finder at /Users/maksim/Projects/job-finder-3, production https://job-radar.app. Reuse the saved Muse profile, real Docker engine and verified ownership. Show the current source review and help me complete the two-account HTTP proof. I authorize read-only testing of /api/profile and /api/run. Ask only for missing inputs; do not start another demo or duplicate a running review.
+Bypass should show the **actual selected folder**, loaded version/source, model and next step. An old walkthrough's DNS date is not current proof: check the selected project's saved ownership and scope. If needed, publish the generated TXT record, then ask Bypass to verify it. Source-only review can run while DNS propagates.
 
-## What the plugin should show
+## 2. Finish ownership, scope and model setup first
 
-| Step | Result |
-| --- | --- |
-| Repository | Existing Job Finder checkout, matching GitHub HEAD at validation time |
-| Shared model | Existing Muse Code profile reused |
-| Analysis | Real Docker engine; no mock fallback |
-| App | `https://job-radar.app`, production |
-| Ownership | Published DNS TXT verified on 2026-10-27 UTC; valid for 30 days |
-| Testing scope | GET/HEAD on `/api/profile` and `/api/run`, at most 2 requests/second; seven-day authorization |
-| Accounts | Needs two dedicated, valid Firebase ID-token references |
-| Resource | Needs one existing run ID belonging to the owner account |
-| Production proof | Pending account/resource setup; no confirmed production finding yet |
+Confirm your two dedicated test accounts work in the app. Complete DNS, testing permission, Docker and the model connection before fetching short-lived tokens. Then create or open one recent run owned by the first account and keep its exact ID. Run data is held in application memory and can disappear after an app restart.
 
-DNS proves control of the domain. It does not attest that production is running the checked-out commit. Existing seeded findings remain marked simulated and are not evidence against this app.
+## 3. Get the two Firebase ID tokens privately
 
-## Supply the remaining inputs once
+For this app, the browser already sends the needed Firebase ID token with authenticated API requests. You do not need a service-account key or a refresh token.
 
-Load two dedicated test accounts' **Firebase ID tokens** in the terminal that launches Muse. These are user ID tokens, not Firebase service-account keys or refresh tokens. Keep values out of chat and Git. Choose environment names such as `JOB_RADAR_OWNER_TOKEN` and `JOB_RADAR_OTHER_TOKEN`; use your normal private credential-loading mechanism before starting Muse. Refresh expired tokens and restart the session when necessary.
+1. Sign in to `https://job-radar.app` as the **owner test account**. Open the browser's developer tools → **Network**.
+2. Reload the signed-in app. Select its request to **`/api/profile`**. Under **Request Headers**, find `Authorization: Bearer …`. Copy only the token after `Bearer ` into the private terminal prompt below.
+3. Repeat in a separate browser profile/private window signed in as the **other test account**. Do not reuse the owner's account.
+4. In the terminal from which you will start Muse, run `bash`, then these commands. Pasted values are hidden and are not part of shell command history:
+
+```bash
+read -r -s -p 'Owner Firebase ID token: ' JOB_RADAR_OWNER_TOKEN
+printf '\n'
+export JOB_RADAR_OWNER_TOKEN
+read -r -s -p 'Other account Firebase ID token: ' JOB_RADAR_OTHER_TOKEN
+printf '\n'
+export JOB_RADAR_OTHER_TOKEN
+muse --reasoning-effort minimal
+```
+
+Do not paste tokens into chat, command arguments, screenshots or Git. Do not copy the entire request as cURL. Clear your clipboard after pasting. If Muse is already running, exit it first; a running process cannot inherit variables exported in another shell.
+
+Firebase ID tokens last about **one hour**. If validation returns a login failure, reload the signed-in app, copy fresh tokens, repeat the private prompts and start a new Muse session. Bypass keeps the saved references and resource setup. The app's source uses `user.getIdToken()` in `ui/src/lib/api.ts`; the SDK can refresh an expired token. [Firebase session lifetime](https://firebase.google.com/docs/auth/admin/manage-sessions) · [Firebase getIdToken reference](https://firebase.google.com/docs/reference/js/auth.user#getidtoken).
+
+## 4. Give Muse names and the real resource ID
 
 Then tell Muse the names and an existing private run owned by the first account:
 
@@ -44,11 +53,11 @@ Replace `YOUR_RUN_ID`; do not submit a guessed ID. The source establishes the re
 
 Run records live in application memory and may expire or disappear after a restart. Use a recent existing run from the owner account. A missing run is an inconclusive positive control, not proof that access is secured.
 
-Muse performs the Bypass tools itself. It adds the two identities and the resource probe, shows the plan, starts the review and polls progress. If you choose a prep note/thread instead, it must update the authorized resource route and match the corresponding response selector (`note.id` / `thread.id`); it must not reuse `run.id` blindly.
+Muse performs the Bypass tools itself. It adds the two identities and resource probe, calls `bypass_test_probe` itself, then shows the plan and starts the review. Preflight performs only the first three controls below and must succeed before AI. A live review repeats these positive controls before model calls. Missing tokens or a nonexistent owner resource are blocked with a concrete recovery step, not marked ready. If you choose a prep note/thread instead, it must update the authorized resource route and match the corresponding response selector (`note.id` / `thread.id`); it must not reuse `run.id` blindly.
 
 ## What a completed proof means
 
-Bypass makes five actual GET requests for the selected resource:
+During the proof phase, Bypass makes five actual GET requests for the selected resource (in addition to the three positive preflight requests):
 
 1. Owner identity returns 200 and an account ID.
 2. Other identity returns 200 and a **different** account ID.

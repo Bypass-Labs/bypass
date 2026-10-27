@@ -1,4 +1,5 @@
 import fs from 'node:fs';
+import { terminalRun } from './run-state.mjs';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
 import { read, change, atomic, event } from './store.mjs';
@@ -20,7 +21,7 @@ export async function watchRun(root,runId,timeoutMs=300000,signal){
   while(true){
     if(signal?.aborted)throw abortFault(signal);
     const run=named(read(root).runs,runId,'Run');
-    if(['completed','cancelled','interrupted'].includes(run.status))return outcome({run},run.exitCode??3);
+    if(terminalRun(run))return outcome({run},run.exitCode??3);
     if(run.pid){try{process.kill(run.pid,0);}catch(e){if(e.code==='ESRCH'){
       await change(root,s=>{Object.assign(named(s.runs,runId,'Run'),{status:'interrupted',exitCode:3,finishedAt:now()});});continue;
     }}}

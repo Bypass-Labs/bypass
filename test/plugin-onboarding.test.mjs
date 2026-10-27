@@ -78,7 +78,7 @@ test('local onboarding reaches combined readiness only after scope, account repa
   status=await checklist(root,root);assert.equal(status.nextAction.tool,'bypass_update_identity');assert.equal(status.nextAction.arguments.name,'owner');
   await execute('identity update',['owner'],{...o,'check-path':'/api/me'});assert.equal((await checklist(root,root)).stage,'resource');
   await execute('probe add',['invoice'],{...o,target:'app',path:'/api/invoices/inv-101','resource-id':'inv-101',owner:'owner',outsider:'other'});
-  status=await checklist(root,root);assert.deepEqual(status.ready,{source:true,live:true});assert.equal(status.stage,'ready');
+  status=await checklist(root,root);assert.deepEqual(status.ready,{source:true,live:false});assert.equal(status.stage,'validation');assert.equal(status.nextAction.tool,'bypass_test_probe');
   assert.doesNotMatch(JSON.stringify(status),/owner-test-value|other-test-value/);
   delete process.env.BYPASS_ONBOARD_OTHER_TOKEN;status=await checklist(root,root);
   assert.equal(status.ready.live,false);assert.equal(status.nextAction.tool,undefined);assert.deepEqual(status.nextAction.missingEnvironment,['BYPASS_ONBOARD_OTHER_TOKEN']);

@@ -19,7 +19,7 @@ export function museProgress(onProgress){
       if(event?.kind==='task_lifecycle'&&event.event.kind==='status'&&labels[phase])onProgress?.({kind:'phase',phase,message:labels[phase]});
       if(phase==='stream_failed'){
         const status=event.event.details.facets?.find(f=>f.kind==='external_attempt')?.http_status;
-        if(Number.isInteger(status)&&status>=400&&status<=599)onProgress?.({kind:'phase',phase,message:`Muse provider returned HTTP ${status}`});
+        if(Number.isInteger(status)&&status>=400&&status<=599)onProgress?.({kind:'phase',phase,httpStatus:status,message:`Muse provider returned HTTP ${status}`});
       }
     }
   };
@@ -34,7 +34,8 @@ export function inferenceFailure(result,events){
   const terminal=events.findLast(e=>e?.kind==='run_terminal');
   // Inspect diagnostic fields only, never prompt echoes, model content or tool output.
   const failures=events.filter(e=>e?.event?.kind==='failed').map(e=>e.event.reason||e.event.error);
-  const diagnostic=JSON.stringify([terminal?.reason,result.stderr,...failures]);
+  const statuses=events.flatMap(e=>e?.event?.details?.facets||[]).filter(f=>f.kind==='external_attempt'&&Number.isInteger(f.http_status)&&f.http_status>=400&&f.http_status<=599).map(f=>f.http_status);
+  const diagnostic=JSON.stringify([terminal?.reason,result.stderr,...failures,statuses]);
   let reason='muse_failed',message='Muse stopped before returning a completed model response. Retry the review; your setup and earlier evidence are saved.';
   if(/429|rate.?limit|quota|allowance.*(?:exhaust|exceed|limit)/i.test(diagnostic)){reason='usage_limit';message='Muse reports a provider usage limit. Check muse usage and retry when allowance is available.';}
   else if(/401|unauthori[sz]ed|login required|not logged|invalid.*(?:api.?key|token)/i.test(diagnostic)){reason='authentication';message='Muse reports an authentication failure. Renew the Muse login, then retry the review.';}
@@ -42,7 +43,7 @@ export function inferenceFailure(result,events){
   else if(/400|invalid_request|schema/i.test(diagnostic)){reason='request_format';message='Muse rejected the model request format. Update Bypass or choose a compatible model; repeating this request will not fix it.';}
   else if(/step.{0,10}limit|maximum.{0,20}steps/i.test(diagnostic)){reason='model_step_limit';message='Muse reached its single-response step limit instead of returning JSON. Retry the review; no finding was accepted from that response.';}
   else if(/network|ECONN|ENOTFOUND|TLS|timed out|502|503|504|overload/i.test(diagnostic)){reason='provider_unavailable';message='Muse reports a provider/network interruption. Retry the review; your setup and earlier evidence are saved.';}
-  return new Fault(message+' No mock fallback was used.',3,{reason,nativeExitCode:result.code,terminal:typeof terminal?.terminal==='string'?terminal.terminal.slice(0,40):'missing'});
+  return new Fault(message+' No mock fallback was used.',3,{reason,nativeExitCode:result.code,terminal:['completed','failed','cancelled','interrupted'].includes(terminal?.terminal)?terminal.terminal:'missing',...(statuses.length?{httpStatus:statuses.at(-1)}:{})});
 }
 export function modelResponseSchema(role){
   if(role==='orchestrator')return {type:'object',properties:{focus:{type:'string',maxLength:2000}},required:['focus'],additionalProperties:false};
@@ -75,7 +76,7 @@ export async function infer(profile,messages,{signal,timeoutMs=INFERENCE_TIMEOUT
     need(!profile.secretEnv||token,`Set ${profile.secretEnv} before running the agent.`,3);
     const base=profile.baseUrl.endsWith('/v1')?profile.baseUrl:profile.baseUrl+'/v1';
     const response=await safeRequest(base+'/chat/completions',{allowLocal:profile.provider==='local'||loopback(new URL(base).hostname),allowPrivate:profile.allowPrivate,method:'POST',headers:{'Content-Type':'application/json',...(token?{Authorization:`Bearer ${token}`}:{})},body:JSON.stringify({model:profile.model,messages,max_tokens:4096,stream:false}),timeout:timeoutMs,signal:combined,maxBytes:262144});
-    need(response.status===200,`Model returned HTTP ${response.status}. Check endpoint, model and credentials; no mock fallback was used.`,3);
+    need(response.status===200,`Model returned HTTP ${response.status}. Check endpoint, model and credentials; no mock fallback was used.`,3,{reason:response.status===401?'authentication':response.status===429?'usage_limit':'provider_response',httpStatus:response.status});
     let data;try{data=JSON.parse(response.body);}catch{throw new Fault('Model endpoint returned invalid JSON.',3);}
     return parseModelJSON(data.choices?.[0]?.message?.content);
   }catch(error){if(signal?.aborted)throw abortFault(signal);if(deadline.aborted||error.details?.reason==='timeout')throw new Fault(`Model did not finish within ${Math.ceil(timeoutMs/1000)} seconds. Review incomplete; setup and earlier evidence are saved. Check the model connection before retrying.`,3,{reason:'model_timeout',retryable:true,next:'model test',timeoutMs});throw error;}

@@ -97,7 +97,7 @@ export async function verifyOwnership(target, method, {wait,signal} = {}) {
     if (Date.now()>=deadline) break;
     await delay(Math.min(2000,deadline-Date.now()),undefined,{signal});
   } while (!signal?.aborted);
-  throw new Fault('Ownership is still pending. Publish the exact TXT record or HTTP challenge and retry.',3,{challenge:c});
+  throw new Fault('Ownership is still pending. Publish the exact TXT record or HTTP challenge and retry.',3,{challenge:c,alternative:{tool:'bypass_scan',arguments:{mode:'code'},command:'scan --mode code',message:'Review source now while DNS propagates; no live requests will be made.'}});
 }
 export function authorization(target, scope, acceptedBy = 'local operator') {
   need(target.ownership?.status==='verified' && Date.parse(target.ownership.expiresAt)>Date.now(),'Verify control before authorizing testing.',3);
