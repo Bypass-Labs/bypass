@@ -1,3 +1,4 @@
+import { replayEnvironment } from './credentials.mjs';
 import { requireStandaloneAPI } from './execution-mode.mjs';
 import { consolidateMemory } from './project-memory.mjs';
 import { read, change, event, writeEvidence } from './store.mjs';
@@ -117,7 +118,8 @@ export async function verifyFinding(root,findingId,{target,build,retest=false,si
   }
   need(finding.binding,'This source hypothesis has no approved HTTP resource binding. Add the matching probe and run review again.',3);
   const check={target,fixture:!!finding.fixture,engine:finding.engine,bindings:{[target]:finding.binding}};
-  const result=await replay(specFor(state,check,target),{signal});
+  const spec=specFor(state,check,target);
+  const result=await replay(spec,{signal,env:await replayEnvironment(state,spec,{signal})});
   const inv=await inventory(root);
   const real=['docker','host'].includes(finding.engine);
   const previouslyConfirmed=finding.history.some(h=>h.status==='failed')||finding.verification?.status==='failed';

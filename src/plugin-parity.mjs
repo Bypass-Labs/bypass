@@ -41,12 +41,12 @@ export function pluginHelp(tools,query=''){
   const needle=query.trim().toLowerCase(),catalog=capabilityCatalog(tools);
   return {kind:'plugin-command-guide',primaryExperience:'Muse plugin',
     shortcuts:[['/bypass:start','Connect your application and finish setup'],['/bypass:demo','Real local proof-to-regression demo; preview is an explicit option'],['/bypass:status','Done / Now / Next and current evidence'],['/bypass:review','Start or resume a review'],['/bypass:tests','Inspect, retest, bind, export, enable or disable saved checks'],['/bypass:monitor','Schedule, start, stop or inspect local monitoring'],['/bypass:build','Use security memory while coding'],['/bypass:context','Read saved context'],['/bypass:help','Find any operation']],
-    workflows:[{name:'Application review',steps:['bypass_onboarding','bypass_connect_repository','bypass_add_target','bypass_verify_target','bypass_authorize_target','bypass_add_identity','bypass_add_probe','bypass_test_probe','bypass_prepare_scan','bypass_scan','bypass_review_step']},
+    workflows:[{name:'Application review',steps:['bypass_onboarding','bypass_connect_repository','bypass_add_target','bypass_verify_target','bypass_authorize_target','bypass_import_identity','bypass_add_probe','bypass_test_probe','bypass_prepare_scan','bypass_scan','bypass_review_step']},
       {name:'Proof to regression',steps:['bypass_finding','bypass_verify','bypass_retest','bypass_export_tests','bypass_run_tests','bypass_watch_run']},
       {name:'Local monitoring',steps:['bypass_add_monitor','bypass_monitor_worker','bypass_monitors','bypass_context']},
       {name:'Feature work',steps:['bypass_feature_context','Muse coding tools','bypass_run_tests']}],
     capabilities:catalog.filter(c=>!needle||JSON.stringify(c).toLowerCase().includes(needle)),
-    hostSteps:[{operation:'Official Muse sign-in',reason:'Interactive authentication belongs to Muse; Bypass never collects credentials.',command:'muse login'},
+    hostSteps:[{operation:'Official Muse sign-in',reason:'Interactive authentication belongs to Muse; Bypass never collects Muse login credentials.',command:'muse login'},
       {operation:'Plugin capability approval or loading an update',reason:'Muse owns approval and session lifecycle.',commands:['/plugins → Installed → Bypass → Runtime','Start a new Muse session, then /bypass:start']}],
     guidance:'Perform tools yourself in this Muse session. Show plain-language choices, not MCP syntax or a request to switch to the standalone CLI. Preserve explicit user scope and secrets. A local schedule needs a running worker and awake machine.'};
 }

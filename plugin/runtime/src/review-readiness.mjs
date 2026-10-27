@@ -2,8 +2,9 @@ import { executionMode as currentExecutionMode } from './execution-mode.mjs';
 import { scopeReady } from './network.mjs';
 import { specFor } from './checks.mjs';
 import { hash } from './util.mjs';
+import { credentialHelp, storedToken, credentialStatus } from './credentials.mjs';
 
-export const credentialHelp=name=>`Load ${name} in the terminal that launches Muse or Bypass, then restart that session. Keep token values out of chat; refresh expired app tokens. See docs/JOB_RADAR.md for Firebase instructions.`;
+export { credentialHelp };
 export const activeFindings=state=>currentExecutionMode()==='muse-host'||state.settings?.analysisEngine==='docker'?state.findings.filter(f=>!f.simulation&&f.sourceEvidence?.kind!=='mock'):state.findings;
 
 export function probeConfiguration(state,target,probe,env=process.env){
@@ -12,7 +13,7 @@ export function probeConfiguration(state,target,probe,env=process.env){
   const credentials=[spec.owner,spec.outsider].map(identity=>{
     if(!identity.checkPath)throw new Error(`Add the signed-in JSON endpoint for ${identity.name}.`);
     scopeReady(target,identity.checkPath);
-    const value=env[identity.secretEnv]||(fixture?identity.fixtureValue:null);
+    const value=storedToken(state,target,identity,env)||(fixture?identity.fixtureValue:null);
     if(!value)throw new Error(credentialHelp(identity.secretEnv));
     if(/[\r\n]/.test(value))throw new Error(`Invalid credential in ${identity.secretEnv}. ${credentialHelp(identity.secretEnv)}`);
     return value;
@@ -38,8 +39,8 @@ export function reviewReadiness(state,{targetName=state.activeTarget,env=process
   let authorized=false;try{scopeReady(target||{});authorized=true;}catch(error){liveBlockers.push(error.message);}
   const fixture=target?.environment==='local'&&(state.demo?.target===target.name||(state.poc&&target.pocFixture));
   const identities=state.identities.filter(i=>i.target===target?.name);
-  const missingEnvironment=identities.filter(i=>!env[i.secretEnv]&&!(fixture&&i.fixtureValue)).map(i=>i.secretEnv);
-  const usable=identities.filter(i=>{try{scopeReady(target,i.checkPath);return i.checkPath&&(env[i.secretEnv]||(fixture&&i.fixtureValue));}catch{return false;}});
+  const missingEnvironment=identities.filter(i=>!credentialStatus(state,target,i,env).available&&!(fixture&&i.fixtureValue)).map(i=>i.secretEnv);
+  const usable=identities.filter(i=>{try{scopeReady(target,i.checkPath);return i.checkPath&&(credentialStatus(state,target,i,env).available||(fixture&&i.fixtureValue));}catch{return false;}});
   const probes=(target?.probes||[]).map(probe=>{
     try{
       const {signature}=probeConfiguration(state,target,probe,env),last=probe.validation;

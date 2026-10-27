@@ -1,0 +1,46 @@
+# Connect test accounts once
+
+In Muse, ask **“Continue setup with the test accounts you created.”** When the account credentials already exist in a private local file, Muse imports them itself and continues. No terminal exports or session restart is needed. The same connection works for live checks, deterministic saved tests and local monitor workers.
+
+Bypass supports bearer tokens, cookies and custom headers. Firebase accounts can refresh automatically. Other providers currently use static credentials: replace the private file's token and reimport the same account when needed. Bypass does not automate arbitrary OAuth, browser login or MFA.
+
+## What Muse does
+
+1. Reuses the selected repository, app, ownership, testing scope and account references.
+2. Calls `bypass_import_identity` with **file paths and field names**, never secret values. An existing account name is updated without creating another application user.
+3. For Firebase, imports the ID token, refresh token and public web API key. Before app requests, Bypass refreshes an expiring token through Google's fixed HTTPS endpoint, checks the returned account/project claims, and saves the new ID and refresh tokens. Revoked or invalid logins block testing with a reconnect action.
+4. Derives routes and JSON selectors from source; reuses a known owner resource ID from authorized setup. If none exists, asks only for the missing resource or permission to create one.
+5. Runs the login and owner-resource controls before cross-account testing. A connected account does not by itself prove that these controls pass.
+
+Initial sign-in, MFA, DNS access, creating accounts/resources and expanding testing scope may require the user's access or permission. Reuse authorization already given. Do not make the user perform tool calls or disclose credentials in the conversation.
+
+## Standalone CLI equivalent
+
+For an existing private account file with `OWNER_ID_TOKEN`, `OWNER_REFRESH_TOKEN`, `OTHER_ID_TOKEN` and `OTHER_REFRESH_TOKEN` fields:
+
+```bash
+bypass identity import owner --file /private/path/accounts.env --token-field OWNER_ID_TOKEN --provider firebase --refresh-token-field OWNER_REFRESH_TOKEN --config-file ui/.env --api-key-field VITE_FIREBASE_API_KEY --check-path /api/profile
+bypass identity import outsider --file /private/path/accounts.env --token-field OTHER_ID_TOKEN --provider firebase --refresh-token-field OTHER_REFRESH_TOKEN --config-file ui/.env --api-key-field VITE_FIREBASE_API_KEY --check-path /api/profile
+bypass identity test owner
+bypass identity test outsider
+```
+
+The active target is used; `--target` selects another configured app. Existing identities retain their type, endpoint and CI variable reference unless explicitly changed. New identities default to bearer tokens. `--provider static` is the default for tokens/cookies without a refresh adapter. `bypass identity refresh owner` forces a Firebase refresh; ordinary checks refresh automatically before expiry.
+
+Inputs may be a JSON object of string fields or a data-only env file (`KEY=value`, optional `export`, simple quoted values). Shell expressions and scripts are never executed. On macOS/Linux, credential input files must be owned by the current user and have mode `600`. Public Firebase config files do not need secret-file permissions. Bypass copies only the selected credentials; account passwords are not retained. Import does not delete or modify the source file.
+
+## Storage, removal and CI
+
+The default store is `~/.local/state/bypass/credentials`, outside the application and installation. Project state contains an opaque reference bound to the project, checkout path, target origin and identity. The runtime reads it on demand, including in already-running MCP sessions. Local files use owner-only permissions on macOS/Linux and a restricted directory ACL on Windows. This is local access control, **not encryption against the signed-in OS user**. `BYPASS_CREDENTIAL_DIR` can select another private location outside the app.
+
+`bypass identity remove owner` deletes the local credential and account reference; it does not delete the user from your application. Switching an identity back to `--secret-env` removes its private stored credential. Existing accounts must be reconnected on another machine or checkout. Back up this directory only as private credential material.
+
+Exported independent Node tests contain only environment-variable names. CI supplies fresh app credentials through its secret system; local refresh tokens and private-store references are never exported. Local Bypass replay and monitors use the private connection automatically, while monitors still require an awake machine and running worker.
+
+The Firebase adapter follows the [official refresh-token exchange](https://firebase.google.com/docs/reference/rest/auth#section-refresh-token), including retaining a replacement refresh token. Token claims are checked for account/project continuity; successful app identity controls establish that the app accepts the credentials.
+
+## Validation for 0.7.0
+
+The packaged MCP integration test starts the server before the credential file exists, imports two accounts, performs local HTTP proof, verifies a fixture fix, replays a saved regression in a separate process, runs a monitor tick, and replaces a token while the same MCP process remains running. It checks that exported tests and project state contain no credentials. Refresh tests cover expiration, rotated refresh tokens, concurrent requests, wrong-account/project responses, redirects, revocation and cancellation. The local full suite passed 133 tests with two Docker-only tests skipped; release CI runs the Docker tests separately.
+
+Both existing Job Radar test accounts also completed a real Firebase refresh and returned HTTP 200 from the already-authorized `/api/profile` endpoint. No resource proof or model calls ran, and the app scope was unchanged. [Redacted production account-validation record](evidence/account-connection-2026-10-27.json). This validates account connection, not production authorization security or live model reasoning.

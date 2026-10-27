@@ -13,6 +13,7 @@ import { savedSelection, rememberSelection } from './plugin-context.mjs';
 import { pluginHelp } from './plugin-parity.mjs';
 import { pluginDashboard, runProgress, progressSnapshot, startPluginDemo, controlPluginDemo, validateProjectOutput, operationFailed } from './plugin-experience.mjs';
 import { duration } from './util.mjs';
+import { registerProjectCredentials } from './credentials.mjs';
 
 const str=(description,extra={})=>({type:'string',description,...extra});
 const bool=description=>({type:'boolean',description});
@@ -36,6 +37,8 @@ export const toolDefinitions=[
   tool('bypass_use_target','Select an existing configured application target.',{name:str('Target name')},['name'],'target use',a=>[a.name]),
   tool('bypass_revoke_target','Revoke testing authorization and pause monitors.',{name:str('Target name')},['name'],'target revoke',a=>[a.name]),
   tool('bypass_add_identity','Store a credential environment-variable reference, never a raw secret.',{name:str('Identity name'),target,type:str('Identity kind',{enum:['bearer','cookie','header']}),'secret-env':str('Environment variable name'),header:str('Custom header name'),'check-path':str('Configured identity check path')},['name','target','type','secret-env'],'identity add',a=>[a.name]),
+  tool('bypass_import_identity','Connect or repair a test account in this session from a private local JSON/env file. Pass only file paths and field names, never secret values. Firebase accounts refresh automatically. When you created the account file, import it yourself and continue setup.',{name:str('Identity name; existing setup is reused'),file:str('Private credential file path, absolute or relative to the application'),'token-field':str('Field containing the ID/access token'),provider:str('Refresh adapter',{enum:['static','firebase']}),'refresh-token-field':str('Field containing the Firebase refresh token'),'config-file':str('Optional Firebase public config file path'),'api-key-field':str('Firebase web API key field; default VITE_FIREBASE_API_KEY'),'project-id':str('Optional Firebase project ID; otherwise read from ID token audience'),target,type:str('Identity kind',{enum:['bearer','cookie','header']}),'secret-env':str('Optional environment reference for CI'),header:str('Custom header name'),'check-path':str('Signed-in JSON identity endpoint')},['name','file','token-field'],'identity import',a=>[a.name]),
+  tool('bypass_refresh_identity','Refresh an imported Firebase test account privately. Normal app tests refresh expiring tokens automatically; no Muse restart or token values in chat.',{name:str('Identity name')},['name'],'identity refresh',a=>[a.name]),
   tool('bypass_update_identity','Repair an existing credential reference or signed-in identity endpoint without adding a duplicate.',{name:str('Existing identity name'),'secret-env':str('Credential environment variable name'),'check-path':str('Signed-in JSON identity endpoint')},['name'],'identity update',a=>[a.name]),
   tool('bypass_identities','List identity references without credentials.',{target},[],'identity list',undefined,undefined,true),
   tool('bypass_test_identity','Test a configured identity against an authorized identity-check path.',{name:str('Identity name')},['name'],'identity test',a=>[a.name]),
@@ -141,6 +144,7 @@ export async function serveMCP(cwd=process.cwd(),io={input:process.stdin,output:
     if(token!==undefined)send({jsonrpc:'2.0',method:'notifications/progress',params:{progressToken:token,progress:0,message:'Starting Bypass operation'}});
     try{
       let result;
+      if(selectedRoot)registerProjectCredentials(read(selectedRoot));
       if(t.command==='plugin-help')result=outcome(pluginHelp(toolDefinitions,args.query));
       else if(t.command==='plugin-dashboard')result=pluginDashboard(selectedRoot);
       else if(t.command==='onboarding')result=outcome(await pluginOnboarding(cwd,selectedRoot,{intent:args.intent||'real',signal:controller.signal}));

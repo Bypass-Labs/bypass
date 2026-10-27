@@ -76,7 +76,7 @@ test('local onboarding reaches combined readiness only after scope, account repa
   status=await checklist(root,root);assert.deepEqual(status.ready,{source:true,live:false});assert.equal(status.stage,'validation');assert.equal(status.nextAction.tool,'bypass_test_probe');
   assert.doesNotMatch(JSON.stringify(status),/owner-test-value|other-test-value/);
   delete process.env.BYPASS_ONBOARD_OTHER_TOKEN;status=await checklist(root,root);
-  assert.equal(status.ready.live,false);assert.equal(status.nextAction.tool,undefined);assert.deepEqual(status.nextAction.missingEnvironment,['BYPASS_ONBOARD_OTHER_TOKEN']);
+  assert.equal(status.ready.live,false);assert.equal(status.nextAction.tool,'bypass_import_identity');assert.deepEqual(status.nextAction.missingEnvironment,['BYPASS_ONBOARD_OTHER_TOKEN']);
   assert.equal(read(root).runs.length,0,'onboarding must not make any scan or model calls');
 });
 

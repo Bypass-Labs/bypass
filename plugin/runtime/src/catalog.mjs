@@ -28,6 +28,8 @@ export const commands={
   'target revoke':command('target revoke <name>','Revoke testing and pause target monitors.'),
   'target remove':command('target remove <name>','Disconnect a target while retaining historical evidence.'),
   'identity add':command('identity add <name>','Reference a bearer token, cookie, or header in an environment variable.','target type secret-env header check-path'),
+  'identity import':command('identity import <name>','Connect a test account from a private file, available immediately. Firebase refreshes automatically.','file token-field provider refresh-token-field config-file api-key-field project-id target type secret-env header check-path'),
+  'identity refresh':command('identity refresh <name>','Refresh a privately connected Firebase account without restarting.'),
   'identity list':command('identity list','List credential references, never values.','target'),
   'identity test':command('identity test <name>','Make one authorized request to the configured identity-check path.'),
   'identity update':command('identity update <name>','Update a credential reference.','secret-env check-path'),

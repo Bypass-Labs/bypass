@@ -128,7 +128,7 @@ export async function onboard(options={}, args=[], io={}) {
         await call(root,'identity add',[name],{target:target.name,type,'secret-env':secret,'check-path':checkPath,header});
         say(`✓ ${name}: reference saved. Credential not tested.`);
       }
-      say('Load those variables in your terminal before testing accounts or starting Muse. Test the connections in Targets & identities.');
+      say('These are environment references for CLI/CI. To connect accounts without shell exports, use identity import; Muse imports known private account files itself. Test connections in Targets & identities.');
     });
   }else say('You can review source now. Use /engine to add two test accounts and an owner-owned resource for HTTP proof.');
   if(advanced&&await yes('Connect the Muse Code plugin now?'))try{

@@ -25,7 +25,7 @@ async function request(url,headers,local,signal,timeout=8000){
 }
 function identityHeaders(identity,env,fixture){
   const value=env[identity.secretEnv] || (fixture?identity.fixtureValue:null);
-  assert(value,`Missing environment variable ${identity.secretEnv}. Load it in the terminal that launches Muse or Bypass, then restart that session. Keep token values out of chat.`);
+  assert(value,`Missing account credential ${identity.secretEnv}. In Bypass, import the private account file; in an exported standalone test, supply this variable through CI secrets. Keep tokens out of chat.`);
   assert(!/[\r\n]/.test(value),'Invalid credential value');
   if(identity.type==='bearer')return {Authorization:`Bearer ${value}`};
   if(identity.type==='cookie')return {Cookie:value};
@@ -78,7 +78,7 @@ export async function replay(spec,{env=process.env,signal,positiveOnly=false}={}
       };
       const own=await send(owner,'owner identity',identityURL(spec.owner));
       const other=await send(outsider,'outsider identity',identityURL(spec.outsider));
-      assert(own.status===200&&other.status===200,'Both account login controls must return HTTP 200. Refresh the app credentials in the launching terminal, then restart Muse or Bypass. Firebase ID tokens last about one hour.');
+      assert(own.status===200&&other.status===200,'Both account login controls must return HTTP 200. Refresh or reconnect the failing test account; preserve the saved repository, DNS and scope. A failed login is not a passing security result.');
       const field=spec.identityField||'id';let a,b;
       try{a=jsonField(JSON.parse(own.body),field);b=jsonField(JSON.parse(other.body),field);}catch{}
       assert(['string','number'].includes(typeof a)&&['string','number'].includes(typeof b)&&String(a)!==String(b),'Identity controls must identify two different accounts; check identityField');

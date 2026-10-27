@@ -17,6 +17,7 @@ import { monitorSummary } from './plugin-context.mjs';
 import { realEngine } from './real-engine.mjs';
 import { reviewReadiness, activeFindings, credentialHelp } from './review-readiness.mjs';
 import { validateProbe } from './probe-preflight.mjs';
+import { importCredential, removeCredential, credentialStatus, credentialEnvironment } from './credentials.mjs';
 import { summarizeRun, terminalRun } from './run-state.mjs';
 import { runtimeIdentity } from './runtime-identity.mjs';
 import { dockerStatus, prepareAgents } from './agent-runtime.mjs';
@@ -42,7 +43,7 @@ export function readiness(root){
     findings:{total:findings.length,hiddenSimulated:s.findings.length-findings.length,confirmed:findings.filter(f=>f.status==='confirmed').length,fixtureConfirmed:findings.filter(f=>f.status==='confirmed_fixture').length,simulated:findings.filter(f=>f.status==='simulated_unproven').length,fixed:findings.filter(f=>f.status==='fixed_verified').length},
     checks:{total:s.checks.length,enabled:s.checks.filter(c=>c.enabled).length,passed:s.checks.filter(c=>c.lastResult?.status==='passed').length,failed:s.checks.filter(c=>c.lastResult?.status==='failed').length},
     memory:memorySummary(s),worker:workerStatus(root),monitors:s.monitors.length,latestRun:summarizeRun(latest),
-    privacy:{evidence:'local',sourceUpload:host||realEngine(s),analysisInference:host?'Active Muse session receives requested excerpts; no plugin model requests':realEngine(s)?'Selected source excerpts sent to the active model':'not invoked (mock engine)',secretStorage:'environment variable references; public fixture credentials only in demo'},
+    privacy:{evidence:'local',sourceUpload:host||realEngine(s),analysisInference:host?'Active Muse session receives requested excerpts; no plugin model requests':realEngine(s)?'Selected source excerpts sent to the active model':'not invoked (mock engine)',secretStorage:'Test accounts: owner-only local store outside the repository, or environment references for CI. Firebase refresh is automatic. Public fixture credentials only in demo.'},
     next,
     limitations:[host||realEngine(s)?'Bounded JSON API account-boundary POC; incomplete coverage.':'White-box and black-box engines are simulated.','Hosted Bypass account, cloud scheduler, and deployment attestation are not connected.','No passing result implies complete security coverage.']};
 }
@@ -141,17 +142,44 @@ export async function execute(key,args=[],o={},context={}){
       const checkPath=o['check-path']||null;if(checkPath)need(checkPath.startsWith('/')&&!/[?#\\]/.test(checkPath),'Identity check path must be a path without query strings.');
       result=await change(root,state=>{named(state.targets,targetName,'Target');need(!state.identities.some(i=>i.name===args[0]),'Identity name already exists.');const identity={name:args[0],target:targetName,type:o.type,secretEnv:o['secret-env'],header:o.header||null,checkPath,createdAt:now()};state.identities.push(identity);return {identity};});break;
     }
-    case 'identity list':result={identities:filter(s.identities,o,['target']).map(({fixtureValue,...x})=>x)};break;
+    case 'identity import':{
+      safeName(args[0]);need(o.file&&o['token-field'],'Provide the private file path and token field name. Never pass a raw token.');
+      const existing=s.identities.find(i=>i.name===args[0]),target=named(s.targets,o.target||existing?.target||targetName,'Target');
+      need(!existing||existing.target===target.name,'An existing identity cannot move between targets.');
+      const identity={...existing,name:args[0],target:target.name,type:o.type||existing?.type||'bearer',secretEnv:envName(o['secret-env']||existing?.secretEnv||`BYPASS_${args[0].toUpperCase().replaceAll('-','_')}_TOKEN`),header:o.header||existing?.header||null,checkPath:o['check-path']||existing?.checkPath||null,createdAt:existing?.createdAt||now()};
+      need(['bearer','cookie','header'].includes(identity.type),'Choose bearer, cookie or header.');
+      if(identity.type==='header')need(/^[A-Za-z][A-Za-z0-9-]*$/.test(identity.header||'')&&!['host','connection','content-length','transfer-encoding'].includes(identity.header.toLowerCase()),'Supply a safe custom header.');
+      if(identity.checkPath)need(identity.checkPath.startsWith('/')&&!/[?#\\]/.test(identity.checkPath),'Invalid check path.');
+      const ref=importCredential(s,target,identity,o);identity.credentialRef=ref;delete identity.fixtureValue;delete identity.lastTest;
+      try{result=await change(root,state=>{const current=state.identities.find(i=>i.name===identity.name);need(current?.credentialRef===existing?.credentialRef,'Account changed during import; retry.',3);need(state.project.id===s.project.id&&named(state.targets,target.name,'Target').url===target.url,'Project changed during import; retry.',3);state.identities=state.identities.filter(i=>i.name!==identity.name);state.identities.push(identity);return {identity,credential:credentialStatus(state,target,identity),message:'Account connected privately. Continue in this session; no export or restart needed.'};});}
+      catch(error){removeCredential(s,ref);throw error;}
+      removeCredential(s,existing?.credentialRef);break;
+    }
+    case 'identity refresh':{
+      const identity=named(s.identities,args[0],'Identity'),target=named(s.targets,identity.target,'Target');
+      need(identity.credentialRef,'Import the account with its refresh token first.');
+      await credentialEnvironment(s,target,[identity],{force:true,signal:context.signal});
+      result={identity:identity.name,credential:credentialStatus(s,target,identity),message:'Account refreshed privately; continue in this session.'};break;
+    }
+    case 'identity list':result={identities:filter(s.identities,o,['target']).map(({fixtureValue,...x})=>({...x,credential:credentialStatus(s,s.targets.find(t=>t.name===x.target),x)}))};break;
     case 'identity test':{
       const identity=named(s.identities,args[0],'Identity'),target=named(s.targets,identity.target,'Target');need(identity.checkPath,'Configure --check-path before testing this identity.');scopeReady(target,identity.checkPath);
-      const secret=process.env[identity.secretEnv]||(target.environment==='local'&&(s.demo?.target===identity.target||(s.poc&&target.pocFixture))?identity.fixtureValue:null);need(secret,credentialHelp(identity.secretEnv),3);
+      const env=await credentialEnvironment(s,target,[identity],{signal:context.signal});
+      const secret=env[identity.secretEnv]||(target.environment==='local'&&(s.demo?.target===identity.target||(s.poc&&target.pocFixture))?identity.fixtureValue:null);need(secret,credentialHelp(identity.secretEnv),3);
       const headers=identity.type==='bearer'?{Authorization:`Bearer ${secret}`}:identity.type==='cookie'?{Cookie:secret}:{[identity.header]:secret};
-      const response=await safeRequest(target.url+identity.checkPath,{headers,allowLocal:target.environment==='local',timeout:s.settings.requestTimeoutMs});
+      const response=await safeRequest(target.url+identity.checkPath,{headers,allowLocal:target.environment==='local',timeout:s.settings.requestTimeoutMs,signal:context.signal});
       const check={httpStatus:response.status,status:response.status>=200&&response.status<300?'accepted':'blocked',checkedAt:now(),bodyStored:false,message:'Endpoint accepted the request; account role is not automatically attested.'};
       await change(root,state=>{named(state.identities,args[0],'Identity').lastTest=check;});return outcome({identity:args[0],check},check.status==='accepted'?0:3);
     }
-    case 'identity update':result=await change(root,state=>{const identity=named(state.identities,args[0],'Identity');need(o['secret-env']||o['check-path'],'Supply --secret-env or --check-path.');if(o['secret-env']){identity.secretEnv=envName(o['secret-env']);delete identity.fixtureValue;}if(o['check-path']){need(o['check-path'].startsWith('/')&&!/[?#\\]/.test(o['check-path']),'Invalid check path.');identity.checkPath=o['check-path'];}delete identity.lastTest;return {identity};});break;
-    case 'identity remove':result=await change(root,state=>{named(state.identities,args[0],'Identity');state.identities=state.identities.filter(i=>i.name!==args[0]);return {removed:args[0]};});break;
+    case 'identity update':{
+      const previous=named(s.identities,args[0],'Identity').credentialRef;
+      result=await change(root,state=>{const identity=named(state.identities,args[0],'Identity');need(o['secret-env']||o['check-path'],'Supply --secret-env or --check-path.');if(o['secret-env']){identity.secretEnv=envName(o['secret-env']);delete identity.fixtureValue;delete identity.credentialRef;}if(o['check-path']){need(o['check-path'].startsWith('/')&&!/[?#\\]/.test(o['check-path']),'Invalid check path.');identity.checkPath=o['check-path'];}delete identity.lastTest;return {identity};});
+      if(o['secret-env'])removeCredential(s,previous);break;
+    }
+    case 'identity remove':{
+      const previous=named(s.identities,args[0],'Identity').credentialRef;
+      result=await change(root,state=>{named(state.identities,args[0],'Identity');state.identities=state.identities.filter(i=>i.name!==args[0]);return {removed:args[0],message:'Local credentials removed. The application account itself is unchanged.'};});removeCredential(s,previous);break;
+    }
     case 'model add':{
       safeName(args[0]);const profile=modelProfile(args[0],o);result=await change(root,state=>{need(!state.models.some(m=>m.name===args[0]),'Model profile already exists.');state.models.push(profile);state.activeModel??=profile.name;return {model:profile};});break;
     }

@@ -1,6 +1,7 @@
 import { read, change, event } from './store.mjs';
 import { inventory } from './repository.mjs';
 import { hash, now, need, redact } from './util.mjs';
+import { registerProjectCredentials } from './credentials.mjs';
 
 export const MEMORY_LIMIT=500;
 export const KNOWLEDGE_TOPICS=['authentication','authorization','data-model','routing','trust-boundary'];
@@ -10,6 +11,7 @@ const initialize=s=>{
   return s.memory??={schemaVersion:1,projectId:s.project.id,enabled:true,entries:[],forgotten:[],capacitySkipped:0};
 };
 function clean(value,state){
+  registerProjectCredentials(state);
   const secrets=[...state.identities,...state.models].map(ref=>process.env[ref.secretEnv]).filter(v=>v?.length>=4);
   const scrub=value=>typeof value==='string'?redact(secrets.reduce((text,secret)=>text.split(secret).join('[REDACTED]'),value)).replace(/eyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]+/g,'[REDACTED_JWT]'):
     Array.isArray(value)?value.map(scrub):value&&typeof value==='object'?Object.fromEntries(Object.entries(value).map(([k,v])=>[k,scrub(v)])):value;

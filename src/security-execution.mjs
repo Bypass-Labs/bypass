@@ -3,6 +3,7 @@ import { specFor } from './checks.mjs';
 import { replay } from './portable-check.mjs';
 import { rememberObservation } from './project-memory.mjs';
 import { id, hash, now, redact } from './util.mjs';
+import { replayEnvironment } from './credentials.mjs';
 // Both the host plugin and API agents use these exact finding/proof operations.
 export async function saveSourceCandidates(root,{candidates,bindings,targetName,sourceFingerprint,runId,engine='docker',candidateIds=[]}) {
   const initial=read(root),target=initial.targets.find(t=>t.name===targetName);
@@ -20,7 +21,8 @@ export async function saveSourceCandidates(root,{candidates,bindings,targetName,
 }
 export async function executeProbe(root,{binding,rawBinding,bindingIndex,targetName,sourceFingerprint,runId,engine='docker',candidateIds,probes,signal,persist=async()=>{},report=async()=>{}}) {
       const state=read(root); // honor revocation and changes immediately before each probe
-      const result=await replay(specFor(state,{target:targetName,engine:engine,fixture:!!(state.demo||state.poc),bindings:{[targetName]:binding}},targetName),{signal:signal});
+      const spec=specFor(state,{target:targetName,engine:engine,fixture:!!(state.demo||state.poc),bindings:{[targetName]:binding}},targetName);
+      const result=await replay(spec,{signal,env:await replayEnvironment(state,spec,{signal})});
       const observed={resource:rawBinding.name,bindingIndex:bindingIndex,...result};probes.push(observed);await rememberObservation(root,{target:state.targets.find(t=>t.name===targetName),binding,result,runId,sourceFingerprint:sourceFingerprint});await persist();
       await report('black-box',`${rawBinding.name}: ${result.status} · ${result.controls.map(c=>`${c.label} HTTP ${c.status}`).join(' / ')}`);
       if(result.status==='failed'){

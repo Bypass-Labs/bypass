@@ -36,7 +36,7 @@ To return to setup in a later Muse session:
 /bypass:start
 ```
 
-Bypass guides you through connecting your repository and running app. For a deployed app, it gives you the exact DNS TXT ownership record, then helps configure testing scope and account references. Source review can start while live setup is pending. Never paste app credentials into chat.
+Bypass guides you through connecting your repository and running app. For a deployed app, it gives you the exact DNS TXT ownership record, then helps configure testing scope and connect two test accounts. If Muse has already created the accounts, it imports their private credential file itself and continues. Firebase tokens refresh automatically—no token exports, refresh scripts or Muse restart. Source review can start while live setup is pending. Never paste app credentials into chat. [Account connection and refresh](docs/ACCOUNTS.md).
 
 Then ask, for example:
 
