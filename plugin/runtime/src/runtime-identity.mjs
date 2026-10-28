@@ -11,7 +11,17 @@ export function comparePlugin(record,running=runtimeIdentity()){
   return {...running,installedVersion:record?.version||null,installedSource:record?.source?.path||null,restartRequired,
     ...(restartRequired?{message:'This Muse session is running an older cached plugin. Exit Muse and open a new session to load the installed package.'}:record?.version&&record.version!==running.version?{message:'The running package and installed Muse plugin have different versions. Update the plugin from your chosen checkout and start a new Muse session.'}:{})};
 }
-export async function pluginIdentity({inspect=()=>execFile('muse',['plugins','inspect','bypass','--json'],{timeout:2000})}={}){
-  try{const result=await inspect();return comparePlugin(JSON.parse(result.stdout).record);}
-  catch{return {...runtimeIdentity(),installedVersion:null,restartRequired:null,installationCheck:'unavailable; use muse plugins inspect bypass in the launching terminal'};}
+let cached,pending;
+export async function pluginIdentity({inspect}={}){
+  if(!inspect&&cached&&Date.now()-cached.at<60000)return cached.value;
+  if(!inspect&&pending)return pending;
+  const readIdentity=async()=>{
+    try{const result=await (inspect||(()=>execFile('muse',['plugins','inspect','bypass','--json'],{timeout:8000})))();
+      if(result.code!==undefined&&result.code!==0)throw new Error('Native inspection failed');
+      const record=JSON.parse(result.stdout).record;
+      return {...comparePlugin(record),installationCheck:record?'verified':'not_installed'};
+    }catch(error){return {...runtimeIdentity(),installedVersion:null,restartRequired:null,installationCheck:error.details?.reason==='timeout'?'timed_out':'unavailable',message:'Running package version is known; native installation could not be checked. Retry integration status; this does not block review.'};}
+  };
+  if(inspect)return readIdentity();
+  pending=readIdentity();try{const value=await pending;cached={at:Date.now(),value};return value;}finally{pending=null;}
 }

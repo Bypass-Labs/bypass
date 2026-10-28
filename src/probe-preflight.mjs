@@ -8,6 +8,7 @@ export async function validateProbe(root,name,{target,signal,env=process.env}={}
   const state=read(root),app=named(state.targets,target||state.activeTarget,'Target'),probe=named(app.probes||[],name,'Probe');
   let signature,result;
   try{
+    if(probe.binding.kind==='anonymous')return {name,target:app.name,status:'ready',requests:0,modelCalls:0,securityConclusion:false,reason:'No credentials required. Run the live probe to observe the exact resource.'};
     env=await credentialEnvironment(state,app,[named(state.identities,probe.binding.owner,'Identity'),named(state.identities,probe.binding.outsider,'Identity')],{env,signal});
     const config=probeConfiguration(state,app,probe,env);signature=config.signature;
     result=await replay(config.spec,{env,signal,positiveOnly:true});

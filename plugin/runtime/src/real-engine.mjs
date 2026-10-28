@@ -9,6 +9,7 @@ import { runChecks, specFor } from './checks.mjs';
 import { replay } from './portable-check.mjs';
 import { reviewReadiness } from './review-readiness.mjs';
 import { validateProbe } from './probe-preflight.mjs';
+import { testRegistration } from './registration.mjs';
 import { infer, INFERENCE_TIMEOUT_MS, modelResponseSchema } from './inference.mjs';
 import { testModel } from './models.mjs';
 import { prepareAgents, runContainer } from './agent-runtime.mjs';
@@ -107,9 +108,10 @@ export async function executeRealScan(root,runId,options,{signal,report,runtime=
     for(const probe of read(root).targets.find(t=>t.name===plan.target).probes){
       const check=await validateProbe(root,probe.name,{target:plan.target,signal});preflight.push(check);await persist();
       await report('accounts',`${probe.name}: ${check.status} · ${check.reason}`);
-      need(check.status==='ready',check.reason,signal?.aborted?130:3,{stage:'accounts',reason:'account_resource_preflight',probe:probe.name,next:`probe test ${probe.name}`,controls:check.controls});
+      if(signal?.aborted)need(false,'Cancelled',130); // blocked accounts limit this probe, not the source review
     }
   }
+  const registration=plan.mode==='code'?{status:'not_run'}:await testRegistration(root,{target:plan.target,signal});if(!registration.reused)candidateIds.push(...(registration.findings||[]));
   // A saved profile is not a working connection. Check before source upload or container work.
   const last=profile.lastAttempt||profile.lastTest;
   if(runtime.testModel&&!(last?.status==='connected'&&Date.now()-Date.parse(last.checkedAt)<15*60*1000)){
@@ -181,8 +183,8 @@ export async function executeRealScan(root,runId,options,{signal,report,runtime=
     await persist();
   }
   await consolidateMemory(root);
-  const state=read(root),confirmed=candidateIds.filter(id=>state.findings.find(f=>f.id===id)?.status==='confirmed');
-  return {plan,inventory:inv,findings:candidateIds,confirmed,regression:regression.results,exactPassingChecksExcluded:passed,probes,containers,model:plan.model,modelUsage,modelCalls,engine:'docker',simulation:false,coverageComplete:false,
-    exitCode:confirmed.length||regression.exitCode===1?1:3,
+  const state=read(root),confirmed=candidateIds.filter(id=>state.findings.find(f=>f.id===id)?.status==='confirmed'&&Date.parse(state.findings.find(f=>f.id===id)?.verification?.at)>=Date.parse(named(state.runs,runId,'Run').createdAt));
+  return {plan,inventory:inv,findings:candidateIds,confirmed,registration,coverageGaps:reviewReadiness(read(root)).coverageGaps,regression:regression.results,exactPassingChecksExcluded:passed,probes,containers,model:plan.model,modelUsage,modelCalls,engine:'docker',simulation:false,coverageComplete:false,
+    exitCode:confirmed.length||regression.exitCode===1||registration.status==='failed'?1:3,
     message:confirmed.length?`${confirmed.length} real finding(s) reproduced by HTTP controls. Fix the application, then retest to save regression tests.`:'Bounded AI review complete. No new issue was confirmed; this is not a security clearance.'};
 }

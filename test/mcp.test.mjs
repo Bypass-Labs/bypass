@@ -107,7 +107,7 @@ test('plugin setup resumes across real MCP processes without copying permissions
   fs.writeFileSync(path.join(app,'auth.mjs'),'export const requireUser = true;\n');
   const inv=await inventory(app),reader=sourceReader(app,inv);reader.read(['auth.mjs']);
   const learned=await rememberSource(app,[{topic:'authentication',title:'User required',summary:'The auth module exports a user requirement.',file:'auth.mjs',line:1,quote:'export const requireUser = true;'}],reader,inv,'run_past');
-  const before=await c.call('bypass_onboarding');assert.equal(before.steps.find(s=>s.id==='resource').status,'complete');
+  const before=await c.call('bypass_onboarding');assert.equal(before.steps.find(s=>s.id==='resource').status,'configured');
   assert.equal(await c.close(),0);
   c=client();await c.request('initialize',{protocolVersion:'2025-11-25'});
   const resumed=await c.call('bypass_onboarding');assert.equal(resumed.selectedRepository,app);assert.equal(resumed.engine,'host');
@@ -115,7 +115,7 @@ test('plugin setup resumes across real MCP processes without copying permissions
   await c.call('bypass_memory_mode',{mode:'off'});assert.equal((await c.call('bypass_feature_context',{task:'Add endpoint'})).memory.entries.length,0);
   await c.call('bypass_memory_mode',{mode:'on'});await c.call('bypass_forget_memory',{id:learned.saved[0]});assert.equal((await c.call('bypass_memory')).entries.length,0);
   assert.equal(resumed.steps.some(s=>s.id==='model'),false);assert.equal(resumed.steps.find(s=>s.id==='scope').status,'complete');
-  assert.equal(resumed.steps.find(s=>s.id==='resource').status,'complete');assert.equal(resumed.pluginVersion,VERSION);
+  assert.equal(resumed.steps.find(s=>s.id==='resource').status,'configured');assert.equal(resumed.pluginVersion,VERSION);
   assert.doesNotMatch(JSON.stringify(resumed),/owner-test-only|other-test-only/);
   const resource=await c.request('resources/read',{uri:'bypass://context'});assert.equal(JSON.parse(resource.result.contents[0].text).summary.root,app);
   assert.equal(fs.readFileSync(path.join(host,'.bypass/state.json'),'utf8'),hostBefore);assert.equal(read(app).runs.length,0);

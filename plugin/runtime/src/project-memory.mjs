@@ -178,9 +178,9 @@ export async function featureContext(root,{task,files='',target}={}){
   const state=read(root),inv=await inventory(root);
   const memory=await recallMemory(root,{task,files:paths,target,inv,forAgent:true,limit:12,maxBytes:14000});
   const checks=memory.entries.filter(e=>e.kind==='regression').flatMap(entry=>{
-    const check=state.checks.find(c=>c.id===entry.evidence.checkId&&['docker','host'].includes(c.engine)&&c.kind==='cross-account-resource');
+    const check=state.checks.find(c=>c.id===entry.evidence.checkId&&['docker','host'].includes(c.engine)&&['cross-account-resource','anonymous','unverified-account-access'].includes(c.kind));
     return check&&hash(check.bindings[entry.target.name]||{})===entry.bindingFingerprint?[{memoryId:entry.id,id:check.id,enabled:check.enabled,target:entry.target,resourcePath:entry.resourcePath,
-      expectedBehavior:{owner:'can read their resource',otherAccount:'cannot read that resource',anonymous:'cannot read that resource'},
+      expectedBehavior:check.kind==='unverified-account-access'?{unverifiedAccount:'cannot access a route requiring verified email; valid account identity remains available'}:check.kind==='anonymous'?{anonymous:'cannot read the explicitly private resource'}:{owner:'can read their resource',otherAccount:'cannot read that resource',anonymous:'cannot read that resource'},
       lastResult:entry.outcome,lastCheckedAt:entry.evidence.observedAt||null,validity:entry.validity,replayRequired:true,
       command:`test run ${check.id} --target ${entry.target.name}`,tool:'bypass_run_tests'}]:[];
   });

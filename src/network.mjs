@@ -85,7 +85,7 @@ export async function verifyOwnership(target, method, {wait,signal} = {}) {
   }
   need(['dns','http'].includes(method), 'Choose --method dns or --method http.');
   const c=target.challenge;
-  need(c && c.origin===target.url && Date.parse(c.expiresAt)>Date.now(), 'Ownership challenge expired. Run target verify --renew to issue a fresh challenge.',3);
+  need(c && c.origin===target.url && Date.parse(c.expiresAt)>Date.now(), 'Ownership challenge expired. Renew it, publish the new TXT value, then verify again.',3,{challenge:c,expired:true,alternative:{tool:'bypass_scan',arguments:{mode:'code'}}});
   const deadline=Date.now()+(wait ? duration(wait) : 0);
   do {
     let match=false;

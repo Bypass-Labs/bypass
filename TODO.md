@@ -2,9 +2,33 @@
 
 Open issues observed in the October 27, 2026 fresh-install UAT of Bypass 0.7.0
 (`e87d042`). Muse reviewed `Bypass-Labs/job-finder` at `1f5684f`.
-These items are not fixed. The first production black-box attempt was blocked by
+The original observations below are preserved; implementation status for 0.7.1 follows. The first production black-box attempt was blocked by
 DNS verification; the rerun below completed the configured production probes.
 Local-fixture results are not production evidence.
+
+## 0.7.1 implementation status
+
+- [x] UAT-01: Structural redaction; quoted-source memory and second-review packaged tests pass.
+- [x] UAT-02: Batched review and fast replay reduce host calls; elapsed/last-action and cancel/resume state exposed. Actual final Muse run: 22 calls, 2m31s, zero tool errors. Host inference waits remain a limitation.
+- [x] UAT-03: Known real fixtures recover after process loss in a new MCP session without changing finding/check identity.
+- [x] UAT-04: Pending/expired DNS is a setup response, preserving the ownership gate and source-only alternative.
+- [x] UAT-05: Concrete read-schema correction plus initial source and batched completion; final native source review had no argument errors.
+- [x] UAT-06: Native inspection bound increased to eight seconds, cached briefly; slow/unavailable/missing states distinguished.
+- [x] UAT-07: Installed `bypass` help has a small starting menu and an explicit full reference.
+- [x] UAT-08: Only matching verified HTTP replay closes a linked previously confirmed finding; unrelated passing binding test retains the open finding.
+- [x] UAT-09: Removed hardcoded host-version billing wording; billing remains unattested.
+- [x] Optional credentials, bounded JSON/Firebase signup, owned-resource discovery, anonymous JSON/HTML checks, and immediate failing regressions available through both CLI and plugin.
+
+Validation and limits: [0.7.1 reliability report](docs/RELIABILITY_0_7_1.md).
+
+## Remaining validation / scope
+
+- [ ] Fresh production UAT of 0.7.1, including real supported signup and suitable dedicated resources. Local fixture proof is not production evidence.
+- [ ] Observe a first-time user complete the production journey without operator-prepared fields/data.
+- [ ] Host inference delay remains variable; Bypass cannot render during Muse's own model turn. Do not promise a latency bound from one run.
+- [ ] Arbitrary browser signup, social login, CAPTCHA and unsupported resource provisioning remain explicitly out of scope.
+
+## Archived 0.7.0 observations
 
 ### Rerun update — October 27, 2026 (Pacific)
 
@@ -29,7 +53,7 @@ rerun. Long model waits and unavailable installed-version metadata also remain.
 
 ## P1 — blocks a complete plugin journey
 
-- [ ] **UAT-01: Preserve JSON structure during secret redaction.** After a real
+- [x] **UAT-01: Preserve JSON structure during secret redaction.** After a real
   source review, `bypass_memory`, `bypass_feature_context`, and a second
   `bypass_scan` fail with JSON parsing errors. Nine memory records were saved
   intact; equivalent CLI context retrieval succeeded. `src/util.mjs` serializes
@@ -42,7 +66,7 @@ rerun. Long model waits and unavailable installed-version metadata also remain.
   text, escaped strings, and actual-secret masking. Evidence: `mcp-context.json`,
   `mcp-repeat.json`, `cli-context.json` from the UAT report.
 
-- [ ] **UAT-02: Make long host-model waits visible and recoverable.** One source
+- [x] **UAT-02: Make long host-model waits visible and recoverable.** One source
   interval took about 147 seconds without advancing product state. The real Muse
   fixture journey had repeated long waits and was manually interrupted after
   8m42s, before retesting the applied fix. A same-model synthetic connection
@@ -54,7 +78,7 @@ rerun. Long model waits and unavailable installed-version metadata also remain.
   `source-host.jsonl`, `fixture-host.jsonl`, `fixture-interruption.json`,
   `latency-timing.json`.
 
-- [ ] **UAT-03: Recover the local demo after its server stops.** Interrupting the
+- [x] **UAT-03: Recover the local demo after its server stops.** Interrupting the
   Muse process group also stopped its descendant fixture server. A fresh Muse
   session spent 65 seconds attempting retests and fixture controls, received
   `ECONNREFUSED`, and could not restart the saved fixture. The operator had to
@@ -67,34 +91,34 @@ rerun. Long model waits and unavailable installed-version metadata also remain.
 
 ## P2 — misleading state and onboarding friction
 
-- [ ] **UAT-04: Render pending DNS as a setup state.** Missing ownership is an
+- [x] **UAT-04: Render pending DNS as a setup state.** Missing ownership is an
   expected onboarding step, but the plugin presents it as a failed tool call.
   Preserve the live-request gate and expose the exact record, expiry, retry
   action, and source-only option. Acceptance: pending and verified flows remain
   understandable in Muse; a retry or reinstall preserves a current challenge;
   an expired challenge is clearly renewed without silently accepting old proof.
 
-- [ ] **UAT-05: Align source-read tool arguments and host guidance.** Muse made
+- [x] **UAT-05: Align source-read tool arguments and host guidance.** Muse made
   an invalid `bypass_review_step.paths` call before recovering. Inspect the
   schema, examples, and tool response guidance; the observed error alone does
   not establish a schema defect. Acceptance: a fresh installed-plugin source
   review reads files successfully on its first valid call, and malformed input
   returns a concrete correction. Evidence: `source-host.jsonl`.
 
-- [ ] **UAT-06: Avoid false unavailable plugin-version diagnostics.**
+- [x] **UAT-06: Avoid false unavailable plugin-version diagnostics.**
   `src/runtime-identity.mjs` bounds native inspection at 2 seconds, while a
   successful native inspection took approximately 3.7 seconds in UAT. The
   installed plugin consequently reported its installed-version check as
   unavailable. Acceptance: report the actual version, distinguish a slow check
   from a missing installation, and keep the status interaction bounded.
 
-- [ ] **UAT-07: Make installed CLI help a short starting point.** The installed
+- [x] **UAT-07: Make installed CLI help a short starting point.** The installed
   executable's help begins with clone-style `./bypass` examples and exposes 85
   commands at once. Acceptance: installed help uses `bypass`, prioritizes the
   plugin and guided start, shows a few next actions, and keeps the complete
   command reference available on demand.
 
-- [ ] **UAT-08: Explain finding state after regression replay.** A deliberate
+- [x] **UAT-08: Explain finding state after regression replay.** A deliberate
   fixture regression reopened a confirmed finding. Restoring the fix made the
   saved check pass but left the finding confirmed until an explicit retest.
   This is a state/UX ambiguity, not evidence that replay failed. Acceptance:
@@ -105,7 +129,7 @@ rerun. Long model waits and unavailable installed-version metadata also remain.
 
 ## P3 — diagnostic accuracy
 
-- [ ] **UAT-09: Remove misleading hardcoded host-version wording.** Billing
+- [x] **UAT-09: Remove misleading hardcoded host-version wording.** Billing
   guidance in `src/execution-mode.mjs` names Muse 1.4.13 while the UAT host was
   1.4.14. Acceptance: distinguish the observed host version from compatibility
   history; keep billing mode explicitly unknown when the host does not attest

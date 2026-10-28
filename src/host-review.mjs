@@ -3,9 +3,11 @@ import { inventory } from './repository.mjs';
 import { sourceReader, groundCandidates } from './real-engine.mjs';
 import { runChecks } from './checks.mjs';
 import { reviewReadiness } from './review-readiness.mjs';
-import { validateProbe } from './probe-preflight.mjs';
 import { saveSourceCandidates, executeProbe } from './security-execution.mjs';
 import { consolidateMemory, recallMemory, rememberSource } from './project-memory.mjs';
+import fs from 'node:fs';
+import path from 'node:path';
+import { testRegistration, registrationStatus } from './registration.mjs';
 import { hostAI } from './execution-mode.mjs';
 import { id, now, named, need, outcome, hash, abortFault, redact } from './util.mjs';
 
@@ -15,14 +17,15 @@ export function hostPlan(state, options={}) {
   const ready=reviewReadiness(state,{targetName:options.target||state.activeTarget,executionMode:'muse-host'});
   return {executionMode:'muse-host',engine:'host',simulation:false,mode,target:ready.target?.name||null,ai:hostAI(),
     repository:state.project.repository,app:ready.target?{url:ready.target.url,environment:ready.target.environment}:null,
-    blockers:mode==='code'?[]:ready.liveBlockers,savedChecks:state.checks.filter(c=>c.enabled).length,
+    blockers:mode==='code'?[]:ready.liveBlockers,coverageGaps:ready.coverageGaps,registration:registrationStatus(ready.target),savedChecks:state.checks.filter(c=>c.enabled).length,
     whiteBox:{status:mode==='live'?'not_run':'host_plans',description:'Muse reads eligible source and submits exact cited hypotheses.'},
     blackBox:{status:mode==='code'?'not_run':ready.liveBlockers.length?'blocked':'host_selects',description:'Muse selects approved probes; observed controls determine confirmation.'},
     dataFlow:{source:'Returned to the active Muse session on request',inference:'Muse host only; plugin API calls disabled',evidence:'Local .bypass/runs'},
     message:'Bounded authentication and account-boundary POC; source hypotheses alone are not confirmed vulnerabilities.'};
 }
 const receipt=(root,run)=>({runId:run.id,status:run.status,executionMode:'muse-host',pluginModelCalls:0,simulation:false,coverageComplete:false,
-  evidence:`${root}/.bypass/runs/${run.id}.json`,findings:run.result?.findings||[],probes:run.result?.probes||[],
+  progress:{stage:run.stage,lastCompleted:run.steps.at(-1)||null,elapsedSeconds:Math.floor((Date.now()-Date.parse(run.startedAt))/1000),waitingSeconds:Math.floor((Date.now()-Date.parse(run.steps.at(-1)?.at||run.startedAt))/1000),waitingFor:run.status==='awaiting_host'?'Muse reasoning; no internal worker':null,resume:{tool:'bypass_review_step',arguments:{id:run.id,action:run.status==='cancelled'?'resume':'status'}},cancel:{tool:'bypass_stop_run',arguments:{id:run.id}}},
+  evidence:`${root}/.bypass/runs/${run.id}.json`,findings:run.result?.findings||[],probes:run.result?.probes||[],registration:run.result?.registration,coverageGaps:run.result?.coverageGaps||[],
   outcomes:{confirmed:run.result?.confirmed||[],notRun:run.result?.notRun||null,executionFailures:run.result?.probes?.filter(p=>p.status==='blocked').map(p=>({resource:p.resource,reason:p.reason}))||[]},
   nextAction:run.status==='completed'?{tool:run.result?.findings?.length?'bypass_finding':'bypass_run',arguments:{id:run.result?.findings?.[0]||run.id}}:{tool:'bypass_review_step',arguments:{id:run.id,action:'status'}},
   guidance:'Muse must choose and execute the next step. Do not wait for an internal AI worker. Read source, submit cited hypotheses, select approved probes, then finish. Use host coding tools to propose/apply fixes within user permissions and bypass_retest to verify.'});
@@ -34,17 +37,21 @@ export async function beginHostReview(root,options={},context={}) {
   try {
     context.onProgress?.({message:'Replaying saved checks and preparing source for Muse'});
     const regression=plan.mode==='code'?{results:[],exitCode:0}:await runChecks(root,{all:true,target:plan.target,signal:context.signal,runId:run.id});
-    if(plan.mode!=='code')for(const probe of initial.targets.find(t=>t.name===plan.target).probes){const result=await validateProbe(root,probe.name,{target:plan.target,signal:context.signal});need(result.status==='ready',result.reason,3);}
     const inv=plan.mode==='live'?{files:[],fingerprint:null,routes:[],sourceFileCount:0}:await inventory(root,options.base);
     if(context.signal?.aborted)throw abortFault(context.signal);
     const current=read(root),target=current.targets.find(t=>t.name===plan.target);
     const passed=regression.results.filter(r=>r.status==='passed').map(r=>r.id);
-    const bindings=plan.mode==='code'?[]:(target?.probes||[]).filter(p=>!current.checks.some(c=>passed.includes(c.id)&&JSON.stringify(c.bindings[plan.target])===JSON.stringify(p.binding))).map(p=>({...p.binding,name:p.name}));
+    const bindings=plan.mode==='code'?[]:(target?.probes||[]).filter(p=>!current.checks.some(c=>passed.includes(c.id)&&hash(c.bindings[plan.target])===hash(p.binding))).map(p=>({...p.binding,name:p.name}));
+    let initialSource=[];
+    if(inv.files.length>0&&inv.files.length<=4&&inv.files.reduce((n,file)=>n+fs.statSync(path.join(root,file)).size,0)<=32000){
+      const reader=sourceReader(root,inv);initialSource=reader.read(inv.files);run.host.reads.push(inv.files);
+    }
+    const registration=plan.mode==='code'?{status:'not_run',reason:'Source-only review; no registration requests.'}:await testRegistration(root,{target:plan.target,signal:context.signal});
     await consolidateMemory(root);const memory=await recallMemory(root,{target:plan.target,inv,mode:plan.mode,forAgent:true,limit:8,maxBytes:8000});
-    const saved=await change(root,s=>{const r=named(s.runs,run.id,'Run');Object.assign(r.host,{inventory:inv,bindings});r.result.regression=regression.results;r.result.exactPassingChecksExcluded=passed;r.steps.push({at:now(),stage:'planning',message:'Ready for Muse to choose source reads and approved probes.'});return r;});
+    const saved=await change(root,s=>{const r=named(s.runs,run.id,'Run');Object.assign(r.host,{inventory:inv,bindings,reads:run.host.reads});r.result.registration=registration;if(!registration.reused)r.result.findings.push(...(registration.findings||[]));r.result.coverageGaps=plan.coverageGaps;r.result.regression=regression.results;r.result.exactPassingChecksExcluded=passed;r.steps.push({at:now(),stage:'planning',message:'Ready for Muse to choose source reads and approved probes.'});return r;});
     writeEvidence(root,saved);
-    return outcome({...receipt(root,saved),plan,inventory:{files:inv.files.slice(0,400),totalFiles:inv.files.length,routes:inv.routes?.slice(0,80),routeLocations:inv.routeLocations?.slice(0,160)},resources:bindings.map((b,index)=>({index,name:b.name,resourcePath:b.resourcePath,resourceId:b.resourceId})),memory,
-      nextAction:{tool:'bypass_review_step',arguments:{id:run.id,action:plan.mode==='live'?'probe':'read'},message:'Choose paths from inventory, or a resource index from resources.'}});
+    return outcome({...receipt(root,saved),plan,initialSource,inventory:{files:inv.files.slice(0,400),totalFiles:inv.files.length,routes:inv.routes?.slice(0,80),routeLocations:inv.routeLocations?.slice(0,160)},resources:bindings.map((b,index)=>({index,name:b.name,resourcePath:b.resourcePath,resourceId:b.resourceId})),memory,
+      nextAction:{tool:'bypass_review_step',arguments:{id:run.id,action:plan.mode==='live'||initialSource.length?'complete':'read'},message:'Read needed source in batches, then use complete to submit cited hypotheses, test every remaining approved resource and finish in one call. Credentials are optional. Discover signup and resource routes from source; configure supported checks and refresh resources before completing.'}});
   } catch(error) {
     const saved=await change(root,s=>{const r=named(s.runs,run.id,'Run');r.status=context.signal?.aborted?'cancelled':'failed';r.finishedAt=now();r.result.message=redact(error.message);r.exitCode=context.signal?.aborted?130:3;return r;});writeEvidence(root,saved);throw error;
   }
@@ -57,16 +64,17 @@ export async function hostReviewStep(root,args,{signal,onProgress}={}) {
   need(!busy.has(key),'This review already has an operation in progress. Retry after it completes.',3);busy.add(key);controllers.set(key,controller);
   try {
     let run=named(read(root).runs,args.id,'Run');need(run.executionMode==='muse-host','This is not a host-orchestrated review.',3);
+    if(args.action==='resume'){need(run.status==='cancelled','Only cancelled reviews need resume.',3);need(Date.now()-Date.parse(run.createdAt)<86400000,'Review expired; start a new one.',3);if(run.host.mode!=='live')need((await inventory(root,run.options.base)).fingerprint===run.host.inventory.fingerprint,'Source changed; start a new review.',3);await change(root,s=>{const r=named(s.runs,args.id,'Run');r.status='awaiting_host';delete r.finishedAt;delete r.exitCode;});return outcome({...receipt(root,named(read(root).runs,args.id,'Run')),message:'Saved review resumed. HTTP operations will recheck current scope.'});}
     if(args.action==='status')return outcome({...receipt(root,run),sourceReads:run.host.reads,sourceSubmitted:run.host.sourceSubmitted,resources:run.host.bindings?.map((b,index)=>({index,name:b.name,resourcePath:b.resourcePath,tested:run.host.visited.includes(index)})),lastError:run.host.lastError});
     need(run.status==='awaiting_host','Review is finished. Start a new review; saved findings can still be retested.',3);
     if(args.action==='cancel'){const saved=await change(root,s=>{const r=named(s.runs,args.id,'Run');r.status='cancelled';r.finishedAt=now();r.exitCode=130;return r;});writeEvidence(root,saved);return outcome(receipt(root,saved));}
     need(Date.now()-Date.parse(run.createdAt)<86400000,'Review expired after 24 hours. Start a new review; evidence is retained.',3);
     need(args.action==='finish'||run.host.operations<32,'Review reached 32 operations; finish or start a smaller review.',3);
     if(signal?.aborted)throw abortFault(signal);
-    const {inventory:inv,mode,target,bindings}=run.host;
+    const {inventory:inv,mode,target}=run.host;let {bindings}=run.host;
     let result={};
     const persist=async()=>{await change(root,s=>{const r=named(s.runs,args.id,'Run');r.result=run.result;});};
-    if(args.action==='read'||args.action==='source'){
+    if(args.action==='read'||args.action==='source'||(args.action==='complete'&&mode!=='live'&&!run.host.sourceSubmitted)){
       need(mode!=='live','This is a live-only review.',3);
       const current=await inventory(root,run.options.base);need(current.fingerprint===inv.fingerprint,'Source changed during review. Start a new review for fresh citations; use retest for existing findings.',3);
       const reader=sourceReader(root,inv);for(const batch of run.host.reads)reader.read(batch);
@@ -75,25 +83,40 @@ export async function hostReviewStep(root,args,{signal,onProgress}={}) {
         need(!run.host.sourceSubmitted,'Source hypotheses were already recorded for this review.',3);
         const candidates=groundCandidates(args.candidates||[],reader,inv).filter(c=>!read(root).checks.some(check=>run.result.exactPassingChecksExcluded.includes(check.id)&&check.bindings[target]?.resourcePath===c.resourcePath));
         await saveSourceCandidates(root,{candidates,bindings,targetName:target,sourceFingerprint:inv.fingerprint,runId:args.id,engine:'host',candidateIds:run.result.findings});
-        result={hypotheses:candidates.length,knowledge:await rememberSource(root,args.knowledge||[],reader,inv,args.id)};run.host.sourceSubmitted=true;
+        result={hypotheses:candidates.length,knowledge:await rememberSource(root,args.knowledge||[],reader,inv,args.id)};run.host.sourceSubmitted=true;await change(root,s=>{Object.assign(named(s.runs,args.id,'Run'),run);});
       }
-    } else if(args.action==='probe'){
-      need(mode!=='code'&&Number.isInteger(args.index)&&bindings[args.index],'Choose a configured resource index from this live review.',3);
-      need(!run.host.visited.includes(args.index),'This resource was already tested. Use verify or retest for follow-up.',3);
-      const rawBinding=bindings[args.index],binding=Object.fromEntries(Object.entries(rawBinding).filter(([k])=>k!=='name'));
+    }
+    if(args.action==='refresh'){
+      need(mode!=='code','Source-only reviews have no live probes.',3);
+      const current=read(root),app=named(current.targets,target,'Target');
+      const additions=(app.probes||[]).filter(p=>!bindings.some(b=>b.name===p.name));
+      bindings.push(...additions.map(p=>({...p.binding,name:p.name})));
+      run.result.registration=await testRegistration(root,{target,signal});if(!run.result.registration.reused)run.result.findings=[...new Set([...run.result.findings,...(run.result.registration.findings||[])])];
+      result={resources:bindings.map((b,index)=>({index,name:b.name,path:b.resourcePath})),registration:run.result.registration};
+    }
+    if(args.action==='probe'||args.action==='complete'){
+      const indexes=args.action==='complete'?(mode==='code'?[]:bindings.map((_,i)=>i).filter(i=>!run.host.visited.includes(i))):[args.index];
+      if(args.action==='probe')need(mode!=='code'&&Number.isInteger(args.index)&&bindings[args.index],'Choose a configured resource index from this live review.',3);
+      for(const index of indexes){
+      need(!run.host.visited.includes(index),'This resource was already tested. Use verify or retest for follow-up.',3);
+      const rawBinding=bindings[index],binding=Object.fromEntries(Object.entries(rawBinding).filter(([k])=>k!=='name'));
       const current=read(root).targets.find(t=>t.name===target)?.probes?.find(p=>p.name===rawBinding.name);
       need(current&&hash(current.binding)===hash(binding),'Probe configuration changed. Start a new review.',3);
       onProgress?.({message:`Testing ${rawBinding.name}: owner, other account, anonymous controls`});
-      result={observation:await executeProbe(root,{binding,rawBinding,bindingIndex:args.index,targetName:target,sourceFingerprint:inv.fingerprint,runId:args.id,engine:'host',candidateIds:run.result.findings,probes:run.result.probes,signal,persist})};
+      result={observation:await executeProbe(root,{binding,rawBinding,bindingIndex:index,targetName:target,sourceFingerprint:inv.fingerprint,runId:args.id,engine:'host',candidateIds:run.result.findings,probes:run.result.probes,signal,persist})};
       if(signal?.aborted)throw abortFault(signal);
-      run.host.visited.push(args.index);
-    } else if(args.action==='finish'){
-      run.status='completed';run.finishedAt=now();run.result.confirmed=run.result.findings.filter(id=>read(root).findings.find(f=>f.id===id)?.status==='confirmed');
+      run.host.visited.push(index);run.steps.push({at:now(),stage:'probe',message:`${rawBinding.name}: ${result.observation.status}`});
+      await change(root,s=>{Object.assign(named(s.runs,args.id,'Run'),run);});writeEvidence(root,run);
+      }
+    }
+    if(args.action==='finish'||args.action==='complete'){
+      run.status='completed';run.finishedAt=now();run.result.confirmed=run.result.findings.filter(id=>read(root).findings.find(f=>f.id===id)?.status==='confirmed'&&Date.parse(read(root).findings.find(f=>f.id===id)?.verification?.at)>=Date.parse(run.startedAt));
       run.result.notRun={source:mode==='live'||!run.host.sourceSubmitted,resources:bindings.filter((_,i)=>!run.host.visited.includes(i)).map(b=>b.name)};
       run.result.message='Host-directed bounded review finished. See confirmed findings, suspected source issues, blocked executions and not-run coverage. No security clearance.';
-      run.exitCode=run.result.confirmed.length||run.result.regression.some(r=>r.status==='failed')?1:3;run.result.exitCode=run.exitCode;
-    } else need(false,'Unsupported host review action.',3);
-    run.host.operations++;delete run.host.lastError;run.steps.push({at:now(),stage:args.action,message:`Muse-directed ${args.action} complete`});
+      run.exitCode=run.result.confirmed.length||run.result.regression.some(r=>r.status==='failed')||run.result.registration?.status==='failed'?1:3;run.result.exitCode=run.exitCode;
+    }
+    need(['read','source','probe','refresh','complete','finish'].includes(args.action),'Unsupported host review action.',3);
+    run.stage=args.action;run.host.operations++;delete run.host.lastError;run.steps.push({at:now(),stage:args.action,message:`Muse-directed ${args.action} complete`});
     await change(root,s=>{Object.assign(named(s.runs,args.id,'Run'),run);});writeEvidence(root,run);await consolidateMemory(root);
     return outcome({...receipt(root,run),...result});
   } catch(error) {

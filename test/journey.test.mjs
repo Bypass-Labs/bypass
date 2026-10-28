@@ -16,7 +16,7 @@ test('full real fixture journey: discover → prove → fix → retest → stand
   const first=await cli(root,'scan');assert.equal(first.code,3);assert.equal(first.data.run.result.regression.length,0);
   const finding=read(root).findings[0];
   const proof=await cli(root,'verify',finding.id);assert.equal(proof.code,1);assert.equal(proof.data.status,'confirmed_fixture');assert.equal(proof.data.verification.controls[0].status,200);assert.equal(proof.data.verification.controls[1].status,200);
-  assert.equal((await cli(root,'test','save',finding.id)).code,3);
+  assert.equal((await cli(root,'test','save',finding.id)).code,0);assert.equal(read(root).checks[0].baseline,'failing_reproduction');
   // A normal source edit (as Muse would make) changes the running app without a restart.
   const app=path.join(root,'app.mjs');fs.writeFileSync(app,fs.readFileSync(app,'utf8').replace('enforceOwnership = false','enforceOwnership = true'));
   const retest=await cli(root,'retest',finding.id,'--build','operator-build-123');assert.equal(retest.code,0);assert.equal(retest.data.status,'fixed_verified');

@@ -10,6 +10,7 @@ export const activeFindings=state=>currentExecutionMode()==='muse-host'||state.s
 export function probeConfiguration(state,target,probe,env=process.env){
   const fixture=target?.environment==='local'&&(state.demo?.target===target.name||(state.poc&&target.pocFixture));
   const spec=specFor(state,{engine:'docker',fixture:!!fixture,bindings:{[target.name]:probe.binding}},target.name);
+  if(spec.kind==='anonymous')return {spec,signature:hash({project:state.project.id,spec})};
   const credentials=[spec.owner,spec.outsider].map(identity=>{
     if(!identity.checkPath)throw new Error(`Add the signed-in JSON endpoint for ${identity.name}.`);
     scopeReady(target,identity.checkPath);
@@ -46,9 +47,8 @@ export function reviewReadiness(state,{targetName=state.activeTarget,env=process
       const {signature}=probeConfiguration(state,target,probe,env),last=probe.validation;
       const fresh=last?.signature===signature&&Date.now()-Date.parse(last.checkedAt)<5*60*1000;
       return {name:probe.name,path:probe.binding.resourcePath,configured:true,ready:!!(fresh&&last.status==='ready'),status:fresh?last.status:'preflight_required',...(fresh?{reason:last.reason,checkedAt:last.checkedAt}:{})};
-    }catch(error){liveBlockers.push(`${probe.name}: ${error.message}`);return {name:probe.name,path:probe.binding.resourcePath,configured:false,ready:false,status:'blocked',reason:error.message};}
+    }catch(error){return {name:probe.name,path:probe.binding.resourcePath,configured:false,ready:false,status:'blocked',reason:error.message};}
   });
-  if(!probes.length)liveBlockers.push('Add an exact owner resource and two account references with probe add (or /engine).');
   const source=sourceBlockers.length===0,canValidateLive=source&&liveBlockers.length===0;
-  return {target,model,identities,usable,missingEnvironment,authorized,probes,sourceBlockers,liveBlockers,source,canValidateLive,live:canValidateLive&&probes.every(p=>p.ready),modelReady};
+  return {target,model,identities,usable,missingEnvironment,authorized,probes,sourceBlockers,liveBlockers,source,canValidateLive,live:canValidateLive,modelReady,coverageGaps:[...(!probes.length?['No exact resource probes configured; discover routes from source before live proof.']:[]),...probes.filter(p=>!p.configured).map(p=>`${p.name}: ${p.reason}`),...(usable.length<2?['Cross-account checks need two valid accounts; source, public-surface and registration checks can proceed.']:[])]};
 }

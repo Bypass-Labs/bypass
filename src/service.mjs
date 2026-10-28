@@ -17,6 +17,7 @@ import { monitorSummary } from './plugin-context.mjs';
 import { realEngine } from './real-engine.mjs';
 import { reviewReadiness, activeFindings, credentialHelp } from './review-readiness.mjs';
 import { validateProbe } from './probe-preflight.mjs';
+import { configureRegistration, testRegistration, registrationStatus } from './registration.mjs';
 import { importCredential, removeCredential, credentialStatus, credentialEnvironment } from './credentials.mjs';
 import { summarizeRun, terminalRun } from './run-state.mjs';
 import { runtimeIdentity } from './runtime-identity.mjs';
@@ -34,22 +35,26 @@ export function readiness(root){
   const host=executionMode()==='muse-host';
   const shared=reviewReadiness(s),liveReady=shared.authorized,liveReview=host||realEngine(s)?shared.live:liveReady;
   const findings=activeFindings(s),latest=s.runs.at(-1),active=latest&&!terminalRun(latest);
-  const next=active?(latest.executionMode==='muse-host'?`Continue review ${latest.id} in Muse`:`run watch ${latest.id}`):realEngine(s)&&shared.sourceBlockers.length?'model test':latest?.status==='failed'?(latest.result?.details?.next||`run show ${latest.id}`):s.checks.some(c=>c.enabled)?'test run --all':realEngine(s)&&shared.canValidateLive&&!shared.live?`probe test ${shared.probes.find(p=>!p.ready).name}`:findings.length?'finding list':liveReview?'scan --mode combined':'scan --mode code';
+  const next=active?(latest.executionMode==='muse-host'?`Continue review ${latest.id} in Muse`:`run watch ${latest.id}`):realEngine(s)&&shared.sourceBlockers.length?'model test':latest?.status==='failed'?(latest.result?.details?.next||`run show ${latest.id}`):s.checks.some(c=>c.enabled)?'test run --all':findings.length?'finding list':liveReview?'scan --mode combined':'scan --mode code';
   return {runtime:runtimeIdentity(),project:s.project,root,ai:host?hostAI():{mode:'standalone-api'},engine:{mode:host?'host':realEngine(s)?'docker':'mock',analysisImplemented:host||realEngine(s),label:host?'Muse plans; Bypass executes':realEngine(s)?'Docker agents · real source review and scoped HTTP proof':'MOCK analysis · real setup and saved-test replay'},
     review:(executionMode()==='muse-host'?hostPlan:scanPlan)(s,{mode:liveReview?'combined':'code'}),
     model:host?{name:'Active Muse session',provider:'muse-host',destination:'Host session',connection:'host managed'}:model?{name:model.name,provider:model.provider,destination:model.dataDestination,connection:model.lastAttempt?.status||model.lastTest?.status||'not tested'}:null,
     target:target?{name:target.name,url:target.url,environment:target.environment,ownership:target.ownership?.status||'pending',authorized:liveReady}:null,
-    ready:{repository:true,model:host||realEngine(s)?shared.modelReady:!!model,source:host||realEngine(s)?shared.source:true,target:!!target,authorized:liveReady,liveTesting:liveReview,liveReview,canValidateLive:shared.canValidateLive},probes:shared.probes,blockers:{source:shared.sourceBlockers,live:shared.liveBlockers},
+    ready:{repository:true,model:host||realEngine(s)?shared.modelReady:!!model,source:host||realEngine(s)?shared.source:true,target:!!target,authorized:liveReady,liveTesting:liveReview,liveReview,canValidateLive:shared.canValidateLive},probes:shared.probes,coverageGaps:shared.coverageGaps,registration:registrationStatus(target),blockers:{source:shared.sourceBlockers,live:shared.liveBlockers},
     findings:{total:findings.length,hiddenSimulated:s.findings.length-findings.length,confirmed:findings.filter(f=>f.status==='confirmed').length,fixtureConfirmed:findings.filter(f=>f.status==='confirmed_fixture').length,simulated:findings.filter(f=>f.status==='simulated_unproven').length,fixed:findings.filter(f=>f.status==='fixed_verified').length},
     checks:{total:s.checks.length,enabled:s.checks.filter(c=>c.enabled).length,passed:s.checks.filter(c=>c.lastResult?.status==='passed').length,failed:s.checks.filter(c=>c.lastResult?.status==='failed').length},
     memory:memorySummary(s),worker:workerStatus(root),monitors:s.monitors.length,latestRun:summarizeRun(latest),
     privacy:{evidence:'local',sourceUpload:host||realEngine(s),analysisInference:host?'Active Muse session receives requested excerpts; no plugin model requests':realEngine(s)?'Selected source excerpts sent to the active model':'not invoked (mock engine)',secretStorage:'Test accounts: owner-only local store outside the repository, or environment references for CI. Firebase refresh is automatic. Public fixture credentials only in demo.'},
     next,
-    limitations:[host||realEngine(s)?'Bounded JSON API account-boundary POC; incomplete coverage.':'White-box and black-box engines are simulated.','Hosted Bypass account, cloud scheduler, and deployment attestation are not connected.','No passing result implies complete security coverage.']};
+    limitations:[host||realEngine(s)?'Bounded source, JSON/HTML access and registration checks; incomplete coverage.':'White-box and black-box engines are simulated.','Hosted Bypass account, cloud scheduler, and deployment attestation are not connected.','No passing result implies complete security coverage.']};
 }
 
 export async function execute(key,args=[],o={},context={}){
   const working=path.resolve(o.project||context.cwd||process.cwd());
+  if(['scan','verify','retest','test run'].includes(key)){
+    const fixtureRoot=rootFrom(working,false);
+    if(fixtureRoot&&read(fixtureRoot).poc){const {resumePOC}=await import('./poc.mjs');await resumePOC(fixtureRoot,{automatic:true,signal:context.signal});}
+  }
   if(executionMode()==='muse-host'&&['model add','model test','model use'].includes(key))return outcome({ai:hostAI(),message:'Model setup and independent connection tests are disabled in the Muse plugin. Continue in the active host session.'});
   if(executionMode()==='muse-host'&&key==='scan'&&!read(rootFrom(working)).demo)return o.plan?outcome({plan:hostPlan(read(rootFrom(working)),o)}):beginHostReview(rootFrom(working),o,context);
   if(key==='host review')return hostReviewStep(rootFrom(working),o,context);
@@ -67,6 +72,7 @@ export async function execute(key,args=[],o={},context={}){
   }
   if(key==='poc start'){const {startPOC}=await import('./poc.mjs');return outcome(await startPOC(o));}
   if(key==='poc stop'){const {stopPOC}=await import('./poc.mjs');return outcome(await stopPOC(rootFrom(working)));}
+  if(key==='poc resume'){const {resumePOC}=await import('./poc.mjs');return outcome(await resumePOC(rootFrom(working),{signal:context.signal}));}
   if(key==='demo start')return outcome(await startDemo(o.dir||path.join(PACKAGE_ROOT,'.demo/ledger'),{port:o.port||4317}));
   if(key==='auth login'&&o.device)throw new Fault('Hosted device authentication is unavailable. Standalone AI uses explicit provider API keys.',3);
   if(key==='auth status'||key==='auth login')return outcome(executionMode()==='muse-host'?{ai:hostAI()}:{mode:'standalone-api',accountRequired:false,message:'AI requires a provider API key. Configure it with model add; installed-agent logins are never used.'});
@@ -88,15 +94,23 @@ export async function execute(key,args=[],o={},context={}){
     }
     case 'engine doctor':result=executionMode()==='muse-host'?{available:true,engine:'host',ai:hostAI(),message:'Plugin test execution needs no Docker or model profile.'}:{...(await dockerStatus(context)),engine:realEngine(s)?'docker':'mock',model:s.models.find(m=>m.name===s.activeModel)||null};break;
     case 'engine prepare':result=await prepareAgents(context);break;
+    case 'registration configure':result=await configureRegistration(root,o);break;
+    case 'registration status':result=registrationStatus(named(s.targets,targetName,'Target'));break;
+    case 'registration test':{const registration=await testRegistration(root,{target:targetName,signal:context.signal});return outcome({registration},registration.status==='failed'?1:['blocked','cancelled'].includes(registration.status)?3:0);}
+    case 'probe discover':{const {discoverResources}=await import('./resource-discovery.mjs');result=await discoverResources(root,o,context);break;}
     case 'probe test':{const validation=await validateProbe(root,args[0],{target:targetName,signal:context.signal});return outcome({validation},validation.status==='ready'?0:3);}
     case 'probe list':result={target:targetName,probes:named(s.targets,targetName,'Target').probes||[]};break;
     case 'probe add':{
       safeName(args[0]);const t=named(s.targets,targetName,'Target');scopeReady(t,o.path);
-      need(o.path&&o['resource-id']&&o.owner&&o.outsider,'Provide --path, --resource-id, --owner and --outsider.');
+      const anonymous=o.kind==='anonymous',html=o.response==='html';
+      need(!o.kind||['anonymous','cross-account-resource'].includes(o.kind),'Probe kind must be anonymous or cross-account-resource.');
+      need(!o.response||['json','html'].includes(o.response),'Response must be json or html.');
+      need(o.path&&(html?typeof o['match-text']==='string'&&o['match-text'].length>=8&&o['match-text'].length<=1000:o['resource-id']),'Provide an exact path and JSON resource ID, or HTML response with a specific 8–1000 character content marker.');
       need(o.path.startsWith('/')&&!o.path.startsWith('//')&&!/[?#\\]/.test(o.path)&&!/%(?:2f|5c|2e|25)/i.test(o.path)&&!o.path.split('/').includes('..'),'Probe path must be an exact safe path without query strings.');
-      const binding={resourcePath:o.path,resourceId:o['resource-id'],owner:o.owner,outsider:o.outsider,idField:o['id-field']||'id',identityField:o['identity-field']||'id'};
-      need(o.owner!==o.outsider,'Choose two different account identities.');
-      for(const name of [o.owner,o.outsider]){const identity=named(s.identities,name,'Identity');need(identity.checkPath,'Each identity needs --check-path (for example /api/me).');scopeReady(t,identity.checkPath);}
+      const binding={resourcePath:o.path,resourceId:o['resource-id'],...(html?{response:'html',matchText:o['match-text']}:{idField:o['id-field']||'id'}),...(anonymous?{kind:'anonymous',expected:o.expected}:{owner:o.owner,outsider:o.outsider,identityField:o['identity-field']||'id'})};
+      if(anonymous)need(['private','public'].includes(o.expected),'Choose the intended public/private policy; public availability alone is not a vulnerability.');
+      else{need(o.owner&&o.outsider&&o.owner!==o.outsider,'Choose two different account identities.');
+      for(const name of [o.owner,o.outsider]){const identity=named(s.identities,name,'Identity');need(identity.checkPath,'Each identity needs --check-path (for example /api/me).');scopeReady(t,identity.checkPath);}}
       specFor(s,{target:targetName,engine:'docker',bindings:{[targetName]:binding}},targetName);
       result=await change(root,state=>{const target=named(state.targets,targetName,'Target');target.probes??=[];need(target.probes.length<6||target.probes.some(p=>p.name===args[0]),'POC supports up to six approved resources per target.');target.probes=target.probes.filter(p=>p.name!==args[0]);target.probes.push({name:args[0],binding});return {probe:target.probes.at(-1),target:targetName};});break;
     }
@@ -121,7 +135,9 @@ export async function execute(key,args=[],o={},context={}){
     case 'target verify':{
       const name=args[0]||s.activeTarget;let t=named(s.targets,name,'Target');
       if(o.renew){result=await change(root,state=>{const target=named(state.targets,name,'Target');target.challenge=makeChallenge(state.project,target);target.ownership={status:'pending'};target.authorization=null;return {target,message:'New ownership challenge issued; previous authorization invalidated.'};});break;}
-      const ownership=await verifyOwnership(t,o.method||(t.environment==='local'?'local':'dns'),{wait:o.wait,signal:context.signal});
+      let ownership;
+      try{ownership=await verifyOwnership(t,o.method||(t.environment==='local'?'local':'dns'),{wait:o.wait,signal:context.signal});}
+      catch(error){if(error.details?.challenge&&!context.signal?.aborted)return outcome({kind:'setup-pending',status:error.details.expired?'expired':'pending',target:name,challenge:error.details.challenge,message:error.message,nextAction:{tool:'bypass_verify_target',arguments:{name,method:o.method||'dns',...(error.details.expired?{renew:true}:{})}},alternative:error.details.alternative,liveRequestsAllowed:false},3);throw error;}
       result=await change(root,state=>{const target=named(state.targets,name,'Target');need(target.challenge.id===t.challenge.id,'Challenge changed during verification; retry.',3);target.ownership=ownership;event(state,'ownership',`${name}: ownership verified`);return {target,next:`bypass target authorize ${name}`};});break;
     }
     case 'target authorize':{

@@ -3,6 +3,7 @@ const command=(usage,description,flags='',extra={})=>({usage,description,flags:f
 export const commands={
   poc:command('poc','Open a real-AI, two-container POC with a local test app.','dir model'),
   'poc start':command('poc start','Create a separate POC app with public accounts and real Docker agents.','dir port model'),
+  'poc resume':command('poc resume','Restart the saved generated local fixture; preserve findings and tests.'),
   'poc stop':command('poc stop','Stop this POC fixture app; preserve its evidence.'),
   demo:command('demo','Guided local walkthrough: prove, fix, retest, and catch a regression.','dir'),
   onboard:command('onboard [path]','Guided QuickStart, resumable app verification, or local demo.','repo dir flow'),
@@ -42,7 +43,11 @@ export const commands={
   'engine use':command('engine use <docker|mock>','Select real Docker agents or the offline mocked preview.'),
   'engine doctor':command('engine doctor','Check Docker and the shared inference profile.'),
   'engine prepare':command('engine prepare','Build the agent image for both Docker services.'),
-  'probe add':command('probe add <name>','Configure an exact authorized JSON resource and account controls.','target path resource-id owner outsider id-field identity-field'),
+  'registration configure':command('registration configure','Authorize up to two dedicated JSON signup attempts on the verified app.','target provider config-file api-key-field project-id path check-path access-path email-domain email-field password-field token-field verified-field identity-field require-verification accept'),
+  'registration test':command('registration test','Attempt signup, privately connect generated accounts and check unverified access.','target'),
+  'registration status':command('registration status','Show registration coverage and created account cleanup information.','target'),
+  'probe add':command('probe add <name>','Configure an exact authorized JSON resource and account controls.','target path resource-id owner outsider id-field identity-field kind response match-text expected'),
+  'probe discover':command('probe discover','Select owned test IDs from an authorized JSON collection without exposing contents.','target path resource-prefix items-field owner-field id-field resource-id-field identity-field owner outsider'),
   'probe test':command('probe test <name>','Validate both logins and the exact owner resource with three GET requests; zero model calls.','target'),
   'probe list':command('probe list','List approved resources for live agent probes.','target'),
   scan:command('scan','Replay saved checks, then review with the selected analysis engine.','mode target base full plan detach'),
@@ -52,7 +57,7 @@ export const commands={
   retest:command('retest <finding-id>','Check a deployed fix and save a standalone regression.','target build'),
   'test list':command('test list','List saved regression checks.','target'),
   'test show':command('test show <id>','Show a check and environment bindings.'),
-  'test save':command('test save <finding-id>','Save a regression after a verified fix.'),
+  'test save':command('test save <finding-id>','Save a failing reproduction immediately, or a verified fixed regression.'),
   'test run':command('test run [id]','Replay deterministic checks with zero model calls.','all target detach'),
   'test bind':command('test bind [id]','Bind a saved check to an authorized environment.','all target file'),
   'test export':command('test export [id]','Write ordinary Node tests with no Bypass dependency.','all target out force'),
@@ -89,8 +94,8 @@ export const commands={
   _run:command('_run <id>','Internal detached run entry point.','',{hidden:true}),
   '_demo-serve':command('_demo-serve','Internal fixture server.','',{hidden:true})
 };
-export const booleanFlags=new Set(['json','help','version','non-interactive','plan','full','detach','all','force','accept','production','renew','once','stop','device','install','replace','allow-private']);
-export const globalFlags=['project','json','help','version','non-interactive'];
+export const booleanFlags=new Set(['reference','require-verification','json','help','version','non-interactive','plan','full','detach','all','force','accept','production','renew','once','stop','device','install','replace','allow-private']);
+export const globalFlags=['project','json','help','version','non-interactive','reference'];
 export function parse(argv){
   const options={},words=[];
   for(let i=0;i<argv.length;i++){
@@ -111,9 +116,10 @@ export function parse(argv){
   if(!key)for(const flag of Object.keys(options))if(!globalFlags.includes(flag))throw new Error(`Unknown global option --${flag}.`);
   return {key,args:words,options};
 }
-export function help(key){
+export function help(key,reference=false){
+  if(!key&&!reference)return `BYPASS  /  security checks that stay with your code\n\nMuse plugin (recommended): /bypass:start inside Muse\n\n  bypass onboard       Connect your application\n  bypass poc           Try the real local demonstration\n  bypass status        See what is done and what comes next\n  bypass scan          Review configured source and live checks\n  bypass test run --all  Replay saved regressions without AI\n\nCredentials are optional. Account-boundary tests need two accounts.\nStandalone AI needs an API-key profile; Muse uses its active session.\n\nFull reference: bypass --help --reference\nCommand details: bypass <command> --help\n`;
   const selected=commands[key];
   if(selected)return `bypass ${selected.usage}\n\n${selected.description}\n\nOptions: ${selected.flags.map(x=>'--'+x).join(', ')||'(none)'}\nGlobal: --project <path>, --json, --non-interactive, --help\n`;
   const entries=Object.entries(commands).filter(([k,v])=>!v.hidden&&(!key||k.startsWith(key+' ')));
-  return `BYPASS  /  security checks that stay with your code\n\nStart here: ./bypass demo — complete guided walkthrough; no DNS or login needed.\nYour project: ./bypass onboard — connect a repository and preview a review.\n\nPOC · real Docker agents via engine use docker; offline mock preview available\n\n${entries.map(([,v])=>`  ${v.usage.padEnd(38)} ${v.description}`).join('\n')}\n\nGlobal: --project <path>, --json, --non-interactive, --help, --version\nExit codes: 0 success · 1 failed regression · 2 usage/config · 3 blocked/incomplete (including mock scan results) · 130 cancelled\n`;
+  return `BYPASS  /  security checks that stay with your code\n\nStart here: bypass demo — complete guided walkthrough; no DNS or login needed.\nYour project: bypass onboard — connect a repository and preview a review.\n\nPOC · real Docker agents via engine use docker; offline mock preview available\n\n${entries.map(([,v])=>`  ${v.usage.padEnd(38)} ${v.description}`).join('\n')}\n\nGlobal: --project <path>, --json, --non-interactive, --help, --version\nExit codes: 0 success · 1 failed regression · 2 usage/config · 3 blocked/incomplete (including mock scan results) · 130 cancelled\n`;
 }

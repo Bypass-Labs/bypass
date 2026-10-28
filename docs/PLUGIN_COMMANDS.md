@@ -2,22 +2,22 @@
 
 The Muse plugin is the primary experience. Use ordinary requests or its slash commands; Muse calls these tools for you. You do not need to learn MCP syntax or leave Muse for project operations.
 
-Standalone model setup has a deliberate mode boundary: plugin model tools explain host ownership and cannot configure or invoke API inference. This reference is generated from the CLI catalog and plugin definitions. CI checks all 85 public CLI commands and their options; there are 80 typed tools. Regenerate with `node scripts/check-plugin-parity.mjs --write` after intentionally changing the catalog.
+Standalone model setup has a deliberate mode boundary: plugin model tools explain host ownership and cannot configure or invoke API inference. This reference is generated from the CLI catalog and plugin definitions. CI checks all 90 public CLI commands and their options; there are 84 typed tools. Regenerate with `node scripts/check-plugin-parity.mjs --write` after intentionally changing the catalog.
 
 ## Start inside Muse
 
-- `/bypass:start`: reuse your repository and active Muse reasoning, and finish only missing app/DNS/scope/account setup.
+- `/bypass:start`: reuse your repository and active Muse reasoning, and finish missing app/DNS/scope setup; accounts are optional.
 - `/bypass:demo`: a real local Muse-directed demonstration, through proof, fixture fix, saved test, deliberate regression, one monitor tick and security context. Ask for an offline preview explicitly to use seeded discovery.
 - `/bypass:status`: Done / Now / Next, progress, evidence and actual worker health.
 - `/bypass:review`, `/bypass:tests`, `/bypass:monitor`, `/bypass:build`, `/bypass:context`, `/bypass:help`: the remaining workflows.
 
 ## Shared behavior and deliberate UI differences
 
-The plugin calls the same application services and reads/writes the same project state as the CLI. An initialized application workspace is reused; other repository selection is explicit. Host reviews use durable read/source/probe/finish steps directed by Muse. Deterministic replay uses bounded progress calls. Monitor workers run detached, or for one tick. Demo creation selects a separate fixture, and stopping it restores the prior application selection while retaining evidence.
+The plugin calls the same application services and reads/writes the same project state as the CLI. An initialized application workspace is reused; other repository selection is explicit. Host reviews use durable read/source/probe/finish steps directed by Muse. Short deterministic replays return completed controls directly; pending runs use bounded progress calls. Monitor workers run detached, or for one tick. Demo creation selects a separate fixture, and stopping it restores the prior application selection while retaining evidence.
 
 An observed vulnerability or failed regression retains CLI exit code 1 but is a successful MCP operation with a security result. Execution errors, blocked requests and incomplete reviews stay explicit. A configured model, accepted job or saved monitor schedule is never shown as a successful review or running monitor.
 
-Muse owns interactive sign-in, plugin capability approval and session restart. Bypass provides an explicit handoff for official login instead of collecting credentials or claiming sign-in succeeded. The already-approved MCP server is started by Muse, so `mcp serve` is transport lifecycle. For test accounts, Muse imports an existing private account file through `bypass_import_identity`; Firebase tokens refresh automatically without environment exports or session restarts. DNS publication and initial app sign-in may need user access; reuse authorized host integrations where available. Installation/update/removal tools require an explicit user request and do not approve themselves.
+Muse owns interactive sign-in, plugin capability approval and session restart. Bypass provides an explicit handoff for official login instead of collecting credentials or claiming sign-in succeeded. The already-approved MCP server is started by Muse, so `mcp serve` is transport lifecycle. For optional test accounts, Muse can perform authorized bounded JSON/Firebase registration or import an existing private account file through `bypass_import_identity`; Firebase tokens refresh automatically without environment exports or session restarts. DNS publication and initial app sign-in may need user access; reuse authorized host integrations where available. Installation/update/removal tools require an explicit user request and do not approve themselves.
 
 CLI global `--project` maps to the selected repository; `--json` maps to structured tool results; `--help`/`--version` map to the guide and runtime identity. Terminal rendering/keyboard flags are represented by the conversational UI. Output paths stay in the selected repository and may not traverse symlinks.
 
@@ -27,6 +27,7 @@ CLI global `--project` maps to the selected repository; `--json` maps to structu
 | --- | --- | --- |
 | `poc` | `bypass_demo_start` · {"kind":"real"} | Conversational real demo replaces the standalone terminal screen. |
 | `poc start` | `bypass_demo_start` · {"kind":"real"} | Create a separate real fixture for Muse to investigate; no plugin API key or Docker required. |
+| `poc resume` | `bypass_demo_control` · {"action":"resume"} | Restart the saved generated local fixture; preserve findings and tests. |
 | `poc stop` | `bypass_demo_control` · {"action":"stop"} | Stop this POC fixture app; preserve its evidence. |
 | `demo` | `bypass_demo_start` · {"kind":"preview"} | Muse guides the same six-step walkthrough. |
 | `onboard` | `bypass_onboarding` | Conversational checklist, with bypass_connect_repository for repository and config input. |
@@ -66,7 +67,11 @@ CLI global `--project` maps to the selected repository; `--json` maps to structu
 | `engine use` | `bypass_engine` | Set the standalone engine preference. Real plugin reviews remain Muse-directed. |
 | `engine doctor` | `bypass_engine_doctor` | Explain native host execution; no Docker or API profile is needed in Muse. |
 | `engine prepare` | `bypass_prepare_engine` | Optional preparation of standalone Docker workers; unnecessary for native plugin reviews. |
+| `registration configure` | `bypass_configure_registration` | Authorize up to two dedicated JSON signup attempts on the verified app. |
+| `registration test` | `bypass_test_registration` | Attempt signup, privately connect generated accounts and check unverified access. |
+| `registration status` | `bypass_registration` | Show registration coverage and created account cleanup information. |
 | `probe add` | `bypass_add_probe` | Configure an exact authorized JSON resource and account controls. |
+| `probe discover` | `bypass_discover_resources` | Select owned test IDs from an authorized JSON collection without exposing contents. |
 | `probe test` | `bypass_test_probe` | Validate both logins and the exact owner resource with three GET requests; zero model calls. |
 | `probe list` | `bypass_probes` | List approved resources for live agent probes. |
 | `scan` | `bypass_scan` | Prepare a durable host review. Muse drives bypass_review_step read/source/probe/finish; no independent AI worker. |
@@ -76,7 +81,7 @@ CLI global `--project` maps to the selected repository; `--json` maps to structu
 | `retest` | `bypass_retest` | Check a deployed fix and save a standalone regression. |
 | `test list` | `bypass_tests` | List saved regression checks. |
 | `test show` | `bypass_test` | Show a check and environment bindings. |
-| `test save` | `bypass_save_test` | Save a regression after a verified fix. |
+| `test save` | `bypass_save_test` | Save a failing reproduction immediately, or a verified fixed regression. |
 | `test run` | `bypass_run_tests` | Replay deterministic checks with zero model calls. |
 | `test bind` | `bypass_bind_tests` | Bind a saved check to an authorized environment. |
 | `test export` | `bypass_export_tests` | Write ordinary Node tests with no Bypass dependency. |

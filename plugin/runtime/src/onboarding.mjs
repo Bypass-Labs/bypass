@@ -130,7 +130,7 @@ export async function onboard(options={}, args=[], io={}) {
       }
       say('These are environment references for CLI/CI. To connect accounts without shell exports, use identity import; Muse imports known private account files itself. Test connections in Targets & identities.');
     });
-  }else say('You can review source now. Use /engine to add two test accounts and an owner-owned resource for HTTP proof.');
+  }else say('You can review source now. Accounts are optional; anonymous checks and authorized registration testing are available. Use /engine for account-boundary probes.');
   if(advanced&&await yes('Connect the Muse Code plugin now?'))try{
     say('Checking the existing Muse plugin installation…');
     const integration=await call(root,'integrate muse',[],{scope:'project'});museInstalled=true;
@@ -158,7 +158,7 @@ export async function onboard(options={}, args=[], io={}) {
             say(`Serve ${target.challenge.token} at:\n${target.url}${target.challenge.httpPath}`);
             if(!await yes('Is that HTTPS challenge published?'))continue;
           }
-          try{target=(await call(root,'target verify',[target.name],{method:selection.method})).target;}
+          try{const verifiedResult=await call(root,'target verify',[target.name],{method:selection.method});if(verifiedResult.kind==='setup-pending'){say('DNS pending — keep the published record and retry later. Source review can continue.');return;}target=verifiedResult.target;}
           catch(e){if(e.code===130)throw e;say(`Not verified yet: ${selection.method==='dns'?'the matching TXT value is not visible. Check the DNS host/name and allow propagation.':e.message}\nPress Enter to continue your review now; your record is saved.`);}
         }
       }
@@ -184,7 +184,7 @@ export async function onboard(options={}, args=[], io={}) {
     say(`  Repository    ${root}\n  Model         ${info.model?`${info.model.name} · ${info.model.connection}`:'add later'}\n  App           ${info.target?`${info.target.url} · ${info.target.authorized?'verified and authorized':info.target.ownership==='verified'?'scope required':'verification pending'}`:'add later; code-only review available'}\n  Test accounts ${read(root).identities.length} references\n  Muse plugin   ${museInstalled?'installed; approve in Muse':'optional'}`);
     say(info.engine.mode==='docker'?'\nReal AI selected. The first review checks your model connection before sending source.':'\nYour saved offline-preview choice is retained. Use /engine to switch to real AI.');
     say('\nYour review\n'+reviewSummary(info.review));
-    say('Press Enter on the next screen to review source. Live proof also needs verified app scope, two accounts and a resource.\nType / for commands; /app resumes DNS and /models changes the model.');
+    say('Press Enter on the next screen to review source. Live checks need verified app scope. Accounts are optional; add them for cross-account checks or authorize registration testing.\nType / for commands; /app resumes DNS and /models changes the model.');
     const openDashboard=io.inDashboard||io.rich||await yes('Open my project?','y');
     return outcome({root,interactive:true,openDashboard,readiness:info});
   }

@@ -9,7 +9,7 @@ const json=argv.includes('--json');
 try{
   const {key,args,options}=parse(argv);
   if(options.version){console.log(json?JSON.stringify({schemaVersion:SCHEMA,version:VERSION}):VERSION);}
-  else if(options.help){console.log(help(key));}
+  else if(options.help){console.log(help(key,options.reference));}
   else if(!key){if(process.stdin.isTTY&&process.stdout.isTTY&&!options['non-interactive']&&!json)await terminal(options);else {const result=await execute('status',[],options).catch(()=>null);if(result)json?console.log(JSON.stringify(redact(result))):printResult(result);else console.log(json?JSON.stringify({schemaVersion:SCHEMA,status:'not-initialized',next:'bypass init',exitCode:0}):help());}}
   else {
     const interactive=process.stdin.isTTY&&process.stdout.isTTY&&!options['non-interactive']&&!json;

@@ -62,21 +62,21 @@ test('deployed DNS challenge is exact, renews when expired and never implies tes
   status=await checklist(root,root);assert.equal(status.nextAction.challenge.renewRequired,false);assert.equal(read(root).targets[0].authorization,null);
 });
 
-test('local onboarding reaches combined readiness only after scope, account repair and exact resource binding',async t=>{
+test('local onboarding permits optional accounts and retains per-probe validation state',async t=>{
   environment(t,{BYPASS_ONBOARD_OWNER_TOKEN:'owner-test-value',BYPASS_ONBOARD_OTHER_TOKEN:'other-test-value'});
   const root=await sourceReady(),o={project:root};await execute('target add',['app'],{...o,url:'http://127.0.0.1:3456',environment:'local'});
   let status=await checklist(root,root);assert.equal(status.nextAction.challenge.method,'local');assert.match(status.nextAction.question,/local app/);
   await execute('target verify',['app'],{...o,method:'local'});status=await checklist(root,root);assert.equal(status.stage,'scope');assert.equal(status.ready.live,false);
-  await execute('target authorize',['app'],{...o,paths:'/api',accept:true});status=await checklist(root,root);assert.equal(status.stage,'accounts');
+  await execute('target authorize',['app'],{...o,paths:'/api',accept:true});status=await checklist(root,root);assert.equal(status.stage,'ready');assert.equal(status.steps.find(s=>s.id==='accounts').status,'optional');
   await execute('identity add',['owner'],{...o,target:'app',type:'bearer','secret-env':'BYPASS_ONBOARD_OWNER_TOKEN'});
   await execute('identity add',['other'],{...o,target:'app',type:'bearer','secret-env':'BYPASS_ONBOARD_OTHER_TOKEN','check-path':'/api/me'});
-  status=await checklist(root,root);assert.equal(status.nextAction.tool,'bypass_update_identity');assert.equal(status.nextAction.arguments.name,'owner');
-  await execute('identity update',['owner'],{...o,'check-path':'/api/me'});assert.equal((await checklist(root,root)).stage,'resource');
+  status=await checklist(root,root);assert.equal(status.nextAction.tool,'bypass_scan');assert.ok(status.coverageGaps.length);
+  await execute('identity update',['owner'],{...o,'check-path':'/api/me'});assert.equal((await checklist(root,root)).stage,'ready');
   await execute('probe add',['invoice'],{...o,target:'app',path:'/api/invoices/inv-101','resource-id':'inv-101',owner:'owner',outsider:'other'});
-  status=await checklist(root,root);assert.deepEqual(status.ready,{source:true,live:false});assert.equal(status.stage,'validation');assert.equal(status.nextAction.tool,'bypass_test_probe');
+  status=await checklist(root,root);assert.deepEqual(status.ready,{source:true,live:true});assert.equal(status.stage,'ready');assert.equal(status.steps.find(s=>s.id==='resource').probes[0].status,'preflight_required');
   assert.doesNotMatch(JSON.stringify(status),/owner-test-value|other-test-value/);
   delete process.env.BYPASS_ONBOARD_OTHER_TOKEN;status=await checklist(root,root);
-  assert.equal(status.ready.live,false);assert.equal(status.nextAction.tool,'bypass_import_identity');assert.deepEqual(status.nextAction.missingEnvironment,['BYPASS_ONBOARD_OTHER_TOKEN']);
+  assert.equal(status.ready.live,true);assert.equal(status.nextAction.tool,'bypass_scan');assert.ok(status.coverageGaps.some(x=>x.includes('BYPASS_ONBOARD_OTHER_TOKEN')));
   assert.equal(read(root).runs.length,0,'onboarding must not make any scan or model calls');
 });
 

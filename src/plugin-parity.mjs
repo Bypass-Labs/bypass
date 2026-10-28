@@ -5,6 +5,7 @@ import { commands } from './catalog.mjs';
 export const pluginAliases={
   poc:{tool:'bypass_demo_start',arguments:{kind:'real'},note:'Conversational real demo replaces the standalone terminal screen.'},
   'poc start':{tool:'bypass_demo_start',arguments:{kind:'real'},note:'Create a separate real fixture for Muse to investigate; no plugin API key or Docker required.'},
+  'poc resume':{tool:'bypass_demo_control',arguments:{action:'resume'}},
   'poc stop':{tool:'bypass_demo_control',arguments:{action:'stop'}},
   demo:{tool:'bypass_demo_start',arguments:{kind:'preview'},note:'Muse guides the same six-step walkthrough.'},
   'demo start':{tool:'bypass_demo_start',arguments:{kind:'preview'}},
@@ -27,7 +28,7 @@ export const flagEquivalents={
   poc:{project:'selected application profile'},onboard:{repo:'bypass_connect_repository.repository',dir:'bypass_connect_repository.dir',flow:'real/preview onboarding and conversational choices'},
   init:{repo:'repository'},
   scan:{plan:'bypass_prepare_scan',detach:'Host review uses explicit read/source/probe/finish steps'},
-  'test run':{detach:'bypass_run_tests always starts a durable run'},
+  'test run':{detach:'bypass_run_tests returns fast completion or a pending durable run'},
   'monitor worker':{detach:'action=start',once:'action=once',stop:'action=stop'}
 };
 export function capabilityCatalog(tools){
@@ -41,7 +42,7 @@ export function pluginHelp(tools,query=''){
   const needle=query.trim().toLowerCase(),catalog=capabilityCatalog(tools);
   return {kind:'plugin-command-guide',primaryExperience:'Muse plugin',
     shortcuts:[['/bypass:start','Connect your application and finish setup'],['/bypass:demo','Real local proof-to-regression demo; preview is an explicit option'],['/bypass:status','Done / Now / Next and current evidence'],['/bypass:review','Start or resume a review'],['/bypass:tests','Inspect, retest, bind, export, enable or disable saved checks'],['/bypass:monitor','Schedule, start, stop or inspect local monitoring'],['/bypass:build','Use security memory while coding'],['/bypass:context','Read saved context'],['/bypass:help','Find any operation']],
-    workflows:[{name:'Application review',steps:['bypass_onboarding','bypass_connect_repository','bypass_add_target','bypass_verify_target','bypass_authorize_target','bypass_import_identity','bypass_add_probe','bypass_test_probe','bypass_prepare_scan','bypass_scan','bypass_review_step']},
+    workflows:[{name:'Application review',steps:['bypass_onboarding','bypass_connect_repository','bypass_add_target','bypass_verify_target','bypass_authorize_target','bypass_scan','bypass_review_step']},
       {name:'Proof to regression',steps:['bypass_finding','bypass_verify','bypass_retest','bypass_export_tests','bypass_run_tests','bypass_watch_run']},
       {name:'Local monitoring',steps:['bypass_add_monitor','bypass_monitor_worker','bypass_monitors','bypass_context']},
       {name:'Feature work',steps:['bypass_feature_context','Muse coding tools','bypass_run_tests']}],

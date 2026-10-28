@@ -4,7 +4,7 @@
 
 Inside **Muse Code**, Muse plans the investigation and fixes; Bypass reads bounded source, executes approved HTTP tests, and preserves evidence. No separate model key or Docker is needed for the plugin. The **standalone CLI** uses your explicit provider API key and isolated Docker workers.
 
-This is a working POC for missing authentication and cross-account access to configured JSON resources. Source citations are hypotheses; actual HTTP controls establish confirmation. Passing these checks is not a complete security assessment.
+This is a working POC for missing authentication and cross-account access to configured JSON/HTML resources, plus bounded registration and email-verification checks. Source citations are hypotheses; actual HTTP controls establish confirmation. Passing these checks is not a complete security assessment.
 
 ## Start in Muse
 
@@ -36,7 +36,9 @@ To return to setup in a later Muse session:
 /bypass:start
 ```
 
-Bypass guides you through connecting your repository and running app. For a deployed app, it gives you the exact DNS TXT ownership record, then helps configure testing scope and connect two test accounts. If Muse has already created the accounts, it imports their private credential file itself and continues. Firebase tokens refresh automatically—no token exports, refresh scripts or Muse restart. Source review can start while live setup is pending. Never paste app credentials into chat. [Account connection and refresh](docs/ACCOUNTS.md).
+Bypass confirms the repository and app, shows the exact DNS TXT record for deployed ownership, and records the testing scope. **Credentials are optional.** Source and anonymous checks can start without them. Muse investigates signup from source and, when authorized, Bypass tries creating up to two dedicated accounts and connects them privately. JSON signup and Firebase email/password are supported; retries reuse saved attempts instead of creating duplicate users.
+
+For account-boundary tests, Muse derives routes/selectors and selects owned test IDs from an authorized collection. You can also import existing accounts from a private file. Firebase tokens refresh automatically in the same session. Missing accounts or data limit those tests; they do not block the rest of the review. Never paste secrets into chat. [Accounts, signup and supported limits](docs/ACCOUNTS.md).
 
 Then ask, for example:
 
@@ -65,16 +67,18 @@ Inside Muse:
 /bypass:demo
 ```
 
-Muse creates an isolated public fixture, reads its actual source and finds the missing invoice ownership check. It chooses the approved probe; Bypass observes owner **200**, other account **200**, anonymous **401**. Muse interprets that evidence, applies the fixture fix and retests: owner **200**, other account **403**, anonymous **401**. Bypass saves and exports the regression. Reintroducing the bug makes replay fail with **zero plugin model calls**. The fixture is restored and stopped; evidence remains available.
+Muse creates an isolated public fixture, reads its actual source and finds the missing invoice ownership check. It chooses the approved probe; Bypass observes owner **200**, other account **200**, anonymous **401**. Muse interprets that evidence, applies the fixture fix and retests: owner **200**, other account **403**, anonymous **401**. Bypass saves a failing regression as soon as the issue is confirmed; after the fix, that same test passes and can be exported. Reintroducing the bug makes replay fail with **zero plugin model calls**. The fixture is restored and stopped; evidence remains available.
 
 Muse drives every reasoning step. You do not copy JSON, configure a second model, or move to another terminal for the test loop. The fixture demo tests only its generated app. [Detailed walkthrough](docs/WALKTHROUGH.md).
 
 ## What you keep
 
+- **Optional accounts:** start with source and anonymous checks; authorize dedicated signup tests or connect existing accounts when needed.
 - **Observed proof:** cited source plus scoped HTTP controls; suspected, confirmed, blocked and not-run states stay distinct.
-- **Reusable regressions:** fixed behavior becomes an independent Node test, replayed without AI or provider credentials.
+- **Reusable regressions:** confirmed bugs immediately become failing tests. Verify a fix, export to CI, and catch recurrence without AI or provider credentials.
 - **Security context for coding:** `/bypass:build` retrieves cited application knowledge, prior investigations and saved behavior requirements before a new feature. Changed source marks knowledge stale; history is not current proof.
 - **Local evidence and control:** evidence stays in `.bypass/`. Muse controls plugin reasoning/privacy; CLI users explicitly choose a provider or their own API-key-protected compatible endpoint.
+- **Fewer setup steps:** source-derived endpoints, owned-resource discovery and batched review operations keep setup inside Muse.
 - **One execution engine:** plugin and CLI share source grounding, account-boundary proof, evidence, retest, export and monitoring operations.
 
 | In Muse | Purpose |

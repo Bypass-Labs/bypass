@@ -1,4 +1,26 @@
-# Connect test accounts once
+# Optional test accounts and registration checks
+
+Start source and anonymous JSON/HTML checks without credentials. Bypass always includes registration coverage in a live review. Muse derives signup details from source; when account creation is authorized, Bypass creates up to two dedicated accounts through a JSON signup endpoint or Firebase email/password. Tokens go directly into the private credential store and are available in the same session. Firebase refresh tokens are retained privately and refreshed on use.
+
+Retries reuse the saved attempt ledger. An uncertain POST is never retried automatically. CAPTCHA, social login, invitation-only registration and unsupported payloads are reported as gaps; the rest of the review continues. Accounts may send emails through your app, so use an authorized test domain. Created accounts and cleanup needs appear in registration status; removing a local identity does not delete the application user.
+
+An account created without email verification is an observation. A confirmed email-verification issue additionally requires an established verified-email policy, a valid unverified account positive control, and successful access to the protected account resource. A separate identity endpoint lets the regression prove that the account remains valid after protected access is denied. A failed login, already-verified account, redirect or missing resource is inconclusive. This follows the [OWASP registration testing guidance](https://wstg.owasp.org/latest/4-Web_Application_Security_Testing/03-Identity_Management/02-User_Registration_Process/) and [Firebase signup contract](https://firebase.google.com/docs/reference/rest/auth#section-create-email-password).
+
+In Muse, say: **“Review this app. You may create up to two dedicated test accounts using our test domain.”** Muse configures and runs the supported check itself after app ownership and scope are established. Existing credentials remain optional.
+
+CLI examples after ownership/scope setup (replace endpoint/selector values with your app's actual contract):
+
+```bash
+bypass registration configure --path /api/signup --check-path /api/me --access-path /api/verified-profile --email-domain tests.example.com --token-field token --verified-field emailVerified --require-verification --accept
+bypass registration test
+bypass registration status
+```
+
+Firebase uses `--provider firebase --config-file ui/.env --project-id your-firebase-project --api-key-field VITE_FIREBASE_API_KEY` instead of a signup path/token selector. Supply the app identity endpoint and its ID selector, such as `--check-path /api/profile --identity-field owner_uid`. Only enable `--require-verification` when the tested access actually requires verified email.
+
+Muse can select existing owned test data with `bypass_discover_resources`: it reads the chosen account's identity and authorized collection, returns only owned IDs and configures their probes. It never guesses customer IDs or creates resources silently. No suitable data means a reported gap, not a forced onboarding loop.
+
+## Import existing accounts
 
 In Muse, ask **“Continue setup with the test accounts you created.”** When the account credentials already exist in a private local file, Muse imports them itself and continues. No terminal exports or session restart is needed. The same connection works for live checks, deterministic saved tests and local monitor workers.
 

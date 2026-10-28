@@ -26,11 +26,11 @@ async function wizard(root, answers, options={}){
 test('wizard defers failed DNS and resumes the same challenge through explicit scope without duplicate setup',async t=>{
   const root=temp();
   t.mock.method(dns,'resolveTxt',async()=>[['wrong challenge']]);
-  const first=await wizard(root,['1','','','','n','https://staging.example.com','1','1','2','n']);
+  const first=await wizard(root,['1','','','','n','https://staging.example.com','1','1','n']);
   const saved=read(root),challenge=saved.targets[0].challenge;
   assert.equal(saved.targets[0].ownership.status,'pending');
   assert.equal(saved.targets[0].authorization,null);
-  assert.match(first.output,/Not verified yet/);
+  assert.match(first.output,/DNS pending/);
   assert.match(first.output,/verification pending/);
   assert.equal(first.result.openDashboard,false);
   assert.equal(saved.models[0].lastTest,undefined);

@@ -18,7 +18,7 @@ async function request(url,headers,local,signal,timeout=8000){
   return new Promise((resolve,reject)=>{
     const req=(url.protocol==='https:'?https:http).request(url,{method:'GET',headers,signal,agent:false,family:chosen.family,servername:net.isIP(host)?undefined:host,lookup:(_h,o,cb)=>o?.all?cb(null,[chosen]):cb(null,chosen.address,chosen.family)},res=>{
       let body='',bytes=0;res.on('data',b=>{bytes+=b.length;if(bytes>131072)req.destroy(new Error('Response exceeds limit'));else body+=b;});
-      res.on('end',()=>resolve({status:res.statusCode,body}));res.on('error',reject);
+      res.on('end',()=>resolve({status:res.statusCode,body,contentType:res.headers['content-type']||''}));res.on('error',reject);
     });
     req.setTimeout(timeout,()=>req.destroy(new Error('Request timed out')));req.on('error',reject);req.end();
   });
@@ -47,6 +47,7 @@ export function jsonField(data,selector='id'){
   return value;
 }
 function resourceMatches(response,spec){
+  if(spec.response==='html')return /text\/html/i.test(response.contentType)&&typeof spec.matchText==='string'&&spec.matchText.length>=8&&response.body.includes(spec.matchText);
   try{const value=jsonField(JSON.parse(response.body),spec.idField||'id');return ['string','number'].includes(typeof value)&&String(value)===String(spec.resourceId);}catch{return false;}
 }
 export async function replay(spec,{env=process.env,signal,positiveOnly=false}={}){
@@ -63,12 +64,39 @@ export async function replay(spec,{env=process.env,signal,positiveOnly=false}={}
     assert(spec.authorization.paths.some(p=>p==='/'||spec.resourcePath===p||spec.resourcePath.startsWith(p.endsWith('/')?p:p+'/')),'Resource is outside authorized paths');
     assert(spec.authorization.methods.includes('GET'),'GET is not authorized');
     const fixture=!!spec.fixture&&local;
+    if(spec.kind==='unverified-account-access'){
+      const headers=identityHeaders(spec.owner,env,fixture),p=spec.owner.checkPath;
+      assert(typeof p==='string'&&p.startsWith('/')&&!p.startsWith('//')&&!/[?#\\]/.test(p)&&!/%(?:2f|5c|2e|25)/i.test(p)&&!p.split('/').includes('..'),'Invalid identity path');
+      assert(spec.authorization.paths.some(prefix=>prefix==='/'||p===prefix||p.startsWith(prefix.endsWith('/')?prefix:prefix+'/')),'Identity control is outside scope');
+      requests++;const identity=await request(new URL(p,url),headers,local,signal,spec.timeoutMs||8000);controls.push({label:'unverified account identity',status:identity.status});
+      assert(identity.status===200,'Unverified account login control failed; refresh credentials or use a separate identity endpoint. A login failure cannot verify a fix.');
+      const profile=JSON.parse(identity.body);assert(String(jsonField(profile,spec.identityField||'id'))===String(spec.resourceId),'Identity no longer matches the generated test account');
+      let verified=jsonField(profile,spec.verifiedField);
+      if(spec.verificationSource==='firebase-token'){const claims=JSON.parse(Buffer.from((env[spec.owner.secretEnv]||'').split('.')[1],'base64url').toString('utf8'));assert(claims.sub===String(spec.resourceId)&&claims.aud===spec.firebaseProject&&claims.iss===`https://securetoken.google.com/${spec.firebaseProject}`&&claims.exp*1000>Date.now(),'Firebase identity binding changed or expired');verified=claims.email_verified;}
+      assert(verified===false,'Test account must still be explicitly unverified; a verified account cannot establish this fix');
+      await new Promise(resolve=>setTimeout(resolve,Math.ceil(1000/spec.authorization.maxRequestsPerSecond)));
+      requests++;const access=await request(new URL(spec.resourcePath,url),headers,local,signal,spec.timeoutMs||8000);controls.push({label:'unverified protected access',status:access.status});
+      if(access.status===200&&resourceMatches(access,spec))return {status:'failed',reason:'An unverified account can access a route explicitly requiring verified email.',controls,requests,modelCalls:0,durationMs:Date.now()-started};
+      assert([401,403].includes(access.status),'Protected access is inconclusive; response does not identify the expected account resource');
+      return {status:'passed',reason:'The account is valid and unverified; its access to the protected route is denied.',controls,requests,modelCalls:0,durationMs:Date.now()-started};
+    }
+    if(spec.kind==='anonymous'){
+      assert(['private','public'].includes(spec.expected),'Anonymous checks require an explicit public/private expectation');
+      const resource=new URL(spec.resourcePath,url);assert(resource.origin===url.origin,'Resource escapes target origin');
+      requests++;const response=await request(resource,{Accept:spec.response==='html'?'text/html':'application/json','User-Agent':'Bypass-Regression/0.1'},local,signal,spec.timeoutMs||8000);
+      controls.push({label:'unauthenticated access',status:response.status});
+      const matches=response.status===200&&resourceMatches(response,spec);
+      if(matches&&spec.expected==='private')return {status:'failed',reason:'Unauthenticated request can read the explicitly private resource.',controls,requests,modelCalls:0,durationMs:Date.now()-started};
+      if(spec.expected==='private'&&[401,403].includes(response.status))return {status:'passed',reason:'Anonymous access to the explicitly private resource is denied.',controls,requests,modelCalls:0,durationMs:Date.now()-started};
+      if(matches&&spec.expected==='public')return {status:'observed',reason:'Expected public content is accessible; this is an observation, not a vulnerability or security clearance.',controls,requests,modelCalls:0,durationMs:Date.now()-started};
+      assert(false,'Anonymous check is inconclusive: resource marker missing, login page, missing resource, redirect or server error.');
+    }
     const owner=identityHeaders(spec.owner,env,fixture), outsider=identityHeaders(spec.outsider,env,fixture);
     assert(JSON.stringify(owner)!==JSON.stringify(outsider),'Owner and non-owner credentials must be different');
     const resource=new URL(spec.resourcePath,url);
     assert(resource.origin===url.origin,'Resource escapes target origin');
     const gap=Math.ceil(1000/spec.authorization.maxRequestsPerSecond);
-    const send=async(headers,label,requestURL=resource)=>{if(requests)await new Promise((resolve,reject)=>{const t=setTimeout(resolve,gap);if(signal){const onAbort=()=>{clearTimeout(t);reject(new Error('Cancelled'));};signal.addEventListener('abort',onAbort,{once:true});setTimeout(()=>signal.removeEventListener('abort',onAbort),gap);}});requests++;const r=await request(requestURL,{Accept:'application/json','User-Agent':'Bypass-Regression/0.1',...headers},local,signal,spec.timeoutMs||8000);controls.push({label,status:r.status});return r;};
+    const send=async(headers,label,requestURL=resource)=>{if(requests)await new Promise((resolve,reject)=>{const t=setTimeout(resolve,gap);if(signal){const onAbort=()=>{clearTimeout(t);reject(new Error('Cancelled'));};signal.addEventListener('abort',onAbort,{once:true});setTimeout(()=>signal.removeEventListener('abort',onAbort),gap);}});requests++;const r=await request(requestURL,{Accept:spec.response==='html'?'text/html, application/json':'application/json','User-Agent':'Bypass-Regression/0.1',...headers},local,signal,spec.timeoutMs||8000);controls.push({label,status:r.status});return r;};
     if(spec.requireIdentityControl){
       const identityURL=identity=>{
         const p=identity.checkPath;

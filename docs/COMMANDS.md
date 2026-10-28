@@ -20,7 +20,7 @@ For a scrolling interface or screen reader, use `BYPASS_PLAIN=1 ./bypass`. `TERM
 
 ## poc / poc start / poc stop
 
-`poc` creates a separate local app and opens the workspace with real Docker agents selected. Docker and a configured model are required for review. The fixture uses two public accounts; model calls analyze actual source, and HTTP controls determine the findings. `--dir` must be empty; `--model` selects a Muse model ID. Existing active project profiles are reused when `--project` is supplied. `poc start` is the scriptable setup and also supports `--port`; it returns the project root. `poc stop --project <root>` stops the fixture app and preserves evidence.
+`poc` creates a separate local app and opens the workspace with real Docker agents selected. Docker and a configured model are required for review. The fixture uses two public accounts; model calls analyze actual source, and HTTP controls determine the findings. `--dir` must be empty; `--model` overrides the selected standalone API profile model; the Muse plugin uses its active host model. Existing active project profiles are reused when `--project` is supplied. `poc start` is the scriptable setup and also supports `--port`; it returns the project root. `poc stop --project <root>` stops the fixture app and preserves evidence.
 
 ## engine use <docker|mock> / engine doctor / engine prepare
 
@@ -393,3 +393,15 @@ Stop the local fixture server.
 `~/bypass-for-muse/bypass probe test <name> --project /path/to/app` checks the two signed-in account IDs and owner resource with three authorized GET requests, no model calls. The plugin performs this through `bypass_test_probe`. Status `ready` means those positive controls succeeded; it is not a security verdict. Every combined/live scan repeats this check before AI.
 
 Run status is `failed` for execution errors, `incomplete` for blocked/bounded results with exit 3, `cancelled` for cancellation and `completed` when the requested execution finished with a conclusive behavior result. `run watch` exits for all terminal statuses. `status` and `context` return a compact latest-run summary; `run show <id>` / `bypass_run` returns the detailed evidence.
+
+## Optional accounts and faster review (0.7.1)
+
+`bypass --help` shows a short starting menu; `bypass --help --reference` shows every command. The primary plugin flow is `/bypass:start` inside Muse.
+
+- `registration configure`, `registration test`, `registration status`: authorize bounded JSON/Firebase signup, privately connect generated accounts, inspect evidence and cleanup needs.
+- `probe discover`: derive exact owned IDs from an authorized collection, using selectors from source.
+- `probe add --kind anonymous`: test an exact JSON resource without credentials. Use `--response html --match-text 'specific content marker'` for HTML. Set `--expected private` only for an established private-content requirement; public content is an observation.
+- `test save <finding-id>` and `test export <check-or-finding-id>`: preserve failing reproductions immediately after observed confirmation.
+- `poc resume`: restart the recorded generated fixture; source edits, finding/check IDs and evidence are retained. Known fixture forms only.
+
+All have typed Muse tools; see [the generated capability reference](PLUGIN_COMMANDS.md) and [account/signup contracts](ACCOUNTS.md). Source and anonymous checks do not require imported accounts. Authenticated checks still require valid positive controls.

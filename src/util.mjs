@@ -3,7 +3,7 @@ import { spawn } from 'node:child_process';
 import { setTimeout as delay } from 'node:timers/promises';
 import { commandInvocation } from './command.mjs';
 
-export const VERSION = '0.7.0';
+export const VERSION = '0.7.1';
 export const SCHEMA = 'bypass.v1';
 export const now = () => new Date().toISOString();
 export const id = prefix => `${prefix}_${randomUUID().slice(0, 8)}`;
@@ -35,13 +35,15 @@ export function cleanText(value) { return String(value).replace(/[\x00-\x08\x0b-
 const registeredSecrets=new Set();
 export function registerSecret(value){if(typeof value==='string'&&value.length>=4)registeredSecrets.add(value);}
 export function redact(value) {
-  let text = typeof value === 'string' ? value : JSON.stringify(value);
-  for (const [key, secret] of Object.entries(process.env)) {
-    if (/(TOKEN|SECRET|PASSWORD|API_KEY|COOKIE)/i.test(key) && secret?.length >= 4) text = text.split(secret).join('[REDACTED]');
-  }
-  for(const secret of registeredSecrets)text=text.split(secret).join('[REDACTED]');
-  text = text.replace(/(Bearer\s+)[^\s"<>]+/gi, '$1[REDACTED]');
-  return typeof value === 'string' ? text : JSON.parse(text);
+  const secrets=[...new Set([...Object.entries(process.env).filter(([key,secret])=>/(TOKEN|SECRET|PASSWORD|API_KEY|COOKIE)/i.test(key)&&secret?.length>=4).map(([,secret])=>secret),...registeredSecrets])].sort((a,b)=>b.length-a.length);
+  const mask=text=>{
+    for(const secret of secrets)text=text.split(secret).join('[REDACTED]');
+    return text.replace(/(Bearer[ \t]+)[A-Za-z0-9._~+\/-]+={0,2}/gi,'$1[REDACTED]');
+  };
+  // Work on values, never JSON syntax: quoted source, escapes and array shape
+  // must survive redaction. Mask keys too, without invoking setters such as __proto__.
+  const walk=item=>typeof item==='string'?mask(item):Array.isArray(item)?item.map(walk):item&&typeof item==='object'?Object.fromEntries(Object.entries(item).map(([key,v])=>[mask(key),walk(v)])):item;
+  return walk(value);
 }
 export function execFile(command, args = [], options = {}) {
   return new Promise((resolve, reject) => {

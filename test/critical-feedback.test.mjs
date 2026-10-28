@@ -17,45 +17,33 @@ import { Fault } from '../src/util.mjs';
 
 const onboarding=root=>pluginOnboarding(root,root,{checkDocker:async()=>({available:true})});
 async function fixture(t){const root=path.join(temp(),'app');await startPOC({dir:root});await addTestModel(root);t.after(()=>stopPOC(root));return root;}
-const noAI={prepareAgents:async()=>assert.fail('No Docker before valid accounts/resource'),infer:async()=>assert.fail('No AI before valid accounts/resource'),testModel:async()=>assert.fail('No model preflight before valid accounts/resource')};
 
-test('missing credentials are blocked consistently in plan, status and onboarding, with zero model calls',async t=>{
+test('missing credentials limit account probes without blocking source and other authorized checks',async t=>{
   const root=await fixture(t);
   await change(root,s=>{delete s.identities[1].fixtureValue;s.identities[1].secretEnv='BYPASS_TEST_MISSING_ACCOUNT';});
   const plan=scanPlan(read(root),{mode:'combined'}),status=readiness(root),setup=await onboarding(root);
-  assert.equal(plan.blackBox.status,'blocked');assert.match(plan.blockers.join(' '),/BYPASS_TEST_MISSING_ACCOUNT.*terminal/);
-  assert.equal(status.ready.liveTesting,false);assert.equal(status.ready.liveReview,false);assert.equal(setup.ready.live,false);
-  assert.equal(setup.nextAction.id,'accounts');
-  const run=await createRun(root,'scan',{mode:'combined'}),result=await executeRun(root,run.id,null,null,{runtime:noAI});
-  assert.equal(result.run.status,'failed');assert.equal(result.run.modelCalls,0);assert.equal(result.run.result.details.stage,'setup');
-  assert.equal((await watchRun(root,run.id,100)).run.status,'failed');
+  assert.equal(plan.blockers.length,0);assert.equal(status.ready.liveReview,true);assert.equal(setup.ready.live,true);
+  assert.equal(setup.nextAction.id,'review');assert.ok(status.coverageGaps.some(x=>x.includes('BYPASS_TEST_MISSING_ACCOUNT')));
+  const probe=await execute('probe test',['invoice'],{project:root});assert.equal(probe.validation.status,'blocked');assert.equal(probe.validation.requests,0);
 });
 
-test('placeholder resource is rejected by real owner control before any model or container',async t=>{
+test('placeholder remains blocked by positive controls while other review stages remain available',async t=>{
   const root=await fixture(t);
   await change(root,s=>{s.targets[0].probes[0].binding.resourcePath='/api/invoices/placeholder';s.targets[0].probes[0].binding.resourceId='placeholder';});
-  assert.equal(scanPlan(read(root),{mode:'combined'}).blackBox.status,'preflight_required');
-  assert.equal((await onboarding(root)).nextAction.tool,'bypass_test_probe');
-  const run=await createRun(root,'scan',{mode:'combined'}),result=await executeRun(root,run.id,null,null,{runtime:noAI});
-  assert.equal(result.run.status,'failed');assert.equal(result.exitCode,3);assert.equal(result.run.modelCalls,0);
-  assert.equal(result.run.result.details.stage,'accounts');assert.equal(result.run.agentEvidence.preflight[0].requests,3);
-  assert.match(result.run.result.message,/Owner positive control/);assert.equal(readiness(root).ready.liveTesting,false);
+  assert.equal(scanPlan(read(root),{mode:'combined'}).blockers.length,0);
+  const result=await execute('probe test',['invoice'],{project:root});assert.equal(result.exitCode,3);assert.equal(result.validation.requests,3);assert.match(result.validation.reason,/Owner positive control/);
+  assert.equal(read(root).findings.length,0);
 });
 
-test('positive preflight validates only three controls; changing token, binding or expiry invalidates readiness',async t=>{
-  const root=await fixture(t);
-  const check=await execute('probe test',['invoice'],{project:root});
-  assert.equal(check.exitCode,0);assert.equal(check.validation.status,'ready');assert.equal(check.validation.requests,3);
-  assert.equal(check.validation.securityConclusion,false);assert.equal(check.validation.modelCalls,0);
-  assert.deepEqual(check.validation.controls.map(c=>c.label),['owner identity','outsider identity','owner access']);
-  assert.equal(readiness(root).ready.liveReview,true);assert.equal((await onboarding(root)).ready.live,true);
-  await change(root,s=>{s.identities[1].fixtureValue='invalid-test-token';});
-  assert.equal(readiness(root).ready.liveReview,false);
-  const blocked=await execute('probe test',['invoice'],{project:root});assert.equal(blocked.exitCode,3);assert.match(blocked.validation.reason,/refresh|Refresh/);
-  await change(root,s=>{s.identities[1].fixtureValue='poc-outsider-token';});
-  await execute('probe test',['invoice'],{project:root});
-  await change(root,s=>{s.targets[0].probes[0].binding.idField='wrong';});assert.equal(readiness(root).ready.liveReview,false);
-  await change(root,s=>{s.targets[0].probes[0].binding.idField='id';s.targets[0].probes[0].validation.checkedAt='2000-01-01T00:00:00Z';});assert.equal(readiness(root).ready.liveReview,false);
+test('preflight freshness is per probe; invalid controls never become a pass',async t=>{
+  const root=await fixture(t),o={project:root};
+  const check=await execute('probe test',['invoice'],o);assert.equal(check.exitCode,0);assert.equal(check.validation.requests,3);assert.equal(check.validation.securityConclusion,false);
+  assert.equal(readiness(root).probes[0].ready,true);
+  await change(root,s=>{s.identities[1].fixtureValue='invalid-test-token';});assert.equal(readiness(root).probes[0].ready,false);
+  const blocked=await execute('probe test',['invoice'],o);assert.equal(blocked.exitCode,3);assert.match(blocked.validation.reason,/refresh|Refresh/);
+  await change(root,s=>{s.identities[1].fixtureValue='poc-outsider-token';});await execute('probe test',['invoice'],o);
+  await change(root,s=>{s.targets[0].probes[0].binding.idField='wrong';});assert.equal(readiness(root).probes[0].ready,false);
+  await change(root,s=>{s.targets[0].probes[0].binding.idField='id';s.targets[0].probes[0].validation.checkedAt='2000-01-01T00:00:00Z';});assert.equal(readiness(root).probes[0].ready,false);
 });
 
 test('failed white-box run preserves source reads and structured cause, terminates watch and stays compact in context',async()=>{

@@ -115,6 +115,11 @@ export function importCredential(state,target,identity,options){
   directory(state,true);const ref=randomUUID();writeRecord(state,ref,record);return ref;
 }
 export function removeCredential(state,ref){if(ref)fs.rmSync(fileFor(state,ref),{force:true});}
+export function saveGeneratedCredential(state,target,identity,token,options={}){
+  const record={version:1,binding:binding(state,target,identity),provider:'static',token:tokenValue(token),expiresAt:expiration(token),updatedAt:new Date().toISOString()};
+  if(options.provider==='firebase'){Object.assign(record,{provider:'firebase',refreshToken:tokenValue(options.refreshToken),apiKey:options.apiKey,projectId:options.projectId,subject:firebaseClaims(token,options.projectId).sub});registerSecret(record.apiKey);}
+  directory(state,true);const ref=randomUUID();writeRecord(state,ref,record);return ref;
+}
 export function registerProjectCredentials(state){
   for(const identity of state.identities.filter(i=>i.credentialRef)){
     const target=state.targets.find(t=>t.name===identity.target);if(!target)continue;
@@ -182,4 +187,4 @@ export async function credentialEnvironment(state,target,identities,{env=process
   }
   return resolved;
 }
-export async function replayEnvironment(state,spec,options){const target=state.targets.find(t=>t.url===spec.origin&&t.name===spec.owner.target);need(target,'Target not found.',3);return credentialEnvironment(state,target,[spec.owner,spec.outsider],options);}
+export async function replayEnvironment(state,spec,options){if(spec.kind==='anonymous')return options?.env||process.env;const target=state.targets.find(t=>t.url===spec.origin&&t.name===spec.owner.target);need(target,'Target not found.',3);return credentialEnvironment(state,target,[spec.owner,spec.outsider].filter(Boolean),options);}

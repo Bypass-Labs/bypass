@@ -15,18 +15,18 @@ Standalone model setup has a deliberate mode boundary: plugin model tools explai
 
 ## Start inside Muse
 
-- \`/bypass:start\`: reuse your repository and active Muse reasoning, and finish only missing app/DNS/scope/account setup.
+- \`/bypass:start\`: reuse your repository and active Muse reasoning, and finish missing app/DNS/scope setup; accounts are optional.
 - \`/bypass:demo\`: a real local Muse-directed demonstration, through proof, fixture fix, saved test, deliberate regression, one monitor tick and security context. Ask for an offline preview explicitly to use seeded discovery.
 - \`/bypass:status\`: Done / Now / Next, progress, evidence and actual worker health.
 - \`/bypass:review\`, \`/bypass:tests\`, \`/bypass:monitor\`, \`/bypass:build\`, \`/bypass:context\`, \`/bypass:help\`: the remaining workflows.
 
 ## Shared behavior and deliberate UI differences
 
-The plugin calls the same application services and reads/writes the same project state as the CLI. An initialized application workspace is reused; other repository selection is explicit. Host reviews use durable read/source/probe/finish steps directed by Muse. Deterministic replay uses bounded progress calls. Monitor workers run detached, or for one tick. Demo creation selects a separate fixture, and stopping it restores the prior application selection while retaining evidence.
+The plugin calls the same application services and reads/writes the same project state as the CLI. An initialized application workspace is reused; other repository selection is explicit. Host reviews use durable read/source/probe/finish steps directed by Muse. Short deterministic replays return completed controls directly; pending runs use bounded progress calls. Monitor workers run detached, or for one tick. Demo creation selects a separate fixture, and stopping it restores the prior application selection while retaining evidence.
 
 An observed vulnerability or failed regression retains CLI exit code 1 but is a successful MCP operation with a security result. Execution errors, blocked requests and incomplete reviews stay explicit. A configured model, accepted job or saved monitor schedule is never shown as a successful review or running monitor.
 
-Muse owns interactive sign-in, plugin capability approval and session restart. Bypass provides an explicit handoff for official login instead of collecting credentials or claiming sign-in succeeded. The already-approved MCP server is started by Muse, so \`mcp serve\` is transport lifecycle. For test accounts, Muse imports an existing private account file through \`bypass_import_identity\`; Firebase tokens refresh automatically without environment exports or session restarts. DNS publication and initial app sign-in may need user access; reuse authorized host integrations where available. Installation/update/removal tools require an explicit user request and do not approve themselves.
+Muse owns interactive sign-in, plugin capability approval and session restart. Bypass provides an explicit handoff for official login instead of collecting credentials or claiming sign-in succeeded. The already-approved MCP server is started by Muse, so \`mcp serve\` is transport lifecycle. For optional test accounts, Muse can perform authorized bounded JSON/Firebase registration or import an existing private account file through \`bypass_import_identity\`; Firebase tokens refresh automatically without environment exports or session restarts. DNS publication and initial app sign-in may need user access; reuse authorized host integrations where available. Installation/update/removal tools require an explicit user request and do not approve themselves.
 
 CLI global \`--project\` maps to the selected repository; \`--json\` maps to structured tool results; \`--help\`/\`--version\` map to the guide and runtime identity. Terminal rendering/keyboard flags are represented by the conversational UI. Output paths stay in the selected repository and may not traverse symlinks.
 

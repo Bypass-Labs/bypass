@@ -65,7 +65,7 @@ test('same running MCP session imports accounts, performs proof and saved replay
   await c.call('bypass_add_target',{name:'app',url:`http://127.0.0.1:${server.address().port}`,environment:'local'});await c.call('bypass_verify_target',{name:'app',method:'local'});await c.call('bypass_authorize_target',{name:'app',accept:true,paths:'/api'});
   const file=secretFile(temp(),{OWNER:owner.value,OTHER:outsider,PASSWORD:'unused-private-password'}),outputs=[];
   for(const [name,field] of [['owner','OWNER'],['outsider','OTHER']])outputs.push(await c.call('bypass_import_identity',{name,file,'token-field':field,target:'app','check-path':'/api/me'}));
-  assert.equal(requests,0,'import itself never calls the app');assert.equal((await c.call('bypass_onboarding')).stage,'resource');
+  assert.equal(requests,0,'import itself never calls the app');assert.equal((await c.call('bypass_onboarding')).stage,'ready');
   await c.call('bypass_add_probe',{name:'item',path:'/api/items/item-1','resource-id':'item-1',owner:'owner',outsider:'outsider'});
   const preflight=await c.call('bypass_test_probe',{name:'item'});assert.equal(preflight.validation.status,'ready');assert.equal(requests,3);assert.equal((await c.call('bypass_onboarding')).ready.live,true);
   const review=await c.call('bypass_scan',{mode:'live'});const proof=await c.call('bypass_review_step',{id:review.runId,action:'probe',index:0});assert.equal(proof.observation.status,'failed');await c.call('bypass_review_step',{id:review.runId,action:'finish'});
