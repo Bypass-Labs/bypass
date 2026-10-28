@@ -2,8 +2,30 @@
 
 Open issues observed in the October 27, 2026 fresh-install UAT of Bypass 0.7.0
 (`e87d042`). Muse reviewed `Bypass-Labs/job-finder` at `1f5684f`.
-These items are not fixed. Production black-box testing remains pending DNS
-verification; the earlier local-fixture results are not production evidence.
+These items are not fixed. The first production black-box attempt was blocked by
+DNS verification; the rerun below completed the configured production probes.
+Local-fixture results are not production evidence.
+
+### Rerun update — October 27, 2026 (Pacific)
+
+DNS verification and the bounded production black-box review have now completed.
+The real Muse production workflow took 8m54s (27 host model calls, zero failed
+tool calls). It exercised all three configured owner/outsider/anonymous probes,
+verification and retest. The private UAT report contains the application-specific
+evidence; these results are not a claim of complete application coverage.
+
+The uninterrupted local Muse fix/regression/export/monitor journey passed in
+3m13s, including pass → fail → pass, final finding retest, monitor pause, worker
+stop, and fixture shutdown. Independently executed exported Node tests reproduced
+pass/fail/pass in 7.5s; the installed CLI replay also passed. These local results
+do not establish a deployed production fix.
+
+Production memory retrieval passed with ten records, and a fresh Muse coding
+session retrieved that context without onboarding or app requests. **UAT-01 is
+still open:** the installed release still throws on the quoted-Bearer minimal
+reproduction. The second production review was only started and cancelled;
+full repeat analysis and interrupted-fixture recovery are not closed by this
+rerun. Long model waits and unavailable installed-version metadata also remain.
 
 ## P1 — blocks a complete plugin journey
 
