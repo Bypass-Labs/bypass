@@ -27,7 +27,8 @@ const send=(r,status,data)=>{r.writeHead(status,{'Content-Type':'application/jso
 test('method selection normalizes exact choices, permits custom methods, and preserves explicit production gates',async()=>{
   assert.deepEqual(httpMethods(),['GET','HEAD']);
   assert.deepEqual(httpMethods('get, POST post PROPFIND'),['GET','POST','PROPFIND']);
-  for(const value of [[],null,'*','POST\r\nHost:evil','CONNECT','PRI','GET /api'])assert.throws(()=>httpMethods(value));
+  assert.deepEqual(httpMethods('["GET", "HEAD", "POST", "PATCH", "PROPFIND"]'),['GET','HEAD','POST','PATCH','PROPFIND']);
+  for(const value of [[],null,'*','POST\r\nHost:evil','CONNECT','PRI','GET /api','[]','["POST",null]','["POST",{}]','["POST",["GET"]]','["POST", "*"]','["POST"','["POST\\r\\nHost:evil"]'])assert.throws(()=>httpMethods(value));
   const answers=['*','1,3,PROPFIND'];let errors=0;
   assert.deepEqual(await promptMethods(async()=>answers.shift(),()=>errors++),['GET','POST','PROPFIND']);assert.ok(errors>0);
   const app={url:'https://app.example.com',environment:'production',ownership:{status:'verified',expiresAt:new Date(Date.now()+86400000).toISOString()}};
@@ -71,6 +72,11 @@ test('packaged Muse flow selects POST, creates a resource, proves access and rep
   await c.call('bypass_authorize_target',{name:'app','scope-file':scopeFile,accept:true,production:true});
   const saved=(await c.call('bypass_target',{name:'app'})).target.authorization;
   assert.deepEqual(saved.methods,['GET','HEAD','POST','PUT','PATCH','DELETE','OPTIONS']);assert.deepEqual(saved.paths,['/']);assert.equal(saved.maxRequestsPerSecond,2);assert.equal(saved.productionAcknowledged,true);
+  await c.call('bypass_authorize_target',{name:'app',paths:'/api',methods:'["GET", "HEAD", "POST", "PATCH", "PROPFIND"]',accept:true});
+  assert.deepEqual((await c.call('bypass_target',{name:'app'})).target.authorization.methods,['GET','HEAD','POST','PATCH','PROPFIND']);
+  const malformed=await c.raw('bypass_authorize_target',{name:'app',paths:'/api',methods:'["POST", "*"]',accept:true});
+  assert.equal(malformed.result.isError,true);
+  assert.deepEqual(read(root).targets[0].authorization.methods,['GET','HEAD','POST','PATCH','PROPFIND'],'invalid input cannot alter the saved grant');
   await c.call('bypass_authorize_target',{name:'app',paths:'/api',methods:['GET','HEAD'],accept:true});
   const denied=await c.raw('bypass_request',{method:'POST',path:'/api/jobs'});assert.equal(denied.result.isError,true);assert.equal(posts,0);
   await c.call('bypass_authorize_target',{name:'app',paths:'/api',methods:['GET','HEAD','POST'],accept:true});

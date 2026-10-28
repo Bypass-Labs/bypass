@@ -17,7 +17,13 @@ export function httpMethod(value){
   return method;
 }
 export function httpMethods(value=['GET','HEAD']){
-  const items=typeof value==='string'?value.split(/[,\s]+/).filter(Boolean):value;
+  let items=value;
+  if(typeof value==='string'){
+    const input=value.trim();
+    if(input.startsWith('[')){
+      try{items=JSON.parse(input);}catch{need(false,'Provide a JSON array of HTTP method names or a comma-separated list.');}
+    }else items=input.split(/[,\s]+/).filter(Boolean);
+  }
   need(Array.isArray(items)&&items.length>0&&items.length<=16,'Choose 1–16 HTTP methods, separated by commas.');
   return [...new Set(items.map(httpMethod))];
 }

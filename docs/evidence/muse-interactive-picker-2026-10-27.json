@@ -1,0 +1,28 @@
+{
+  "test": "Native Muse interactive method picker",
+  "date": "2026-10-27",
+  "host": "Muse Code 1.4.14, macOS x64",
+  "testedPluginVersion": "0.7.5",
+  "museSessionId": "01a180ed-e012-73b0-bff9-dd4c94c86194",
+  "entrypoint": "Interactive muse in an isolated local project; keyboard selection in the host's actual request_user_input picker",
+  "displayedChoices": ["Read (GET, HEAD)", "Read + create (GET, HEAD, POST)", "Custom methods"],
+  "selection": "Custom methods, with GET,HEAD,POST,PATCH,PROPFIND in the note field",
+  "initialToolPayload": {"methods": "[\"GET\", \"HEAD\", \"POST\", \"PATCH\", \"PROPFIND\"]"},
+  "initialOutcome": "Rejected because the JSON array was encoded as a string",
+  "recovery": "Muse retried with comma-separated methods, then read back the target",
+  "savedScope": {
+    "paths": ["/api"],
+    "methods": ["GET", "HEAD", "POST", "PATCH", "PROPFIND"],
+    "maxRequestsPerSecond": 2,
+    "productionAcknowledged": false
+  },
+  "outcome": "Selected methods persisted correctly, with one recovered tool error",
+  "hostReportedElapsed": "3m52s, including waiting for keyboard input",
+  "applicationRequests": 0,
+  "applicationReviewsRun": 0,
+  "followUp": "0.7.6 accepts the observed JSON-string representation with identical validation. Packaged MCP regression coverage includes this payload and verifies that invalid input cannot alter the saved grant.",
+  "limitations": [
+    "The installed 0.7.5 journey had an error; do not report it as error-free.",
+    "Local permission selection is not a complete production review or upgrade UAT."
+  ]
+}
