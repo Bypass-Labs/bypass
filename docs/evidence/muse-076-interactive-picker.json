@@ -1,0 +1,41 @@
+{
+  "test": "Native Muse interactive scope picker after explicit fallback guidance",
+  "host": "Muse Code 1.4.14 on macOS x64",
+  "pluginVersion": "0.7.6",
+  "codeCommit": "e22124cabfc4267b17a26bae98fe02c184d69057",
+  "installation": "Native Muse plugin installed from the built workspace package while the corresponding release went through CI",
+  "sessionId": "01a180fe-8228-79a3-80b1-0f6e80c6bdb4",
+  "request": "Change the allowed Bypass HTTP methods for the configured local app. Show the method picker and wait for my selection. This is only a scope-editing test: do not scan or send app requests.",
+  "pickerOpenedWithoutFollowUp": true,
+  "choices": [
+    "Read",
+    "Read + create",
+    "Custom methods"
+  ],
+  "keyboardSelection": "Custom methods; note: GET,HEAD,POST,PATCH,PROPFIND",
+  "toolCalls": [
+    "bypass_onboarding",
+    "bypass_target",
+    "bypass_authorize_target"
+  ],
+  "toolErrors": 0,
+  "savedMethods": [
+    "GET",
+    "HEAD",
+    "POST",
+    "PATCH",
+    "PROPFIND"
+  ],
+  "savedPaths": [
+    "/api"
+  ],
+  "rateLimit": 2,
+  "independentSavedStateReadback": "matched",
+  "applicationRequests": 0,
+  "applicationReviewsRun": 0,
+  "hostReportedElapsed": "1m51s including 51 seconds waiting for keyboard selection",
+  "limitations": [
+    "Local permission selection, not production application UAT.",
+    "One observed host conversation does not establish a host latency bound or eliminate model variability."
+  ]
+}

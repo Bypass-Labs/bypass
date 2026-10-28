@@ -126,8 +126,6 @@
     "Focused native conversation; not a full production security review.",
     "No production HTTP probes or account creation were requested."
   ],
-  "startedAt": 1793165234394929,
-  "finishedAt": 1793165236743920,
   "release": "main-69dcade93b3687b51b2f1b0607da594bf0f8147c-40637316654-1",
   "releaseStatusAtTest": "Mac artifact installed before promotion; public channel remained 0.7.5 pending cross-platform checks."
 }
