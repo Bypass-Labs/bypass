@@ -15,7 +15,7 @@ $marker = Join-Path $PSScriptRoot 'installed.json'
 switch ($args[1]) {
   'inspect' { if (Test-Path $marker) { Get-Content $marker -Raw; exit 0 }; Write-Output '{"error":{"message":"not installed"}}'; exit 1 }
   'validate' { Write-Output '{"valid":true}'; exit 0 }
-  'install' { '{"valid":true,"active":true,"record":{"id":"bypass"}}' | Set-Content $marker; @{installed=$true; source=$args[2]} | ConvertTo-Json -Compress; exit 0 }
+  'install' { '{"valid":true,"active":true,"record":{"id":"bypass","version":"${manifest.version}"}}' | Set-Content $marker; @{installed=$true; source=$args[2]} | ConvertTo-Json -Compress; exit 0 }
   default { throw 'Unexpected native Muse operation' }
 }
 `);
