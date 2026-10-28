@@ -10,6 +10,7 @@ export const pluginAliases={
   demo:{tool:'bypass_demo_start',arguments:{kind:'preview'},note:'Muse guides the same six-step walkthrough.'},
   'demo start':{tool:'bypass_demo_start',arguments:{kind:'preview'}},
   onboard:{tool:'bypass_onboarding',note:'Conversational checklist, with bypass_connect_repository for repository and config input.'},
+  'app connect':{tool:'bypass_connect_app'},
   init:{tool:'bypass_connect_repository'},'repo connect':{tool:'bypass_connect_repository'},
   'memory list':{tool:'bypass_memory'},
   scan:{tool:'bypass_scan',note:'Prepare a durable host review. Muse drives bypass_review_step read/source/probe/finish; no independent AI worker.'},
@@ -25,7 +26,7 @@ export const pluginAliases={
   ...Object.fromEntries(['status','fix','regress','add-route','reset','stop'].map(action=>['demo '+action,{tool:'bypass_demo_control',arguments:{action}}]))
 };
 export const flagEquivalents={
-  poc:{project:'selected application profile'},onboard:{repo:'bypass_connect_repository.repository',dir:'bypass_connect_repository.dir',flow:'real/preview onboarding and conversational choices'},
+  poc:{project:'selected application profile'},onboard:{repo:'bypass_connect_repository.repository',dir:'bypass_connect_repository.dir',flow:'real/preview onboarding and conversational choices',mode:'bypass_onboarding.mode'},
   init:{repo:'repository'},
   scan:{plan:'bypass_prepare_scan',detach:'Host review uses explicit read/source/probe/finish steps'},
   'test run':{detach:'bypass_run_tests returns fast completion or a pending durable run'},
@@ -49,5 +50,5 @@ export function pluginHelp(tools,query=''){
     capabilities:catalog.filter(c=>!needle||JSON.stringify(c).toLowerCase().includes(needle)),
     hostSteps:[{operation:'Official Muse sign-in',reason:'Interactive authentication belongs to Muse; Bypass never collects Muse login credentials.',command:'muse login'},
       {operation:'Plugin capability approval or loading an update',reason:'Muse owns approval and session lifecycle.',commands:['/plugins → Installed → Bypass → Runtime','Start a new Muse session, then /bypass:start']}],
-    guidance:'Perform tools yourself in this Muse session. Show plain-language choices, not MCP syntax or a request to switch to the standalone CLI. Preserve explicit user scope and secrets. A local schedule needs a running worker and awake machine.'};
+    guidance:'Perform tools yourself in this Muse session. Reuse saved answers and discover configuration first. For missing decisions, open native pickers with grounded recommendations and a custom-answer/note field. Ask one decision at a time; exact unknown URLs or file paths may need one text input. Never ask for MCP syntax or a switch to the standalone CLI. Suggestions are not consent; preserve explicit user scope and secrets. A local schedule needs a running worker and awake machine.'};
 }

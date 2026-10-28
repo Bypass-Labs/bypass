@@ -1,3 +1,4 @@
+import { workProgress } from './review-worklist.mjs';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -9,8 +10,11 @@ import { need, named, outcome, delay, abortFault } from './util.mjs';
 import { projectPath } from './project-selection.mjs';
 
 const action=(label,tool,args={})=>({label,tool,arguments:args});
-function nextForRun(run){
-  if(run.status==='awaiting_host')return action('Continue planning and testing in Muse','bypass_review_step',{id:run.id,action:'status'});
+function nextForRun(run,state){
+  if(run.status==='awaiting_host'){
+    const next=state?workProgress(run,state).next:{action:'status'};
+    return action(next.message||'Continue assessment; do not stop or fix application code','bypass_review_step',{id:run.id,action:next.action,...next.arguments});
+  }
   if(!terminalRun(run))return action('Follow this review', 'bypass_watch_run',{id:run.id,after:run.steps?.length||0});
   if(run.status==='failed'||run.status==='interrupted')return action('Inspect the saved failure before retrying','bypass_run',{id:run.id});
   if(run.status==='cancelled')return run.executionMode==='muse-host'?action('Resume saved review','bypass_review_step',{id:run.id,action:'resume'}):action('Review saved progress','bypass_run',{id:run.id});
@@ -21,9 +25,9 @@ function nextForRun(run){
 }
 export function progressSnapshot(root,run,after=0){
   const steps=run.steps||[],terminal=terminalRun(run);
-  return {run:summarizeRun(run),terminal,elapsedSeconds:Math.floor((Date.now()-Date.parse(run.startedAt||run.createdAt))/1000),waitingSeconds:Math.floor((Date.now()-Date.parse(steps.at(-1)?.at||run.startedAt||run.createdAt))/1000),waitingFor:run.status==='awaiting_host'?'Muse reasoning; no internal AI worker':null,cursor:steps.length,events:steps.slice(after),
+  return {run:summarizeRun(run),terminal,...(run.executionMode==='muse-host'?{work:workProgress(run,read(root))}:{}),elapsedSeconds:Math.floor((Date.now()-Date.parse(run.startedAt||run.createdAt))/1000),waitingSeconds:Math.floor((Date.now()-Date.parse(steps.at(-1)?.at||run.startedAt||run.createdAt))/1000),waitingFor:run.status==='awaiting_host'?'Muse reasoning; no internal AI worker':null,cursor:steps.length,events:steps.slice(after),
     done:[...new Set(steps.map(s=>s.stage))].filter(stage=>run.status==='completed'||stage!==run.stage),now:terminal?`${run.status}: ${run.result?.message||'execution finished'}`:steps.at(-1)?.message||'Queued for execution',
-    next:nextForRun(run),evidence:path.join(root,'.bypass/runs',run.id+'.json'),
+    next:nextForRun(run,read(root)),evidence:path.join(root,'.bypass/runs',run.id+'.json'),
     meaning:run.exitCode===1?'Observed vulnerability or regression; this is a security result, not a tool failure.':run.exitCode===3?'Incomplete or bounded evidence; not a clean bill of health.':terminal?'Execution finished; inspect its evidence and coverage.':'Still running; acceptance is not a passing result.'};
 }
 export async function runProgress(root,id,{after=0,waitMs=10000,signal,onProgress}={}){
@@ -46,10 +50,11 @@ export async function runProgress(root,id,{after=0,waitMs=10000,signal,onProgres
 export function pluginDashboard(root){
   if(!root)return outcome({kind:'plugin-dashboard',selectedRepository:null,done:[],now:'Choose your application or try an isolated demo',next:action('Connect your application','bypass_onboarding'),alternatives:[action('Run the real local demo','bypass_demo_start',{kind:'real'}),action('Browse available actions','bypass_help')]});
   const state=read(root),status=readiness(root),run=state.runs.findLast(r=>!terminalRun(r))||state.runs.at(-1);
-  const done=['Repository connected',...(status.model?['Model profile selected ('+status.model.connection+')']:[]),...(status.target?.ownership==='verified'?['App ownership verified']:[]),...(status.ready.authorized?['Testing scope authorized']:[]),...(status.checks.total?[`${status.checks.total} saved regression checks`]:[])];
-  return outcome({kind:'plugin-dashboard',selectedRepository:root,application:status.project.name,app:status.target,engine:status.engine,model:status.model,done,
+  const appOnly=state.project.repository.kind==='app';
+  const done=[appOnly?'App profile connected; source not selected':'Repository connected',...(status.model?['Model profile selected ('+status.model.connection+')']:[]),...(status.target?.ownership==='verified'?['App ownership verified']:[]),...(status.ready.authorized?['Testing scope authorized']:[]),...(status.checks.total?[`${status.checks.total} saved regression checks`]:[])];
+  return outcome({kind:'plugin-dashboard',selectedRepository:appOnly?null:root,profileRoot:root,application:status.project.name,app:status.target,engine:status.engine,model:status.model,done,
     now:run&&!terminalRun(run)?run.steps?.at(-1)?.message||'Review queued':run?`${run.status}: ${run.result?.message||'Latest operation finished'}`:'Ready to continue setup or request a review',
-    next:run?nextForRun(run):action('Continue setup','bypass_onboarding'),latestRun:run?progressSnapshot(root,run,run.steps?.length||0):null,
+    next:run?nextForRun(run,state):action('Continue setup','bypass_onboarding'),latestRun:run?progressSnapshot(root,run,run.steps?.length||0):null,
     findings:status.findings,checks:status.checks,worker:status.worker,monitoring:{schedules:state.monitors.length,enabled:state.monitors.filter(m=>m.enabled).length,running:status.worker.status==='running'},
     recentEvents:state.events.slice(-8),actions:[action('Review source or app','bypass_onboarding'),action('Saved tests','bypass_tests'),action('Security memory','bypass_memory'),action('All available actions','bypass_help')]});
 }

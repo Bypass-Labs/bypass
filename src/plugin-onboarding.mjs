@@ -1,3 +1,4 @@
+import { choiceInput, scopeSuggestions } from './interaction.mjs';
 import { hostAI } from './execution-mode.mjs';
 import { read } from './store.mjs';
 import { VERSION, need } from './util.mjs';
@@ -9,54 +10,79 @@ import { credentialStatus } from './credentials.mjs';
 import { registrationStatus } from './registration.mjs';
 import { appConnection } from './app-connection.mjs';
 import { methodInput } from './http-methods.mjs';
+import { reviewQuestion, reviewInput, sourceStatus, repositoryAction } from './application-setup.mjs';
+import { ownershipRevoked, sharedOwnership } from './ownership-store.mjs';
 
-// This checklist is executable product state, not a set of prose hints for a model.
-export async function pluginOnboarding(cwd,root,{intent='real',mode='combined',url,environment,reviewScope=false,signal}={}){
-  need(['code','combined'].includes(mode),'Choose code or combined review.');
+// Setup plans are read-only. The MCP adapter remembers explicitly selected modes.
+export async function pluginOnboarding(cwd,root,{intent='real',mode,url,environment,repository,dir,reviewScope=false}={}){
   const [workspace,identity]=await Promise.all([workspaceInfo(cwd,root),pluginIdentity()]);
-  if(!root)return {version:VERSION,runtime:identity,intent,workspace,stage:'repository',steps:[{id:'repository',status:'needed',label:'Choose application repository'}],
-    ready:{source:false,live:false},nextAction:{id:'repository',tool:'bypass_connect_repository',question:workspace.isBypassSource?'Which application should we review? Give its folder or Git URL; this folder contains the Bypass tool.':`Review the repository at ${workspace.repository.path}, or choose another folder/Git URL?`},
-    guidance:'This is setup, not a security finding. Ask the one repository question in plain language. When the user answers, call the tool yourself and continue onboarding; do not end with an MCP command for them to execute.'};
-  const state=read(root),real=true,engine='host',target=state.targets.find(t=>t.name===state.activeTarget);
-  if(intent==='preview'&&state.demo)return {version:VERSION,runtime:identity,intent,workspace,selectedRepository:root,engine:'mock',simulation:true,ai:hostAI(),stage:'ready',steps:[{id:'repository',label:'Explicit preview fixture',status:'complete',path:root}],ready:{source:true,live:true},nextAction:{tool:'bypass_scan',arguments:{mode:'combined'}},guidance:'Explicit seeded preview only. Discovery is simulated; fixture HTTP proof and saved replay are real.'};
-  const ready=reviewReadiness(state,{executionMode:'muse-host'});
-  const steps=[{id:'repository',label:'Application repository',status:'complete',path:root},
-    {id:'host',label:'AI reasoning in this Muse session',status:'complete',message:'No provider profile or API key required.',billing:hostAI().billing}];
-  let owned=false,authorized=false;
-  if(target){owned=target.ownership?.status==='verified'&&Date.parse(target.ownership.expiresAt)>Date.now();try{scopeReady(target);authorized=true;}catch{}}
+  const state=root?read(root):null;
+  mode??=state?.settings.reviewMode||(state?.targets.length?'combined':null);
+  const early=(stage,nextAction,extra={})=>({version:VERSION,runtime:identity,intent,mode,workspace,selectedRepository:root,stage,steps:[],ready:{source:false,live:false},nextAction,...extra});
+  if(!mode)return early('review-type',{id:'review-type',tool:'bypass_onboarding',question:reviewQuestion,input:reviewInput()},
+    {guidance:'Open the host question/selection tool with these three choices. Do not initialize the current folder yet. Retain any repository URL and app URL the user supplied for the selected flow.'});
+  need(['code','combined','live'].includes(mode),'Choose code, combined, or live review.');
+  if(intent==='preview'&&state?.demo)return {...early('ready',{tool:'bypass_scan',arguments:{mode:'combined'}}),engine:'mock',simulation:true,ai:hostAI(),ready:{source:true,live:true}};
+  if(mode!=='live'){
+    if(repository){const action=await repositoryAction(cwd,root,repository,dir);if(action)return early('repository',action);}
+    const source=root?await sourceStatus(root):null;
+    if(!root||!source.ready){
+      const candidate=await sourceStatus(cwd).catch(()=>({ready:false}));
+      const choices=[...(candidate.ready&&!workspace.isBypassSource?[{id:'current',label:'Use detected application folder',description:cwd,value:cwd}]:[]),{id:'git',label:'Connect a Git repository',description:'Paste the Git URL in the custom-answer/note field.',requiresInput:'repository'},{id:'folder',label:'Use another local folder',description:'Enter the folder path in the custom-answer/note field.',requiresInput:'repository'}];
+      return early('repository',{id:'repository',tool:'bypass_connect_repository',question:'Which application should Bypass review?',
+        input:choiceInput('repository',choices,{recommended:choices[0].id==='current'?'current':undefined,custom:'value'})},{sourceInventory:source,guidance:'Open the repository picker. Prefer explicit inputs already supplied; connect them without asking again. Suggest the current folder only when it contains source. Collect an unknown Git URL/path through the custom field; never substitute a choice ID for a path. Validate actual source before DNS or scope.'});
+    }
+  }else if(!root){
+    const action=appConnection({url,environment});action.tool='bypass_connect_app';
+    if(action.automatic)delete action.arguments.name;
+    return early(action.id,action,{guidance:'App-only review needs no repository. Ask only for the missing app URL or environment using the supplied input, then connect its app profile.'});
+  }
+  const target=state.targets.find(t=>t.name===state.activeTarget),ready=reviewReadiness(state,{executionMode:'muse-host'});
+  const source=mode!=='live';
+  let owned=!!target&&target.ownership?.status==='verified'&&Date.parse(target.ownership.expiresAt)>Date.now()&&!ownershipRevoked(target),authorized=false;
+  if(owned)try{scopeReady(target);authorized=true;}catch{}
+  const reusable=target&&!owned&&target.environment!=='local'?sharedOwnership(target.url):null;
   const challenge=target&&!owned?target.challenge:null;
-  steps.push({id:'app',label:'App address',status:target?'complete':'needed',url:target?.url||null,environment:target?.environment||null,tool:'bypass_add_target'},
-    {id:'ownership',label:target?.environment==='local'?'Local ownership acknowledgment':'App ownership',status:owned?'complete':target?'needed':'waiting',tool:'bypass_verify_target',...(challenge?{challenge:{record:challenge.record,value:challenge.token,method:target.environment==='local'?'local':'dns',expiresAt:challenge.expiresAt,renewRequired:Date.parse(challenge.expiresAt)<=Date.now()}}:{})},
-    {id:'scope',label:'Testing permission',status:authorized?'complete':owned?'needed':'waiting',tool:'bypass_authorize_target',paths:target?.authorization?.paths||[],methods:target?.authorization?.methods||[],message:'Ownership and testing permission are separate; production requires explicit acknowledgment.'});
-  const {identities,usable,missingEnvironment,probes}=ready;
-  steps.push({id:'accounts',label:'Test accounts (optional)',status:usable.length>=2?'complete':'optional',tool:'bypass_import_identity',configured:identities.map(i=>({name:i.name,type:i.type,credential:credentialStatus(state,target,i)})),message:'Use existing accounts or let an authorized registration check create dedicated accounts. Missing credentials do not block source or anonymous checks.'},
+  const steps=[{id:'repository',label:source?'Application source':'Source review not selected',status:source?'complete':'skipped',path:source?root:null},
+    {id:'host',label:'AI reasoning in this Muse session',status:'complete',message:'No provider profile or API key required.',billing:hostAI().billing},
+    {id:'app',label:'App address',status:target?'complete':'needed',url:target?.url||null,environment:target?.environment||null,tool:'bypass_add_target'},
+    {id:'ownership',label:target?.environment==='local'?'Local ownership acknowledgment':'App ownership',status:owned?'complete':target?'needed':'waiting',tool:'bypass_verify_target',
+      ...(owned?{message:`Ownership already verified for ${new URL(target.url).hostname}.`,expiresAt:target.ownership.expiresAt,reused:!!target.ownership.reused}:{}),
+      ...(challenge?{challenge:{record:challenge.record,value:challenge.token,method:target.environment==='local'?'local':'dns',expiresAt:challenge.expiresAt,renewRequired:Date.parse(challenge.expiresAt)<=Date.now()}}:{})},
+    {id:'scope',label:'Testing permission',status:authorized?'complete':owned?'needed':'waiting',tool:'bypass_authorize_target',paths:target?.authorization?.paths||[],methods:target?.authorization?.methods||[],message:'Ownership and testing permission are separate; production requires explicit acknowledgment.'}];
+  const {identities,usable,probes}=ready;
+  steps.push({id:'accounts',label:'Test accounts (optional)',status:usable.length>=2?'complete':'optional',tool:'bypass_import_identity',configured:identities.map(i=>({name:i.name,type:i.type,credential:credentialStatus(state,target,i)})),message:'Existing or authorized dedicated accounts are optional; missing credentials do not block anonymous checks.'},
     {id:'registration',label:'Account registration check',status:target?.registration?'configured':'optional',tool:'bypass_configure_registration',...registrationStatus(target)},
-    {id:'resource',label:'Resource checks (discovered from source)',status:probes.length?'configured':'optional',tool:'bypass_add_probe',probes,message:'Muse derives routes and response selectors from source. JSON and HTML checks can run anonymously; cross-account checks use two accounts. Exact test resource IDs must come from authorized setup.'});
-  const source=true;
-  const requestedOrigin=mode==='combined'&&url?appOriginInput(url):null;
-  const live=source&&authorized&&(!real||ready.live)&&(!requestedOrigin||target?.url===requestedOrigin);
+    {id:'resource',label:'Resource checks',status:probes.length?'configured':'optional',tool:'bypass_add_probe',probes,message:source?'Derive routes and response selectors from source.':'Use authorized app observations and supplied API information; source is not available. Exact resources and intended access policy must be established.'});
+  const requestedOrigin=mode!=='code'&&url?appOriginInput(url):null;
+  const live=mode!=='code'&&authorized&&ready.live&&(!requestedOrigin||target?.url===requestedOrigin);
   const next=steps.find(s=>s.status==='needed');
-  let nextAction=next?{id:next.id,tool:next.tool,question:questions[next.id],...(next.id==='ownership'?{challenge:next.challenge}:{})}:{id:'review',tool:'bypass_scan',arguments:{mode:'combined'},message:'Show repository, app and scope, then start the requested review.'};
+  let nextAction=next?{id:next.id,tool:next.tool,...(next.id==='ownership'?{question:'Verify that you control this app: publish the exact TXT record, then check DNS.',challenge:next.challenge}:{})}:{id:'review',tool:'bypass_scan',arguments:{mode},message:'Show the selected source/app and scope, then start the requested review.'};
   if(mode==='code'){
-    nextAction={id:'review',tool:'bypass_scan',arguments:{mode:'code'},message:'Review the code now. App connection is deferred; do not ask for URL, DNS, testing permission or accounts for this review.'};
+    nextAction={id:'review',tool:'bypass_scan',arguments:{mode:'code'},message:'Review the code now. Do not ask for app URL, DNS, scope or accounts.'};
     for(const step of steps)if(['app','ownership','scope'].includes(step.id)&&step.status!=='complete')step.status='deferred';
   }else if(url||!target){
     const saved=requestedOrigin?state.targets.find(t=>t.url===requestedOrigin):null;
     if(saved){
       need(!environment||environment===saved.environment,`This app is saved as ${saved.environment}. Review its saved configuration before changing its environment.`);
-      if(saved.name!==target?.name)nextAction={id:'app',tool:'bypass_use_target',arguments:{name:saved.name},automatic:true,message:'Reuse the saved app and its existing ownership record; do not create a duplicate.'};
+      if(saved.name!==target?.name)nextAction={id:'app',tool:'bypass_use_target',arguments:{name:saved.name},automatic:true,message:'Reuse the saved app and ownership record.'};
     }else{
       nextAction=appConnection({url,environment});
       if(nextAction.automatic){const base=nextAction.arguments.name;let n=2;while(state.targets.some(t=>t.name===nextAction.arguments.name))nextAction.arguments.name=base+n++;}
     }
   }
   if(reviewScope&&mode!=='code'&&owned&&(!requestedOrigin||requestedOrigin===target.url))nextAction={id:'scope',tool:'bypass_authorize_target'};
-  if(nextAction.id==='ownership'&&target?.environment==='local')nextAction.question=`Do you control the app at ${target.url} on this computer?`;
+  if(nextAction.id==='ownership'){
+    if(reusable)nextAction={id:'ownership',tool:'bypass_verify_target',automatic:true,arguments:{name:target.name,method:reusable.method},message:'Reuse existing valid ownership for this app URL. No DNS publication is needed.'};
+    else if(target?.environment!=='local'&&!challenge)nextAction={id:'ownership',tool:'bypass_verify_target',automatic:true,arguments:{name:target.name,renew:true,method:'dns'},message:'The prior ownership proof has expired. Issue a new challenge.'};
+    else if(target?.environment==='local')Object.assign(nextAction,{question:`Do you control the app at ${target.url} on this computer?`,input:choiceInput('ownership',[{id:'confirm',label:'Confirm local ownership',description:'I control this local application.',arguments:{name:target.name,method:'local'}},{id:'later',label:'Set up later',description:'Keep live testing disabled.'}])});
+    else nextAction.input=choiceInput('ownership',[{id:'check',label:'I added the TXT record — check DNS',description:'Check the displayed record without starting tests.',arguments:{name:target.name,method:'dns'}},{id:'later',label:source?'Review code while DNS updates':'Save and verify later',description:'Keep app testing disabled.'},{id:'http',label:'Use an HTTPS verification file',description:'Show the exact file URL and contents instead.'}],{recommended:'check'});
+  }
   if(nextAction.id==='scope')Object.assign(nextAction,{question:`Which HTTP methods may Bypass use on ${target.url}?`,input:methodInput(target.authorization?.methods),
-    scope:{url:target.url,environment:target.environment,paths:target.authorization?.paths||[],maxRequestsPerSecond:target.authorization?.maxRequestsPerSecond||2,expiresAt:target.authorization?.expiresAt||null},
-    guidance:'Present a method picker with custom input, showing the exact URL, source-derived paths, request limit and expiry. Identify production explicitly. If the host has no multi-select, offer Read (GET/HEAD), Read + create (GET/HEAD/POST), and Custom methods with comma-separated input. Explain that POST can create data/start jobs, PUT/PATCH change data and DELETE removes it. Pass exactly the user-selected methods to bypass_authorize_target after permission; do not silently add methods. Then use bypass_request for authorized setup requests and observed resource IDs for probes.'});
-  return {version:VERSION,runtime:identity,intent,mode,workspace,selectedRepository:root,engine,ai:hostAI(),stage:nextAction.id==='review'?'ready':nextAction.id,steps,ready:{source,live},coverageGaps:mode==='code'?[]:ready.coverageGaps,readinessMeaning:'Muse plans source review directly. Live requests require current ownership and explicit scope. Account controls are required only for authenticated checks. Host billing mode is not attested by MCP.',nextAction,
-    alternatives:mode!=='code'&&source&&!live?[{label:'Review code now; connect the app later',tool:'bypass_scan',arguments:{mode:'code'}}]:[],
-    guidance:'Show a compact Done / Now / Next and only the current question, not the full setup checklist. Follow nextAction.input: text means one free-text question, not a menu. Reuse the user-supplied app URL and environment by passing them to bypass_onboarding; never substitute a local README/example address. Complete steps yourself when the conversation already supplies the inputs and permission. Import known private account files; reuse routes and selectors from source and resource IDs from authorized setup. Ask only for a genuinely missing user choice, sign-in or permission. Do not ask users to export tokens, run refresh scripts or restart Muse for account credentials. Do not describe missing setup as a security finding or search unrelated private files/example folders. For an explicit code-only choice call bypass_scan with mode code immediately; do not ask for live setup.'};
+    pathInput:choiceInput('paths',scopeSuggestions(target).map((item,n)=>({...item,id:String(n)})),{recommended:'0',custom:'value'}),
+    scope:{url:target.url,environment:target.environment,paths:target.authorization?.paths||[],maxRequestsPerSecond:target.authorization?.maxRequestsPerSecond||2,expiresAt:target.authorization?.expiresAt||null,publicConfigDiscovery:target.authorization?.publicConfigDiscovery||false,publicConfigOption:{label:'Read public app pages and scripts to discover sign-in setup',method:'GET',authenticated:false}},
+    guidance:'Open the host method picker with custom input. Show the exact URL, paths, rate and expiry. Explain POST creates data/jobs, PUT/PATCH change data, DELETE removes it. Include optional public-config discovery (bounded anonymous GET of this app’s pages/scripts) in the scope summary so it can be approved with the testing methods, without a separate question. Pass public-config true only if this was explicitly included in the approved summary. Pass exactly the selected methods; never broaden permission. Reuse current explicit scope.'});
+  return {version:VERSION,runtime:identity,intent,mode,workspace,selectedRepository:source?root:null,profileRoot:root,engine:'host',ai:hostAI(),stage:nextAction.id==='review'?'ready':nextAction.id,steps,ready:{source,live},coverageGaps:mode==='code'?[]:ready.coverageGaps,nextAction,
+    alternatives:mode==='combined'&&source&&!live?[{label:'Review code now; connect the app later',tool:'bypass_scan',arguments:{mode:'code'}}]:[],
+    guidance:'Show compact Done / Now / Next. Use native pickers with recommended options and custom notes whenever meaningful alternatives exist. Reuse known answers; discover technical values before asking. Text-only input is reserved for an unknown exact URL/path or a user-selected custom value. Use supplied repository and app URL as actual tool inputs before progressing. Show billing/privacy once at the AI step before review, separately from pickers. Accounts are optional. Never ask users to export tokens or restart Muse for credentials. Source hypotheses are not live proof. App-only review skips source and reports its coverage limits.'};
 }
-const questions={ownership:'Verify that you control this app: add the TXT record below in your DNS settings, then say "check DNS". You can review the code while it updates.'};

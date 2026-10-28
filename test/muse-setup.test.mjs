@@ -18,8 +18,14 @@ test('one explicit consent approves only the two declared capabilities and opens
   assert.match(f.output.join('\n'),/Security memory \(needs permission\)/);
   assert.match(f.output.join('\n'),/saved project security context/);
   assert.match(f.output.join('\n'),/verified ownership and an approved scope/);
-  assert.match(f.output.join('\n'),/n\/Enter Keep Bypass installed/);
+  assert.match(f.output.join('\n'),/2 \/ n.*Keep installed.*Enter/);
   assert.match(f.output.join('\n'),/customer app & Ω/);
+});
+
+test('numbered consent and customize options behave distinctly',async()=>{
+  const yes=fixture({answer:'1'});assert.equal((await finishMuseSetup(yes.options)).opened,true);
+  const defer=fixture({answer:'2'});assert.equal((await finishMuseSetup(defer.options)).state,'deferred');assert.deepEqual(defer.calls,['ask']);
+  const custom=fixture({answer:'3'});assert.equal((await finishMuseSetup(custom.options)).state,'manual_review');assert.deepEqual(custom.calls,['ask']);assert.ok(custom.value.runtime_capabilities.every(row=>row.status==='review_needed'));
 });
 
 test('decline, empty input and cancellation leave permissions unchanged and do not launch',async()=>{

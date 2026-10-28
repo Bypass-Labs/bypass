@@ -1,5 +1,9 @@
 # UAT bugs and release gates
 
+## 0.7.7 release
+
+Includes the October 28 choices-first onboarding, correct repository selection, same-origin ownership reuse, public signup-config discovery and assessment-continuation fixes. Final local suite: 208 passed, zero failed, two opt-in Docker tests skipped. Native interactive acceptance items below remain open; publishing does not turn fixture results into production UAT evidence.
+
 Open issues observed in the October 27, 2026 fresh-install UAT of Bypass 0.7.0
 (`e87d042`). Muse reviewed `Bypass-Labs/job-finder` at `1f5684f`.
 The original observations below are preserved; implementation status for 0.7.1 follows. The first production black-box attempt was blocked by
@@ -22,6 +26,79 @@ Local-fixture results are not production evidence.
 Validation and limits: [0.7.1 reliability report](docs/RELIABILITY_0_7_1.md).
 
 ## Remaining validation / scope
+
+- [ ] **UAT-23: Do not confuse three chosen probes with the full assessment.** Local follow-up adds unread source-range tracking, a 2 MB plugin budget, authorized resource-preparation suggestions with request-backed blockers, late-bound finding deduplication, real run-aware coverage, direct continuation actions and independent HTTP controls after reasoning-stage failures. Historical five records group into four issues, one confirmed. Final suite: 208 passed, zero failed, two opt-in Docker skips; native package validation passed. See the [follow-up audit](docs/CONTINUATION_AUDIT_2026_10_28.md). Fresh native-session continuation and production acceptance remain open; no plugin update or app changes were made.
+
+- [ ] **UAT-21: Continue the agreed assessment after the first finding.** Implemented locally: durable source/route/probe worklist, early-finish deferral, automatic inclusion of newly configured probes, specific source-grounded blocker reasons, progress counts and measured HTTP-only ETA. Independent configured controls continue after a source-operation limit or an early/failed standalone black-box reasoning step. Full suite: 201 passed, zero failed, two opt-in Docker skips. Native Muse continuation and visible progress acceptance remain pending. [Session audit](docs/ASSESSMENT_FLOW_AUDIT_2026_10_28.md).
+- [ ] **UAT-22: Assessment must not become unrequested remediation.** Confirmed in the October 28 session: Muse interpreted “keep working” as permission to edit application source, then admitted the error. Local command/skill/session/tool guidance now specifies testing, recommendations and regression artifacts only; a separate explicit request authorizes fixes. Source changes are detected before continuing review. This is not a host-editor sandbox. Verify in a fresh native session that a first finding followed by “keep working” continues checks and leaves application source unchanged. Existing job-finder edits were preserved for user review.
+
+- [ ] **UAT-20: Choices-first interaction throughout the product.** Local implementation covers shared CLI suggestions/custom values; native plugin choices with custom notes; saved create/existing/skip account decisions; automatic public-config discovery; bounded recovery pickers; and numbered installer permissions with native customization. Automated validation: **196 passed, zero failed, two opt-in Docker tests skipped** in 93.5 seconds; native Muse package validation passed. Details are in the [interaction audit](docs/INTERACTION_AUDIT_2026_10_28.md). Still requires manual acceptance in a new Muse session and a visible terminal before publication. Do not ask for permission, Firebase project ID and email domain in a single free-text prompt.
+
+
+October 28 local implementation: [session audit and changes](docs/ONBOARDING_AUDIT_2026_10_28.md). These changes are uncommitted, unpublished and not installed. Items remain open until native interactive acceptance is completed.
+
+Previous onboarding validation (before the interaction audit): **187 passed, zero failed, two opt-in Docker tests skipped** in 91.8 seconds. Syntax checks passed for 107 JavaScript modules; all 93 public commands/options map to 87 typed plugin tools; native Muse plugin validation returned valid with no diagnostics. The new parser recovered one Firebase config from the existing job-radar bundle without making network requests. The final CLI ownership-message follow-up also passed all 13 wizard/app-connection checks. This is local automated validation, not a new production or visual UAT.
+
+- [ ] **UAT-15: Start with the approved review-type picker.** Replace the free-text
+  app-address-or-"code only" question with **Code only**, **Code + running app
+  (recommended)**, and **Running app only**, each with a short explanation. Use
+  the native Muse selection UI and an equivalent CLI picker. Code only chooses
+  a repository and skips all live setup; combined chooses a repository and then
+  the app URL; app-only accepts a URL without requiring a repository. Request
+  the URL only after an app option is selected. Credentials remain optional.
+  Show billing/privacy guidance once at the relevant model step before review,
+  separate from this choice. Acceptance: exercise all three paths through the
+  installed plugin and CLI; verify app-only works without repository state and
+  live requests still require ownership and scope. UI approved October 28;
+  implemented locally with CLI and packaged-MCP regression coverage; native interactive acceptance and deployment remain pending.
+- [ ] **UAT-16: Choose the app environment with the approved picker.** Replace
+  "Do real users use this app, or is it only for testing?" with **Production**
+  (live deployment), **Staging** (separate test deployment), **Preview**
+  (temporary branch/PR deployment), and **Local development** (on this computer).
+  Show the supplied app URL above the options and use the native Muse selection
+  UI plus the CLI equivalent. Retain an environment explicitly supplied by the
+  user; production does not require existing real users. After selection,
+  continue to ownership and testing permissions without asking the same
+  confirmation again. Acceptance: each option saves its exact environment;
+  origin/environment validation and live-request gates remain enforced.
+  UI approved October 28; implemented locally with CLI and packaged-MCP regression coverage; native interactive acceptance and deployment remain pending.
+- [ ] **UAT-17: Keep ownership verification attached to the app URL across
+  repository changes.** Ownership belongs to the verified app origin, not the
+  selected checkout or a newly generated project ID. Reuse the same user's
+  valid, unexpired verification for the exact normalized origin when connecting,
+  cloning, or switching repositories, including app-only to combined review.
+  Do not issue a new TXT challenge or ask the user to replace a DNS record just
+  because the repository changed. Observed October 28: verification and scope
+  succeeded for `https://job-radar.app` under `Development`; selecting the supplied
+  `Bypass-Labs/job-finder` source then created a separate project and unnecessarily
+  requested DNS verification again for the unchanged origin. Persist ownership
+  independently of checkout state, retain its provenance and expiry, and keep
+  testing authorization separate; ownership reuse must not broaden methods,
+  paths, or other approved limits. Acceptance: verify once, switch checkout,
+  reopen Muse and continue without another DNS prompt; trailing-slash variants
+  reuse the same origin, while different origins, expired or revoked proof do
+  not reuse it. Record the reused verification in the UI. Requirement confirmed
+  October 28; implemented locally with CLI and packaged-MCP regression coverage; native interactive acceptance and deployment remain pending.
+
+- [ ] **UAT-18: Resolve public Firebase configuration before asking the user.**
+  Audited October 28: Muse asked for a project ID at 09:36, then independently
+  found the deployed client configuration at 09:39 and configured registration
+  at 09:40. Implemented locally: bounded same-origin discovery, automatic fallback
+  from source templates/missing values, private generated configuration instead
+  of app `.env` edits, synthetic email-domain default, and discovery progress.
+  Existing creation permission and attempt budgets are reused. Scope still
+  applies; include public config reads in the initial scope summary to avoid
+  a separate permission question. Tests cover landing page → SPA → bundle,
+  ambiguity, revocation, cancellation and request limits. Native interactive
+  acceptance and deployment remain pending.
+- [ ] **UAT-19: Connect the supplied repository before app setup.** Implemented
+  locally: pass the Git URL into a real connection action, validate source before
+  initializing, reject an empty parent directory before DNS, and resume the
+  selected checkout instead of the old initialized parent. App-only needs no
+  repository and resumes across CLI/MCP processes. Preserve same-app ownership
+  and exact scope on an explicit checkout switch; never pair an unrelated app
+  silently. Regression coverage passes; native interactive acceptance and
+  deployment remain pending.
 
 - [ ] Complete production UAT on the latest installed release, including real supported signup and suitable dedicated resources. Local fixture proof and the focused scope-update test are not production review evidence.
 - [ ] Observe a first-time user complete the production journey without operator-prepared fields/data.

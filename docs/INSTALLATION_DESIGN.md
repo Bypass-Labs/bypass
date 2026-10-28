@@ -19,7 +19,7 @@ This follows the [Command Line Interface Guidelines](https://clig.dev/) on immed
 2. The installer names **Security tools** (selected-code review, scoped app checks, local evidence/tests) and **Security memory** (loading saved project context in future sessions), marking each as needing permission or already enabled. It explains model access to reviewed code/context and the ownership/scope requirements for live testing. The choice is explicit: `y` enables the listed permissions and starts setup here; `n` or Enter keeps the installation for later. “Enable Bypass and open Muse?” is the only consent question. After `y`, live progress shows the package check, each pending permission and final verification before opening Muse. Approval still uses the native manager, preserves existing decisions, checks package identity, and stops on failure or cancellation.
 3. Bypass resumes missing application setup. Source review can start immediately; deployed HTTP proof needs ownership and bounded authorization, with accounts optional for checks that do not require them. Demo, fixes, deterministic replay, exports, monitoring and security memory remain part of the same native plugin. Muse's own account/workspace trust prompts still apply when needed.
 
-## Connecting an app: one missing input at a time (0.7.4)
+## Connecting an app: choices first (0.7.7)
 
 The old question mixed an address, an environment and the option to skip live testing. Muse could turn this into a menu that elevated a documented local port into an apparent running-app recommendation. Repository documentation is not evidence of a current deployment, and a local address must not replace a production URL the user already supplied.
 
@@ -29,18 +29,17 @@ The revised flow adopts three patterns checked against primary documentation on 
 - [Vercel project linking](https://vercel.com/docs/cli/project-linking) offers an identified matching project and remembers the link. Bypass reuses an exact saved app and its ownership record; an unconfirmed README address is not an identified deployment.
 - [OpenClaw onboarding](https://docs.openclaw.ai/start/wizard) separates Quick start from custom configuration and reuses configured choices. Bypass asks for the next missing input and postpones advanced details until relevant. The [CLI Guidelines](https://clig.dev/) also recommend human-readable output, useful defaults and clear interaction.
 
-For a missing address, ask as free text:
+On a fresh start, show the review-type picker:
 
 ```text
-Done  Repository connected
-Now   Connect your running app
-
-What address do you open in your browser to use this app?
-Paste the app URL, or say "code only" to review the code now.
-You can connect an app later.
+What would you like to review?
+1. Code + running app (recommended)
+2. Code only
+3. Running app only
+Custom instructions are available.
 ```
 
-If the user already supplied the address, skip this question. If they also said production, preview or staging, skip the environment question. Loopback is local automatically. Otherwise ask whether real users use the app or it is only for testing; no remote environment is inferred from the hostname. The plugin input has no selected answer. The CLI's first choice is production, preserving its explicit permission gate if accepted on Enter.
+Reuse a supplied mode, repository, app URL or environment. For code, connect the actual repository before live setup. Ask for the URL only when an app mode was selected and its address is missing. If the environment is missing, offer Production, Staging, Preview and Local development with custom instructions. Production can have no real users. Loopback is recognized automatically; no remote environment is inferred from the hostname. Native permission questions require an explicit answer.
 
 `bypass_onboarding` accepts these conversational inputs and returns a structured text/choice input or a concrete next tool action. It remains read-only: no startup command, discovery request, DNS lookup, target write or authorization is performed. `mode: code` bypasses live setup for the current review and preserves saved app configuration. The CLI accepts the same plain-language choice and `code only` answer.
 

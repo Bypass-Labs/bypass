@@ -7,7 +7,7 @@ import { execFile, Fault, abortFault } from './util.mjs';
 import { museInstallState } from './muse-install-state.mjs';
 import { createTheme } from './terminal-theme.mjs';
 
-export const setupPrompt='Use Bypass to start setup for this application folder. Read the bypass skill and call bypass_onboarding. Reuse saved setup, ask one question at a time for missing information, and do not start live testing until ownership and scope are configured.';
+export const setupPrompt='Start Bypass setup. Read the bypass skill and call bypass_onboarding. Reuse saved setup; otherwise show the review-type picker first. Use the current folder only after confirming it contains the selected application source, or connect the supplied Git URL. Use native pickers with grounded recommendations and custom instructions for missing choices, one decision at a time. Discover known configuration yourself; do not ask for it again. Do not start live testing until ownership and scope are configured.';
 const required=['plugin:bypass:hook:session-context','plugin:bypass:mcp_server:security'];
 const fallback='In Muse, open /plugins → Installed → Bypass → Runtime. Then start a new session and use /bypass:start.';
 const fingerprint=value=>JSON.stringify([value.record?.package_sha256,value.record?.cache_path,value.active,(value.runtime_capabilities||[]).map(row=>row.candidate).sort((a,b)=>a.stable_id.localeCompare(b.stable_id))]);
@@ -53,14 +53,17 @@ export async function finishMuseSetup({cwd,signal,inspect=()=>inspectMuse(cwd,{s
     write('\nReviewed code and context are available to your current Muse model.');
     write('Live app testing still requires verified ownership and an approved scope.');
     write('Manage later in Muse: /plugins → Installed → Bypass → Runtime.');
-    write('\n  y       Enable the permissions above and open Muse here to start setup.');
-    write('  n/Enter Keep Bypass installed and decide later.');
+    write('\n  1 / y   Enable these permissions and open Muse here.');
+    write('  2 / n   Keep installed and decide later (Enter).');
+    write('  3       Review or customize permissions inside Muse.');
   }else{
     write('Security tools and security memory are already enabled.');
     write('Muse will open here and begin setup using your current Muse account and model.');
+    write('  1 / y   Open Muse here.');write('  2 / n   Decide later (Enter).');
   }
   const answer=await ask(state.reviewRequired?'\nEnable Bypass and open Muse? [y/N] ':'Open Muse and begin setup? [y/N] ');
-  if(!/^(y|yes)$/i.test(answer?.trim()||'')){
+  if(state.reviewRequired&&answer?.trim()==='3'){write(fallback);return {state:'manual_review',opened:false};}
+  if(!/^(1|y|yes)$/i.test(answer?.trim()||'')){
     write('Setup paused. Rerun the same installer whenever you are ready.');return {state:'deferred',opened:false};
   }
   // Re-read immediately before recording consent; never approve a package that

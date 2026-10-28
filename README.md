@@ -2,7 +2,7 @@
 
 **Find an account-access bug. Verify the fix. Keep the test and security context for your next feature.**
 
-Inside **Muse Code**, Muse plans the investigation and fixes; Bypass reads bounded source, executes approved HTTP tests, and preserves evidence. No separate model key or Docker is needed for the plugin. The **standalone CLI** uses your explicit provider API key and isolated Docker workers.
+Inside **Muse Code**, Muse plans the investigation; Bypass reads bounded source, executes approved HTTP tests, and preserves evidence. Reviews report findings, recommend fixes and save regression tests. Application fixes require a separate explicit request. No separate model key or Docker is needed for the plugin. The **standalone CLI** uses your explicit provider API key and isolated Docker workers.
 
 This is a working POC for missing authentication and cross-account access to configured JSON/HTML resources, plus bounded registration and email-verification checks. Source citations are hypotheses; actual HTTP controls establish confirmation. Passing these checks is not a complete security assessment.
 
@@ -10,7 +10,7 @@ This is a working POC for missing authentication and cross-account access to con
 
 Requires **Muse Code installed and signed in**.
 
-**1. Run this from your application folder.**
+**1. Run the installer. You can choose your application during setup.**
 
 macOS / Linux:
 
@@ -26,7 +26,7 @@ irm https://bypasslabs.ai/install/muse.ps1 | iex
 
 This installs the full Muse plugin and CLI, includes Node, and sets up PATH. No GitHub clone, npm, Docker or separate model key is needed for the plugin. Rerun the same command to update or repair, then start a **new Muse session**. An already-open session keeps its loaded plugin. Native `muse plugins update bypass` only refreshes its local source; use the public installer to download a newer release.
 
-**2. Answer `y` to “Enable Bypass and open Muse?”**
+**2. Choose “Enable these permissions and open Muse” (`1` or `y`).**
 
 The installer explains Bypass's two permissions, records your choice through Muse, and opens a fresh Muse session in the same folder with setup already started. You do not need to navigate plugin menus or type a startup command. Muse may still ask you to sign in or trust the workspace if you have not done that before.
 
@@ -36,15 +36,25 @@ To return to setup in a later Muse session:
 /bypass:start
 ```
 
-Bypass reuses the repository and app address you already supplied. If the address is missing, it asks **“What address do you open in your browser to use this app?”** Paste the URL, or say **“code only”** to start a code review. For an online app, it asks whether real users use it only if that is still unknown. It then shows the exact DNS TXT record to verify control and lets you choose allowed HTTP methods: **GET, HEAD, POST, PUT, PATCH, DELETE, OPTIONS, or custom**. The permission summary shows the app, paths, request limit and expiry. Choose POST when the review needs to create test resources or start jobs. Muse performs authorized setup and uses the returned IDs for access checks; saved access regressions do not recreate those jobs.
+On a fresh start, choose **Code only**, **Code + running app**, or **Running app only** in the picker. For code, supply a local folder or Git URL; Muse connects the actual source before app setup. App-only needs no repository. Bypass reuses inputs you already supplied. Each setup decision uses suggested choices and a custom-answer option. A recommendation is guidance; permissions still require your choice.
 
-**Credentials are optional.** Source and anonymous checks can start without them. Muse investigates signup from source and, when authorized, Bypass tries creating up to two dedicated accounts and connects them privately. JSON signup and Firebase email/password are supported; retries reuse saved attempts instead of creating duplicate users.
+For account checks, choose **Create two test accounts (recommended)**, **Use existing test accounts**, or **Continue without accounts**, with custom instructions available. Bypass remembers the choice. With creation permission, it discovers Firebase public configuration itself and suggests a synthetic email namespace; you do not need to look up a project ID or paste keys into chat. If authorized discovery cannot resolve it, a recovery picker lets you continue other checks or supply a known page/config file.
+
+For an app, enter its URL and choose **Production**, **Staging**, **Preview**, or **Local development** if the environment is missing. Production can have no real users yet. Bypass shows the DNS TXT record only when ownership still needs verification; switching repositories keeps valid verification for the same app URL.
+
+Choose allowed HTTP methods: **GET, HEAD, POST, PUT, PATCH, DELETE, OPTIONS, or custom**. The permission summary shows the app, paths, request limit, expiry, and optional public-page/script reads for sign-in setup. Choose POST when the review needs to create test resources or start jobs. Muse performs authorized setup and uses the returned IDs for access checks; saved access regressions do not recreate those jobs.
+
+**Credentials are optional.** Source and anonymous checks can start without them. Muse investigates signup from source and, when authorized, Bypass tries creating up to two dedicated accounts and connects them privately. JSON signup and Firebase email/password are supported; retries reuse saved attempts instead of creating duplicate users. Missing Firebase values are discovered from resolved config or authorized public app pages and scripts before Muse asks you. Discovered config stays in generated Bypass files, not your app’s `.env`.
 
 For account-boundary tests, Muse derives routes/selectors and selects owned test IDs from an authorized collection. You can also import existing accounts from a private file. Firebase tokens refresh automatically in the same session. Missing accounts or data limit those tests; they do not block the rest of the review. Never paste secrets into chat. [Accounts, signup and supported limits](docs/ACCOUNTS.md).
 
 Then ask, for example:
 
-> Review this application, prove any account-access issue, help me fix it, and save a regression test.
+> Review this application, test the agreed scope, report findings and fix recommendations, and save regression tests.
+
+A confirmed finding is an interim result: its regression is saved and the assessment continues. Muse shows what finished, what is running, remaining checks, blockers and elapsed time. HTTP time estimates use observed timings; source investigation has no reliable fixed estimate. A durable worklist prevents an early finish while discovered routes or configured probes remain unresolved. “Continue” or “keep working” continues testing; it does not authorize source fixes. The final report identifies executed checks and specific coverage gaps. These are bounded POC checks, not an exhaustive security clearance.
+
+Missing test data is a preparation step: Muse inspects available collection/create routes, uses already-authorized requests for isolated synthetic records, and tests the returned IDs. Unavailable DELETE permission leaves cleanup recorded; it does not cancel permitted GET/POST checks. Paid jobs, email delivery and global operations require their own applicable authorization. Coverage also tracks unread source ranges, with a 2 MB source budget per plugin review. Limits and unsupported behavior are reported as incomplete coverage. `bypass coverage` or `bypass_coverage` shows what remains, including gaps in older completed runs. Finding summaries count a source hypothesis and its matching HTTP proof as one issue while preserving both records.
 
 <details>
 <summary>Optional: install from inside Muse instead</summary>
@@ -86,7 +96,7 @@ Muse drives every reasoning step. You do not copy JSON, configure a second model
 | In Muse | Purpose |
 | --- | --- |
 | `/bypass:start` | Resume missing setup |
-| `/bypass:review` | Muse-directed investigation and fix verification |
+| `/bypass:review` | Test the agreed scope; report findings and save regressions |
 | `/bypass:status` | Done / Now / Next and evidence |
 | `/bypass:tests` | Replay, export and manage saved checks |
 | `/bypass:build` / `/bypass:context` | Security context for feature work |

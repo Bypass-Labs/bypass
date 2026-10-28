@@ -12,7 +12,7 @@ import { realEngine, realPlan, executeRealScan } from './real-engine.mjs';
 
 export function scanPlan(state,options={}){
   need(!(options.base&&options.full),'Choose --base or --full, not both.');
-  const mode=options.mode || 'combined',targetName=options.target||state.activeTarget;
+  const mode=options.mode || state.settings.reviewMode || 'combined',targetName=options.target||state.activeTarget;
   need(['code','live','combined'].includes(mode),'Scan mode must be code, live, or combined.');
   if(realEngine(state))return realPlan(state,options);
   const target=targetName?named(state.targets,targetName,'Target'):null;
@@ -22,7 +22,7 @@ export function scanPlan(state,options={}){
     else try{scopeReady(target);}catch(e){blockers.push(e.message);}
   }
   return {mode,target:targetName,comparison:options.base?`Git reference ${options.base}`:'full eligible source inventory',engine:'mock',simulation:true,realAnalysis:false,modelCalls:0,
-    repository:{path:state.project.root,remote:state.project.repository.remote,branch:state.project.repository.branch},app:target?{name:target.name,url:target.url,environment:target.environment}:null,
+    repository:{kind:state.project.repository.kind,path:state.project.root,remote:state.project.repository.remote,branch:state.project.repository.branch},app:target?{name:target.name,url:target.url,environment:target.environment}:null,
     whiteBox:{status:mode==='live'?'skipped':'simulated',implemented:false,description:mode==='live'?'Source review is not selected.':'Local source inventory works; vulnerability discovery is mocked.'},
     blackBox:{status:mode==='code'?'deferred':blockers.length?'blocked':'simulated',implemented:false,description:mode==='code'?'App investigation is deferred. Code preview can run now.':blockers.length?blockers.join(' '):'Deployed-app investigation is mocked. Saved authorized HTTP checks can replay.'},
     stages:['Replay saved tests','Inventory changed source','Simulate candidate discovery','Simulate live engine handoff','Persist evidence and context'],
@@ -101,7 +101,7 @@ export async function executeRun(root,runId,externalSignal,onProgress,{runtime}=
   const partial=named(read(root).runs,runId,'Run').partialRegression;
   if(partial)result.regression??=partial.results;
   if(partial?.exitCode===1&&result.exitCode!==130){result.exitCode=1;result.regression??=partial.results;}
-  let final=await change(root,s=>{const r=named(s.runs,runId,'Run');Object.assign(r,{status:result.exitCode===130?'cancelled':failed?'failed':result.exitCode===3?'incomplete':'completed',finishedAt:now(),exitCode:result.exitCode,result,modelCalls:result.modelCalls||0});event(s,'run-finished',`${r.kind}: ${r.status}`,{runId,exitCode:r.exitCode});return r;});
+  let final=await change(root,s=>{const r=named(s.runs,runId,'Run');Object.assign(r,{status:result.exitCode===130?'cancelled':failed?'failed':result.exitCode===3||result.executionFailures?.length?'incomplete':'completed',finishedAt:now(),exitCode:result.exitCode,result,modelCalls:result.modelCalls||0});event(s,'run-finished',`${r.kind}: ${r.status}`,{runId,exitCode:r.exitCode});return r;});
   await consolidateMemory(root,{runId});
   final=named(read(root).runs,runId,'Run');
   writeEvidence(root,final);return outcome({run:final},final.exitCode);

@@ -12,3 +12,7 @@ export async function cli(root,...args){const r=await execFile(process.execPath,
 // Public synthetic key for local/mock transport contracts only.
 process.env.BYPASS_UNIT_API_KEY='unit-fixture-key';
 export const addTestModel=root=>execute('model add',['test-api'],{project:root,provider:'meta',model:'test-model','secret-env':'BYPASS_UNIT_API_KEY',stream:false});
+
+// Tests never write reusable app ownership proof to the operator's real profile.
+process.env.BYPASS_PLUGIN_STATE_DIR ||= temp();
+process.env.BYPASS_OWNERSHIP_DIR ||= path.join(temp(),'ownership');

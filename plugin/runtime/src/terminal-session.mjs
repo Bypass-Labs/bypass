@@ -120,7 +120,7 @@ export function frame(state, columns, rows, now=Date.now()) {
     if(state.pending.kind==='multiselect')add(`Selected: ${state.pending.values.join(', ')||'none'}`,'muted');
     if(state.pending.fallback&&height>=30)add(`Enter uses: ${state.pending.fallback}`,'muted');
   }
-  const placeholder=state.pending?.kind==='command'?`Enter: ${state.recommended||'/review'}  ·  / commands`:state.pending?.kind==='multiselect'?'Or type a replacement list: GET,POST,PROPFIND':state.pending?.kind==='select'?'↑↓ choose · Enter confirm':state.operation?'Working…':'Type your answer';
+  const placeholder=state.pending?.kind==='command'?`Enter: ${state.recommended||'/review'}  ·  / commands`:state.pending?.kind==='multiselect'?'Or type a replacement list: GET,POST,PROPFIND':state.pending?.kind==='select'?(state.pending.allowCustom?'↑↓ choose · or type a custom value':'↑↓ choose · Enter confirm'):state.operation?'Working…':'Type your answer';
   const before=state.input.slice(0,state.cursor),budget=width-3;
   let offset=0;
   while(cells(before.slice(offset))>=budget&&offset<before.length)offset++;
@@ -210,7 +210,7 @@ export function createTerminalSession({input=process.stdin,output=process.stdout
     const pending=state.pending;if(!pending)return;
     state.pending=null;state.menu=[];setInput('');state.scroll=0;
     if(error)pending.reject(error);
-    else {const title=pending.title.trim().replace(/ \(Enter to continue, q to leave\)$/,'');write(`› ${pending.kind==='command'?answer:title+'  '+(pending.items?.find(item=>item.value===answer)?.label||answer||'continue')}`);pending.resolve(answer);}
+    else {const title=pending.title.trim().replace(/ \(Enter to continue, q to leave\)$/,'');write(`› ${pending.kind==='command'?answer:title+'  '+(pending.items?.find(item=>item.value===answer)?.label||answer?.value||answer||'continue')}`);pending.resolve(answer);}
   };
   const cancel=()=>new Fault('Action stopped. Your saved progress is retained.',130,{cancelled:true});
   const shutdown=()=>{
@@ -261,6 +261,7 @@ export function createTerminalSession({input=process.stdin,output=process.stdout
       if(state.pending.kind==='select') {
         if(['0','q','back'].includes(state.input)&&state.pending.back){complete(null);return;}
         const selected=state.input?state.menu[Number(state.input)-1]:state.menu[state.selected];
+        if(!selected&&state.pending.allowCustom&&state.input.trim()){complete({custom:true,value:state.input.trim()});return;}
         if(selected){complete(selected.value);return;}write('Use ↑↓ and Enter, or type a listed number.');setInput('');return;
       }
       const value=(state.pending.kind==='command'&&state.menu.length?state.menu[state.selected].label:state.input.trim())||state.pending.fallback;
@@ -285,7 +286,7 @@ export function createTerminalSession({input=process.stdin,output=process.stdout
     return new Promise((resolve,reject)=>{state.pending={kind:'question',title,fallback,resolve,reject,...extra};state.input='';state.cursor=0;state.scroll=0;state.menu=extra.items||[];state.selected=extra.selected||0;mark();render();});
   }
   const ask=(title,fallback='')=>question(title,fallback);
-  const select=(title,items,{fallback=0,back=false}={})=>question(title,'',{kind:'select',items:items.map((item,i)=>({...item,label:item.label||item.name||item.id,value:String(i)})),selected:fallback,back}).then(value=>value===null?null:items[Number(value)]);
+  const select=(title,items,{fallback=0,back=false,allowCustom=false}={})=>question(title,'',{kind:'select',items:items.map((item,i)=>({...item,label:item.label||item.name||item.id,value:String(i)})),selected:fallback,back,allowCustom}).then(value=>value===null?null:typeof value==='object'?value:items[Number(value)]);
   ask.select=select;
   const multiselect=(title,items,{selected=[]}={})=>question(title,'',{kind:'multiselect',items,values:[...selected]});
   ask.multiselect=multiselect;

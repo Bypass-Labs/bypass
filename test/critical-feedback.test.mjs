@@ -15,7 +15,7 @@ import { comparePlugin } from '../src/runtime-identity.mjs';
 import { providerFailure } from '../src/providers.mjs';
 import { Fault } from '../src/util.mjs';
 
-const onboarding=root=>pluginOnboarding(root,root,{checkDocker:async()=>({available:true})});
+const onboarding=root=>pluginOnboarding(root,root,{mode:'combined',checkDocker:async()=>({available:true})});
 async function fixture(t){const root=path.join(temp(),'app');await startPOC({dir:root});await addTestModel(root);t.after(()=>stopPOC(root));return root;}
 
 test('missing credentials limit account probes without blocking source and other authorized checks',async t=>{
@@ -66,7 +66,7 @@ test('failed white-box run preserves source reads and structured cause, terminat
 });
 
 test('failed model configuration never shows ready and active runs outrank old findings',async()=>{
-  const root=temp();await execute('init',[root]);await execute('engine use',['docker'],{project:root});await execute('model add',['muse'],{project:root,provider:'meta','secret-env':'BYPASS_UNIT_API_KEY',model:'test-model',stream:false});
+  const root=temp();fs.writeFileSync(path.join(root,'app.mjs'),'export const app = true;');await execute('init',[root]);await execute('engine use',['docker'],{project:root});await execute('model add',['muse'],{project:root,provider:'meta','secret-env':'BYPASS_UNIT_API_KEY',model:'test-model',stream:false});
   await change(root,s=>{s.models[0].lastAttempt={status:'failed',checkedAt:new Date().toISOString()};s.findings.push({id:'mock',simulation:true,status:'simulated_unproven'});});
   assert.equal(readiness(root).ready.model,false);assert.equal(scanPlan(read(root),{mode:'code'}).whiteBox.status,'blocked');assert.equal((await onboarding(root)).stage,'app');
   assert.equal(readiness(root).findings.total,0);assert.equal(readiness(root).findings.hiddenSimulated,1);

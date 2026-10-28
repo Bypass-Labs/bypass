@@ -1,3 +1,5 @@
+import { promptValue, confirmChoice, credentialTypes, verificationChoices, scopeSuggestions } from './interaction.mjs';
+import { appEnvironmentQuestion, appEnvironmentChoices } from './app-connection.mjs';
 import { promptAPIProfile } from './provider-setup.mjs';
 import readline from 'node:readline/promises';
 import path from 'node:path';
@@ -133,32 +135,36 @@ function updateWorkspace(prompt,root){
 }
 async function modelWizard(ask,root,io){
   const setup=await promptAPIProfile(ask,(title,options)=>choose(ask,options,title));if(!setup)return;
-  const name=await ask('Profile name',setup.selection.name);
+  const name=await promptValue(ask,'Profile name',[setup.selection.name]);
   const options={project:root,...setup.config};
   printResult(await execute('model add',[name],options));
-  if((await ask('Check the model connection now? (y/n)','n')).toLowerCase()==='y')await checkModelConnection(root,name,io);
+  if(await confirmChoice(ask,'Check the model connection now?',{yes:'Send a synthetic test prompt',no:'Skip for now (recommended)'}))await checkModelConnection(root,name,io);
 }
 async function targetWizard(ask,root){
-  const name=await ask('Target name','staging');const url=appOriginInput(await ask('App domain or URL'));const environment=await ask('Environment: local / preview / staging / production',url.includes('localhost')||url.includes('127.0.0.1')||url.includes('[::1]')?'local':'staging');
-  printResult(await execute('target add',[name],{project:root,url,environment}));
-  if(environment==='local'){await execute('target verify',[name],{project:root,method:'local'});await authorizeWizard(ask,root,name);}
-  else console.log('\nPublish the ownership challenge, then choose Targets → Verify. Code-only review can continue while DNS propagates.');
+  const url=appOriginInput(await ask('App domain or URL'));const environment=(await choose(ask,appEnvironmentChoices,appEnvironmentQuestion(url)))?.id;if(!environment)return;
+  const name=await promptValue(ask,'Target name',[environment]);
+  const added=await execute('target add',[name],{project:root,url,environment});printResult(added);
+  if(added.target.ownership.status==='verified'){console.log(`\nOwnership already verified for ${new URL(url).hostname}.`);await authorizeWizard(ask,root,name);}
+  else if(environment==='local'){await execute('target verify',[name],{project:root,method:'local'});await authorizeWizard(ask,root,name);}
+  else console.log('\nPublish the ownership challenge, then choose Targets → Verify. App testing becomes available after verification and scope approval.');
 }
 async function authorizeWizard(ask,root,name){
   const target=read(root).targets.find(t=>t.name===name);console.log(`\nAuthorize testing on ${target?.url} only. This expires in seven days.`);
-  const paths=await ask('Allowed path prefixes, comma-separated',target?.authorization?.paths.join(',')||'/api');
+  const paths=await promptValue(ask,'Allowed path prefixes, comma-separated',scopeSuggestions(target));
   const methods=await promptMethods(ask,console.log,target?.authorization?.methods);
   console.log(`Methods: ${methods.join(', ')} · Paths: ${paths} · Limit: 2 requests/second`);
+  console.log('Also read public app pages/scripts for sign-in setup (anonymous GET only).');
   if(mayChangeData(methods))console.log('These methods can change test data or start jobs. Only explicitly configured requests will run.');
-  const accepted=await ask('Do you authorize these methods and paths? (yes/no)','no');if(accepted!=='yes')return;
-  let production=false;if(target?.environment==='production')production=(await ask('Type production to authorize the production environment'))==='production';
-  printResult(await execute('target authorize',[name],{project:root,paths,methods,accept:true,production}));
+  if(!await confirmChoice(ask,'Do you authorize these methods and paths?',{yes:'Authorize the displayed scope',no:'Keep testing disabled'}))return;
+  let production=false;if(target?.environment==='production')production=await confirmChoice(ask,'Confirm testing on this production app',{yes:'Authorize the displayed production scope',no:'Keep production testing disabled'});
+  if(target?.environment==='production'&&!production)return;
+  printResult(await execute('target authorize',[name],{project:root,paths,methods,accept:true,production,'public-config':true}));
 }
 function dashboard(root){
   console.log('\n'+brandHeading('Security that stays with your code.')+'\n');
   let info;try{info=readiness(root);}catch{console.log('No project connected. Choose Setup or Demo to begin.');return;}
   console.log(`${bold(info.project.name)}\n${muted(root)}\n`);
-  console.log(`  REPOSITORY   ${info.project.repository.kind==='git'?'Git connected':'Directory connected'}`);
+  console.log(`  REPOSITORY   ${info.project.repository.kind==='app'?'App only · no source repository':info.project.repository.kind==='git'?'Git connected':'Directory connected'}`);
   console.log(`  LIVE APP     ${info.target?`${info.target.url} · ${info.target.authorized?'authorized':info.target.ownership}`:'not connected'}`);
   console.log(`  MODEL        ${info.model?`${info.model.name} · ${info.model.provider} · ${info.model.connection}`:'choose a provider'}`);
   console.log(`  EVIDENCE     local · ${info.findings.total} findings · ${info.checks.enabled} saved tests`);
@@ -283,9 +289,9 @@ export async function terminal(options={},io){
         else if(choice==='2'){
           const state=read(root);const action=await choose(ask,[{label:'Add a target',id:'add'},{label:'Show targets / ownership challenges',id:'show'},{label:'Verify ownership',id:'verify'},{label:'Authorize testing scope',id:'authorize'},{label:'Select active target',id:'use'},{label:'Add test identity',id:'identity'},{label:'Test identity connection',id:'identity-test'},{label:'Revoke testing',id:'revoke'}],'Targets & identities');
           if(action?.id==='add')await targetWizard(ask,root);
-          else if(action?.id==='identity'){const name=await ask('Identity name');const type=await ask('Type: bearer / cookie / header','bearer');const secret=await ask('Environment variable containing the secret');const check=await ask('Identity-check endpoint path','/api/me');const header=type==='header'?await ask('Header name'):undefined;await run('identity add',[name],{target:state.activeTarget,type,'secret-env':secret,'check-path':check,header});}
+          else if(action?.id==='identity'){const name=await promptValue(ask,'Identity name',['owner','outsider']);const type=await promptValue(ask,'Credential type',credentialTypes);const secret=await promptValue(ask,'Credential environment variable NAME',[`BYPASS_${name.toUpperCase().replace(/[^A-Z0-9_]/g,'_')}_TOKEN`]);const check=await promptValue(ask,'Identity-check endpoint path',['/api/me','/api/profile','/me']);const header=type==='header'?await promptValue(ask,'Header name',['X-API-Key','X-Auth-Token'],{recommended:false}):undefined;await run('identity add',[name],{target:state.activeTarget,type,'secret-env':secret,'check-path':check,header});}
           else if(action?.id==='identity-test'){const identity=await choose(ask,state.identities,'Identity');if(identity)await run('identity test',[identity.name]);}
-          else if(action){const t=await choose(ask,state.targets,'Target');if(t){if(action.id==='authorize')await authorizeWizard(ask,root,t.name);else await run(`target ${action.id}`,[t.name],action.id==='verify'?{method:await ask('Verification method',t.environment==='local'?'local':'dns')}:{});}}
+          else if(action){const t=await choose(ask,state.targets,'Target');if(t){if(action.id==='authorize')await authorizeWizard(ask,root,t.name);else await run(`target ${action.id}`,[t.name],action.id==='verify'?{method:await promptValue(ask,'Verification method',verificationChoices(t))}:{});}}
         }
         else if(choice==='3'){
           const action=await choose(ask,[{label:'Add model profile',id:'add'},{label:'Choose active model',id:'use'},{label:'Test connection with synthetic prompt',id:'test'},{label:'Show profiles and privacy',id:'list'}],'Models');
@@ -293,9 +299,9 @@ export async function terminal(options={},io){
         }
         else if(choice==='4'){
           const ready=readiness(root).ready.liveReview;
-          const mode=ready?'combined':'code';
+          const mode=read(root).settings.reviewMode||(ready?'combined':'code');
           console.log('\n'+reviewSummary(readiness(root).review));
-          console.log(`\nRunning your ${read(root).settings.analysisEngine==='docker'?'real AI review':'review preview'}${ready?'':' (code only; app verification can wait)'}…`);
+          console.log(`\nRunning your ${read(root).settings.analysisEngine==='docker'?'real AI review':'review preview'}${mode==='code'?' (code only)':mode==='live'?' (app only)':''}…`);
           const result=await run('scan',[],{mode});
           if(result.run?.result?.findings?.length)await showResults();
         }
@@ -306,7 +312,7 @@ export async function terminal(options={},io){
         }
         else if(choice==='7'){
           await run('monitor list');const action=await choose(ask,[{label:'Add a local monitor',id:'add'},{label:'Start background worker',id:'worker'},{label:'Run monitor now',id:'run'},{label:'Pause monitor',id:'pause'},{label:'Stop worker',id:'stop'}],'Monitoring');
-          if(action?.id==='add')await run('monitor add',[await ask('Monitor name','security')],{every:await ask('Interval','1h'),runner:'local'});
+          if(action?.id==='add')await run('monitor add',[await promptValue(ask,'Monitor name',['security'])],{every:await promptValue(ask,'Interval',[{value:'1h',label:'Every hour'},{value:'15m',label:'Every 15 minutes'},{value:'24h',label:'Daily'}]),runner:'local'});
           else if(action?.id==='worker'||action?.id==='stop')await run('monitor worker',[],action.id==='stop'?{stop:true}:{detach:true});
           else if(action){const m=await choose(ask,read(root).monitors,'Monitor');if(m)await run(`monitor ${action.id}`,[m.name]);}
         }
@@ -335,6 +341,12 @@ async function engineWizard(ask,root,run){
   const target=state.targets.find(t=>t.name===state.activeTarget);
   if(!target||!readiness(root).ready.authorized){console.log('Source review is ready. Use /app to finish ownership and scope before HTTP proof.');return;}
   if(target.probes?.length){for(const p of target.probes)await run('probe test',[p.name]);return;}
+  if(target.accountChoice?.mode==='skip'){console.log('Keeping your choice to continue without accounts. Source and anonymous checks remain available.');return;}
+  if(target.accountChoice?.mode==='create'&&!target.registration){console.log('Account creation permission is saved. Finish registration configure with the source-derived signup route, then registration test. In Muse, the host discovers and configures these values.');return;}
+  const accountChoice=target.accountChoice?{id:'connect'}:await choose(ask,[{id:'skip',label:'Continue without imported accounts (recommended)',description:'Source and configured anonymous checks remain available.'},{id:'connect',label:'Connect existing test accounts',description:'Choose saved accounts or add private references.'}],'Account-boundary checks are optional');
+  if(!accountChoice)return;
+  if(!target.accountChoice)await run('registration choose',[],{target:target.name,mode:accountChoice.id==='connect'?'existing':'skip'});
+  if(accountChoice.id!=='connect')return;
   console.log('For real account-boundary proof, use two different test accounts and one resource belonging to the owner. Supply environment variable NAMES, never token values.');
   const identities=[];
   for(const role of ['owner','outsider']){
@@ -343,17 +355,17 @@ async function engineWizard(ask,root,run){
     const selected=await choose(ask,[...available.map(i=>({id:i.name,label:`Use ${i.name} (${i.secretEnv})`})),{id:'__new',label:`Add ${role} account`}],`${role} identity`);
     if(!selected)return;
     if(selected.id!=='__new'){identities.push(selected.id);continue;}
-    const name=await ask('Account reference name',role);
-    const type=await ask('Credential type: bearer / cookie / header','bearer');
-    const secret=await ask('Credential environment variable',`BYPASS_${role.toUpperCase()}_TOKEN`);
-    const check=await ask('Signed-in identity endpoint','/api/me');
-    const header=type==='header'?await ask('Header name'):undefined;
+    const name=await promptValue(ask,'Account reference name',[role]);
+    const type=await promptValue(ask,'Credential type',credentialTypes);
+    const secret=await promptValue(ask,'Credential environment variable',[`BYPASS_${role.toUpperCase()}_TOKEN`]);
+    const check=await promptValue(ask,'Signed-in identity endpoint',['/api/me','/api/profile','/me']);
+    const header=type==='header'?await promptValue(ask,'Header name',['X-API-Key','X-Auth-Token'],{recommended:false}):undefined;
     await run('identity add',[name],{target:target.name,type,'secret-env':secret,'check-path':check,header});identities.push(name);
   }
   const resourcePath=await ask('Exact path to an owner-owned JSON resource (GET)');
   const resourceId=await ask('Expected resource identifier');
-  const idField=await ask('JSON field identifying the resource','id');
-  const identityField=await ask('JSON field identifying the account at the identity endpoint','id');
+  const idField=await promptValue(ask,'JSON field identifying the resource',['id','resource.id','data.id']);
+  const identityField=await promptValue(ask,'JSON field identifying the account at the identity endpoint',['id','uid','owner_uid']);
   await run('probe add',['primary'],{target:target.name,path:resourcePath,'resource-id':resourceId,owner:identities[0],outsider:identities[1],'id-field':idField,'identity-field':identityField});
   await run('probe test',['primary']);
   console.log('Ready. Use /review for source analysis and real HTTP proof. Fix confirmed issues in your editor, then use /results → Retest a fix.');

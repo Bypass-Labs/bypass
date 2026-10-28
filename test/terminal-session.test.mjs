@@ -10,6 +10,7 @@ import { Fault } from '../src/util.mjs';
 import { createTheme } from '../src/terminal-theme.mjs';
 import { temp } from './helpers.mjs';
 import { methodChoices, promptMethods } from '../src/http-methods.mjs';
+import { promptValue, confirmChoice } from '../src/interaction.mjs';
 
 function terminal(t,columns=90,rows=30) {
   const input=new PassThrough(),output=new PassThrough();let raw=false,bytes='';
@@ -44,6 +45,21 @@ test('menus accept arrows, numbers and Escape without abandoning the workspace',
   answer=tty.ui.select('Choose',items,{back:true});tty.key('escape');assert.equal(await answer,null);
   answer=tty.ui.select('Choose',items);tty.type('1');tty.key('return');assert.equal((await answer).id,1);
   answer=tty.ui.select('Model',[{name:'local',provider:'custom','secret-env':'BYPASS_UNIT_API_KEY',stream:false}]);assert.equal(tty.ui.state.menu[0].label,'local');tty.key('return');assert.equal((await answer).name,'local');
+});
+
+test('suggested-value pickers support arrows, a typed custom value, custom entry and cancellation',async t=>{
+  const tty=terminal(t),choices=[{value:'1h',label:'Hourly'},{value:'24h',label:'Daily'}];
+  let answer=promptValue(tty.ui.ask,'Monitor interval',choices);tty.key('down');tty.key('return');assert.equal(await answer,'24h');
+  answer=promptValue(tty.ui.ask,'Monitor interval',choices);tty.type('45m\r');assert.equal(await answer,'45m');
+  assert.doesNotMatch(transcriptLines(tty.ui.state,100).join('\n'),/\[object Object\]/);
+  answer=promptValue(tty.ui.ask,'Monitor interval',choices);tty.type('3\r');await new Promise(resolve=>setImmediate(resolve));tty.type('2h\r');assert.equal(await answer,'2h');
+  answer=promptValue(tty.ui.ask,'Monitor interval',choices);tty.key('escape');await assert.rejects(answer,e=>e.code===130);
+});
+
+test('permission pickers default to defer and custom text cannot grant consent',async t=>{
+  const tty=terminal(t);let answer=confirmChoice(tty.ui.ask,'Authorize requests?');tty.key('return');assert.equal(await answer,false);
+  answer=confirmChoice(tty.ui.ask,'Authorize requests?');tty.type('maybe later\r');assert.ok(tty.ui.state.pending);tty.key('return');assert.equal(await answer,false);
+  answer=confirmChoice(tty.ui.ask,'Authorize requests?');tty.type('1\r');assert.equal(await answer,true);
 });
 
 test('HTTP method picker toggles multiple choices with real keys, supports custom input and remains visible on resize',async t=>{

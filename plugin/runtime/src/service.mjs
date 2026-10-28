@@ -1,3 +1,7 @@
+import { discoverRegistration } from './registration-discovery.mjs';
+import { assessmentCoverage, findingSummary } from './review-report.mjs';
+import { createAppProfile, requireSource } from './application-setup.mjs';
+import { rememberOwnership, rememberProjectOwnership, sharedOwnership, revokeOwnership } from './ownership-store.mjs';
 import { executionMode, hostAI, requireStandaloneAPI } from './execution-mode.mjs';
 import { beginHostReview, hostPlan, hostReviewStep } from './host-review.mjs';
 import { memorySummary, recallMemory, featureContext, forgetMemory, setMemory, consolidateMemory } from './project-memory.mjs';
@@ -10,14 +14,14 @@ import { rootFrom, read, change, initStore, snapshot, atomic, event } from './st
 import { need, named, safeName, envName, now, duration, outcome, execFile, Fault, redact } from './util.mjs';
 import { samePluginPackage, museInstallState } from './muse-install-state.mjs';
 import { connectRepository, repositoryInfo, inventory } from './repository.mjs';
-import { targetURL, makeChallenge, verifyOwnership, authorization, scopeReady, safeRequest } from './network.mjs';
+import { appOriginInput, targetURL, makeChallenge, verifyOwnership, authorization, scopeReady, safeRequest } from './network.mjs';
 import { modelProfile, testModel } from './models.mjs';
 import { scanPlan, executeRun, verifyFinding } from './engine.mjs';
 import { monitorSummary } from './plugin-context.mjs';
 import { realEngine } from './real-engine.mjs';
 import { reviewReadiness, activeFindings, credentialHelp } from './review-readiness.mjs';
 import { validateProbe } from './probe-preflight.mjs';
-import { configureRegistration, testRegistration, registrationStatus } from './registration.mjs';
+import { configureRegistration, testRegistration, registrationStatus, chooseAccounts } from './registration.mjs';
 import { importCredential, removeCredential, credentialStatus, credentialEnvironment } from './credentials.mjs';
 import { summarizeRun, terminalRun } from './run-state.mjs';
 import { runtimeIdentity } from './runtime-identity.mjs';
@@ -34,13 +38,13 @@ export function readiness(root){
   const s=read(root),target=s.targets.find(t=>t.name===s.activeTarget),model=s.models.find(m=>m.name===s.activeModel);
   const host=executionMode()==='muse-host';
   const shared=reviewReadiness(s),liveReady=shared.authorized,liveReview=host||realEngine(s)?shared.live:liveReady;
-  const findings=activeFindings(s),latest=s.runs.at(-1),active=latest&&!terminalRun(latest);
-  const next=active?(latest.executionMode==='muse-host'?`Continue review ${latest.id} in Muse`:`run watch ${latest.id}`):realEngine(s)&&shared.sourceBlockers.length?'model test':latest?.status==='failed'?(latest.result?.details?.next||`run show ${latest.id}`):s.checks.some(c=>c.enabled)?'test run --all':findings.length?'finding list':liveReview?'scan --mode combined':'scan --mode code';
+  const findings=activeFindings(s),latest=s.runs.at(-1),active=latest&&!terminalRun(latest),mode=s.settings.reviewMode||(liveReview?'combined':'code'),hasSource=s.project.repository.kind!=='app';
+  const next=active?(latest.executionMode==='muse-host'?`Continue review ${latest.id} in Muse`:`run watch ${latest.id}`):realEngine(s)&&shared.sourceBlockers.length?'model test':latest?.status==='failed'?(latest.result?.details?.next||`run show ${latest.id}`):s.checks.some(c=>c.enabled)?'test run --all':findings.length?'finding list':liveReview?`scan --mode ${mode}`:mode==='live'?'target show':'scan --mode code';
   return {runtime:runtimeIdentity(),project:s.project,root,ai:host?hostAI():{mode:'standalone-api'},engine:{mode:host?'host':realEngine(s)?'docker':'mock',analysisImplemented:host||realEngine(s),label:host?'Muse plans; Bypass executes':realEngine(s)?'Docker agents · real source review and scoped HTTP proof':'MOCK analysis · real setup and saved-test replay'},
-    review:(executionMode()==='muse-host'?hostPlan:scanPlan)(s,{mode:liveReview?'combined':'code'}),
+    review:(executionMode()==='muse-host'?hostPlan:scanPlan)(s,{mode}),
     model:host?{name:'Active Muse session',provider:'muse-host',destination:'Host session',connection:'host managed'}:model?{name:model.name,provider:model.provider,destination:model.dataDestination,connection:model.lastAttempt?.status||model.lastTest?.status||'not tested'}:null,
     target:target?{name:target.name,url:target.url,environment:target.environment,ownership:target.ownership?.status||'pending',authorized:liveReady}:null,
-    ready:{repository:true,model:host||realEngine(s)?shared.modelReady:!!model,source:host||realEngine(s)?shared.source:true,target:!!target,authorized:liveReady,liveTesting:liveReview,liveReview,canValidateLive:shared.canValidateLive},probes:shared.probes,coverageGaps:shared.coverageGaps,registration:registrationStatus(target),blockers:{source:shared.sourceBlockers,live:shared.liveBlockers},
+    ready:{repository:hasSource,model:host||realEngine(s)?shared.modelReady:!!model,source:hasSource&&mode!=='live'&&(host||realEngine(s)?shared.source:true),target:!!target,authorized:liveReady,liveTesting:liveReview,liveReview,canValidateLive:shared.canValidateLive},probes:shared.probes,coverageGaps:shared.coverageGaps,registration:registrationStatus(target),blockers:{source:shared.sourceBlockers,live:shared.liveBlockers},
     findings:{total:findings.length,hiddenSimulated:s.findings.length-findings.length,confirmed:findings.filter(f=>f.status==='confirmed').length,fixtureConfirmed:findings.filter(f=>f.status==='confirmed_fixture').length,simulated:findings.filter(f=>f.status==='simulated_unproven').length,fixed:findings.filter(f=>f.status==='fixed_verified').length},
     checks:{total:s.checks.length,enabled:s.checks.filter(c=>c.enabled).length,passed:s.checks.filter(c=>c.lastResult?.status==='passed').length,failed:s.checks.filter(c=>c.lastResult?.status==='failed').length},
     memory:memorySummary(s),worker:workerStatus(root),monitors:s.monitors.length,latestRun:summarizeRun(latest),
@@ -58,10 +62,20 @@ export async function execute(key,args=[],o={},context={}){
   if(executionMode()==='muse-host'&&['model add','model test','model use'].includes(key))return outcome({ai:hostAI(),message:'Model setup and independent connection tests are disabled in the Muse plugin. Continue in the active host session.'});
   if(executionMode()==='muse-host'&&key==='scan'&&!read(rootFrom(working)).demo)return o.plan?outcome({plan:hostPlan(read(rootFrom(working)),o)}):beginHostReview(rootFrom(working),o,context);
   if(key==='host review')return hostReviewStep(rootFrom(working),o,context);
+  if(key==='app connect'){
+    const url=targetURL(appOriginInput(o.url||args[0]),o.environment||'staging'),profile=await createAppProfile(url);
+    const state=read(profile.root);
+    let target=state.targets.find(t=>t.url===url);
+    if(target)need(!o.environment||target.environment===o.environment,`This app is saved as ${target.environment}.`);
+    else target=(await execute('target add',[o.environment||'staging'],{project:profile.root,url,environment:o.environment},context)).target;
+    return outcome({...profile,target,message:'App profile connected. No repository is required; no app requests have been made.',readiness:readiness(profile.root)});
+  }
   if(key==='init'||key==='repo connect'){
     const config=o.config?loadJSON(o.config):null;
     const {root,repository}=await connectRepository(o.repo||args[0]||config?.repo||working,o.dir||config?.dir,context);
+    if(context.requireSource)await requireSource(root);
     const {resumed}=initStore(root,repository,o.name||config?.name);
+    if(resumed)rememberProjectOwnership(read(root));
     if(resumed)await change(root,s=>{s.project.repository=repository;s.project.root=root;});
     if(config){
       if(config.model&&!read(root).models.some(m=>m.name===config.model.name))await execute('model add',[config.model.name],{...config.model,project:root},context);
@@ -94,7 +108,9 @@ export async function execute(key,args=[],o={},context={}){
     }
     case 'engine doctor':result=executionMode()==='muse-host'?{available:true,engine:'host',ai:hostAI(),message:'Plugin test execution needs no Docker or model profile.'}:{...(await dockerStatus(context)),engine:realEngine(s)?'docker':'mock',model:s.models.find(m=>m.name===s.activeModel)||null};break;
     case 'engine prepare':result=await prepareAgents(context);break;
-    case 'registration configure':result=await configureRegistration(root,o);break;
+    case 'registration discover':result=await discoverRegistration(root,o,context);break;
+    case 'registration choose':result=await chooseAccounts(root,o);break;
+    case 'registration configure':result=await configureRegistration(root,o,context);break;
     case 'registration status':result=registrationStatus(named(s.targets,targetName,'Target'));break;
     case 'registration test':{const registration=await testRegistration(root,{target:targetName,signal:context.signal});return outcome({registration},registration.status==='failed'?1:['blocked','cancelled'].includes(registration.status)?3:0);}
     case 'probe discover':{const {discoverResources}=await import('./resource-discovery.mjs');result=await discoverResources(root,o,context);break;}
@@ -113,7 +129,7 @@ export async function execute(key,args=[],o={},context={}){
       else{need(o.owner&&o.outsider&&o.owner!==o.outsider,'Choose two different account identities.');
       for(const name of [o.owner,o.outsider]){const identity=named(s.identities,name,'Identity');need(identity.checkPath,'Each identity needs --check-path (for example /api/me).');scopeReady(t,identity.checkPath);}}
       specFor(s,{target:targetName,engine:'docker',bindings:{[targetName]:binding}},targetName);
-      result=await change(root,state=>{const target=named(state.targets,targetName,'Target');target.probes??=[];need(target.probes.length<6||target.probes.some(p=>p.name===args[0]),'POC supports up to six approved resources per target.');target.probes=target.probes.filter(p=>p.name!==args[0]);target.probes.push({name:args[0],binding});return {probe:target.probes.at(-1),target:targetName};});break;
+      result=await change(root,state=>{const target=named(state.targets,targetName,'Target');target.probes??=[];need(target.probes.length<64||target.probes.some(p=>p.name===args[0]),'Target probe capacity reached (64). Record remaining coverage explicitly; do not claim a complete assessment.');target.probes=target.probes.filter(p=>p.name!==args[0]);target.probes.push({name:args[0],binding});return {probe:target.probes.at(-1),target:targetName};});break;
     }
     case 'status':result=readiness(root);break;
     case 'repo show':result={repository:await repositoryInfo(root)};break;
@@ -128,28 +144,31 @@ export async function execute(key,args=[],o={},context={}){
     case 'auth logout':result=await change(root,state=>{state.auth=null;return {message:'Bypass-local account metadata cleared. Use muse logout to sign out of Muse itself.'};});break;
     case 'target add':{
       safeName(args[0]);need(o.url,'--url is required.');const environment=o.environment||'staging',url=targetURL(o.url,environment);
-      result=await change(root,state=>{need(!state.targets.some(t=>t.name===args[0]),'A target with this name already exists.');const t={name:args[0],url,environment,createdAt:now(),ownership:{status:'pending'},authorization:null};t.challenge=makeChallenge(state.project,t);state.targets.push(t);state.activeTarget??=t.name;return {target:t,next:`bypass target verify ${t.name} --method ${environment==='local'?'local':'dns'}`};});break;
+      result=await change(root,state=>{need(!state.targets.some(t=>t.name===args[0]),'A target with this name already exists.');const t={name:args[0],url,environment,createdAt:now(),ownership:environment==='local'?{status:'pending'}:sharedOwnership(url)||{status:'pending'},authorization:null};if(t.ownership.status!=='verified')t.challenge=makeChallenge(state.project,t);state.targets.push(t);state.activeTarget??=t.name;return {target:t,next:t.ownership.status==='verified'?`bypass target authorize ${t.name}`:`bypass target verify ${t.name} --method ${environment==='local'?'local':'dns'}`};});break;
     }
     case 'target list':result={targets:s.targets,active:s.activeTarget};break;
     case 'target show':result={target:named(s.targets,args[0]||s.activeTarget,'Target')};break;
     case 'target use':result=await change(root,state=>{state.activeTarget=named(state.targets,args[0],'Target').name;return {activeTarget:state.activeTarget};});break;
     case 'target verify':{
       const name=args[0]||s.activeTarget;let t=named(s.targets,name,'Target');
-      if(o.renew){result=await change(root,state=>{const target=named(state.targets,name,'Target');target.challenge=makeChallenge(state.project,target);target.ownership={status:'pending'};target.authorization=null;return {target,message:'New ownership challenge issued; previous authorization invalidated.'};});break;}
+      if(o.renew){revokeOwnership(t);result=await change(root,state=>{const target=named(state.targets,name,'Target');target.challenge=makeChallenge(state.project,target);target.ownership={status:'pending'};target.authorization=null;return {target,message:'New ownership challenge issued; previous authorization invalidated.'};});break;}
+      rememberOwnership(s,t);
+      const existing=t.environment==='local'?null:sharedOwnership(t.url);
+      if(existing){result=await change(root,state=>{const target=named(state.targets,name,'Target');target.ownership=existing;return {target,message:`Ownership already verified for ${new URL(t.url).hostname}.`,next:`bypass target authorize ${name}`};});break;}
       let ownership;
       try{ownership=await verifyOwnership(t,o.method||(t.environment==='local'?'local':'dns'),{wait:o.wait,signal:context.signal});}
       catch(error){if(error.details?.challenge&&!context.signal?.aborted)return outcome({kind:'setup-pending',status:error.details.expired?'expired':'pending',target:name,challenge:error.details.challenge,message:error.message,nextAction:{tool:'bypass_verify_target',arguments:{name,method:o.method||'dns',...(error.details.expired?{renew:true}:{})}},alternative:error.details.alternative,liveRequestsAllowed:false},3);throw error;}
-      result=await change(root,state=>{const target=named(state.targets,name,'Target');need(target.challenge.id===t.challenge.id,'Challenge changed during verification; retry.',3);target.ownership=ownership;event(state,'ownership',`${name}: ownership verified`);return {target,next:`bypass target authorize ${name}`};});break;
+      result=await change(root,state=>{const target=named(state.targets,name,'Target');need(target.challenge.id===t.challenge.id,'Challenge changed during verification; retry.',3);target.ownership=ownership;event(state,'ownership',`${name}: ownership verified`);return {target,next:`bypass target authorize ${name}`};});rememberOwnership(read(root),result.target);break;
     }
     case 'target authorize':{
       const name=args[0]||s.activeTarget;
       need(o['scope-file']||o.accept,'Review scope, then provide --scope-file or --accept --paths /api. Ownership alone is not authorization.');
       need(!(o['scope-file']&&o.methods!==undefined),'Choose methods in the scope file or with --methods, not both.');
-      const scope=context.scope||(o['scope-file']?loadJSON(o['scope-file']):{paths:(o.paths||'/api').split(','),methods:o.methods,productionAcknowledged:!!o.production});
+      const scope=context.scope||(o['scope-file']?loadJSON(o['scope-file']):{paths:(o.paths||'/api').split(','),methods:o.methods,productionAcknowledged:!!o.production,publicConfigDiscovery:o['public-config']??named(s.targets,name,'Target').authorization?.publicConfigDiscovery});
       result=await change(root,state=>{const t=named(state.targets,name,'Target');t.authorization=authorization(t,scope);event(state,'authorized',`${name}: testing authorized`,{scope:t.authorization});return {target:t.name,authorization:t.authorization};});break;
     }
     case 'target revoke':case 'target remove':result=await change(root,state=>{
-      const t=named(state.targets,args[0],'Target');t.authorization=null;t.ownership={status:'revoked'};
+      const t=named(state.targets,args[0],'Target');revokeOwnership(t);t.authorization=null;t.ownership={status:'revoked'};
       state.monitors.filter(m=>m.target===t.name).forEach(m=>m.enabled=false);
       state.runs.filter(r=>r.options.target===t.name&&['queued','running'].includes(r.status)).forEach(r=>r.cancelRequested=true);
       if(key==='target remove'){state.targets=state.targets.filter(x=>x.name!==t.name);if(state.activeTarget===t.name)state.activeTarget=state.targets[0]?.name||null;}
@@ -218,9 +237,9 @@ export async function execute(key,args=[],o={},context={}){
     case 'model remove':result=await change(root,state=>{named(state.models,args[0],'Model');state.models=state.models.filter(m=>m.name!==args[0]);if(state.activeModel===args[0])state.activeModel=state.models[0]?.name||null;return {removed:args[0]};});break;
     case 'scan':{
       const plan=scanPlan(s,o);if(o.plan)return outcome({plan},plan.blockers.length?3:0);
-      return dispatchRun(root,'scan',{mode:o.mode||'combined',target:targetName,base:o.base,full:!!o.full},!!o.detach,context.signal,context.onProgress);
+      return dispatchRun(root,'scan',{mode:o.mode||s.settings.reviewMode||'combined',target:targetName,base:o.base,full:!!o.full},!!o.detach,context.signal,context.onProgress);
     }
-    case 'finding list':result={findings:filter(activeFindings(s),{...o,lastRunId:o.run},['target','status','severity','lastRunId'])};break;
+    case 'finding list':{const findings=filter(activeFindings(s),{...o,lastRunId:o.run},['target','status','severity','lastRunId']);result={findings,summary:findingSummary(findings)};break;}
     case 'finding show':result={finding:named(s.findings,args[0],'Finding')};break;
     case 'verify':case 'retest':return verifyFinding(root,args[0],{target:o.target,build:o.build,retest:key==='retest',signal:context.signal});
     case 'test list':result={checks:filter(s.checks,o,['target'])};break;
@@ -231,7 +250,7 @@ export async function execute(key,args=[],o={},context={}){
     case 'test export':need(o.all||args[0],'Specify a check ID or --all.');result=exportChecks(root,{checkId:args[0],all:o.all,target:o.target,out:o.out,force:o.force});break;
     case 'test disable':case 'test enable':result=await change(root,state=>{const c=named(state.checks,args[0],'Check');if(key==='test disable')need(o.reason,'--reason is required.');c.enabled=key==='test enable';c.disabledReason=c.enabled?null:o.reason;event(state,'check-setting',`${c.id}: ${c.enabled?'enabled':'disabled'}`,{reason:c.disabledReason});return {check:c};});break;
     case 'coverage':{
-      const inv=await inventory(root);result={scope:'Specific saved HTTP behaviors only',complete:false,sourceFingerprint:inv.fingerprint,checks:s.checks.map(c=>({id:c.id,behavior:c.title,target:c.target,status:!c.enabled?'disabled':['failed','blocked'].includes(c.lastResult?.status)?c.lastResult.status:c.sourceFingerprint!==inv.fingerprint?'stale':c.lastResult?.status||'not-run',sourceChanged:c.sourceFingerprint!==inv.fingerprint,lastResult:c.lastResult})),unproven:s.findings.filter(f=>f.status==='simulated_unproven').map(f=>({id:f.id,title:f.title,simulation:true})),message:'A route is not fully covered just because one behavior on that route has a test.'};break;
+      const inv=await inventory(root);result={scope:'Recorded assessment work and specific HTTP behaviors',complete:false,assessment:assessmentCoverage(s,inv,o),sourceFingerprint:inv.fingerprint,checks:s.checks.filter(c=>!o.target||c.target===o.target).map(c=>({id:c.id,behavior:c.title,target:c.target,status:!c.enabled?'disabled':['failed','blocked'].includes(c.lastResult?.status)?c.lastResult.status:c.sourceFingerprint!==inv.fingerprint?'stale':c.lastResult?.status||'not-run',sourceChanged:c.sourceFingerprint!==inv.fingerprint,lastResult:c.lastResult})),unproven:s.findings.filter(f=>(!o.target||f.target===o.target)&&['unproven','simulated_unproven'].includes(f.status)).map(f=>({id:f.id,title:f.title,simulation:!!f.simulation})),message:'A route is not fully covered just because one behavior on that route has a test. Use assessment.work and nextAction to continue remaining work.'};break;
     }
     case 'memory':case 'memory list':result=await recallMemory(root,{query:o.query,target:o.target});break;
     case 'memory show':{const packet=await recallMemory(root,{query:args[0],limit:1});result=packet.entries.find(e=>e.id===args[0]);need(result,'Memory record not found in this project.');result={kind:'memory-record',entry:result};break;}

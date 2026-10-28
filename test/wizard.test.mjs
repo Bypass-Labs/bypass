@@ -10,8 +10,9 @@ import { read } from '../src/store.mjs';
 import { temp, cli } from './helpers.mjs';
 
 async function wizard(root, answers, options={}){
+  if(options.flow!=='demo')fs.writeFileSync(path.join(root,'app.mjs'),'export const app = true;');
   const output=[],prompts=[];
-  const result=await onboard({flow:'quickstart',project:root,...options},[],{
+  const result=await onboard({flow:'quickstart',project:root,mode:'combined',...options},[],{
     write:value=>output.push(value),
     ask:async(label,fallback)=>{
       prompts.push(label);
@@ -65,7 +66,7 @@ test('wizard production scope requires the separate production confirmation',asy
   t.mock.method(dns,'resolveTxt',async()=>[[read(root).targets[0].challenge.token]]);
   await wizard(root,['n','1','','','yes','no','n']);
   assert.equal(read(root).targets[0].authorization,null);
-  await wizard(root,['n','','','yes','production','n']);
+  await wizard(root,['n','','','yes','yes','n']);
   assert.equal(read(root).targets[0].authorization.productionAcknowledged,true);
 });
 
@@ -75,7 +76,7 @@ test('failed optional model smoke is recoverable and never shown as connected',a
   await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));
   t.after(()=>new Promise(resolve=>server.close(resolve)));
   const root=temp();
-  const result=await wizard(root,['6','BYPASS_UNIT_API_KEY','test-model',`http://127.0.0.1:${server.address().port}/v1`,'chat','yes','1','','n']);
+  const result=await wizard(root,['6','BYPASS_UNIT_API_KEY','test-model',`http://127.0.0.1:${server.address().port}/v1`,'chat','yes','1','n'],{mode:'code'});
   assert.equal(requests,1);
   assert.equal(read(root).models[0].lastTest,undefined);
   assert.match(result.output,/HTTP 503/);
@@ -117,9 +118,9 @@ test('wizard accepts a bare domain directly after a typo and defers DNS on Enter
   assert.match(result.output,/Source review can continue/);
 });
 
-test('wizard accepts code only as an answer and never asks for environment or ownership',async()=>{
+test('wizard accepts code-only selection and never asks for environment or ownership',async()=>{
   const root=temp();
-  const result=await wizard(root,['1','','','','n','code only','n']);
+  const result=await wizard(root,['1','','','','n','n'],{mode:'code'});
   assert.equal(read(root).targets.length,0);
   assert.equal(result.prompts.some(p=>/real users|Paths to test|control|confirm this production/i.test(p)),false);
   assert.match(result.output,/code-only review available/);
@@ -136,7 +137,7 @@ test('wizard invalid flow and noninteractive invocation fail before writing setu
 
 test('repository setup redirects an accidental tooling checkout to the chosen application',async()=>{
   const tooling=temp(),app=temp();fs.writeFileSync(path.join(tooling,'package.json'),JSON.stringify({name:'@bypass-labs/cli-skeleton'}));
-  const result=await wizard(app,['n',app,'1','BYPASS_UNIT_API_KEY','','','n','','n'],{repo:tooling});
+  const result=await wizard(app,['n',app,'1','BYPASS_UNIT_API_KEY','','','n','n'],{repo:tooling,mode:'code'});
   assert.equal(result.result.root,app);
   assert.equal(fs.existsSync(path.join(tooling,'.bypass/state.json')),false);
   assert.match(result.output,/Bypass’s own tooling source/);

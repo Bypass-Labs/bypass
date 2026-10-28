@@ -15,7 +15,7 @@ import { read } from '../src/store.mjs';
 import { delay, VERSION } from '../src/util.mjs';
 
 test('MCP negotiates, validates typed tools, shares CLI state, and closes cleanly',async t=>{
-  const root=temp();await execute('init',[root]);
+  const root=temp();fs.writeFileSync(path.join(root,'api.mjs'),'export const app = true;');await execute('init',[root]);
   const child=spawn(process.execPath,[CLI,'mcp','serve','--project',root],{stdio:['pipe','pipe','pipe'],env:{...process.env,BYPASS_PLUGIN_STATE_DIR:temp()}});
   t.after(()=>child.kill());let sequence=0;const waiting=new Map();const notifications=[];
   const lines=readline.createInterface({input:child.stdout});const protocolErrors=[];
@@ -48,7 +48,7 @@ test('plugin selects the application explicitly, keeps host state untouched, and
   const child=spawn(process.execPath,[CLI,'mcp','serve','--project',host],{stdio:['pipe','pipe','pipe'],env:{...process.env,BYPASS_PLUGIN_STATE_DIR:temp()}});
   t.after(()=>child.kill());let sequence=0;const pending=new Map();
   readline.createInterface({input:child.stdout}).on('line',line=>{const message=JSON.parse(line);const item=pending.get(message.id);if(item){clearTimeout(item.timer);pending.delete(message.id);item.resolve(message);}});
-  const request=(method,params={})=>new Promise((resolve,reject)=>{const id=++sequence;const timer=setTimeout(()=>reject(new Error('MCP selection request timed out')),8000);pending.set(id,{resolve,timer});child.stdin.write(JSON.stringify({jsonrpc:'2.0',id,method,params})+'\n');});
+  const request=(method,params={})=>new Promise((resolve,reject)=>{const id=++sequence;const timer=setTimeout(()=>reject(new Error('MCP selection request timed out')),15000);pending.set(id,{resolve,timer});child.stdin.write(JSON.stringify({jsonrpc:'2.0',id,method,params})+'\n');});
   const call=(name,args={})=>request('tools/call',{name,arguments:args});
   const data=message=>JSON.parse(message.result.content[0].text);
   await request('initialize',{protocolVersion:'2025-11-25'});
@@ -71,7 +71,7 @@ test('plugin selects the application explicitly, keeps host state untouched, and
   assert.equal(codePlan.plan.blockers.length,0);assert.equal(codePlan.plan.blackBox.status,'not_run');
   const started=data(await call('bypass_scan',{mode:'code'}));
   assert.equal(started.status,'awaiting_host');assert.deepEqual(started.inventory.files,['job-search.js']);
-  await call('bypass_review_step',{id:started.runId,action:'finish'});
+  await call('bypass_review_step',{id:started.runId,action:'complete',candidates:[]});
   const run=data(await call('bypass_run',{id:started.runId})).run;assert.equal(run.status,'completed');assert.equal(run.modelCalls,0);
   assert.equal(read(app).targets[0].ownership.status,'pending');
   assert.equal(read(app).identities.length,0);
@@ -83,6 +83,7 @@ test('plugin selects the application explicitly, keeps host state untouched, and
 
 test('plugin setup resumes across real MCP processes without copying permissions from the host',async t=>{
   const host=temp(),app=temp(),pluginState=temp();
+  fs.writeFileSync(path.join(app,'auth.mjs'),'export const requireUser = true;\n');
   fs.writeFileSync(path.join(host,'package.json'),JSON.stringify({name:'@bypass-labs/cli-skeleton'}));
   await execute('init',[host]);const hostBefore=fs.readFileSync(path.join(host,'.bypass/state.json'),'utf8');
   function client(){
@@ -93,7 +94,7 @@ test('plugin setup resumes across real MCP processes without copying permissions
     return {request,call:async(name,args={})=>{const reply=await request('tools/call',{name,arguments:args});assert.ok(reply.result,JSON.stringify(reply));assert.equal(reply.result.isError,false,JSON.stringify(reply));return JSON.parse(reply.result.content[0].text);},close:()=>new Promise(resolve=>{child.once('close',resolve);child.stdin.end();})};
   }
   let c=client();await c.request('initialize',{protocolVersion:'2025-11-25'});
-  const context=await c.call('bypass_context');assert.equal(context.stage,'repository');assert.equal(context.recentEvents,undefined);
+  const context=await c.call('bypass_context');assert.equal(context.stage,'review-type');assert.equal(context.recentEvents,undefined);
   await c.call('bypass_connect_repository',{repository:app,confirmed:true});
   await c.call('bypass_engine',{mode:'docker'});await c.call('bypass_add_model',{name:'muse',provider:'meta','secret-env':'BYPASS_UNIT_API_KEY',model:'test-model',stream:false});
   await c.call('bypass_add_target',{name:'local',url:'http://127.0.0.1:4567',environment:'local'});

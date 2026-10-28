@@ -2,7 +2,7 @@
 
 The Muse plugin is the primary experience. Use ordinary requests or its slash commands; Muse calls these tools for you. You do not need to learn MCP syntax or leave Muse for project operations.
 
-Standalone model setup has a deliberate mode boundary: plugin model tools explain host ownership and cannot configure or invoke API inference. This reference is generated from the CLI catalog and plugin definitions. CI checks all 91 public CLI commands and their options; there are 85 typed tools. Regenerate with `node scripts/check-plugin-parity.mjs --write` after intentionally changing the catalog.
+Standalone model setup has a deliberate mode boundary: plugin model tools explain host ownership and cannot configure or invoke API inference. This reference is generated from the CLI catalog and plugin definitions. CI checks all 94 public CLI commands and their options; there are 88 typed tools. Regenerate with `node scripts/check-plugin-parity.mjs --write` after intentionally changing the catalog.
 
 ## Start inside Muse
 
@@ -32,6 +32,7 @@ CLI global `--project` maps to the selected repository; `--json` maps to structu
 | `demo` | `bypass_demo_start` · {"kind":"preview"} | Muse guides the same six-step walkthrough. |
 | `onboard` | `bypass_onboarding` | Conversational checklist, with bypass_connect_repository for repository and config input. |
 | `init` | `bypass_connect_repository` | Connect a repository and configure a project. |
+| `app connect` | `bypass_connect_app` | Connect a running app without a source repository. |
 | `repo show` | `bypass_repository` | Inspect the connected repository. |
 | `repo connect` | `bypass_connect_repository` | Connect or clone a repository. |
 | `status` | `bypass_status` | Show project readiness, results, and next actions. |
@@ -68,6 +69,8 @@ CLI global `--project` maps to the selected repository; `--json` maps to structu
 | `engine use` | `bypass_engine` | Set the standalone engine preference. Real plugin reviews remain Muse-directed. |
 | `engine doctor` | `bypass_engine_doctor` | Explain native host execution; no Docker or API profile is needed in Muse. |
 | `engine prepare` | `bypass_prepare_engine` | Optional preparation of standalone Docker workers; unnecessary for native plugin reviews. |
+| `registration discover` | `bypass_discover_registration` | Find public Firebase config in authorized app pages and linked scripts. No accounts created. |
+| `registration choose` | `bypass_choose_accounts` | Save the test-account choice: create, existing or skip. Creating accounts requires explicit permission. |
 | `registration configure` | `bypass_configure_registration` | Authorize up to two dedicated JSON signup attempts on the verified app. |
 | `registration test` | `bypass_test_registration` | Attempt signup, privately connect generated accounts and check unverified access. |
 | `registration status` | `bypass_registration` | Show registration coverage and created account cleanup information. |
@@ -88,7 +91,7 @@ CLI global `--project` maps to the selected repository; `--json` maps to structu
 | `test export` | `bypass_export_tests` | Write ordinary Node tests with no Bypass dependency. |
 | `test disable` | `bypass_disable_test` | Disable a saved check with an audit reason. |
 | `test enable` | `bypass_enable_test` | Enable a saved check. |
-| `coverage` | `bypass_coverage` | Show behavior-level checks, gaps, stale, and blocked evidence. |
+| `coverage` | `bypass_coverage` | Show assessment work remaining, source ranges, actual controls and specific blockers. |
 | `context` | `bypass_feature_context` | Get security context for feature work, or general session history. |
 | `memory` | `bypass_memory` | Inspect local security memory and its evidence. |
 | `memory list` | `bypass_memory` | Inspect or search security memory. |

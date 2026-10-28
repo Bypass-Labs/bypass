@@ -1,3 +1,5 @@
+import { promptValue } from './interaction.mjs';
+import { sourceStatus } from './application-setup.mjs';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -37,12 +39,13 @@ export async function connectProject(options, args, {ask, say, yes, pick, activi
   let fallback=process.cwd()===PACKAGE_ROOT||isBypassSource(process.cwd()) ? '' : process.cwd();
   let suppliedDirectory=options.dir;
   const init=(source,dir) => {
-    const work=signal=>execute('init',[source],{...options,repo:undefined,dir,'non-interactive':true},{signal});
+    const work=signal=>execute('init',[source],{...options,repo:undefined,dir,'non-interactive':true},{signal,requireSource:true});
     return activity?activity(isRemote(source)?'Clone application repository':'Connect application repository',work):work(signal);
   };
 
   while(true) {
-    location=unwrap(location || await ask('Repository directory or Git URL',fallback));
+    const candidate=fallback&&!isRemote(fallback)&&await sourceStatus(path.resolve(expand(fallback))).then(s=>s.ready).catch(()=>false)?fallback:null;
+    location=unwrap(location || await promptValue(ask,'Repository directory or Git URL',candidate?[{value:candidate,label:'Use this application folder',description:candidate}]:[],{write:say,customLabel:'Use another folder or Git URL'}));
     if(!location) { say('Enter your repository URL or an existing local folder.'); continue; }
     const remote=isRemote(location);
     if(!remote) {
@@ -72,7 +75,7 @@ export async function connectProject(options, args, {ask, say, yes, pick, activi
     let useSupplied=Boolean(suppliedDirectory);suppliedDirectory=null;
     say(`\nWhere should we save ${name}? Press Enter to use the suggested folder.\nYou can also enter a different path, or type back to change the repository.`);
     while(true) {
-      const answer=useSupplied ? directory : await ask('Clone into folder',display(directory));
+      const answer=useSupplied ? directory : await promptValue(ask,'Clone into folder',[{value:display(directory),label:'Use suggested folder',description:display(directory)}],{write:say,customLabel:'Another folder (or type back)'});
       useSupplied=false;
       if(answer.toLowerCase()==='back') { location=null;fallback='';break; }
       directory=path.resolve(expand(answer));

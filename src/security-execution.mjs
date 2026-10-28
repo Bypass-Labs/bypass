@@ -1,3 +1,4 @@
+import { routeMatches } from './review-worklist.mjs';
 import { read, change, event } from './store.mjs';
 import { specFor, saveCheck } from './checks.mjs';
 import { replay } from './portable-check.mjs';
@@ -8,7 +9,7 @@ import { replayEnvironment } from './credentials.mjs';
 export async function saveSourceCandidates(root,{candidates,bindings,targetName,sourceFingerprint,runId,engine='docker',candidateIds=[]}) {
   const initial=read(root),target=initial.targets.find(t=>t.name===targetName);
   for(const candidate of candidates){
-    const binding=bindings.find(b=>b.resourcePath===candidate.resourcePath);
+    const binding=bindings.find(b=>b.resourcePath===candidate.resourcePath)||bindings.find(b=>routeMatches(candidate.resourcePath,b.resourcePath));
     const fingerprint=hash({kind:'source',file:candidate.sourceEvidence.file,line:candidate.sourceEvidence.line,category:candidate.category,target:targetName,resourcePath:candidate.resourcePath});
     const saved=await change(root,s=>{
       let finding=s.findings.find(f=>f.fingerprint===fingerprint);
@@ -31,6 +32,7 @@ export async function executeProbe(root,{binding,rawBinding,bindingIndex,targetN
       if(result.status==='failed'){
         const saved=await change(root,s=>{
           let finding=s.findings.find(f=>candidateIds.includes(f.id)&&f.binding?.resourcePath===binding.resourcePath);
+          finding??=s.findings.find(f=>candidateIds.includes(f.id)&&!f.binding&&f.target===targetName&&f.sourceEvidence?.kind==='source'&&routeMatches(f.resourcePath,binding.resourcePath)&&f.category===(binding.kind==='unverified-account-access'?'email-verification':result.reason.startsWith('Unauthenticated')?'missing-authentication':'cross-account-access'));
           const fingerprint=hash({kind:'http-account-boundary',target:targetName,binding});
           finding??=s.findings.find(f=>f.fingerprint===fingerprint);
           if(!finding){finding={id:id('finding'),fingerprint,title:`${binding.kind==='unverified-account-access'?'Unverified email account access':'Unauthorized access'} to ${binding.resourcePath}`,category:binding.kind==='unverified-account-access'?'email-verification':'cross-account-access',severity:'high',hypothesis:result.reason,recommendation:'Authenticate the caller and enforce resource ownership; preserve authorized access.',sourceEvidence:{kind:'http',message:'Discovered through observed HTTP controls; no source attribution.'},createdAt:now(),history:[]};s.findings.push(finding);}
@@ -39,7 +41,8 @@ export async function executeProbe(root,{binding,rawBinding,bindingIndex,targetN
         if(read(root).settings.autoSave)await saveCheck(root,saved.id);
       }
       if(result.status!=='failed')await change(root,s=>{
-        for(const finding of s.findings.filter(f=>candidateIds.includes(f.id)&&f.binding?.resourcePath===binding.resourcePath)){
+        for(const finding of s.findings.filter(f=>candidateIds.includes(f.id)&&(f.binding?.resourcePath===binding.resourcePath||!f.binding&&f.target===targetName&&f.sourceEvidence?.kind==='source'&&routeMatches(f.resourcePath,binding.resourcePath)))){
+          finding.binding??=binding;
           if(!finding.history.some(h=>h.status==='failed'))finding.status=result.status==='passed'?'not_reproduced':result.status==='observed'?'unproven':'blocked';
           finding.verification={...result,origin:state.targets.find(t=>t.name===targetName).url,at:now(),simulation:false};finding.history.push({action:'verify',...finding.verification});
         }

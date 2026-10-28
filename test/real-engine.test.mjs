@@ -8,7 +8,7 @@ import { runAgent } from '../agents/worker.mjs';
 import { containerArgs } from '../src/agent-runtime.mjs';
 import { parseModelJSON } from '../src/inference.mjs';
 import { sourceReader, groundCandidates, executeRealScan } from '../src/real-engine.mjs';
-import { createRun, verifyFinding } from '../src/engine.mjs';
+import { createRun, verifyFinding, executeRun } from '../src/engine.mjs';
 import { execute } from '../src/service.mjs';
 import { startPOC, stopPOC } from '../src/poc.mjs';
 import { read, change } from '../src/store.mjs';
@@ -83,7 +83,7 @@ test('large application files are paged and only delivered lines can support a h
   lines[650]="app.get('/api/run/:id', async () => getRun(id));";
   fs.writeFileSync(path.join(root,'server.js'),lines.join('\n'));
   const inv=await inventory(root),reader=sourceReader(root,inv);
-  assert.deepEqual(inv.routeLocations.find(r=>r.path==='/api/run/:id'),{path:'/api/run/:id',file:'server.js',line:651});
+  assert.deepEqual(inv.routeLocations.find(r=>r.path==='/api/run/:id'),{path:'/api/run/:id',method:'GET',file:'server.js',line:651});
   const first=reader.read(['server.js'])[0];
   assert.equal(first.endLine,200);assert.equal(first.nextStartLine,201);assert.equal(first.totalLines,900);
   const candidate={category:'cross-account-access',file:'server.js',line:651,quote:lines[650],title:'Ownership hypothesis',hypothesis:'Inspect the route owner check',recommendation:'Enforce ownership'};
@@ -203,4 +203,24 @@ test('anonymous exposure is confirmed independently of a correctly denied outsid
     const result=await replay(spec,{env:{OWNER:'owner',OUTSIDER:'outsider'}});
     assert.equal(result.status,'failed');assert.match(result.reason,/Unauthenticated/);assert.deepEqual(result.controls.map(c=>c.status),[200,200,200,403,200]);
   }finally{await new Promise(resolve=>server.close(resolve));}
+});
+
+
+test('standalone engine drains configured controls after early completion or failed orchestration/source/black-box reasoning',async t=>{
+  for(const fail of [false,'black-box','white-box','orchestrator']){
+    const root=path.join(temp(),'app');await startPOC({dir:root});await addTestModel(root);
+    try{
+      const first=read(root).targets[0].probes[0];await execute('probe add',['second'],{project:root,target:'poc',path:first.binding.resourcePath,'resource-id':first.binding.resourceId,owner:first.binding.owner,outsider:first.binding.outsider,'identity-field':first.binding.identityField||'id'});
+      const runtime=controlledRuntime(),base=runtime.runContainer,infer=runtime.infer;
+      runtime.infer=async(profile,messages)=>{if(fail==='orchestrator'&&messages[0].content.startsWith('Plan a bounded'))throw new Error('Controlled planning interruption');return infer(profile,messages);};
+      runtime.runContainer=async(role,task,rpc)=>{if(role===fail)throw new Error('Controlled reasoning interruption');return role==='black-box'?{result:{summary:'Stopped early'},container:{role,image:'test-image'}}:base(role,task,rpc);};
+      const run=await createRun(root,'scan',{mode:'combined'});
+      const executed=fail==='white-box'?await executeRun(root,run.id,null,null,{runtime}):null;
+      if(executed)assert.equal(executed.run.status,'incomplete');
+      const result=executed?.run.result||await executeRealScan(root,run.id,{mode:'combined'},{runtime,report:async()=>{}});
+      assert.equal(result.probes.length,2);assert.ok(result.probes.every(p=>p.status==='failed'));assert.equal(result.configuredScope.executed,2);assert.equal(result.executionFailures.length,fail?1:0);
+      assert.match(result.message,/remediation requires a separate explicit request/);
+      if(fail)assert.match(result.message,/Investigation incomplete/);
+    }finally{await stopPOC(root);}
+  }
 });

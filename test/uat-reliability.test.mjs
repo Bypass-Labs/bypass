@@ -42,9 +42,9 @@ test('packaged MCP retrieves quoted source memory and completes a second review 
 
 test('credential-free HTML proof saves failing reproduction, exported test fails then passes; public content is not a finding',async t=>{
   let fixed=false;const {root}=await app(t,(q,r)=>{if(fixed){r.writeHead(403);return r.end();}r.writeHead(200,{'Content-Type':'text/html'});r.end('<title>Private UAT report 78231</title>');});
-  const c=await client(t,root),setup=await c.call('bypass_onboarding');assert.equal(setup.stage,'ready');assert.equal(setup.steps.find(s=>s.id==='accounts').status,'optional');
+  const c=await client(t,root),setup=await c.call('bypass_onboarding',{mode:'live'});assert.equal(setup.stage,'ready');assert.equal(setup.steps.find(s=>s.id==='accounts').status,'optional');
   await c.call('bypass_add_probe',{name:'report',path:'/reports/78231',kind:'anonymous',response:'html','match-text':'Private UAT report 78231',expected:'private'});
-  const run=await c.call('bypass_scan',{mode:'combined'}),done=await c.call('bypass_review_step',{id:run.runId,action:'complete',candidates:[]});assert.equal(done.probes[0].status,'failed');assert.equal(done.probes[0].requests,1);
+  const run=await c.call('bypass_scan',{mode:'live'}),done=await c.call('bypass_review_step',{id:run.runId,action:'complete',candidates:[]});assert.equal(done.probes[0].status,'failed');assert.equal(done.probes[0].requests,1);
   const [check]=read(root).checks;assert.equal(check.baseline,'failing_reproduction');assert.equal(read(root).findings[0].status,'confirmed');
   const exported=await c.call('bypass_export_tests',{id:read(root).findings[0].id});const runExport=()=>execFile(process.execPath,['--test',...exported.files],{env:{NODE_TEST_CONTEXT:undefined}});
   assert.equal((await runExport()).code,1);fixed=true;assert.equal((await runExport()).code,0);
@@ -66,7 +66,7 @@ test('registration creates and privately connects two accounts; discovery select
     send(r,404,{});
   });
   const c=await client(t,root);await c.call('bypass_configure_registration',{path:'/api/signup','check-path':'/api/me','access-path':'/api/verified','email-domain':'uat.invalid','token-field':'token','verified-field':'emailVerified',accept:true,'require-verification':true});
-  const run=await c.call('bypass_scan',{mode:'combined'});assert.equal(posts,2);assert.equal(run.registration.status,'failed');assert.equal(run.registration.accounts.every(a=>a.connected),true);assert.equal(run.registration.findings.length,1);assert.equal(run.registration.probes[0].status,'failed');
+  const run=await c.call('bypass_scan',{mode:'live'});assert.equal(posts,2);assert.equal(run.registration.status,'failed');assert.equal(run.registration.accounts.every(a=>a.connected),true);assert.equal(run.registration.findings.length,1);assert.equal(run.registration.probes[0].status,'failed');
   const ids=read(root).identities;assert.equal(ids.length,2);assert.ok(ids.every(i=>i.credentialRef));assert.doesNotMatch(fs.readFileSync(path.join(root,'.bypass/state.json'),'utf8'),/unique-generated-token/);
   const discovered=await c.call('bypass_discover_resources',{path:'/api/items','resource-prefix':'/api/items','items-field':'items','owner-field':'ownerId',owner:ids[0].name,outsider:ids[1].name});assert.deepEqual(discovered.probes.map(p=>p.resourceId),['mine']);assert.doesNotMatch(JSON.stringify(discovered),/customer-someone-else|foreign/);
   await c.call('bypass_review_step',{id:run.runId,action:'refresh'});const done=await c.call('bypass_review_step',{id:run.runId,action:'complete',candidates:[]});assert.equal(done.probes[0].status,'failed');assert.equal(done.probes[0].requests,5);assert.equal(posts,2);

@@ -57,7 +57,7 @@ export function initStore(root, repository, name) {
   save(root,state);
   const ignore = path.join(root,'.gitignore');
   const previous = fs.existsSync(ignore) ? fs.readFileSync(ignore,'utf8') : '';
-  const rules = ['.bypass/state.json','.bypass/.lock/','.bypass/runs/','.bypass/drafts/','.bypass/demo-state.json','.bypass/worker.json','.bypass/*.log'];
+  const rules = ['.bypass/state.json','.bypass/.lock/','.bypass/runs/','.bypass/drafts/','.bypass/discovery/','.bypass/demo-state.json','.bypass/worker.json','.bypass/*.log'];
   const missing = rules.filter(r=>!previous.split('\n').includes(r));
   if (missing.length) fs.appendFileSync(ignore, `${previous.endsWith('\n') || !previous ? '' : '\n'}\n# Bypass local evidence and runtime state\n${missing.join('\n')}\n`);
   if (!fs.existsSync(path.join(root,'.bypassignore'))) fs.writeFileSync(path.join(root,'.bypassignore'), '.env\n.env.*\n*.pem\n*.key\nnode_modules/\n.git/\n.bypass/\n');

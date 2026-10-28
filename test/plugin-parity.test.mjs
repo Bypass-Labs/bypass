@@ -29,6 +29,7 @@ test('complete preview demo stays inside MCP: proof, fix, test controls, exports
   assert.equal((await c.call('bypass_dashboard')).selectedRepository,null);
   assert.equal((await c.call('bypass_auth_login',{provider:'muse-code'})).kind,'host-handoff');
   const protectedInstall=await c.raw('bypass_remove_plugin',{confirmed:false});assert.equal(protectedInstall.result.isError,true);
+  fs.writeFileSync(path.join(app,'app.mjs'),'export const app = true;');
   await c.call('bypass_connect_repository',{repository:app,confirmed:true});
   const original=fs.readFileSync(path.join(app,'.bypass/state.json'),'utf8');
   const demo=await c.call('bypass_demo_start',{kind:'preview'});fixture=demo.root;assert.equal(demo.session.previousRepository,app);
@@ -78,6 +79,7 @@ test('complete preview demo stays inside MCP: proof, fix, test controls, exports
 test('plugin management, config import, scope file, output containment and confirmation guards use the selected app',async t=>{
   const host=temp(),app=temp(),outside=temp(),c=await mcpClient(host,{stateDir:temp()});t.after(()=>c.child.kill());
   const config=path.join(host,'setup.json');fs.writeFileSync(config,JSON.stringify({name:'Configured application',model:{name:'local',provider:'custom','secret-env':'BYPASS_UNIT_API_KEY',stream:false,'base-url':'http://127.0.0.1:9999',model:'fixture'}}));
+  fs.writeFileSync(path.join(app,'app.mjs'),'export const app = true;');
   await c.call('bypass_connect_repository',{repository:app,confirmed:true,config});
   assert.equal((await c.call('bypass_repository')).repository.path,app);
   assert.equal((await c.call('bypass_config')).project.name,'Configured application');

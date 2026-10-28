@@ -6,8 +6,9 @@ export const commands={
   'poc resume':command('poc resume','Restart the saved generated local fixture; preserve findings and tests.'),
   'poc stop':command('poc stop','Stop this POC fixture app; preserve its evidence.'),
   demo:command('demo','Guided local walkthrough: prove, fix, retest, and catch a regression.','dir'),
-  onboard:command('onboard [path]','Guided QuickStart, resumable app verification, or local demo.','repo dir flow'),
+  onboard:command('onboard [path]','Guided QuickStart, resumable app verification, or local demo.','repo dir flow mode'),
   init:command('init [path]','Connect a repository and configure a project.','repo dir config name'),
+  'app connect':command('app connect <url>','Connect a running app without a source repository.','environment'),
   'repo show':command('repo show','Inspect the connected repository.'),
   'repo connect':command('repo connect <path-or-url>','Connect or clone a repository.','dir name'),
   status:command('status','Show project readiness, results, and next actions.'),
@@ -25,7 +26,7 @@ export const commands={
   'target show':command('target show [name]','Show target, challenge, and scope.'),
   'target use':command('target use <name>','Select an active target.'),
   'target verify':command('target verify [name]','Check DNS/HTTP control, or acknowledge local ownership.','method wait renew'),
-  'target authorize':command('target authorize [name]','Record explicit paths, HTTP methods and expiring testing scope.','scope-file paths methods accept production'),
+  'target authorize':command('target authorize [name]','Record explicit paths, HTTP methods and expiring testing scope.','scope-file paths methods accept production public-config'),
   request:command('request','Send one scoped HTTP request; record status and an optional resource ID without replaying writes.','target method path identity body-file id-field'),
   'target revoke':command('target revoke <name>','Revoke testing and pause target monitors.'),
   'target remove':command('target remove <name>','Disconnect a target while retaining historical evidence.'),
@@ -44,6 +45,8 @@ export const commands={
   'engine use':command('engine use <docker|mock>','Select real Docker agents or the offline mocked preview.'),
   'engine doctor':command('engine doctor','Check Docker and the shared inference profile.'),
   'engine prepare':command('engine prepare','Build the agent image for both Docker services.'),
+  'registration discover':command('registration discover','Find public Firebase config in authorized app pages and linked scripts. No accounts created.','target path project-id'),
+  'registration choose':command('registration choose','Save the test-account choice: create, existing or skip. Creating accounts requires explicit permission.','target mode accept email-domain'),
   'registration configure':command('registration configure','Authorize up to two dedicated JSON signup attempts on the verified app.','target provider config-file api-key-field project-id path check-path access-path email-domain email-field password-field token-field verified-field identity-field require-verification accept'),
   'registration test':command('registration test','Attempt signup, privately connect generated accounts and check unverified access.','target'),
   'registration status':command('registration status','Show registration coverage and created account cleanup information.','target'),
@@ -64,7 +67,7 @@ export const commands={
   'test export':command('test export [id]','Write ordinary Node tests with no Bypass dependency.','all target out force'),
   'test disable':command('test disable <id>','Disable a saved check with an audit reason.','reason'),
   'test enable':command('test enable <id>','Enable a saved check.'),
-  coverage:command('coverage','Show behavior-level checks, gaps, stale, and blocked evidence.'),
+  coverage:command('coverage','Show assessment work remaining, source ranges, actual controls and specific blockers.','run target'),
   context:command('context','Get security context for feature work, or general session history.','finding task files target'),
   memory:command('memory','Inspect local security memory and its evidence.','query target'),
   'memory list':command('memory list','Inspect or search security memory.','query target'),
@@ -95,7 +98,7 @@ export const commands={
   _run:command('_run <id>','Internal detached run entry point.','',{hidden:true}),
   '_demo-serve':command('_demo-serve','Internal fixture server.','',{hidden:true})
 };
-export const booleanFlags=new Set(['reference','require-verification','json','help','version','non-interactive','plan','full','detach','all','force','accept','production','renew','once','stop','device','install','replace','allow-private']);
+export const booleanFlags=new Set(['public-config','reference','require-verification','json','help','version','non-interactive','plan','full','detach','all','force','accept','production','renew','once','stop','device','install','replace','allow-private']);
 export const globalFlags=['project','json','help','version','non-interactive','reference'];
 export function parse(argv){
   const options={},words=[];

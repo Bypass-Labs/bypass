@@ -26,7 +26,9 @@ test('native MCP journey: host plans, source hypotheses, real proof, fix, export
   assert.equal(read(root).findings[0].status,'unproven');
   const proof=await c.call('bypass_review_step',{id:run.runId,action:'probe',index:0});assert.equal(proof.observation.status,'failed');assert.deepEqual(proof.observation.controls.map(x=>x.status),[200,200,200,200,401]);
   const findingId=proof.findings[0];assert.equal(read(root).findings[0].status,'confirmed');
-  await c.call('bypass_review_step',{id:run.runId,action:'finish'});assert.ok(fs.existsSync(run.evidence));
+  const earlyFinish=await c.call('bypass_review_step',{id:run.runId,action:'finish'});assert.equal(earlyFinish.status,'awaiting_host');
+  await c.call('bypass_add_probe',{name:'login-anonymous',path:'/api/me',kind:'anonymous',expected:'private','resource-id':'account-alice'});
+  const finished=await c.call('bypass_review_step',{id:run.runId,action:'complete'});assert.equal(finished.status,'completed');assert.ok(fs.existsSync(run.evidence));
   await c.call('bypass_demo_control',{action:'fix'});const fixed=await c.call('bypass_retest',{id:findingId});assert.equal(fixed.status,'fixed_verified');assert.ok(fixed.savedCheck);
   const exported=await c.call('bypass_export_tests',{all:true});const actual=await execFile(process.execPath,['--test',...exported.files],{env:{NODE_TEST_CONTEXT:undefined}});assert.equal(actual.code,0,actual.stdout+actual.stderr);
   const replay=await c.call('bypass_run_tests',{all:true});assert.equal((await c.wait(replay.runId)).exitCode,0);

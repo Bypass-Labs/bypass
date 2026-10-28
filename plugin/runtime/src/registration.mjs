@@ -1,3 +1,5 @@
+import { accountInput, syntheticEmailDomain } from './interaction.mjs';
+import { discoverRegistration } from './registration-discovery.mjs';
 import { randomUUID, randomBytes } from 'node:crypto';
 import path from 'node:path';
 import { read, change, event } from './store.mjs';
@@ -10,19 +12,54 @@ import { need, named, now, hash, registerSecret, delay, redact } from './util.mj
 const exactPath=p=>typeof p==='string'&&p.startsWith('/')&&!p.startsWith('//')&&!/[?#\\]/.test(p)&&pathAllowed(p,[p]);
 const field=p=>typeof p==='string'&&/^[A-Za-z_][A-Za-z0-9_]{0,63}$/.test(p)&&!['constructor','prototype','__proto__'].includes(p);
 export function registrationStatus(target){
-  if(!target?.registration)return {status:'not_configured',reason:'Discover the signup endpoint from source. Credentials are optional; registration testing needs permission to create up to two dedicated accounts.',next:'registration configure'};
+  if(!target)return {status:'not_selected',reason:'Connect an app before choosing live account checks.',nextAction:null};
+  const decision=target?.accountChoice;
+  if(decision&&decision.mode!=='create')return {status:decision.mode==='skip'?'skipped':'existing_accounts',choice:decision,reason:decision.mode==='skip'?'Continue source and anonymous checks. Signed-in account coverage was skipped.':'Use connected identities or import a private test-account file. Automatic signup is not selected.',nextAction:null};
+  if(decision?.mode==='create'&&!target.registration){
+    const valid=decision.authorizationFingerprint===hash(target.authorization);
+    if(valid&&target.registrationDiscovery?.nextAction)return {status:'setup_needed',choice:decision,permissionSaved:true,reason:'Account creation permission is saved. Resolve the recorded discovery blocker; do not repeat discovery without changed input or access.',discovery:target.registrationDiscovery,nextAction:target.registrationDiscovery.nextAction};
+    if(valid)return {status:'setup_needed',choice:decision,reason:'Account creation permission is already saved. Discover signup configuration and continue without asking again.',nextAction:{tool:'bypass_configure_registration',automatic:true,requiresAnswer:false}};
+  }
+  if(!target?.registration)return {status:'not_configured',reason:'Discover signup from source or authorized app observations. For Firebase, use registration discover before asking the user for public config. Credentials are optional; creating accounts requires explicit permission.',next:'registration configure',nextAction:{question:'How should Bypass test signed-in account access?',input:accountInput(target),requiresAnswer:true}};
   return {status:target.registration.lastResult?'recorded':'ready',path:target.registration.path,lastResult:target.registration.lastResult||null};
 }
-export async function configureRegistration(root,o){
+export async function chooseAccounts(root,o){
+  const state=read(root),target=named(state.targets,o.target||state.activeTarget,'Target');
+  need(['create','existing','skip'].includes(o.mode),'Choose create, existing or skip.');
+  if(o.mode==='create'){scopeReady(target);need(o.accept===true,'Explicit permission is required to create up to two test accounts.');}
+  if(o['email-domain'])need(/^(?:[a-z0-9](?:[a-z0-9-]*[a-z0-9])?\.)+[a-z]{2,63}$/i.test(o['email-domain']),'Use a dedicated synthetic email domain.');
+  return change(root,s=>{const app=named(s.targets,target.name,'Target');
+    app.accountChoice={mode:o.mode,selectedAt:now(),...(o.mode==='create'?{authorizationFingerprint:hash(app.authorization),maxAccounts:2,emailDomain:o['email-domain']||syntheticEmailDomain(app)}:{})};
+    return {target:app.name,...registrationStatus(app)};
+  });
+}
+export async function configureRegistration(root,o,context={}){
+  o={...o};
   const state=read(root),target=named(state.targets,o.target||state.activeTarget,'Target');scopeReady(target,o['check-path']);
-  need(o.accept,'Registration attempts create accounts. Record the user’s permission before enabling this check.');
+  const saved=target.accountChoice;
+  need(o.accept===true||o.accept!==false&&saved?.mode==='create'&&saved.authorizationFingerprint===hash(target.authorization),'Account creation permission is required. Choose how to handle test accounts.',2,{nextAction:registrationStatus(target).nextAction||{input:accountInput(target)}});
+  o['email-domain']??=saved?.mode==='create'?saved.emailDomain:syntheticEmailDomain(target);
+  // Remember explicit consent even if discovery needs recovery; never ask for it again on retry.
+  if(o.accept===true)await chooseAccounts(root,{target:target.name,mode:'create',accept:true,'email-domain':o['email-domain']});
   const provider=o.provider||'json';need(['json','firebase'].includes(provider),'Registration supports json or firebase.');
   need(exactPath(o['check-path'])&&(provider==='firebase'||exactPath(o.path)),'Registration and protected-control paths must be exact paths on the verified application.');
   if(provider==='json')scopeReady(target,o.path,'POST');
   let configKeyHash;
   if(provider==='firebase'){
-    need(o['config-file']&&/^[a-z0-9][a-z0-9-]{3,62}$/.test(o['project-id']||''),'Firebase signup needs the app public config file and exact Firebase project ID.');
-    const fields=credentialFields(path.resolve(root,o['config-file']),{privateFile:false});need(fields[o['api-key-field']||'VITE_FIREBASE_API_KEY'],'Public Firebase API key field is missing.');configKeyHash=hash(fields[o['api-key-field']||'VITE_FIREBASE_API_KEY']);
+    let fields;
+    if(o['config-file'])try{fields=credentialFields(path.resolve(root,o['config-file']),{privateFile:false});}catch{/* Source templates are not resolved config; try bounded discovery. */}
+    o['project-id'] ||= fields?.VITE_FIREBASE_PROJECT_ID||fields?.projectId;
+    if(!fields?.[o['api-key-field']||'VITE_FIREBASE_API_KEY']||!o['project-id']){
+      const discovery=await discoverRegistration(root,{target:o.target,'project-id':o['project-id']},context);
+      if(discovery.status!=='found')return {kind:'setup-needed',registrationConfigured:false,discovery,nextAction:discovery.nextAction,message:discovery.message};
+      o['config-file']=discovery.configFile;o['project-id']=discovery.projectId;o['api-key-field']='VITE_FIREBASE_API_KEY';
+      fields=credentialFields(discovery.configFile,{privateFile:false});
+    }
+    need(/^[a-z0-9][a-z0-9-]{3,62}$/.test(o['project-id']||''),'Firebase config must contain the exact project ID.');
+    const configuredProject=fields.VITE_FIREBASE_PROJECT_ID||fields.projectId;
+    need(!configuredProject||configuredProject===o['project-id'],'The selected Firebase project differs from the resolved app config.');
+    configKeyHash=hash(fields[o['api-key-field']||'VITE_FIREBASE_API_KEY']);
+
   }
   need(typeof o['email-domain']==='string'&&/^(?:[a-z0-9](?:[a-z0-9-]*[a-z0-9])?\.)+[a-z]{2,63}$/i.test(o['email-domain']),'Choose an authorized test email domain. No customer or guessed addresses.');
   for(const key of ['email-field','password-field'])need(field(o[key]||(key==='email-field'?'email':'password')),'Email/password fields must be simple JSON property names.');
@@ -37,6 +74,7 @@ export async function configureRegistration(root,o){
 const active=new Set();
 export async function testRegistration(root,{target:targetName,signal,request=safeRequest}={}){
   const state=read(root),target=named(state.targets,targetName||state.activeTarget,'Target'),config=target.registration;
+  if(target.accountChoice&&target.accountChoice.mode!=='create')return {kind:'registration',...registrationStatus(target),requests:0,modelCalls:0};
   if(!config)return {kind:'registration',...registrationStatus(target),requests:0,modelCalls:0};
   const key=`${root}:${target.name}`;need(!active.has(key),'Registration is already in progress.',3);active.add(key);
   const result={kind:'registration',status:'incomplete',findings:[],probes:[],accounts:[],observations:[],requests:0,modelCalls:0,startedAt:now(),coverage:'JSON signup on the verified origin; no CAPTCHA bypass, email delivery, social login or arbitrary browser automation.'};

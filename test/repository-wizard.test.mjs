@@ -10,7 +10,7 @@ import { execFile } from '../src/util.mjs';
 import { temp } from './helpers.mjs';
 
 const remote='https://example.test/team/job-finder';
-const remainingSetup=['1','','','','n','','n']; // Muse, no connection test, defer app/dashboard; plugin is a separate flow.
+const remainingSetup=['1','','','','n','n']; // Model setup, no connection test or dashboard; source-only flow.
 
 async function fixture(t) {
   const home=temp(), source=path.join(home,'source'), config=path.join(home,'gitconfig');
@@ -23,7 +23,8 @@ async function fixture(t) {
   async function git(...args) { const result=await execFile('git',args);assert.equal(result.code,0,result.stderr);return result; }
   await git('init',source);
   fs.writeFileSync(path.join(source,'README.md'),'Fixture source; never executed.');
-  await git('-C',source,'add','README.md');
+  fs.writeFileSync(path.join(source,'app.mjs'),'export const sourceOnlyFixture = true;');
+  await git('-C',source,'add','README.md','app.mjs');
   await git('-C',source,'-c','user.name=Fixture','-c','user.email=fixture@example.test','commit','-m','Fixture');
   // Real git clone, with these test URLs mapped to a local fixture. No external request.
   await git('config','--file',config,`url.${source}.insteadOf`,remote);
@@ -33,7 +34,7 @@ async function fixture(t) {
 
 async function wizard(answers,options={}) {
   const prompts=[],output=[];
-  const result=await onboard({flow:'quickstart',...options},[],{
+  const result=await onboard({flow:'quickstart',mode:'code',...options},[],{
     write:value=>output.push(value),
     ask:async(label,fallback)=>{
       prompts.push({label,fallback});
@@ -87,7 +88,7 @@ test('an existing matching checkout resumes its saved setup and preserves uncomm
   const first=await wizard([remote,'',...remainingSetup]);
   const id=read(first.result.root).project.id;
   fs.writeFileSync(path.join(first.result.root,'README.md'),'Uncommitted work');
-  const resumed=await wizard([remote,'','yes','n','','n']);
+  const resumed=await wizard([remote,'','yes','n','n']);
   assert.equal(resumed.result.root,first.result.root);
   assert.equal(read(resumed.result.root).project.id,id);
   assert.equal(read(resumed.result.root).models.length,1);
@@ -101,7 +102,7 @@ test('a different origin is explained and the user can explicitly choose that lo
   const first=await wizard([remote,'',...remainingSetup]);
   await git('-C',first.result.root,'remote','set-url','origin','https://example.test/my-fork/job-finder.git');
   fs.writeFileSync(path.join(first.result.root,'README.md'),'My local edits');
-  const resumed=await wizard([remote,'','2','n','','n']);
+  const resumed=await wizard([remote,'','2','n','n']);
   assert.equal(resumed.result.root,first.result.root);
   assert.match(resumed.output,/contains a checkout of example.test\/my-fork\/job-finder/);
   assert.match(resumed.output,/You requested example.test\/team\/job-finder/);

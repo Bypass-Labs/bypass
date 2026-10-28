@@ -2,6 +2,9 @@
 description: Run the complete Bypass proof-to-regression demo inside Muse.
 ---
 
+Follow the bypass skill’s choices-first interaction rules: reuse known answers, use native pickers with grounded recommendations and a custom-answer/note field for missing decisions, and discover configuration before asking. Read-only commands must remain read-only.
+
+
 Use the bypass skill and perform its tools directly in this session. Keep the whole walkthrough in Muse. Start with bypass_demo_start kind real unless I explicitly request an offline preview. Explain that this creates a separate local fixture with public accounts, Muse-directed reasoning and real HTTP execution. It does not test my deployed app. If host reasoning or test execution fails, preserve the fixture and show one recovery action; never silently switch to preview.
 
 Show a short Done / Now / Next board at each milestone. Continue the requested demonstration without asking me to approve each routine step:
