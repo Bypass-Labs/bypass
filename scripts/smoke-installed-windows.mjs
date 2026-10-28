@@ -38,7 +38,11 @@ try{
   assert.equal((await request('initialize',{protocolVersion:'2025-11-25',capabilities:{},clientInfo:{name:'windows-release-test',version:'1'}})).result.protocolVersion,'2025-11-25');
   child.stdin.write(JSON.stringify({jsonrpc:'2.0',method:'notifications/initialized'})+'\n');
   const tools=await request('tools/list');assert.ok(tools.result.tools.find(t=>t.name==='bypass_feature_context'));
-  const connected=await request('tools/call',{name:'bypass_connect_repository',arguments:{repository:app,confirmed:true}});assert.equal(connected.result.isError,false);
+  const empty=await request('tools/call',{name:'bypass_connect_repository',arguments:{repository:app,confirmed:true}});
+  assert.equal(empty.result.isError,true,JSON.stringify(empty));
+  assert.match(JSON.stringify(empty.result),/No eligible application source files/);
+  fs.writeFileSync(path.join(app,'app.mjs'),'export const application = "Windows installed-package fixture";\n');
+  const connected=await request('tools/call',{name:'bypass_connect_repository',arguments:{repository:app,confirmed:true}});assert.equal(connected.result.isError,false,JSON.stringify(connected));
   const context=await request('tools/call',{name:'bypass_feature_context',arguments:{task:'Add invoices & reports'}});assert.equal(context.result.isError,false);assert.equal(JSON.parse(context.result.content[0].text).kind,'feature-security-context');
   const call=async(name,args={})=>{const response=await request('tools/call',{name,arguments:args});assert.equal(response.result.isError,false,JSON.stringify(response));return JSON.parse(response.result.content[0].text);};
   assert.equal((await call('bypass_dashboard')).selectedRepository,app);
