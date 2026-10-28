@@ -1,5 +1,8 @@
 # Architecture and implementation boundaries
 
+For the proposed discovery pipeline, see
+[Vulnerability discovery service](VULNERABILITY_DISCOVERY.md).
+
 ## Shared application core
 
 ```mermaid
