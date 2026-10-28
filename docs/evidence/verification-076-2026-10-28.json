@@ -1,0 +1,111 @@
+{
+  "date": "2026-10-28",
+  "version": "0.7.6",
+  "releaseId": "main-b8955a89c91ddfd14f412b8540121f2156a01a17-40639306192-1",
+  "releaseCommit": "b8955a89c91ddfd14f412b8540121f2156a01a17",
+  "releaseWorkflow": "https://github.com/Bypass-Labs/bypass-for-muse/actions/runs/40639306192",
+  "sourceSuite": {
+    "tests": 172,
+    "pass": 170,
+    "fail": 0,
+    "skipped": 2
+  },
+  "installedRuntimeSuite": {
+    "tests": 32,
+    "pass": 32,
+    "fail": 0,
+    "skipped": 0
+  },
+  "installedRuntimeMethod": "Existing tests copied into an isolated harness with src/bin/agents/examples pointing to the unmodified public package. Packaged MCP calls launched the installed manifest command and bundled Node from the test application cwd. Test assertions were unchanged.",
+  "releaseCi": {
+    "passed": 172,
+    "failed": 0,
+    "skipped": 0,
+    "macosTerminal": "passed",
+    "linuxInstaller": "passed",
+    "windowsPowerShell51": "passed",
+    "windowsPowerShell7": "passed"
+  },
+  "nativeMuseReadback": {
+    "exitCode": 0,
+    "elapsedSeconds": 38.0,
+    "steps": [
+      {
+        "tool": "mcp__plugin_bypass_security__bypass_onboarding",
+        "outcome": "success",
+        "pluginVersion": "0.7.6",
+        "exitCode": 0,
+        "versions": {
+          "version": "0.7.6",
+          "installedVersion": "0.7.6",
+          "publishedVersion": "0.7.6",
+          "restartRequired": false,
+          "releaseCheck": "verified"
+        },
+        "selectedMethods": [
+          "GET",
+          "HEAD",
+          "POST",
+          "PUT",
+          "PATCH",
+          "DELETE",
+          "OPTIONS"
+        ]
+      },
+      {
+        "tool": "mcp__plugin_bypass_security__bypass_target",
+        "outcome": "success",
+        "pluginVersion": "0.7.6",
+        "exitCode": 0
+      }
+    ],
+    "scopeOnly": true,
+    "productionSecurityReview": false
+  },
+  "interactivePicker": {
+    "host": "Muse Code 1.4.14",
+    "sessionId": "01a182f4-dcc3-7782-b262-57bdda9f8a74",
+    "installedFromPublicRelease": true,
+    "pickerOpenedWithoutFollowUp": true,
+    "choices": [
+      "Read",
+      "Read + create",
+      "Custom methods"
+    ],
+    "selectedMethods": [
+      "GET",
+      "HEAD",
+      "POST",
+      "PUT",
+      "PATCH",
+      "DELETE",
+      "OPTIONS",
+      "PROPFIND"
+    ],
+    "hostMethodArgument": "[\"GET\", \"HEAD\", \"POST\", \"PUT\", \"PATCH\", \"DELETE\", \"OPTIONS\", \"PROPFIND\"]",
+    "hostMethodArgumentType": "JSON-encoded string",
+    "toolErrors": 0,
+    "savedMethods": [
+      "GET",
+      "HEAD",
+      "POST",
+      "PUT",
+      "PATCH",
+      "DELETE",
+      "OPTIONS",
+      "PROPFIND"
+    ],
+    "paths": [
+      "/api"
+    ],
+    "requestsPerSecond": 2,
+    "hostReportedElapsed": "1m51s, including waiting for keyboard input",
+    "applicationRequests": 0
+  },
+  "productionApplicationRequests": 0,
+  "remainingGaps": [
+    "Complete production UAT and first-time-user journey",
+    "Active Muse/MCP session protection during cleanup",
+    "Variable host inference latency; no latency bound established"
+  ]
+}
