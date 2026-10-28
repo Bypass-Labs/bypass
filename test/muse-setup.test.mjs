@@ -12,9 +12,13 @@ function fixture({answer='yes',status='review_needed',active=true}={}){
 test('one explicit consent approves only the two declared capabilities and opens onboarding',async()=>{
   const f=fixture();const result=await finishMuseSetup(f.options);
   assert.equal(result.opened,true);
-  assert.deepEqual(f.calls,['ask','plugin:bypass:hook:session-context','plugin:bypass:mcp_server:security',['launch',setupPrompt]]);
-  assert.match(f.output.join('\n'),/Security tools:.*authorized app requests/);
-  assert.match(f.output.join('\n'),/Session context:.*saved security context/);
+  assert.deepEqual(f.calls,['ask','plugin:bypass:mcp_server:security','plugin:bypass:hook:session-context',['launch',setupPrompt]]);
+  assert.match(f.output.join('\n'),/Security tools \(needs permission\)/);
+  assert.match(f.output.join('\n'),/test approved app routes/);
+  assert.match(f.output.join('\n'),/Security memory \(needs permission\)/);
+  assert.match(f.output.join('\n'),/saved project security context/);
+  assert.match(f.output.join('\n'),/verified ownership and an approved scope/);
+  assert.match(f.output.join('\n'),/n\/Enter Keep Bypass installed/);
   assert.match(f.output.join('\n'),/customer app & Ω/);
 });
 
@@ -36,6 +40,22 @@ test('headless installation never approves or launches, even with piped input',a
 test('approved rerun opens after consent without changing previous approval',async()=>{
   const f=fixture({status:'trusted_enabled'});await finishMuseSetup(f.options);
   assert.deepEqual(f.calls,['ask',['launch',setupPrompt]]);
+});
+
+test('partial permission approval identifies the remaining choice and only enables that capability',async()=>{
+  const f=fixture();f.value.runtime_capabilities[0].status='trusted_enabled';
+  await finishMuseSetup(f.options);
+  assert.match(f.output.join('\n'),/Security memory \(already enabled\)/);
+  assert.deepEqual(f.calls,['ask','plugin:bypass:mcp_server:security',['launch',setupPrompt]]);
+});
+
+test('cancelling after yes stops further approvals and never opens Muse',async()=>{
+  const f=fixture(),controller=new AbortController();let approved=0;
+  f.options.signal=controller.signal;
+  const original=f.options.approve;
+  f.options.approve=async id=>{await original(id);approved++;controller.abort();};
+  await assert.rejects(finishMuseSetup(f.options),error=>error.code===130);
+  assert.equal(approved,1);assert.ok(!f.calls.some(call=>Array.isArray(call)));
 });
 
 test('disabled, rejected, missing and unknown capabilities require manual attention',async()=>{

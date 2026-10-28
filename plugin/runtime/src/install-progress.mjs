@@ -6,6 +6,34 @@ const frames=['⠋','⠙','⠹','⠸','⠼','⠴','⠦','⠧','⠇','⠏'];
 const elapsed=ms=>ms<60000?`${Math.floor(ms/1000)}s`:`${Math.floor(ms/60000)}m${Math.floor(ms/1000)%60?' '+Math.floor(ms/1000)%60+'s':''}`;
 const details={inspect:'Looking for an existing Bypass plugin.',validate:'Muse is checking the plugin package.',remove:'Updating the previous plugin installation.',install:'Installing tools, commands and security memory.',disable:'Keeping your existing disabled setting.'};
 
+// A short native operation needs immediate feedback too, especially after a
+// permission choice. Keep machine output plain and finish before Muse takes over.
+export function createSetupActivity({output=process.stderr,env=process.env,clock=Date.now}={}){
+  const animated=!!output.isTTY&&env.TERM!=='dumb'&&!env.CI&&env.BYPASS_PLAIN!=='1';
+  const {paint}=createTheme({output,env:animated?env:{...env,NO_COLOR:''}});
+  return async(label,work)=>{
+    const started=clock();let frame=0,lastPlain=started;
+    const render=()=>{
+      if(animated){
+        const suffix=` · ${elapsed(clock()-started)}`;
+        output.write('\r\x1b[2K'+paint('accent',`${frames[frame++%frames.length]} ${clip(label,Math.max(8,(output.columns||80)-cells(suffix)-4))}${suffix}`));
+      }else if(clock()-lastPlain>=20000){output.write(`${label} · ${elapsed(clock()-started)} elapsed\n`);lastPlain=clock();}
+    };
+    if(animated)render();else output.write(label+'…\n');
+    const timer=setInterval(render,120);
+    try{
+      const result=await work();
+      clearInterval(timer);
+      output.write((animated?'\r\x1b[2K':'')+paint('success',`✓ ${label}`)+'\n');
+      return result;
+    }catch(error){
+      clearInterval(timer);
+      output.write((animated?'\r\x1b[2K':'')+paint(error.code===130?'warning':'error',`${error.code===130?'○':'!'} ${label} — ${error.code===130?'cancelled':'not completed'}`)+'\n');
+      throw error;
+    }
+  };
+}
+
 // Muse reports the result of each operation, not byte progress. Only advance
 // the checklist on real service events; never infer completion from a timer.
 export function createInstallProgress({output=process.stderr,env=process.env,clock=Date.now}={}){

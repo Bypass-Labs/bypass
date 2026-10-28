@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { EventEmitter } from 'node:events';
-import { createInstallProgress } from '../src/install-progress.mjs';
+import { createInstallProgress, createSetupActivity } from '../src/install-progress.mjs';
 import { stripVTControlCharacters } from 'node:util';
 
 function fixture(env={},isTTY=true){
@@ -48,4 +48,15 @@ test('narrow terminal retains next steps and timeout without wrapping the checkl
     const frame=f.text();assert.ok(frame.split('\n').every(line=>line.length<40));
     assert.match(frame,/Next: permissions → open Muse/);assert.match(frame,/Muse timeout: 2m/);
   }finally{f.progress.finish();}
+});
+
+test('approval progress starts before waiting and never marks rejected approval as completed',async()=>{
+  const chunks=[],output={isTTY:false,write:text=>chunks.push(text)};
+  const activity=createSetupActivity({output});
+  let release;const pending=activity('Enable security tools',()=>new Promise(resolve=>{release=resolve;}));
+  assert.match(chunks.join(''),/Enable security tools…/);assert.doesNotMatch(chunks.join(''),/✓/);
+  release();await pending;assert.match(chunks.join(''),/✓ Enable security tools/);
+  chunks.length=0;
+  await assert.rejects(activity('Enable security memory',async()=>{throw new Error('native rejection');}),/native rejection/);
+  assert.doesNotMatch(chunks.join(''),/✓/);assert.match(chunks.join(''),/not completed/);
 });

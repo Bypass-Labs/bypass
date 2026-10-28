@@ -3,9 +3,9 @@ import { execute } from '../src/service.mjs';
 import { finishMuseSetup, setupTerminal } from '../src/muse-setup.mjs';
 import { redact, Fault } from '../src/util.mjs';
 import { createTheme } from '../src/terminal-theme.mjs';
-import { createInstallProgress } from '../src/install-progress.mjs';
+import { createInstallProgress, createSetupActivity } from '../src/install-progress.mjs';
 const {paint}=createTheme();
-const write=text=>console.log(paint(text.startsWith('\n03')?'brand':text.startsWith('  ')?'muted':'normal',text));
+const write=text=>console.log(paint(text.startsWith('\n03')?'brand':/^  [12]\./.test(text)?'title':text.startsWith('  ')?'muted':'normal',text));
 
 let terminal;
 try{
@@ -20,7 +20,7 @@ try{
   }catch(error){progress.finish({error});throw error;}
   finally{process.off('SIGINT',cancel);process.off('SIGTERM',cancel);}
   terminal=setupTerminal();
-  const result=await finishMuseSetup({cwd:process.cwd(),ask:terminal?.ask,launch:terminal?.launch,write});
+  const result=await finishMuseSetup({cwd:process.cwd(),ask:terminal?.ask,launch:terminal?.launch,signal:terminal?.signal,activity:createSetupActivity(),write});
   process.exitCode=result.exitCode||0;
 }catch(error){
   console.error(paint('error',redact(error.message)));
