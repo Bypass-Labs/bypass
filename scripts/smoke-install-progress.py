@@ -11,7 +11,7 @@ for mode in ['success','narrow','resize','failure','cancel','cancel-remove']:
     with tempfile.TemporaryDirectory(prefix='bypass-setup-pty-') as temporary:
         base=Path(temporary);app=base/'app';app.mkdir();bin_dir=base/'bin';bin_dir.mkdir()
         state=base/'installed.json';installing=base/'installing';calls=base/'calls.jsonl'
-        fixture={'valid':True,'active':True,'record':{'id':'bypass','package_sha256':'fixture','cache_path':str(base/'cache'),'source':{'path':str(base/'previous-plugin')}},'runtime_capabilities':[{'candidate':{'stable_id':'plugin:bypass:'+cap},'status':'review_needed'} for cap in ['hook:session-context','mcp_server:security']]}
+        fixture={'valid':True,'active':True,'record':{'id':'bypass','version':json.loads((root/'plugin/.muse-plugin/plugin.json').read_text())['version'],'package_sha256':'fixture','cache_path':str(base/'cache'),'source':{'path':str(base/'previous-plugin')}},'runtime_capabilities':[{'candidate':{'stable_id':'plugin:bypass:'+cap},'status':'review_needed'} for cap in ['hook:session-context','mcp_server:security']]}
         if mode.startswith('cancel'):state.write_text(json.dumps(fixture))
         host=bin_dir/'muse'
         host.write_text('#!'+sys.executable+'\n'+"""
