@@ -37,7 +37,9 @@ jobs:
         with:
           node-version: '22.23.4'
       - name: Verify piped installer hands interactive input to Muse on macOS
-        run: python3 scripts/smoke-muse-terminal.py "$(command -v node)"
+        run: |
+          python3 scripts/smoke-muse-terminal.py "$(command -v node)"
+          python3 scripts/smoke-install-progress.py "$(command -v node)"
   release:
     needs: windows-accounts
     if: github.ref == 'refs/heads/main'
@@ -62,6 +64,7 @@ jobs:
           npm run check
           BYPASS_DOCKER_TESTS=1 npm test
           python3 scripts/smoke-muse-terminal.py "$(command -v node)"
+          python3 scripts/smoke-install-progress.py "$(command -v node)"
           python3 scripts/smoke-terminal-ui.py "$(command -v node)"
       - name: Build self-contained macOS, Linux, and Windows artifacts
         id: build
