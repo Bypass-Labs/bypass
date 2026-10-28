@@ -26,7 +26,7 @@ async function wizard(root, answers, options={}){
 test('wizard defers failed DNS and resumes the same challenge through explicit scope without duplicate setup',async t=>{
   const root=temp();
   t.mock.method(dns,'resolveTxt',async()=>[['wrong challenge']]);
-  const first=await wizard(root,['1','','','','n','https://staging.example.com','1','1','n']);
+  const first=await wizard(root,['1','','','','n','https://staging.example.com','2','1','n']);
   const saved=read(root),challenge=saved.targets[0].challenge;
   assert.equal(saved.targets[0].ownership.status,'pending');
   assert.equal(saved.targets[0].authorization,null);
@@ -44,6 +44,7 @@ test('wizard defers failed DNS and resumes the same challenge through explicit s
   assert.equal(resumed.targets[0].ownership.status,'verified');
   assert.deepEqual(resumed.targets[0].authorization.paths,['/api']);
   assert.match(second.output,/verified and authorized/);
+  assert.doesNotMatch(second.output,/What address do you open/,'saved app must not be asked for again');
 });
 
 test('wizard never turns local ownership acknowledgment into testing permission by default',async()=>{
@@ -106,13 +107,21 @@ test('demo onboarding refuses to replace existing project or unrelated files',as
 test('wizard accepts a bare domain directly after a typo and defers DNS on Enter',async t=>{
   t.mock.method(dns,'resolveTxt',async()=>assert.fail('Default continuation must not request DNS'));
   const root=temp();
-  const result=await wizard(root,['1','','','','n','bad input','job-radar.app','2','','n'],{flow:undefined});
+  const result=await wizard(root,['1','','','','n','bad input','job-radar.app','1','','n'],{flow:undefined});
   assert.equal(read(root).targets[0].url,'https://job-radar.app');
   assert.equal(read(root).targets[0].environment,'production');
   assert.equal(read(root).targets[0].ownership.status,'pending');
-  assert.equal(result.prompts.filter(p=>p.startsWith('App domain')).length,2);
+  assert.equal(result.prompts.filter(p=>p.startsWith('App URL')).length,2);
   assert.equal(result.prompts.some(p=>p.startsWith('Try again')),false);
   assert.match(result.output,/Source review can continue/);
+});
+
+test('wizard accepts code only as an answer and never asks for environment or ownership',async()=>{
+  const root=temp();
+  const result=await wizard(root,['1','','','','n','code only','n']);
+  assert.equal(read(root).targets.length,0);
+  assert.equal(result.prompts.some(p=>/real users|Paths to test|control|confirm this production/i.test(p)),false);
+  assert.match(result.output,/code-only review available/);
 });
 
 test('wizard invalid flow and noninteractive invocation fail before writing setup',async()=>{

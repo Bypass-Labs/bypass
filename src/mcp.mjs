@@ -25,7 +25,7 @@ const repositorySelection={repository:str('Application repository: explicit loca
 export const toolDefinitions=[
   tool('bypass_help','Discover everything available inside Muse: workflows, native tools, CLI equivalents, and the few host-owned setup steps. No project required.',{query:str('Optional feature, command or tool to find')},[],'plugin-help',undefined,undefined,true),
   tool('bypass_dashboard','Show Done / Now / Next, the selected application, latest run, saved checks and actual monitor worker health. No scan or inference.',{},[],'plugin-dashboard',undefined,undefined,true),
-  tool('bypass_onboarding','Start or resume the guided plugin setup. Returns version, selected application, a checklist and one next action. No scan, inference or app request.',{intent:str('Requested experience; real is recommended',{enum:['real','preview']})},[],'onboarding',undefined,undefined,true),
+  tool('bypass_onboarding','Start or resume setup with one question at a time. Reuse the user-supplied app URL and environment; do not ask again or substitute an example local port. Returns the next input/action without saving, scanning or making app requests.',{intent:str('Requested experience; real is recommended',{enum:['real','preview']}),mode:str('Use code when the user wants code only; combined otherwise',{enum:['code','combined']}),url:str('App address explicitly supplied by the user for this repository; not an unconfirmed README/example URL'),environment:str('Only when already identified by the user; loopback is inferred automatically',{enum:['local','preview','staging','production']})},[],'onboarding',undefined,undefined,true),
   tool('bypass_workspace','Inspect the Muse workspace and repository selection without initializing or scanning anything.',{},[],'workspace',undefined,undefined,true),
   tool('bypass_connect_repository','Select the application repository for ALL subsequent Bypass calls in this Muse session. Reuse its existing setup or clone a Git URL into an explicit empty directory. Never executes repository code.',repositorySelection,['repository','confirmed'],'connect-session'),
   tool('bypass_status','Read readiness, selected analysis engine, and evidence boundaries.',{},[],'status',undefined,undefined,true),
@@ -151,7 +151,7 @@ export async function serveMCP(cwd=process.cwd(),io={input:process.stdin,output:
       if(selectedRoot)registerProjectCredentials(read(selectedRoot));
       if(t.command==='plugin-help')result=outcome(pluginHelp(toolDefinitions,args.query));
       else if(t.command==='plugin-dashboard')result=pluginDashboard(selectedRoot);
-      else if(t.command==='onboarding')result=outcome(await pluginOnboarding(cwd,selectedRoot,{intent:args.intent||'real',signal:controller.signal}));
+      else if(t.command==='onboarding')result=outcome(await pluginOnboarding(cwd,selectedRoot,{...args,signal:controller.signal}));
       else if(t.command==='workspace')result=outcome(await workspaceInfo(cwd,selectedRoot));
       else if(t.command==='plugin-demo-start'){
         need(!demoRoot,'A demo is already active. Use bypass_demo_control action stop before starting a fresh one; its evidence is retained.');
@@ -203,6 +203,10 @@ export async function serveMCP(cwd=process.cwd(),io={input:process.stdin,output:
           const options={...t.makeOptions(args),project:selectedRoot,json:true,'non-interactive':true};
           for(const key of ['scope-file','file'])if(options[key])options[key]=projectPath(options[key],selectedRoot);
           result=await execute(t.command,t.makeArgs(args),options,{...operationContext,cwd:selectedRoot});
+          if(t.command==='target add'){
+            result.message='App address saved. No app requests have been made.';
+            result.nextAction=read(selectedRoot).activeTarget===result.target.name?{tool:'bypass_onboarding',arguments:{}}:{tool:'bypass_use_target',arguments:{name:result.target.name},message:'Select the app just connected, then continue onboarding.'};
+          }
           if(t.command==='test run'&&result.status==='accepted'){
             const progress=await runProgress(selectedRoot,result.runId,{after:Number.MAX_SAFE_INTEGER,waitMs:8000,signal:controller.signal,onProgress});
             if(progress.terminal){const run=read(selectedRoot).runs.find(r=>r.id===result.runId);result=outcome({runId:run.id,status:run.status,run,progress,nextAction:progress.next},run.exitCode);}

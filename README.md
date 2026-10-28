@@ -26,7 +26,7 @@ irm https://bypasslabs.ai/install/muse.ps1 | iex
 
 This installs the full Muse plugin and CLI, includes Node, and sets up PATH. No GitHub clone, npm, Docker or separate model key is needed for the plugin. Rerun the same command to update or repair.
 
-**2. Answer `y` to “Allow these permissions and open Muse?”**
+**2. Answer `y` to “Enable Bypass and open Muse?”**
 
 The installer explains Bypass's two permissions, records your choice through Muse, and opens a fresh Muse session in the same folder with setup already started. You do not need to navigate plugin menus or type a startup command. Muse may still ask you to sign in or trust the workspace if you have not done that before.
 
@@ -36,7 +36,9 @@ To return to setup in a later Muse session:
 /bypass:start
 ```
 
-Bypass confirms the repository and app, shows the exact DNS TXT record for deployed ownership, and records the testing scope. **Credentials are optional.** Source and anonymous checks can start without them. Muse investigates signup from source and, when authorized, Bypass tries creating up to two dedicated accounts and connects them privately. JSON signup and Firebase email/password are supported; retries reuse saved attempts instead of creating duplicate users.
+Bypass reuses the repository and app address you already supplied. If the address is missing, it asks **“What address do you open in your browser to use this app?”** Paste the URL, or say **“code only”** to start a code review. For an online app, it asks whether real users use it only if that is still unknown. It then shows the exact DNS TXT record to verify control and asks permission for specific read-only checks.
+
+**Credentials are optional.** Source and anonymous checks can start without them. Muse investigates signup from source and, when authorized, Bypass tries creating up to two dedicated accounts and connects them privately. JSON signup and Firebase email/password are supported; retries reuse saved attempts instead of creating duplicate users.
 
 For account-boundary tests, Muse derives routes/selectors and selects owned test IDs from an authorized collection. You can also import existing accounts from a private file. Firebase tokens refresh automatically in the same session. Missing accounts or data limit those tests; they do not block the rest of the review. Never paste secrets into chat. [Accounts, signup and supported limits](docs/ACCOUNTS.md).
 

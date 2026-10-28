@@ -17,7 +17,34 @@ This follows the [Command Line Interface Guidelines](https://clig.dev/) on immed
 
 1. Run `curl -fsSL https://bypasslabs.ai/install/muse | bash` in a macOS/Linux terminal, or `irm https://bypasslabs.ai/install/muse.ps1 | iex` in Windows PowerShell. The installer checks Muse availability, downloads a checksum-verified release with its own Node runtime, sets PATH and registers the full native plugin at user scope. Installation invokes no model and requests no provider key.
 2. The installer names **Security tools** (selected-code review, scoped app checks, local evidence/tests) and **Security memory** (loading saved project context in future sessions), marking each as needing permission or already enabled. It explains model access to reviewed code/context and the ownership/scope requirements for live testing. The choice is explicit: `y` enables the listed permissions and starts setup here; `n` or Enter keeps the installation for later. “Enable Bypass and open Muse?” is the only consent question. After `y`, live progress shows the package check, each pending permission and final verification before opening Muse. Approval still uses the native manager, preserves existing decisions, checks package identity, and stops on failure or cancellation.
-3. Bypass resumes missing application setup. Source review can start immediately; deployed HTTP proof still needs ownership, bounded authorization and account references. Demo, fixes, deterministic replay, exports, monitoring and security memory remain part of the same native plugin. Muse's own account/workspace trust prompts still apply when needed.
+3. Bypass resumes missing application setup. Source review can start immediately; deployed HTTP proof needs ownership and bounded authorization, with accounts optional for checks that do not require them. Demo, fixes, deterministic replay, exports, monitoring and security memory remain part of the same native plugin. Muse's own account/workspace trust prompts still apply when needed.
+
+## Connecting an app: one missing input at a time (0.7.4)
+
+The old question mixed an address, an environment and the option to skip live testing. Muse could turn this into a menu that elevated a documented local port into an apparent running-app recommendation. Repository documentation is not evidence of a current deployment, and a local address must not replace a production URL the user already supplied.
+
+The revised flow adopts three patterns checked against primary documentation on 2026-10-27:
+
+- [Strix CLI](https://github.com/usestrix/strix/blob/main/docs/usage/cli.mdx) accepts repositories and URLs directly, including both in one command. Bypass reuses the repository and app URL already given in the conversation.
+- [Vercel project linking](https://vercel.com/docs/cli/project-linking) offers an identified matching project and remembers the link. Bypass reuses an exact saved app and its ownership record; an unconfirmed README address is not an identified deployment.
+- [OpenClaw onboarding](https://docs.openclaw.ai/start/wizard) separates Quick start from custom configuration and reuses configured choices. Bypass asks for the next missing input and postpones advanced details until relevant. The [CLI Guidelines](https://clig.dev/) also recommend human-readable output, useful defaults and clear interaction.
+
+For a missing address, ask as free text:
+
+```text
+Done  Repository connected
+Now   Connect your running app
+
+What address do you open in your browser to use this app?
+Paste the app URL, or say "code only" to review the code now.
+You can connect an app later.
+```
+
+If the user already supplied the address, skip this question. If they also said production, preview or staging, skip the environment question. Loopback is local automatically. Otherwise ask whether real users use the app or it is only for testing; no remote environment is inferred from the hostname. The plugin input has no selected answer. The CLI's first choice is production, preserving its explicit permission gate if accepted on Enter.
+
+`bypass_onboarding` accepts these conversational inputs and returns a structured text/choice input or a concrete next tool action. It remains read-only: no startup command, discovery request, DNS lookup, target write or authorization is performed. `mode: code` bypasses live setup for the current review and preserves saved app configuration. The CLI accepts the same plain-language choice and `code only` answer.
+
+After the app is selected, show the DNS record (or local ownership acknowledgment), then propose source-derived paths, request rate and expiry for permission. Credentials remain optional. Muse renders its own question controls; the plugin supplies the question type and instructions, rather than owning that UI. Tests cover the packaged MCP conversation, saved app reuse, URL validation, code-only review, and the existing DNS/production authorization gates.
 
 The direct installer is the recommended path: no prompt, skill discovery or agent interpretation is needed to install. It supports macOS, glibc Linux and Windows on x64/arm64 (PowerShell 5.1+). Git is needed when connecting a Git repository.
 

@@ -6,6 +6,7 @@ import { guidedDemo } from './guided-demo.mjs';
 import { reviewSummary } from './experience.mjs';
 import { read } from './store.mjs';
 import { scopeReady, loopback, appOriginInput } from './network.mjs';
+import { appAddressQuestion, appAddressHelp, appEnvironmentQuestion, appEnvironmentChoices, codeOnlyInput } from './app-connection.mjs';
 import { cleanText, redact, Fault, need, outcome } from './util.mjs';
 
 const unique = (base, entries) => { let name=base, n=2; while(entries.some(x=>x.name===name)) name=base+n++; return name; };
@@ -92,21 +93,21 @@ export async function onboard(options={}, args=[], io={}) {
 
   io.task?.(1,'done');io.task?.(2,'running');io.setNext?.('Save setup → open your project → run a source review');
   say('\nStep 3 of 4 / Connect your running app');
-  say('Have a deployed app? Enter its URL to verify ownership. Press Enter to add it later.');
   let state=read(root), target=state.targets.find(t=>t.name===state.activeTarget);
   if(!target&&state.targets.length){target=state.targets[0];await call(root,'target use',[target.name]);}
   if(target)say(`Continuing ${target.name}: ${target.url}`);
-  else while(!target){
-    const input=await ask('App domain or URL (Enter to add later)');if(!input)break;
+  else {
+    say(appAddressQuestion+'\n'+appAddressHelp+' Press Enter to connect it later.');
+    while(!target){
+    const input=await ask('App URL (Enter for code only)');if(!input||codeOnlyInput(input))break;
     let url;try{url=appOriginInput(input);}catch(error){say(`${error.message}\nTry the address again, or press Enter to continue without an app.`);continue;}
     if(url!==input)say(`Using ${url}`);
     const parsed=new URL(url);
-    const environment=loopback(parsed.hostname)?'local':(await pick('Which environment is this?',[
-      {label:'Staging / preview',id:'staging'},{label:'Production',id:'production'}
-    ])).id;
+    const environment=loopback(parsed.hostname)?'local':(await pick(appEnvironmentQuestion(url),appEnvironmentChoices)).id;
     const name=advanced?await ask('Target name',environment):unique(environment,read(root).targets);
     target=(await call(root,'target add',[name],{url,environment})).target;
     await call(root,'target use',[target.name]);
+    }
   }
   if(target)io.setContext?.({app:`${target.url} · ${authorized(target)?'authorized':verified(target)?'scope required':'DNS pending'}`});
   if(target){await connectApp();target=read(root).targets.find(t=>t.name===target.name);}

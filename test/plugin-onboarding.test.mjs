@@ -65,7 +65,7 @@ test('deployed DNS challenge is exact, renews when expired and never implies tes
 test('local onboarding permits optional accounts and retains per-probe validation state',async t=>{
   environment(t,{BYPASS_ONBOARD_OWNER_TOKEN:'owner-test-value',BYPASS_ONBOARD_OTHER_TOKEN:'other-test-value'});
   const root=await sourceReady(),o={project:root};await execute('target add',['app'],{...o,url:'http://127.0.0.1:3456',environment:'local'});
-  let status=await checklist(root,root);assert.equal(status.nextAction.challenge.method,'local');assert.match(status.nextAction.question,/local app/);
+  let status=await checklist(root,root);assert.equal(status.nextAction.challenge.method,'local');assert.match(status.nextAction.question,/on this computer/);
   await execute('target verify',['app'],{...o,method:'local'});status=await checklist(root,root);assert.equal(status.stage,'scope');assert.equal(status.ready.live,false);
   await execute('target authorize',['app'],{...o,paths:'/api',accept:true});status=await checklist(root,root);assert.equal(status.stage,'ready');assert.equal(status.steps.find(s=>s.id==='accounts').status,'optional');
   await execute('identity add',['owner'],{...o,target:'app',type:'bearer','secret-env':'BYPASS_ONBOARD_OWNER_TOKEN'});
