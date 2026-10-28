@@ -150,6 +150,8 @@ BYPASS_DOCKER_TESTS=1 npm test
 
 `npm run test:live` is an opt-in **actual Muse host** fixture test: it installs a temporary candidate plugin under a distinct ID, uses normal host approvals, exercises the full reasoning/test/fix loop, retains evidence, then removes the candidate. It uses the host account's allowance or billing; the test does not attest subscription billing. `node scripts/provider-smoke.mjs` tests only explicitly available provider API-key environment variables with synthetic prompts.
 
+[Architecture](docs/ARCHITECTURE.md) · [Proposed vulnerability discovery pipeline](docs/VULNERABILITY_DISCOVERY.md)
+
 [Architecture and provider limits](docs/AI_MODES.md) · [POC execution details](docs/REAL_POC.md) · [Job Radar setup](docs/JOB_RADAR.md) · [Verification results](docs/AI_VALIDATION.md)
 
 [Installation design and comparison with Strix, Superpowers and Context7](docs/INSTALLATION_DESIGN.md)
