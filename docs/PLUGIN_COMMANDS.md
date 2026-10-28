@@ -2,7 +2,7 @@
 
 The Muse plugin is the primary experience. Use ordinary requests or its slash commands; Muse calls these tools for you. You do not need to learn MCP syntax or leave Muse for project operations.
 
-Standalone model setup has a deliberate mode boundary: plugin model tools explain host ownership and cannot configure or invoke API inference. This reference is generated from the CLI catalog and plugin definitions. CI checks all 90 public CLI commands and their options; there are 84 typed tools. Regenerate with `node scripts/check-plugin-parity.mjs --write` after intentionally changing the catalog.
+Standalone model setup has a deliberate mode boundary: plugin model tools explain host ownership and cannot configure or invoke API inference. This reference is generated from the CLI catalog and plugin definitions. CI checks all 91 public CLI commands and their options; there are 85 typed tools. Regenerate with `node scripts/check-plugin-parity.mjs --write` after intentionally changing the catalog.
 
 ## Start inside Muse
 
@@ -49,7 +49,8 @@ CLI global `--project` maps to the selected repository; `--json` maps to structu
 | `target show` | `bypass_target` | Show target, challenge, and scope. |
 | `target use` | `bypass_use_target` | Select an active target. |
 | `target verify` | `bypass_verify_target` | Check DNS/HTTP control, or acknowledge local ownership. |
-| `target authorize` | `bypass_authorize_target` | Record explicit, expiring testing scope. |
+| `target authorize` | `bypass_authorize_target` | Record explicit paths, HTTP methods and expiring testing scope. |
+| `request` | `bypass_request` | Send one scoped HTTP request; record status and an optional resource ID without replaying writes. |
 | `target revoke` | `bypass_revoke_target` | Revoke testing and pause target monitors. |
 | `target remove` | `bypass_remove_target` | Disconnect a target while retaining historical evidence. |
 | `identity add` | `bypass_add_identity` | Reference a bearer token, cookie, or header in an environment variable. |

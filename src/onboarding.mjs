@@ -7,6 +7,7 @@ import { reviewSummary } from './experience.mjs';
 import { read } from './store.mjs';
 import { scopeReady, loopback, appOriginInput } from './network.mjs';
 import { appAddressQuestion, appAddressHelp, appEnvironmentQuestion, appEnvironmentChoices, codeOnlyInput } from './app-connection.mjs';
+import { promptMethods, mayChangeData } from './http-methods.mjs';
 import { cleanText, redact, Fault, need, outcome } from './util.mjs';
 
 const unique = (base, entries) => { let name=base, n=2; while(entries.some(x=>x.name===name)) name=base+n++; return name; };
@@ -20,6 +21,7 @@ export async function onboard(options={}, args=[], io={}) {
   if(options.flow) need(['quickstart','advanced','demo'].includes(options.flow), '--flow must be quickstart, advanced, or demo.');
   const say = value => (io.write||console.log)(cleanText(redact(String(value))));
   const ask = async (label, fallback='') => (await io.ask(label,fallback)).trim() || fallback;
+  ask.multiselect=io.multiselect||io.ask.multiselect;
   const yes = async (label, fallback='n') => {
     while(true) { const value=(await ask(label+' (y/n)',fallback)).toLowerCase(); if(['y','yes'].includes(value))return true;if(['n','no'].includes(value))return false;say('Choose y or n.'); }
   };
@@ -168,12 +170,14 @@ export async function onboard(options={}, args=[], io={}) {
     if(authorized(target)){say(`Keeping authorized scope: ${target.authorization.paths.join(', ')}`);return;}
     await recover(async()=>{
       const paths=await ask('Paths to test (comma-separated)','/api');
-      say(`Read-only GET/HEAD checks on ${target.url}\nPaths: ${paths}\nMaximum 2 requests/second · permission expires in 7 days.`);
+      const methods=await promptMethods(ask,say);
+      say(`${methods.join(', ')} checks on ${target.url}\nPaths: ${paths}\nMaximum 2 requests/second · permission expires in 7 days.`);
+      if(mayChangeData(methods))say('Selected methods can create/change/delete test data or start jobs. Bypass sends only explicitly configured requests.');
       if(!await yes('Do you authorize these checks?')){say('Scope not authorized. Live testing stays blocked.');return;}
       let production=false;
       if(target.environment==='production')production=(await ask('Type production to confirm this production scope'))==='production';
       if(target.environment==='production'&&!production){say('Production scope not authorized.');return;}
-      await call(root,'target authorize',[target.name],{accept:true,paths,production});
+      await call(root,'target authorize',[target.name],{accept:true,paths,methods,production});
       say('✓ Testing scope authorized.');
     });
   }

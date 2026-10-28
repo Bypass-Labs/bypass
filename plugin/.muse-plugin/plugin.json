@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "name": "bypass",
   "displayName": "Bypass",
-  "version": "0.7.4",
+  "version": "0.7.5",
   "description": "Give coding agents evidence-backed security context for new features; prove fixes and keep regression tests.",
   "compat": {
     "source": "native",

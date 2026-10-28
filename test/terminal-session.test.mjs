@@ -9,6 +9,7 @@ import { read } from '../src/store.mjs';
 import { Fault } from '../src/util.mjs';
 import { createTheme } from '../src/terminal-theme.mjs';
 import { temp } from './helpers.mjs';
+import { methodChoices, promptMethods } from '../src/http-methods.mjs';
 
 function terminal(t,columns=90,rows=30) {
   const input=new PassThrough(),output=new PassThrough();let raw=false,bytes='';
@@ -43,6 +44,22 @@ test('menus accept arrows, numbers and Escape without abandoning the workspace',
   answer=tty.ui.select('Choose',items,{back:true});tty.key('escape');assert.equal(await answer,null);
   answer=tty.ui.select('Choose',items);tty.type('1');tty.key('return');assert.equal((await answer).id,1);
   answer=tty.ui.select('Model',[{name:'local',provider:'custom','secret-env':'BYPASS_UNIT_API_KEY',stream:false}]);assert.equal(tty.ui.state.menu[0].label,'local');tty.key('return');assert.equal((await answer).name,'local');
+});
+
+test('HTTP method picker toggles multiple choices with real keys, supports custom input and remains visible on resize',async t=>{
+  const tty=terminal(t);let answer=promptMethods(tty.ui.ask,tty.ui.write);
+  tty.type('\x1b[B\x1b[B ');assert.deepEqual(tty.ui.state.pending.values,['GET','HEAD','POST']);
+  for(const [columns,rows] of [[100,30],[80,24],[40,15]]){
+    const view=frame(tty.ui.state,columns,rows),text=view.lines.map(x=>x.text).join('\n');
+    assert.match(text,/\[x\] POST/);assert.match(text,/Selected: GET, HEAD, POST/);
+    assert.equal(view.lines.length,rows);assert.ok(view.lines.every(x=>cells(x.text)<=columns-2));
+  }
+  tty.type('\r');assert.deepEqual(await answer,['GET','HEAD','POST']);
+  answer=promptMethods(tty.ui.ask,tty.ui.write,['GET','POST','PROPFIND']);
+  assert.match(frame(tty.ui.state,100,30).lines.map(x=>x.text).join('\n'),/Selected: GET, POST, PROPFIND/);
+  tty.type('GET,PATCH,PROPFIND\r');assert.deepEqual(await answer,['GET','PATCH','PROPFIND']);
+  answer=tty.ui.multiselect('Methods',methodChoices);tty.type('\r');assert.ok(tty.ui.state.pending,'empty selection cannot silently grant a default');
+  tty.key('escape');await assert.rejects(answer,error=>error.code===130);
 });
 
 test('a real Escape byte resolves promptly before the next typed command',async t=>{

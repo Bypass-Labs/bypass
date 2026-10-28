@@ -17,7 +17,7 @@ import { inExecutionMode } from '../src/execution-mode.mjs';
 
 async function app(t,handler){
   const root=temp(),server=http.createServer(handler);await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));t.after(()=>server.close());
-  await execute('init',[root]);const o={project:root};await execute('target add',['app'],{...o,url:`http://127.0.0.1:${server.address().port}`,environment:'local'});await execute('target verify',['app'],{...o,method:'local'});await execute('target authorize',['app'],{...o,accept:true,paths:'/api,/reports'});return {root,o,server};
+  await execute('init',[root]);const o={project:root};await execute('target add',['app'],{...o,url:`http://127.0.0.1:${server.address().port}`,environment:'local'});await execute('target verify',['app'],{...o,method:'local'});await execute('target authorize',['app'],{...o,accept:true,paths:'/api,/reports',methods:'GET,HEAD,POST'});return {root,o,server};
 }
 async function client(t,root,packaged=false){const c=await mcpClient(root,{packaged,stateDir:temp(),env:{BYPASS_CREDENTIAL_DIR:temp()}});t.after(()=>c.close());return c;}
 const send=(r,status,data)=>{r.writeHead(status,{'Content-Type':'application/json'});r.end(JSON.stringify(data));};
@@ -123,6 +123,9 @@ test('registration permission gates make no requests; interrupted creation is ne
   let posts=0;const {root,o}=await app(t,(_q,r)=>{posts++;send(r,201,{token:'unused-token'});});
   const settings={...o,path:'/api/signup','check-path':'/api/me','email-domain':'uat.invalid','token-field':'token','verified-field':'verified'};
   await assert.rejects(execute('registration configure',[],settings),/permission/);assert.equal(posts,0);
+  await execute('target authorize',['app'],{...o,paths:'/api',methods:'GET,HEAD',accept:true});
+  await assert.rejects(execute('registration configure',[],{...settings,accept:true}),/Method POST/);assert.equal(posts,0);
+  await execute('target authorize',['app'],{...o,paths:'/api',methods:'GET,HEAD,POST',accept:true});
   await execute('registration configure',[],{...settings,accept:true});
   await change(root,s=>{s.targets[0].registration.attempts=[{name:'reserved-test',email:'bypass-reserved@uat.invalid',status:'reserved'}];});
   const resumed=await execute('registration test',[],o);assert.equal(resumed.registration.reused,true);assert.equal(resumed.registration.currentProof,false);assert.equal(posts,0);

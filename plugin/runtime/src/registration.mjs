@@ -18,7 +18,7 @@ export async function configureRegistration(root,o){
   need(o.accept,'Registration attempts create accounts. Record the user’s permission before enabling this check.');
   const provider=o.provider||'json';need(['json','firebase'].includes(provider),'Registration supports json or firebase.');
   need(exactPath(o['check-path'])&&(provider==='firebase'||exactPath(o.path)),'Registration and protected-control paths must be exact paths on the verified application.');
-  if(provider==='json')need(pathAllowed(o.path,target.authorization.paths),'Registration endpoint is outside the authorized paths.',3);
+  if(provider==='json')scopeReady(target,o.path,'POST');
   let configKeyHash;
   if(provider==='firebase'){
     need(o['config-file']&&/^[a-z0-9][a-z0-9-]{3,62}$/.test(o['project-id']||''),'Firebase signup needs the app public config file and exact Firebase project ID.');
@@ -42,6 +42,7 @@ export async function testRegistration(root,{target:targetName,signal,request=sa
   const result={kind:'registration',status:'incomplete',findings:[],probes:[],accounts:[],observations:[],requests:0,modelCalls:0,startedAt:now(),coverage:'JSON signup on the verified origin; no CAPTCHA bypass, email delivery, social login or arbitrary browser automation.'};
   try{
     scopeReady(target,config.checkPath);
+    if(config.provider==='json')scopeReady(target,config.path,'POST');
     need(hash(target.authorization)===config.authorizationFingerprint,'Testing scope changed. Registration permission must be reviewed again.',3);
     if(config.attempts?.length)return {...config.lastResult||result,reused:true,currentProof:false,reason:'Registration attempts are already recorded. Existing identities are reused; no duplicate users created.',attempts:config.attempts,requests:0};
     for(let index=0;index<config.maxAccounts;index++){
@@ -55,6 +56,7 @@ export async function testRegistration(root,{target:targetName,signal,request=sa
       const firebase=config.provider==='firebase',apiKey=firebase?credentialFields(config.configFile,{privateFile:false})[config.apiKeyField]:null;registerSecret(apiKey);
       if(firebase)need(typeof apiKey==='string'&&apiKey&&hash(apiKey)===config.configKeyHash,'Public Firebase config changed. No signup request was sent; review the configured project.',3);
       const live=named(read(root).targets,app.name,'Target');scopeReady(live,config.checkPath);
+      if(!firebase)scopeReady(live,config.path,'POST');
       need(hash(live.authorization)===config.authorizationFingerprint,'Registration permission changed before the request.',3);
       result.requests++;
       const response=await request(firebase?config.path+'?key='+encodeURIComponent(apiKey):app.url+config.path,{allowLocal:app.environment==='local',method:'POST',headers:{'Content-Type':'application/json',...(firebase?{Referer:app.url+'/'}:{})},body:JSON.stringify({[config.emailField]:email,[config.passwordField]:password,...(firebase?{returnSecureToken:true}:{})}),signal,timeout:state.settings.requestTimeoutMs,maxBytes:32768});

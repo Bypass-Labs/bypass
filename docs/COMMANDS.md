@@ -130,7 +130,27 @@ Options: --method, --wait, --renew.
 
 Record explicit, expiring testing scope.
 
-Options: --scope-file, --paths, --accept, --production.
+Options: --scope-file, --paths, --methods, --accept, --production.
+
+The interactive `/app` → **Edit allowed methods & paths** picker supports GET, HEAD, POST, PUT, PATCH, DELETE, OPTIONS and custom comma-separated input. Use ↑↓ and Space to select, Enter to confirm. Plain terminals accept names or numbers separated by commas. Existing grants are retained until explicitly changed. Methods apply to every listed path prefix.
+
+```bash
+bypass target authorize app --paths /api/runs,/api/me --methods GET,HEAD,POST --accept --production
+```
+
+Omitted methods default to GET/HEAD. Scope files can specify `methods` as an array. CONNECT tunnels and HTTP/2 prefaces are not supported.
+
+## request
+
+Send one request within current ownership, method and path permissions. For example, after authorizing POST and connecting the owner account:
+
+```bash
+bypass request --method POST --path /api/runs --identity owner --body-file test-run.json --id-field run.id
+```
+
+Options: --target, --method, --path, --identity, --body-file, --id-field. JSON body files are limited to 64 KiB. Paths are exact, without queries. Returns status, evidence run ID and an optional response resource ID; request/response bodies and credentials are not saved. Muse calls `bypass_request` directly and can supply a synthetic JSON object.
+
+Use the returned resource ID to configure a normal access probe. Requests are never retried automatically, followed across redirects, or included in saved-test replay. If interrupted after sending, the result is unknown: inspect the app before repeating a possible write. This follows [HTTP retry semantics](https://www.rfc-editor.org/rfc/rfc9110.html#section-9.2.2). A one-off response is an observation, not security proof. Existing saved access regressions use GET; they do not recreate resources or test arbitrary mutation workflows. Cleanup requires its own allowed method/path.
 
 ## target revoke <name>
 

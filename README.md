@@ -36,7 +36,7 @@ To return to setup in a later Muse session:
 /bypass:start
 ```
 
-Bypass reuses the repository and app address you already supplied. If the address is missing, it asks **“What address do you open in your browser to use this app?”** Paste the URL, or say **“code only”** to start a code review. For an online app, it asks whether real users use it only if that is still unknown. It then shows the exact DNS TXT record to verify control and asks permission for specific read-only checks.
+Bypass reuses the repository and app address you already supplied. If the address is missing, it asks **“What address do you open in your browser to use this app?”** Paste the URL, or say **“code only”** to start a code review. For an online app, it asks whether real users use it only if that is still unknown. It then shows the exact DNS TXT record to verify control and lets you choose allowed HTTP methods: **GET, HEAD, POST, PUT, PATCH, DELETE, OPTIONS, or custom**. The permission summary shows the app, paths, request limit and expiry. Choose POST when the review needs to create test resources or start jobs. Muse performs authorized setup and uses the returned IDs for access checks; saved access regressions do not recreate those jobs.
 
 **Credentials are optional.** Source and anonymous checks can start without them. Muse investigates signup from source and, when authorized, Bypass tries creating up to two dedicated accounts and connects them privately. JSON signup and Firebase email/password are supported; retries reuse saved attempts instead of creating duplicate users.
 

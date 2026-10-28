@@ -14,6 +14,7 @@ function nextForRun(run){
   if(!terminalRun(run))return action('Follow this review', 'bypass_watch_run',{id:run.id,after:run.steps?.length||0});
   if(run.status==='failed'||run.status==='interrupted')return action('Inspect the saved failure before retrying','bypass_run',{id:run.id});
   if(run.status==='cancelled')return run.executionMode==='muse-host'?action('Resume saved review','bypass_review_step',{id:run.id,action:'resume'}):action('Review saved progress','bypass_run',{id:run.id});
+  if(run.kind==='request')return action('Inspect the HTTP request and observed resource ID','bypass_run',{id:run.id});
   if(run.result?.confirmed?.length||run.result?.findings?.length)return action('Inspect findings and their evidence','bypass_findings',{run:run.id});
   if(run.kind!=='scan')return action('Inspect saved regression results','bypass_tests');
   return action('Read the bounded review result','bypass_run',{id:run.id});

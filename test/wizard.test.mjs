@@ -36,20 +36,21 @@ test('wizard defers failed DNS and resumes the same challenge through explicit s
   assert.equal(saved.models[0].lastTest,undefined);
   assert.equal(saved.settings.analysisEngine,'docker');
   dns.resolveTxt.mock.mockImplementation(async record=>{assert.equal(record,challenge.record);return [[challenge.token]];});
-  const second=await wizard(root,['n','1','','yes','n']);
+  const second=await wizard(root,['n','1','','GET,HEAD,POST,PROPFIND','yes','n']);
   const resumed=read(root);
   assert.equal(resumed.project.id,saved.project.id);
   assert.equal(resumed.targets.length,1);assert.equal(resumed.models.length,1);
   assert.equal(resumed.targets[0].challenge.token,challenge.token);
   assert.equal(resumed.targets[0].ownership.status,'verified');
   assert.deepEqual(resumed.targets[0].authorization.paths,['/api']);
+  assert.deepEqual(resumed.targets[0].authorization.methods,['GET','HEAD','POST','PROPFIND']);
   assert.match(second.output,/verified and authorized/);
   assert.doesNotMatch(second.output,/What address do you open/,'saved app must not be asked for again');
 });
 
 test('wizard never turns local ownership acknowledgment into testing permission by default',async()=>{
   const root=temp();
-  const result=await wizard(root,['1','','','','n','http://127.0.0.1:4317','yes','','','n']);
+  const result=await wizard(root,['1','','','','n','http://127.0.0.1:4317','yes','','','','n']);
   const target=read(root).targets[0];
   assert.equal(target.ownership.status,'verified');
   assert.equal(target.authorization,null);
@@ -62,9 +63,9 @@ test('wizard production scope requires the separate production confirmation',asy
   await execute('model add',['muse'],{project:root,provider:'meta','secret-env':'BYPASS_UNIT_API_KEY',model:'test-model',stream:false});
   await execute('target add',['production'],{project:root,url:'https://app.example.com',environment:'production'});
   t.mock.method(dns,'resolveTxt',async()=>[[read(root).targets[0].challenge.token]]);
-  await wizard(root,['n','1','','yes','no','n']);
+  await wizard(root,['n','1','','','yes','no','n']);
   assert.equal(read(root).targets[0].authorization,null);
-  await wizard(root,['n','','yes','production','n']);
+  await wizard(root,['n','','','yes','production','n']);
   assert.equal(read(root).targets[0].authorization.productionAcknowledged,true);
 });
 
@@ -86,7 +87,7 @@ test('failed optional model smoke is recoverable and never shown as connected',a
 
 test('wizard can configure account references and does not store or request token values',async()=>{
   const root=temp();
-  const result=await wizard(root,['1','','','','','n','http://127.0.0.1:4317','','yes','','yes','yes','1','BYPASS_OWNER_TOKEN','','1','BYPASS_OUTSIDER_TOKEN','','n','n'],{flow:'advanced'});
+  const result=await wizard(root,['1','','','','','n','http://127.0.0.1:4317','','yes','','','yes','yes','1','BYPASS_OWNER_TOKEN','','1','BYPASS_OUTSIDER_TOKEN','','n','n'],{flow:'advanced'});
   const identities=read(root).identities;
   assert.equal(identities.length,2);
   assert.deepEqual(identities.map(i=>i.secretEnv),['BYPASS_OWNER_TOKEN','BYPASS_OUTSIDER_TOKEN']);

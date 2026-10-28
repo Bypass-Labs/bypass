@@ -110,22 +110,23 @@ export function frame(state, columns, rows, now=Date.now()) {
     const count=Math.min(height>=30?5:height>=20?3:2,menu.length),start=Math.max(0,Math.min(state.selected-1,menu.length-count));
     for(let i=start;i<start+count;i++){
       const item=menu[i],selected=i===state.selected;
-      add(`${selected?'›':' '} ${state.pending?.kind==='select'?i+1+'  ':''}${item.label}${item.description&&width>=60?'  '+item.description:''}`,selected?'selection':'muted');
+      add(`${selected?'›':' '} ${state.pending?.kind==='multiselect'?(state.pending.values.includes(item.id)?'[x] ':'[ ] '):state.pending?.kind==='select'?i+1+'  ':''}${item.label}${item.description&&width>=60?'  '+item.description:''}`,selected?'selection':'muted');
     }
-    if(menu.length>count)add(`  ${state.selected+1}/${menu.length} · ↑↓ browse · Enter select`,'muted');
+    if(menu.length>count)add(`  ${state.selected+1}/${menu.length} · ↑↓ browse · ${state.pending?.kind==='multiselect'?'Space toggle':'Enter select'}`,'muted');
   }else if(state.input.startsWith('/')&&state.pending?.kind==='command')add('No match · Esc clears · /help lists commands','warning');
   add(divider,'rule');
-  if(['question','select'].includes(state.pending?.kind)){
+  if(['question','select','multiselect'].includes(state.pending?.kind)){
     for(const line of wrapWords(state.pending.title.trim(),width).slice(0,height>=30?2:1))add(line,'title');
+    if(state.pending.kind==='multiselect')add(`Selected: ${state.pending.values.join(', ')||'none'}`,'muted');
     if(state.pending.fallback&&height>=30)add(`Enter uses: ${state.pending.fallback}`,'muted');
   }
-  const placeholder=state.pending?.kind==='command'?`Enter: ${state.recommended||'/review'}  ·  / commands`:state.pending?.kind==='select'?'↑↓ choose · Enter confirm':state.operation?'Working…':'Type your answer';
+  const placeholder=state.pending?.kind==='command'?`Enter: ${state.recommended||'/review'}  ·  / commands`:state.pending?.kind==='multiselect'?'Or type a replacement list: GET,POST,PROPFIND':state.pending?.kind==='select'?'↑↓ choose · Enter confirm':state.operation?'Working…':'Type your answer';
   const before=state.input.slice(0,state.cursor),budget=width-3;
   let offset=0;
   while(cells(before.slice(offset))>=budget&&offset<before.length)offset++;
   const shown=clip(state.input.slice(offset),budget),composerRow=bottom.length;
   add(`› ${shown||(!state.input?placeholder:'')}`,state.input?'title':'muted');
-  const hint=state.pending?.kind==='command'?'/ commands':state.pending?.kind==='select'?'↑↓ select':'Enter continue';
+  const hint=state.pending?.kind==='command'?'/ commands':state.pending?.kind==='multiselect'?'↑↓ move · Space toggle · Enter confirm':state.pending?.kind==='select'?'↑↓ select':'Enter continue';
   add(state.operation?`${state.operation.cancelable?'Esc stop':'Finishing step'}${state.operation.skipOnEnter?' · Enter skip':''} · Ctrl+O details · Ctrl+C exit`:height<18?'Ctrl+C exit · Esc back':`${hint} · Ctrl+O details${width>=100?' · Ctrl+T tasks':''} · Esc back · Ctrl+C exit`,'muted');
 
   const available=Math.max(0,height-lines.length-bottom.length);
@@ -203,7 +204,7 @@ export function createTerminalSession({input=process.stdin,output=process.stdout
     if(state.pending?.kind==='command'&&state.input.startsWith('/')) {
       const query=state.input.slice(1).toLowerCase();
       state.menu=commands.filter(command=>command.id.startsWith(query));state.selected=0;
-    }else if(state.pending?.kind!=='select')state.menu=[];
+    }else if(!['select','multiselect'].includes(state.pending?.kind))state.menu=[];
   };
   const complete=(answer,error)=>{
     const pending=state.pending;if(!pending)return;
@@ -247,8 +248,16 @@ export function createTerminalSession({input=process.stdin,output=process.stdout
       }
       mark();return;
     }
-    if(key.name==='tab'){if(state.menu.length){if(state.pending.kind==='select')state.selected=(state.selected+1)%state.menu.length;else setInput(state.menu[state.selected].label);}mark();return;}
+    if(key.name==='tab'){if(state.menu.length){if(['select','multiselect'].includes(state.pending.kind))state.selected=(state.selected+1)%state.menu.length;else setInput(state.menu[state.selected].label);}mark();return;}
+    if(state.pending.kind==='multiselect'&&!state.input&&(key.name==='space'||str===' ')){
+      const value=state.menu[state.selected]?.id;if(value)state.pending.values=state.pending.values.includes(value)?state.pending.values.filter(v=>v!==value):[...state.pending.values,value];mark();return;
+    }
     if(key.name==='return') {
+      if(state.pending.kind==='multiselect'){
+        const values=state.input.trim()?state.input.trim().split(/[,\s]+/).filter(Boolean):state.pending.values;
+        if(!values.length){write('Choose at least one method, or type a custom list.');return;}
+        complete(values);return;
+      }
       if(state.pending.kind==='select') {
         if(['0','q','back'].includes(state.input)&&state.pending.back){complete(null);return;}
         const selected=state.input?state.menu[Number(state.input)-1]:state.menu[state.selected];
@@ -278,6 +287,8 @@ export function createTerminalSession({input=process.stdin,output=process.stdout
   const ask=(title,fallback='')=>question(title,fallback);
   const select=(title,items,{fallback=0,back=false}={})=>question(title,'',{kind:'select',items:items.map((item,i)=>({...item,label:item.label||item.name||item.id,value:String(i)})),selected:fallback,back}).then(value=>value===null?null:items[Number(value)]);
   ask.select=select;
+  const multiselect=(title,items,{selected=[]}={})=>question(title,'',{kind:'multiselect',items,values:[...selected]});
+  ask.multiselect=multiselect;
   async function activity(label,work,{skipOnEnter=false,cancelable=true,verdict}={}) {
     if(controller.signal.aborted)throw controller.signal.reason;
     if(state.operation)return work(state.operation.controller.signal);
@@ -312,7 +323,7 @@ export function createTerminalSession({input=process.stdin,output=process.stdout
   };
   write('Security that stays with your code.\n\nConnect your source and app. Prove the issue. Keep the fix as a test.\n\n/ commands     /demo guided walkthrough     Ctrl+O activity details');
   render();
-  return {rich:true,ask,select,write,activity,run:work=>activity('Check model connection',work,{skipOnEnter:true}),signal:controller.signal,
+  return {rich:true,ask,select,multiselect,write,activity,run:work=>activity('Check model connection',work,{skipOnEnter:true}),signal:controller.signal,
     command:(fallback)=>{state.recommended='/'+fallback;historyIndex=history.length;return question('Choose your next action',fallback,{kind:'command'});},
     setContext:context=>{state.context={...state.context,...context};mark();},
     setNext:next=>{state.next=next;mark();},

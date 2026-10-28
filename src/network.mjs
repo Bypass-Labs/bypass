@@ -4,6 +4,7 @@ import dns from 'node:dns/promises';
 import net from 'node:net';
 import { randomBytes } from 'node:crypto';
 import { need, Fault, now, duration, delay, hash, abortable, abortFault } from './util.mjs';
+import { httpMethods } from './http-methods.mjs';
 
 export const loopback = h => ['localhost','127.0.0.1','::1','[::1]'].includes(h.toLowerCase());
 export function appOriginInput(value) {
@@ -40,11 +41,12 @@ export function pathAllowed(urlPath, paths) {
   if (/%(?:2f|5c|2e|25)/i.test(urlPath) || urlPath.includes('\\') || urlPath.split('/').includes('..')) return false;
   return paths.some(p => p === '/' || urlPath === p || urlPath.startsWith(p.endsWith('/') ? p : p+'/'));
 }
-export function scopeReady(target, pathname, method = 'GET') {
+export function scopeReady(target, pathname, method) {
   need(target.ownership?.status === 'verified' && Date.parse(target.ownership.expiresAt) > Date.now(), 'Target ownership is missing or expired. Run target verify.', 3);
   const auth = target.authorization;
   need(auth && auth.origin === target.url && Date.parse(auth.expiresAt) > Date.now(), 'Target authorization is missing or expired. Run target authorize.', 3);
-  need(auth.methods.includes(method), `Method ${method} is outside the authorized scope.`, 3);
+  const required=method||(pathname?'GET':null);
+  if(required)need(auth.methods.includes(required), `Method ${required} is outside the authorized scope. Allowed: ${auth.methods.join(', ')}. Update testing permission to include ${required} before retrying.`, 3);
   if (pathname) need(pathAllowed(pathname,auth.paths), `Path ${pathname} is outside the authorized scope.`, 3);
   return true;
 }
@@ -103,8 +105,7 @@ export async function verifyOwnership(target, method, {wait,signal} = {}) {
 export function authorization(target, scope, acceptedBy = 'local operator') {
   need(target.ownership?.status==='verified' && Date.parse(target.ownership.expiresAt)>Date.now(),'Verify control before authorizing testing.',3);
   need(Array.isArray(scope.paths) && scope.paths.length && scope.paths.every(p=>typeof p==='string' && p.startsWith('/') && !/[?#*\\]/.test(p) && pathAllowed(p,[p])), 'Scope requires explicit path prefixes, e.g. ["/api"].');
-  const methods=scope.methods ?? ['GET','HEAD'];
-  need(methods.length && methods.every(x=>['GET','HEAD'].includes(x)), 'This skeleton supports read-only GET/HEAD scopes.');
+  const methods=httpMethods(scope.methods);
   const rps=scope.maxRequestsPerSecond ?? 2;
   need(Number.isFinite(rps)&&rps>0&&rps<=10,'maxRequestsPerSecond must be between 0 and 10.');
   const expiresAt=scope.expiresAt ?? new Date(Date.now()+7*86400000).toISOString();

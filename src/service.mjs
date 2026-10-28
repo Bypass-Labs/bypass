@@ -98,6 +98,7 @@ export async function execute(key,args=[],o={},context={}){
     case 'registration status':result=registrationStatus(named(s.targets,targetName,'Target'));break;
     case 'registration test':{const registration=await testRegistration(root,{target:targetName,signal:context.signal});return outcome({registration},registration.status==='failed'?1:['blocked','cancelled'].includes(registration.status)?3:0);}
     case 'probe discover':{const {discoverResources}=await import('./resource-discovery.mjs');result=await discoverResources(root,o,context);break;}
+    case 'request':{const {scopedRequest}=await import('./scoped-request.mjs');return scopedRequest(root,o,context);}
     case 'probe test':{const validation=await validateProbe(root,args[0],{target:targetName,signal:context.signal});return outcome({validation},validation.status==='ready'?0:3);}
     case 'probe list':result={target:targetName,probes:named(s.targets,targetName,'Target').probes||[]};break;
     case 'probe add':{
@@ -143,7 +144,8 @@ export async function execute(key,args=[],o={},context={}){
     case 'target authorize':{
       const name=args[0]||s.activeTarget;
       need(o['scope-file']||o.accept,'Review scope, then provide --scope-file or --accept --paths /api. Ownership alone is not authorization.');
-      const scope=context.scope||(o['scope-file']?loadJSON(o['scope-file']):{paths:(o.paths||'/api').split(','),productionAcknowledged:!!o.production});
+      need(!(o['scope-file']&&o.methods!==undefined),'Choose methods in the scope file or with --methods, not both.');
+      const scope=context.scope||(o['scope-file']?loadJSON(o['scope-file']):{paths:(o.paths||'/api').split(','),methods:o.methods,productionAcknowledged:!!o.production});
       result=await change(root,state=>{const t=named(state.targets,name,'Target');t.authorization=authorization(t,scope);event(state,'authorized',`${name}: testing authorized`,{scope:t.authorization});return {target:t.name,authorization:t.authorization};});break;
     }
     case 'target revoke':case 'target remove':result=await change(root,state=>{

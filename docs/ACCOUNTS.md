@@ -68,3 +68,5 @@ The packaged MCP integration test starts the server before the credential file e
 Both existing Job Radar test accounts also completed a real Firebase refresh and returned HTTP 200 from the already-authorized `/api/profile` endpoint. No resource proof or model calls ran, and the app scope was unchanged. [Redacted production account-validation record](evidence/account-connection-2026-10-27.json). This validates account connection, not production authorization security or live model reasoning.
 
 The actual Muse agent also completed this setup on a local fixture: two private imports, three positive-control GETs and live-ready status in the same session. The temporary audit plugin was removed afterward. This used host reasoning; Bypass made no independent model calls. [Native Muse onboarding evidence](evidence/muse-account-onboarding-2026-10-27.json).
+
+App JSON signup requires POST in the saved method scope as well as explicit account-creation permission. In Muse, reopen the testing-permission picker and select POST alongside the methods needed for identity/access controls. Firebase signup retains its separate bounded project and account-creation permission.

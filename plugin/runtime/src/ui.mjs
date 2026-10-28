@@ -13,6 +13,7 @@ import { appOriginInput } from './network.mjs';
 import { isBypassSource } from './project-selection.mjs';
 import { createTerminalSession } from './terminal-session.mjs';
 import { createTheme, brandHeading } from './terminal-theme.mjs';
+import { promptMethods, mayChangeData } from './http-methods.mjs';
 
 const theme=createTheme();
 const tones={'31':'error','33':'warning','90':'muted','1':'title'};
@@ -145,10 +146,13 @@ async function targetWizard(ask,root){
 }
 async function authorizeWizard(ask,root,name){
   const target=read(root).targets.find(t=>t.name===name);console.log(`\nAuthorize testing on ${target?.url} only. This expires in seven days.`);
-  const paths=await ask('Allowed path prefixes, comma-separated','/api');
-  const accepted=await ask('Do you authorize read-only testing of these paths? (yes/no)','no');if(accepted!=='yes')return;
+  const paths=await ask('Allowed path prefixes, comma-separated',target?.authorization?.paths.join(',')||'/api');
+  const methods=await promptMethods(ask,console.log,target?.authorization?.methods);
+  console.log(`Methods: ${methods.join(', ')} · Paths: ${paths} · Limit: 2 requests/second`);
+  if(mayChangeData(methods))console.log('These methods can change test data or start jobs. Only explicitly configured requests will run.');
+  const accepted=await ask('Do you authorize these methods and paths? (yes/no)','no');if(accepted!=='yes')return;
   let production=false;if(target?.environment==='production')production=(await ask('Type production to authorize the production environment'))==='production';
-  printResult(await execute('target authorize',[name],{project:root,paths,accept:true,production}));
+  printResult(await execute('target authorize',[name],{project:root,paths,methods,accept:true,production}));
 }
 function dashboard(root){
   console.log('\n'+brandHeading('Security that stays with your code.')+'\n');
@@ -267,8 +271,8 @@ export async function terminal(options={},io){
           if(ownershipValid)console.log(`\n${target.url}\nOwnership verified · ${info.target.authorized?'testing scope authorized':'choose the paths you authorize for testing'}`);
           else if(target.environment==='local')console.log(`\nConfirm you control the local app at ${target.url}.`);
           else console.log(`\nPublish this DNS record:\n  Type   TXT · TTL Auto\n  Name   ${target.challenge.record}\n  Value  ${target.challenge.token}\n\nChoose the DNS check below when ready. Testing scope is authorized separately.`);
-          prompt.setNext?.(info.target.authorized?'This app is authorized. Return with Esc to continue your review.':ownershipValid?'Authorize the allowed testing paths':'Publish the TXT record, then choose Check the DNS TXT record');
-          const action=await choose(ask,[...(!info.target.authorized?[{id:ownershipValid?'authorize':'verify',label:ownershipValid?'Set the allowed testing scope':`Check ${target.environment==='local'?'local ownership':'the DNS TXT record'}`}]:[]),{id:'add',label:'Connect another app'},{id:'advanced',label:'All app settings & test accounts'}],'App connection');
+          prompt.setNext?.(info.target.authorized?'Edit allowed methods and paths, or return with Esc to review.':ownershipValid?'Choose allowed HTTP methods and paths':'Publish the TXT record, then choose Check the DNS TXT record');
+          const action=await choose(ask,[{id:ownershipValid?'authorize':'verify',label:ownershipValid?(info.target.authorized?'Edit allowed methods & paths':'Choose allowed methods & paths'):`Check ${target.environment==='local'?'local ownership':'the DNS TXT record'}`},{id:'add',label:'Connect another app'},{id:'advanced',label:'All app settings & test accounts'}],'App connection');
           if(action?.id==='verify')await run('target verify',[target.name],{method:target.environment==='local'?'local':'dns'});
           else if(action?.id==='authorize')await authorizeWizard(ask,root,target.name);
           else if(action?.id==='add')await targetWizard(ask,root);
