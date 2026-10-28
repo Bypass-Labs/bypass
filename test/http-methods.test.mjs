@@ -66,6 +66,9 @@ test('packaged Muse flow selects POST, creates a resource, proves access and rep
   assert.equal(picker.nextAction.input.kind,'multiselect');assert.equal(picker.nextAction.input.allowCustom,true);
   assert.deepEqual(picker.nextAction.input.selected,['GET','HEAD']);
   assert.deepEqual(picker.nextAction.input.choices.map(x=>x.id),['GET','HEAD','POST','PUT','PATCH','DELETE','OPTIONS']);
+  assert.equal(picker.nextAction.input.singleSelectFallback.tool,'request_user_input');
+  assert.deepEqual(picker.nextAction.input.singleSelectFallback.choices[1].methods,['GET','HEAD','POST']);
+  assert.equal(picker.nextAction.input.singleSelectFallback.choices[2].custom,true);
   assert.deepEqual(read(root).targets[0].authorization.methods,['GET','HEAD'],'opening the picker cannot expand a grant');
   const scopeFile=path.join(root,'approved-scope.json');
   fs.writeFileSync(scopeFile,JSON.stringify({paths:['/'],methods:['GET','HEAD','POST','PUT','PATCH','DELETE','OPTIONS'],maxRequestsPerSecond:2,productionAcknowledged:true}));

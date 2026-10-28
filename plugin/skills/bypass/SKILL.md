@@ -31,6 +31,8 @@ On onboarding, surface `runtime.notice` before the next setup action. Distinguis
 
 ## Host-directed review loop
 
+For method selection, call the host's `request_user_input` tool when available. Use the returned `input.singleSelectFallback` if the host cannot render multi-select: Read, Read + create, Custom methods. Do not replace an available interactive picker with a Markdown list or ask the user to request the picker again. Accept custom methods from the option's note or a single follow-up question. Skip the question only when the user has already supplied the exact approved methods.
+
 Show the already-known source/live scope and boundaries, then call `bypass_scan` with code, live or combined mode. It returns an `awaiting_host` review, inventory, initial source for small projects, registration coverage, approved resources, saved-test exclusions and evidence location. Use `bypass_prepare_scan` only when a separate plan is requested or scope is unclear. There is no internal AI worker: **do not poll `bypass_watch_run` for a host review**.
 
 Drive `bypass_review_step` yourself:

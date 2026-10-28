@@ -1,0 +1,133 @@
+{
+  "test": "Installed 0.7.6 native Muse scope edit and account reuse",
+  "steps": [
+    {
+      "tool": "read_skill",
+      "outcome": "success",
+      "exitCode": null
+    },
+    {
+      "tool": "mcp__plugin_bypass_security__bypass_onboarding",
+      "outcome": "success",
+      "pluginVersion": "0.7.6",
+      "exitCode": 0,
+      "runtime": {
+        "version": "0.7.6",
+        "installedVersion": "0.7.6",
+        "publishedVersion": "0.7.5",
+        "restartRequired": false,
+        "releaseCheck": "verified"
+      },
+      "selectedMethods": null
+    },
+    {
+      "tool": "mcp__plugin_bypass_security__bypass_integration_status",
+      "outcome": "success",
+      "pluginVersion": "0.7.6",
+      "exitCode": 0
+    },
+    {
+      "tool": "mcp__plugin_bypass_security__bypass_targets",
+      "outcome": "success",
+      "pluginVersion": "0.7.6",
+      "exitCode": 0
+    },
+    {
+      "tool": "mcp__plugin_bypass_security__bypass_registration",
+      "outcome": "success",
+      "pluginVersion": "0.7.6",
+      "exitCode": 0
+    },
+    {
+      "tool": "mcp__plugin_bypass_security__bypass_status",
+      "outcome": "success",
+      "pluginVersion": "0.7.6",
+      "exitCode": 0
+    },
+    {
+      "tool": "mcp__plugin_bypass_security__bypass_authorize_target",
+      "outcome": "success",
+      "pluginVersion": "0.7.6",
+      "exitCode": 0
+    },
+    {
+      "tool": "mcp__plugin_bypass_security__bypass_target",
+      "outcome": "success",
+      "pluginVersion": "0.7.6",
+      "exitCode": 0
+    },
+    {
+      "tool": "mcp__plugin_bypass_security__bypass_onboarding",
+      "outcome": "success",
+      "pluginVersion": "0.7.6",
+      "exitCode": 0,
+      "runtime": {
+        "version": "0.7.6",
+        "installedVersion": "0.7.6",
+        "publishedVersion": "0.7.5",
+        "restartRequired": false,
+        "releaseCheck": "verified"
+      },
+      "selectedMethods": [
+        "GET",
+        "HEAD",
+        "POST",
+        "PUT",
+        "PATCH",
+        "DELETE",
+        "OPTIONS"
+      ]
+    },
+    {
+      "tool": "mcp__plugin_bypass_security__bypass_registration",
+      "outcome": "success",
+      "pluginVersion": "0.7.6",
+      "exitCode": 0
+    },
+    {
+      "tool": "mcp__plugin_bypass_security__bypass_test_registration",
+      "outcome": "success",
+      "pluginVersion": "0.7.6",
+      "exitCode": 0,
+      "registration": {
+        "reused": true,
+        "currentProof": false,
+        "requests": 0,
+        "reason": "Registration attempts are already recorded. Existing identities are reused; no duplicate users created."
+      }
+    },
+    {
+      "tool": "mcp__plugin_bypass_security__bypass_identities",
+      "outcome": "success",
+      "pluginVersion": "0.7.6",
+      "exitCode": 0
+    }
+  ],
+  "scope": {
+    "origin": "https://job-radar.app",
+    "paths": [
+      "/"
+    ],
+    "methods": [
+      "GET",
+      "HEAD",
+      "POST",
+      "PUT",
+      "PATCH",
+      "DELETE",
+      "OPTIONS"
+    ],
+    "maxRequestsPerSecond": 2,
+    "productionAcknowledged": true
+  },
+  "existingRunCount": 1,
+  "registrationAttemptCount": 2,
+  "limitations": [
+    "Focused native conversation; not a full production security review.",
+    "No production HTTP probes or account creation were requested."
+  ],
+  "startedAt": 1793165234394929,
+  "finishedAt": 1793165236743920,
+  "release": "main-69dcade93b3687b51b2f1b0607da594bf0f8147c-40637316654-1",
+  "releaseStatusAtTest": "Mac artifact installed before promotion; public channel remained 0.7.5 pending cross-platform checks."
+}

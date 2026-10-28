@@ -30,6 +30,11 @@ export function httpMethods(value=['GET','HEAD']){
 export const mayChangeData=methods=>methods.some(method=>!['GET','HEAD','OPTIONS'].includes(method));
 export function methodInput(current=['GET','HEAD']){
   return {kind:'multiselect',field:'methods',question:'Which HTTP methods may Bypass use?',choices:methodChoices,selected:current,allowCustom:true,
+    singleSelectFallback:{tool:'request_user_input',question:'Which HTTP methods may Bypass use?',choices:[
+      {label:'Read',description:'Allow GET and HEAD.',methods:['GET','HEAD']},
+      {label:'Read + create',description:'Allow GET, HEAD and POST to create test data or start jobs.',methods:['GET','HEAD','POST']},
+      {label:'Custom methods',description:'Enter exactly the methods to allow, separated by commas.',custom:true}
+    ],instruction:'Use the host interactive question tool when available. If it only supports one selection, render these three choices. For Custom methods use the attached note or one follow-up text input. Do not substitute a printed list when the question tool is available. Wait for the answer before saving; opening the picker is not consent.'},
     help:'Select individual methods or enter a comma-separated list, including custom methods. POST can create data or start jobs; PUT/PATCH change data and DELETE removes it. Only the selected methods and approved paths are allowed.'};
 }
 export async function promptMethods(ask,say=console.log,current=['GET','HEAD']){
