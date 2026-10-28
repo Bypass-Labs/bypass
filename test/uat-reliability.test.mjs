@@ -129,6 +129,8 @@ test('registration permission gates make no requests; interrupted creation is ne
   await execute('registration configure',[],{...settings,accept:true});
   await change(root,s=>{s.targets[0].registration.attempts=[{name:'reserved-test',email:'bypass-reserved@uat.invalid',status:'reserved'}];});
   const resumed=await execute('registration test',[],o);assert.equal(resumed.registration.reused,true);assert.equal(resumed.registration.currentProof,false);assert.equal(posts,0);
+  await execute('target authorize',['app'],{...o,paths:'/api/me',methods:'GET',accept:true});
+  const changed=await execute('registration test',[],o);assert.equal(changed.registration.reused,true);assert.equal(changed.registration.requests,0);assert.equal(posts,0,'changed scope reuses the recorded budget without a signup request');
   await execute('target revoke',['app'],o);const revoked=await execute('registration test',[],o);assert.equal(revoked.registration.status,'blocked');assert.equal(posts,0);
 });
 

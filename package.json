@@ -1,6 +1,6 @@
 {
   "name": "@bypass-labs/cli-skeleton",
-  "version": "0.7.5",
+  "version": "0.7.6",
   "private": true,
   "description": "Muse-directed security tools and explicit API-key CLI agents: source hypotheses, HTTP proof and saved regressions.",
   "type": "module",

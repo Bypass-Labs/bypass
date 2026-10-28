@@ -90,7 +90,7 @@ Clear Bypass-local account metadata; Muse account is separate.
 
 ## integrate muse
 
-Reuse an existing valid Muse plugin, including one from another checkout, or install the bundled native plugin if missing. Does not approve capabilities or change the existing installation source. Refresh an existing installation with `muse plugins update bypass`. Native installation failures include their diagnostic reason.
+Reuse an existing valid Muse plugin, including one from another checkout, or install the bundled native plugin if missing. Does not approve capabilities or change the existing installation source. For a newer public release, rerun `curl -fsSL https://bypasslabs.ai/install/muse | bash` (Windows: `irm https://bypasslabs.ai/install/muse.ps1 | iex`). Native `muse plugins update bypass` refreshes the recorded local source; an installer source may be pinned to an old release. Native installation failures include their diagnostic reason.
 
 Options: --scope, --install, --replace. `--replace` validates the new bundled plugin, replaces the old source, and attempts restoration if installation fails. Native approval and a new Muse session are still required.
 

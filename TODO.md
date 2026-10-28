@@ -23,10 +23,18 @@ Validation and limits: [0.7.1 reliability report](docs/RELIABILITY_0_7_1.md).
 
 ## Remaining validation / scope
 
-- [ ] Fresh production UAT of 0.7.1, including real supported signup and suitable dedicated resources. Local fixture proof is not production evidence.
+- [ ] Complete production UAT on the latest installed release, including real supported signup and suitable dedicated resources. Local fixture proof and the focused scope-update test are not production review evidence.
 - [ ] Observe a first-time user complete the production journey without operator-prepared fields/data.
 - [ ] Host inference delay remains variable; Bypass cannot render during Muse's own model turn. Do not promise a latency bound from one run.
 - [ ] Arbitrary browser signup, social login, CAPTCHA and unsupported resource provisioning remain explicitly out of scope.
+
+## Scope/update recovery — 0.7.6
+
+- [x] UAT-10: Scope editing was attempted on installed/loaded 0.7.1 after 0.7.5 was published. Onboarding now distinguishes loaded, installed and published versions and provides the public installer or fresh-session action. Failures carry the loaded version. Native installation must confirm the requested version before reporting success. Offline metadata checks remain unavailable, not current.
+- [x] UAT-11: The exact approved scope-file payload (all seven common methods, `/`, 2 requests/second, production acknowledgment) succeeds through the installed 0.7.5 plugin in a fresh native Muse session. Saved scope and reopened picker match. [Focused evidence](docs/evidence/muse-scope-update-2026-10-27.json). This was a headless native conversation; the interactive picker and whole production journey are not established by it.
+- [x] UAT-12: Changing scope no longer invalidates reuse of an already-recorded account-creation budget. Current identity-path permission still applies; no duplicate signup is attempted.
+- [ ] Interactive upgrade UAT: keep an old Muse session open, install an update, exit/open a fresh session, adjust methods in the actual picker, and complete the production review. A passing MCP suite does not close this gate.
+- [ ] Cleanup workflow: detect active Muse/MCP sessions before resetting project state. The prior manual reset moved state while Muse remained open; its exact setup was restored from backup for scope recovery.
 
 ## Archived 0.7.0 observations
 

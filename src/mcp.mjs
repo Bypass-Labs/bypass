@@ -220,7 +220,7 @@ export async function serveMCP(cwd=process.cwd(),io={input:process.stdin,output:
       if(result.runId&&result.status==='accepted')result.nextAction={tool:'bypass_watch_run',arguments:{id:result.runId,after:0},label:'Follow progress in Muse'};
       if(token!==undefined)send({jsonrpc:'2.0',method:'notifications/progress',params:{progressToken:token,progress:++progress,total:progress,message:operationFailed(result)?'Operation needs attention; setup and evidence retained':'Operation complete; inspect the result'}});
       respond(id,{content:[{type:'text',text:JSON.stringify(redact(result))}],isError:operationFailed(result)});
-    }catch(e){respond(id,{content:[{type:'text',text:JSON.stringify(redact({schemaVersion:SCHEMA,error:e.message,exitCode:e.code||2,details:e.details||{},selectedRepository:selectedRoot,recovery:{tool:selectedRoot?'bypass_dashboard':'bypass_help',arguments:{},message:'Setup and prior evidence are retained. Inspect the saved state, repair this input, and continue inside Muse.'}}))}],isError:true});}
+    }catch(e){respond(id,{content:[{type:'text',text:JSON.stringify(redact({schemaVersion:SCHEMA,pluginVersion:VERSION,runtime:runtimeIdentity(),error:e.message,exitCode:e.code||2,details:e.details||{},selectedRepository:selectedRoot,recovery:{tool:'bypass_onboarding',arguments:{},message:'Setup and prior evidence are retained. Check the loaded, installed and published versions before treating a version-specific error as a permanent product limit. Repair the input or follow the returned update/restart notice.'}}))}],isError:true});}
     finally{pending.delete(id);}
   }
   await new Promise(resolve=>{

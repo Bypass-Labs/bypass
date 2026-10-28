@@ -66,6 +66,12 @@ test('packaged Muse flow selects POST, creates a resource, proves access and rep
   assert.deepEqual(picker.nextAction.input.selected,['GET','HEAD']);
   assert.deepEqual(picker.nextAction.input.choices.map(x=>x.id),['GET','HEAD','POST','PUT','PATCH','DELETE','OPTIONS']);
   assert.deepEqual(read(root).targets[0].authorization.methods,['GET','HEAD'],'opening the picker cannot expand a grant');
+  const scopeFile=path.join(root,'approved-scope.json');
+  fs.writeFileSync(scopeFile,JSON.stringify({paths:['/'],methods:['GET','HEAD','POST','PUT','PATCH','DELETE','OPTIONS'],maxRequestsPerSecond:2,productionAcknowledged:true}));
+  await c.call('bypass_authorize_target',{name:'app','scope-file':scopeFile,accept:true,production:true});
+  const saved=(await c.call('bypass_target',{name:'app'})).target.authorization;
+  assert.deepEqual(saved.methods,['GET','HEAD','POST','PUT','PATCH','DELETE','OPTIONS']);assert.deepEqual(saved.paths,['/']);assert.equal(saved.maxRequestsPerSecond,2);assert.equal(saved.productionAcknowledged,true);
+  await c.call('bypass_authorize_target',{name:'app',paths:'/api',methods:['GET','HEAD'],accept:true});
   const denied=await c.raw('bypass_request',{method:'POST',path:'/api/jobs'});assert.equal(denied.result.isError,true);assert.equal(posts,0);
   await c.call('bypass_authorize_target',{name:'app',paths:'/api',methods:['GET','HEAD','POST'],accept:true});
   for(const [name,secret] of [['owner','BYPASS_METHOD_OWNER_TOKEN'],['outsider','BYPASS_METHOD_OTHER_TOKEN']])await c.call('bypass_add_identity',{name,target:'app',type:'bearer','secret-env':secret,'check-path':'/api/me'});

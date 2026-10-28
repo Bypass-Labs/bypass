@@ -341,5 +341,7 @@ async function integrate(key,args,o,working,{signal,onProgress}={}){
   const confirmation=await native('verify','plugins','inspect','bypass','--json');
   let confirmed;try{confirmed=JSON.parse(confirmation.stdout);}catch{}
   need(confirmation.code===0&&confirmed?.valid,'Muse did not confirm a valid installation. Run bypass integrate status for the current state.',3);
+  const expectedVersion=loadJSON(path.join(plugin,'.muse-plugin/plugin.json')).version;
+  need(confirmed.record?.version===expectedVersion,`Muse reports Bypass ${confirmed.record?.version||'an unknown version'} after installing ${expectedVersion}. Installation is not verified. Rerun the public Muse installer before continuing.`,3);
   return outcome({plugin,scope,installed:JSON.parse(installed.stdout),...museInstallState(confirmed),message:'Bypass is installed. Full tools, commands, security memory and the session hook are included. Muse permission review is the next step.'});
 }

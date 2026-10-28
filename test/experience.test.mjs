@@ -9,7 +9,7 @@ import { homeActions } from '../src/experience.mjs';
 import { appOriginInput, safeRequest } from '../src/network.mjs';
 import { read } from '../src/store.mjs';
 import { execute } from '../src/service.mjs';
-import { delay } from '../src/util.mjs';
+import { delay, VERSION } from '../src/util.mjs';
 import { temp, cli } from './helpers.mjs';
 
 test('walkthrough advances on Enter through real proof, independent pass/fail, scheduler and cleanup',async()=>{
@@ -101,13 +101,14 @@ async function fakeMuse(t,scenario){
 const fs=require('fs'),args=process.argv.slice(2);
 fs.appendFileSync(${JSON.stringify(calls)},args.join(' ')+'\\n');
 if(args[1]==='inspect'){
+  if(${scenario==='replace-success'||scenario==='replace-disabled'}&&fs.readFileSync(${JSON.stringify(calls)},'utf8').includes('plugins install ')){console.log(JSON.stringify({valid:true,active:${scenario!=='replace-disabled'},record:{id:'bypass',version:${JSON.stringify(VERSION)},source:{path:'/installed/plugin'}}}));process.exit(0);}
   console.log(JSON.stringify(${JSON.stringify(hasExisting?{valid:true,active:scenario!=='replace-disabled',record:{id:'bypass',enabled:scenario!=='replace-disabled',source:{path:'/other/checkout/plugin'}}}:{error:{message:'not installed'}})}));
   process.exit(${hasExisting?0:1});
 }
 if(args[1]==='validate'){console.log('{"valid":true}');process.exit(${scenario==='replace-invalid'?1:0});}
 if(args[1]==='remove'){console.log('{"removed":true}');process.exit(0);}
 if(args[1]==='disable'){console.log('{"disabled":true}');process.exit(0);}
-if(args[1]==='install'&&(${scenario==='replace-success'||scenario==='replace-disabled'}||args[2]==='/other/checkout/plugin')){console.log('{"installed":true}');process.exit(0);}
+if(args[1]==='install'&&(${scenario==='replace-success'||scenario==='replace-disabled'||scenario==='replace-stale'}||args[2]==='/other/checkout/plugin')){console.log('{"installed":true}');process.exit(0);}
 if(args[1]==='install'&&${scenario==='replace-cancel'}){setInterval(()=>{},1000);}else{
 console.log(JSON.stringify({error:{message:'plugin bypass is already installed from a different source'}}));process.exit(1);
 }
@@ -171,4 +172,10 @@ test('interrupted native plugin installation restores the prior source despite t
     assert.equal(commands[4],'plugins install /other/checkout/plugin --scope user --json');
     assert.ok(progress.some(message=>message.startsWith('Restoring the previous Muse plugin')));
   }finally{clearInterval(timer);}
+});
+
+
+test('native install success is insufficient when inspection still reports the old package',async t=>{
+  const {root}=await fakeMuse(t,'replace-stale');
+  await assert.rejects(execute('integrate muse',[],{project:root,scope:'user',replace:true}),/Installation is not verified/);
 });

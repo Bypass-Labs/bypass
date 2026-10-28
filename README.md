@@ -24,7 +24,7 @@ Windows PowerShell:
 irm https://bypasslabs.ai/install/muse.ps1 | iex
 ```
 
-This installs the full Muse plugin and CLI, includes Node, and sets up PATH. No GitHub clone, npm, Docker or separate model key is needed for the plugin. Rerun the same command to update or repair.
+This installs the full Muse plugin and CLI, includes Node, and sets up PATH. No GitHub clone, npm, Docker or separate model key is needed for the plugin. Rerun the same command to update or repair, then start a **new Muse session**. An already-open session keeps its loaded plugin. Native `muse plugins update bypass` only refreshes its local source; use the public installer to download a newer release.
 
 **2. Answer `y` to “Enable Bypass and open Muse?”**
 

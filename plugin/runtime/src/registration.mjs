@@ -42,9 +42,11 @@ export async function testRegistration(root,{target:targetName,signal,request=sa
   const result={kind:'registration',status:'incomplete',findings:[],probes:[],accounts:[],observations:[],requests:0,modelCalls:0,startedAt:now(),coverage:'JSON signup on the verified origin; no CAPTCHA bypass, email delivery, social login or arbitrary browser automation.'};
   try{
     scopeReady(target,config.checkPath);
+    // A completed or interrupted creation budget is historical. Reusing its
+    // accounts sends no signup request and must survive a later scope change.
+    if(config.attempts?.length)return {...config.lastResult||result,reused:true,currentProof:false,reason:'Registration attempts are already recorded. Existing identities are reused; no duplicate users created.',attempts:config.attempts,requests:0};
     if(config.provider==='json')scopeReady(target,config.path,'POST');
     need(hash(target.authorization)===config.authorizationFingerprint,'Testing scope changed. Registration permission must be reviewed again.',3);
-    if(config.attempts?.length)return {...config.lastResult||result,reused:true,currentProof:false,reason:'Registration attempts are already recorded. Existing identities are reused; no duplicate users created.',attempts:config.attempts,requests:0};
     for(let index=0;index<config.maxAccounts;index++){
       const current=read(root),app=named(current.targets,target.name,'Target');scopeReady(app,config.checkPath);
       need(hash(app.authorization)===config.authorizationFingerprint,'Registration permission changed.',3);
