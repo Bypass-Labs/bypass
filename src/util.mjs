@@ -3,7 +3,7 @@ import { spawn } from 'node:child_process';
 import { setTimeout as delay } from 'node:timers/promises';
 import { commandInvocation } from './command.mjs';
 
-export const VERSION = '0.7.6';
+export const VERSION = '0.7.7';
 export const SCHEMA = 'bypass.v1';
 export const now = () => new Date().toISOString();
 export const id = prefix => `${prefix}_${randomUUID().slice(0, 8)}`;
