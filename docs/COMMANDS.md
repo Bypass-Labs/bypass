@@ -362,9 +362,9 @@ Options: --detach, --once, --stop.
 
 ## ci init
 
-Generate a GitHub Actions workflow for exported Node tests.
+Generate a GitHub Actions workflow for exported Node tests, or use --agent for Meta API PR review, deployment verification and scheduled replay. Setup generates files only. See [GitHub agent setup](GITHUB_AGENT.md).
 
-Options: --provider, --target, --force.
+Options: --provider, --target, --force, --agent, --action-ref, --every, --revision-path, --revision-field. The action reference is a reviewed full Bypass commit SHA, optionally taken from bundled release identity. Cadence choices are 24h, 6h and off.
 
 ## mcp serve
 

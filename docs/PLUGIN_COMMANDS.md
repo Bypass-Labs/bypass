@@ -110,7 +110,7 @@ CLI global `--project` maps to the selected repository; `--json` maps to structu
 | `monitor resume` | `bypass_resume_monitor` | Resume a monitor. |
 | `monitor remove` | `bypass_remove_monitor` | Remove a monitor; retain run evidence. |
 | `monitor worker` | `bypass_monitor_worker` | Run the real local scheduler (machine must remain awake). |
-| `ci init` | `bypass_ci` | Generate a GitHub Actions workflow for exported Node tests. |
+| `ci init` | `bypass_ci` | Generate GitHub saved checks, or a Meta API security agent with --agent. |
 | `mcp serve` | Muse starts the approved server | Muse starts this already-approved server. Starting a second stdio server is a transport action, not an application operation. |
 | `demo start` | `bypass_demo_start` · {"kind":"preview"} | Create the Ledger Git fixture and start its HTTP server. |
 | `demo status` | `bypass_demo_control` · {"action":"status"} | Show the fixture state. |

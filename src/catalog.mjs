@@ -86,7 +86,7 @@ export const commands={
   'monitor resume':command('monitor resume <name>','Resume a monitor.'),
   'monitor remove':command('monitor remove <name>','Remove a monitor; retain run evidence.'),
   'monitor worker':command('monitor worker','Run the real local scheduler (machine must remain awake).','detach once stop'),
-  'ci init':command('ci init','Generate a GitHub Actions workflow for exported Node tests.','provider target force'),
+  'ci init':command('ci init','Generate GitHub saved checks, or a Meta API security agent with --agent.','provider target force agent action-ref every revision-path revision-field'),
   'mcp serve':command('mcp serve','Start the typed stdio MCP server.'),
   'demo start':command('demo start','Create the Ledger Git fixture and start its HTTP server.','dir port'),
   'demo status':command('demo status','Show the fixture state.'),
@@ -98,7 +98,7 @@ export const commands={
   _run:command('_run <id>','Internal detached run entry point.','',{hidden:true}),
   '_demo-serve':command('_demo-serve','Internal fixture server.','',{hidden:true})
 };
-export const booleanFlags=new Set(['public-config','reference','require-verification','json','help','version','non-interactive','plan','full','detach','all','force','accept','production','renew','once','stop','device','install','replace','allow-private']);
+export const booleanFlags=new Set(['agent','public-config','reference','require-verification','json','help','version','non-interactive','plan','full','detach','all','force','accept','production','renew','once','stop','device','install','replace','allow-private']);
 export const globalFlags=['project','json','help','version','non-interactive','reference'];
 export function parse(argv){
   const options={},words=[];
