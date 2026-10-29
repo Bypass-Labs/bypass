@@ -4,7 +4,7 @@
 
 This is the first GitHub runner implementation. It uses GitHub Actions, Bypass's shared source-citation validation and HTTP regression engine. It does not use your Muse subscription, run application code, fix application files, or require Docker. Cloudflare Workers and Workers AI are phase two.
 
-The feature is available from this branch's package; the public installer is unchanged until a release containing it is published. Pin the Action to a reviewed **full Bypass commit SHA**. The examples deliberately do not point privileged workflows at a mutable branch.
+The public installer includes this integration. Update Bypass and start a fresh Muse session before setup. Installed packages pin the Action to their bundled **full Bypass commit SHA** automatically; a source checkout requires an explicit reviewed `--action-ref`. Start with the [README walkthrough](../README.md#github-security-agent) for setup, secret names and everyday use.
 
 ## Start in Muse
 
@@ -25,16 +25,16 @@ No application URL, DNS setup or app accounts are needed to start source review.
 Run inside an already-connected Bypass application:
 
 ```bash
-bypass ci init --agent --action-ref <REVIEWED_BYPASS_COMMIT_SHA>
+bypass ci init --agent
 gh secret set MODEL_API_KEY
 ```
 
-Review and merge the three generated files, then run the baseline as above. `--action-ref` is a full 40-character SHA; it is optional in a published package with bundled release identity. `bypass ci init` without `--agent` retains the existing exported-test workflow.
+Review and merge the three generated files, then inspect the baseline under Actions → Bypass Security. When using a source checkout, add `--action-ref <REVIEWED_BYPASS_COMMIT_SHA>` with a full 40-character Bypass SHA. Installed packages infer it from their release identity. `bypass ci init` without `--agent` retains the existing exported-test workflow.
 
 To include an existing DNS-verified target and saved regression checks:
 
 ```bash
-bypass ci init --agent --action-ref <REVIEWED_BYPASS_COMMIT_SHA> \
+bypass ci init --agent \
   --target production --every 24h \
   --revision-path /api/version --revision-field sha
 ```

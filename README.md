@@ -107,11 +107,105 @@ A monitor needs a running worker and an awake machine. A single tick is not an a
 
 ## GitHub security agent
 
-In Muse, ask: **“Set up Bypass's GitHub agent for this repository: report-only PR reviews and daily smoke for our approved saved checks.”** Bypass generates reviewable workflows and policy. Add your **Meta Model API key** as `MODEL_API_KEY`, then review and merge the generated files. GitHub automation uses API billing, separately from the Muse subscription.
+**Review PRs automatically. Verify saved security checks after deployment. Replay them daily.** Runs in GitHub Actions with your **Meta Model API key**, billed separately from Muse. No Docker needed.
 
-The packaged Action reviews immutable PR source, publishes one summary with cited concerns, and replays approved regressions after registered deployments or on a daily schedule. It checks the app's deployed SHA before verifying a fix. Replay uses zero model calls. It never runs PR code or automatically edits your application.
+You need a GitHub repository with Actions enabled and permission to add workflows and repository secrets.
 
-This feature is available in this branch's package; the public installer is unchanged until release. Source review works without app setup. Live verification needs DNS ownership, explicit expiring scope, a registered deployment, its build-revision endpoint and saved checks. Cloudflare hosting is phase two. [Step-by-step Muse and CLI setup](docs/GITHUB_AGENT.md).
+### 1. Generate the setup files
+
+[Install or update Bypass for Muse](#start-in-muse), start a **new Muse session**, and select your application with `/bypass:start`. Then ask:
+
+```text
+Set up Bypass GitHub security reviews for this repository.
+Start with source-only, report-only PR reviews. Generate the setup files.
+```
+
+Bypass creates these three files **in your application repository**:
+
+```text
+.github/bypass.json                      # Settings and review limits
+.github/workflows/bypass-pr-signal.yml    # Triggers PR reviews
+.github/workflows/bypass-security.yml     # Runs the security agent
+```
+
+<details>
+<summary>Prefer the CLI?</summary>
+
+With the latest [standalone installation](#standalone-cli), run inside your application folder:
+
+```bash
+bypass init .          # Skip if this application is already connected
+bypass ci init --agent
+```
+
+The installed package selects its pinned Action version automatically. [Source-checkout instructions](docs/GITHUB_AGENT.md#standalone-setup).
+
+</details>
+
+### 2. Add your Meta API key
+
+In **your application’s GitHub repository**, open **Settings → Secrets and variables → Actions → Secrets → New repository secret**. Add:
+
+| Name | Value | Do you add it? |
+| --- | --- | --- |
+| `MODEL_API_KEY` | Your **Meta Model API key** | **Yes — the only secret needed for PR source review.** |
+| `GITHUB_TOKEN` | GitHub’s temporary workflow token | **No — GitHub supplies it automatically.** |
+
+Store the key in Actions **Secrets**, not Variables or a local `.env`. Use a Meta API key, not a Muse login token. [Meta setup](https://dev.meta.ai/docs/cookbook/github-agent), [GitHub secret help](https://docs.github.com/en/actions/how-tos/write-workflows/choose-what-workflows-do/use-secrets).
+
+Or, with GitHub CLI signed in, run from your app repository and enter the key privately:
+
+```bash
+gh secret set MODEL_API_KEY
+```
+
+### 3. Activate the integration
+
+Review and merge the three generated files into your app's **default branch** (`main`, for example). This starts the baseline review.
+
+Open **Actions → Bypass Security** for progress and results. To rerun: **Run workflow** on the default branch → `operation: auto`, with `pr` empty.
+
+### 4. Use it on your next PR
+
+Open a **non-draft PR in the same repository**. Bypass posts findings and recommendations in one comment and a **Bypass / PR review** check. New commits trigger another review and update the comment.
+
+The default is **report-only**: findings do not block merge. Incomplete execution still fails visibly. Read the report even when the job succeeds; Bypass does not automatically fix application code.
+
+| What you want | How to use it |
+| --- | --- |
+| Review a specific PR now | **Actions → Bypass Security → Run workflow**, default branch: `operation: review`, `pr: <number>`. |
+| Download the report | Open the workflow run → **Artifacts → bypass-report** for JSON and Markdown. |
+| Verify a deployment | Complete live-app setup below; successful registered deployments trigger saved checks. |
+| Run live checks now | **Run workflow**, default branch: `operation: smoke`, `pr` empty. Requires live-app setup. |
+| Replay daily | Choose **Daily** during live-app setup. Replay uses **zero model calls**; scheduling is best effort. |
+
+<details>
+<summary><strong>Optional: add deployment verification and daily smoke</strong></summary>
+
+**1. Connect your live app in Muse.** Verify DNS ownership, approve testing scope, and save the regression checks CI should replay. Source review alone does not create live coverage.
+
+**2. Ask Muse to extend the integration:**
+
+```text
+Add our verified production target and its saved security checks to the
+GitHub integration. Replay them after deployment and every 24 hours.
+Show me the exact additional secret names and any missing deployment setup.
+```
+
+**3. Add the additional repository secrets printed by setup:**
+
+| Secret | Value |
+| --- | --- |
+| `BYPASS_DNS_PRODUCTION` for a target named `production` | The existing full `bypass-verification=...` TXT value. Keep the record published. Other targets get a corresponding name. |
+| Account names printed by setup, e.g. `BYPASS_OWNER_TOKEN` and `BYPASS_OUTSIDER_TOKEN` | Dedicated test-account credentials. **Use the exact generated names.** Needed only for account-based checks. |
+
+**4. Connect deployment identity and merge the updated files.** Your deploy pipeline must register the app's full commit SHA, environment and URL as a GitHub Deployment, then report `success`. Your app must expose an approved endpoint such as `/api/version` returning `{"sha":"<full deployed commit SHA>"}`. Give Muse the path and field name. A push alone does not prove deployment.
+
+Run `operation: smoke` once to verify setup. Bypass checks the deployed SHA and replays all saved checks. Expired scope, credentials or missing resources block the affected tests; CI does not refresh the plugin's private account store. To change cadence, ask Muse for **Daily**, **Every 6 hours**, or **After deploy only**, then review and merge the changes.
+
+</details>
+
+[Full configuration, merge gates, fork support and current limits](docs/GITHUB_AGENT.md).
 
 ## Standalone CLI
 
