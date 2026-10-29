@@ -1,0 +1,42 @@
+name: Bypass Security Agent
+description: Review PR source with your Meta API key and replay approved security checks after deployment.
+branding:
+  icon: shield
+  color: purple
+inputs:
+  github-token:
+    description: Repository token for source, check runs and PR summaries.
+    required: true
+  meta-api-key:
+    description: Meta Model API key (MODEL_API_KEY). Required for source review, unused by smoke replay.
+    required: false
+  operation:
+    description: auto, review, or smoke. Use a PR number for manual PR review.
+    default: auto
+  pr:
+    description: Optional PR number for a manual source review.
+    required: false
+outputs:
+  report-directory:
+    description: Directory containing the redacted assessment and optional baseline state.
+    value: ${{ steps.agent.outputs.report-directory }}
+  state-written:
+    description: Whether a trusted baseline state was written.
+    value: ${{ steps.agent.outputs.state-written }}
+  execution:
+    description: complete, incomplete, or cancelled.
+    value: ${{ steps.agent.outputs.execution }}
+  conclusion:
+    description: GitHub check conclusion, with explicit report-only policy.
+    value: ${{ steps.agent.outputs.conclusion }}
+runs:
+  using: composite
+  steps:
+    - id: agent
+      shell: bash
+      env:
+        GITHUB_TOKEN: ${{ inputs.github-token }}
+        MODEL_API_KEY: ${{ inputs.meta-api-key }}
+        BYPASS_GITHUB_OPERATION: ${{ inputs.operation }}
+        BYPASS_GITHUB_PR: ${{ inputs.pr }}
+      run: node "$GITHUB_ACTION_PATH/plugin/runtime/bin/github-agent.mjs"

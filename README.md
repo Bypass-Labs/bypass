@@ -105,6 +105,14 @@ Muse drives every reasoning step. You do not copy JSON, configure a second model
 
 A monitor needs a running worker and an awake machine. A single tick is not an always-on service. [All operations and mode differences](docs/PLUGIN_COMMANDS.md).
 
+## GitHub security agent
+
+In Muse, ask: **“Set up Bypass's GitHub agent for this repository: report-only PR reviews and daily smoke for our approved saved checks.”** Bypass generates reviewable workflows and policy. Add your **Meta Model API key** as `MODEL_API_KEY`, then review and merge the generated files. GitHub automation uses API billing, separately from the Muse subscription.
+
+The packaged Action reviews immutable PR source, publishes one summary with cited concerns, and replays approved regressions after registered deployments or on a daily schedule. It checks the app's deployed SHA before verifying a fix. Replay uses zero model calls. It never runs PR code or automatically edits your application.
+
+This feature is available in this branch's package; the public installer is unchanged until release. Source review works without app setup. Live verification needs DNS ownership, explicit expiring scope, a registered deployment, its build-revision endpoint and saved checks. Cloudflare hosting is phase two. [Step-by-step Muse and CLI setup](docs/GITHUB_AGENT.md).
+
 ## Standalone CLI
 
 Install once (includes Node and PATH setup):

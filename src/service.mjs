@@ -276,6 +276,8 @@ export async function execute(key,args=[],o={},context={}){
     case 'monitor remove':result=await change(root,state=>{named(state.monitors,args[0],'Monitor');state.monitors=state.monitors.filter(m=>m.name!==args[0]);return {removed:args[0]};});break;
     case 'monitor worker':return startWorker(root,{detach:o.detach,once:o.once,stop:o.stop,signal:context.signal});
     case 'ci init':{
+      need(!o.provider||o.provider==='github','Only GitHub Actions is supported.');
+      if(o.agent){const {generateGitHubAgent}=await import('./github-setup.mjs');result=generateGitHubAgent(root,s,o);break;}
       need(!o.provider||o.provider==='github','Only GitHub Actions is supported.');named(s.targets,targetName,'Target');const file=path.join(root,'.github/workflows/bypass-security.yml');need(!fs.existsSync(file)||o.force,'Workflow exists; review before replacing with --force.');
       const exported=exportChecks(root,{all:true,target:targetName,force:o.force});
       const identities=s.identities.filter(i=>i.target===targetName);const envLines=[...new Set(identities.map(i=>i.secretEnv))].map(name=>`      ${name}: \${{ secrets.${name} }}`).join('\n');

@@ -67,10 +67,10 @@ export function sourceReader(root,inv,{maxBytes=192000}={}){
     return result;
   }};
 }
-export function groundCandidates(candidates,reader,inv){
+export function groundCandidates(candidates,reader,inv,{categories=['cross-account-access','missing-authentication']}={}){
   need(Array.isArray(candidates)&&candidates.length<=8,'Agent returned too many or invalid source hypotheses.',3);
   return candidates.map(candidate=>{
-    need(candidate&&['cross-account-access','missing-authentication'].includes(candidate.category),'Unsupported hypothesis category.',3);
+    need(candidate&&categories.includes(candidate.category),'Unsupported hypothesis category.',3);
     const lines=reader.readFiles.get(candidate.file);
     need(Number.isInteger(candidate.line)&&candidate.line>0&&lines?.has(candidate.line),'Hypothesis must cite a line actually read.',3);
     need(typeof candidate.quote==='string'&&candidate.quote.trim().length>0&&lines.get(candidate.line).trim()===candidate.quote.trim(),'Source citation did not match the actual line. No finding accepted.',3);
