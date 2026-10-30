@@ -19,6 +19,7 @@ for(const packaged of [false,true])test(`${packaged?'packaged':'source'} plugin 
  await c.call('bypass_verify_target',{name:'local',method:'local'});
  await c.call('bypass_authorize_target',{name:'local',paths:'/api',methods:'GET,HEAD,POST',rps:0.75,accept:true,'public-config':true});
  const before=read(root).targets[0].authorization;
+ const permission=await c.call('bypass_onboarding',{mode:'live',reviewScope:true});assert.equal(permission.nextAction.rateInput.field,'rps');assert.equal(permission.nextAction.rateInput.allowCustom,true);assert.equal(permission.nextAction.rateInput.choices[0].value,0.75);
  const confirm=await c.call('bypass_blackbox_setup',{plan:true});assert.equal(confirm.input.choices[0].value,'http://127.0.0.1:12345');assert.equal(confirm.input.choices[0].recommended,true);
  const plan=await c.call('bypass_blackbox_setup',{plan:true,url:'http://127.0.0.1:12345'});
  assert.equal(plan.input.hostControl,'request_user_input');assert.deepEqual(plan.input.choices.map(c=>c.id),['recommended','custom']);
@@ -43,10 +44,13 @@ test('CLI accepts a rate directly and retains exact paths, methods and omitted r
  const root=directory(t);await execute('init',[root]);await execute('target add',['local'],{project:root,url:'http://127.0.0.1:12345',environment:'local'});await execute('target verify',['local'],{project:root,method:'local'});
  const cli=(...args)=>execFile(process.execPath,[CLI,...args,'--project',root,'--json','--non-interactive'],{cwd:root,timeout:10000});
  assert.equal((await cli('target','authorize','local','--accept','--paths','/api','--methods','GET,HEAD,POST','--rps','1.5')).code,0);
+ const initial=read(root).targets[0].authorization;
+ await execute('target authorize',['local'],{project:root,accept:true},{scope:{...initial,loginPaths:['/api/login'],xmlPostPaths:['/api/xml'],writeOperations:[{method:'POST',path:'/api/items',placement:'json'}]}});
  const original=read(root).targets[0].authorization;
  assert.equal((await cli('target','authorize','local','--accept','--rps','1')).code,0);
  assert.deepEqual(read(root).targets[0].authorization.methods,original.methods);assert.deepEqual(read(root).targets[0].authorization.paths,original.paths);
- assert.equal((await cli('target','authorize','local','--accept','--methods','GET,HEAD')).code,0);assert.equal(read(root).targets[0].authorization.maxRequestsPerSecond,1);
+ for(const field of ['loginPaths','xmlPostPaths','writeOperations','expiresAt'])assert.deepEqual(read(root).targets[0].authorization[field],original[field]);
+ assert.equal((await cli('target','authorize','local','--accept')).code,0);assert.equal(read(root).targets[0].authorization.maxRequestsPerSecond,1);
  for(const rps of ['nope','0','-1','11'])assert.notEqual((await cli('target','authorize','local','--accept','--rps',rps)).code,0);
  assert.equal(read(root).targets[0].authorization.maxRequestsPerSecond,1);
 });

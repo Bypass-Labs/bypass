@@ -80,6 +80,11 @@ export async function pluginOnboarding(cwd,root,{intent='real',mode,url,environm
   }
   if(nextAction.id==='scope')Object.assign(nextAction,{question:`Which HTTP methods may Bypass use on ${target.url}?`,input:methodInput(target.authorization?.methods),
     pathInput:choiceInput('paths',scopeSuggestions(target).map((item,n)=>({...item,id:String(n)})),{recommended:'0',custom:'value'}),
+    rateInput:choiceInput('rps',[
+      {id:'saved',label:target.authorization?'Keep saved rate':'Use 2 requests/sec',value:target.authorization?.maxRequestsPerSecond??2,
+        description:`${target.authorization?.maxRequestsPerSecond??2} requests per second`},
+      ...(target.authorization?.maxRequestsPerSecond===1?[]:[{id:'gentle',label:'Use 1 request/sec',value:1,description:'Lower request rate'}])
+    ],{recommended:'saved',custom:'value',question:'What request rate may Bypass use?',minimumExclusive:0,maximum:10}),
     scope:{url:target.url,environment:target.environment,paths:target.authorization?.paths||[],maxRequestsPerSecond:target.authorization?.maxRequestsPerSecond||2,expiresAt:target.authorization?.expiresAt||null,publicConfigDiscovery:target.authorization?.publicConfigDiscovery||false,publicConfigOption:{label:'Read public app pages and scripts to discover sign-in setup',method:'GET',authenticated:false}},
     guidance:'Open the host method picker with custom input. Show the exact URL, paths, rate and expiry. Explain POST creates data/jobs, PUT/PATCH change data, DELETE removes it. Include optional public-config discovery (bounded anonymous GET of this app’s pages/scripts) in the scope summary so it can be approved with the testing methods, without a separate question. Pass public-config true only if this was explicitly included in the approved summary. Pass exactly the selected methods; never broaden permission. Reuse current explicit scope.'});
   return {version:VERSION,runtime:identity,intent,mode,workspace,selectedRepository:source?root:null,profileRoot:root,engine:'host',ai:hostAI(),stage:nextAction.id==='review'?'ready':nextAction.id,steps,ready:{source,live},coverageGaps:mode==='code'?[]:ready.coverageGaps,nextAction,
