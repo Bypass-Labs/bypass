@@ -26,6 +26,17 @@ function tool(name,description,properties,required,command,makeArgs=()=>[],makeO
 const identityKey=str('Finding, check, or run ID');
 const repositorySelection={repository:str('Application repository: explicit local folder or Git URL selected by the user'),dir:str('Empty clone destination for a Git URL'),config:str('Optional user-selected JSON setup file; repository selection remains explicit'),confirmed:bool('True only when the user has identified or confirmed this repository'),allowBypassSource:bool('Only true when the user specifically wants to review Bypass tooling itself'),name:str('Optional project display name')};
 export const toolDefinitions=[
+  tool('bypass_discover','Inspect the whitebox scanner scaffold. plan=true explains prerequisites without Docker or inference. Analysis returns not_implemented. Muse owns reasoning; never configure an API provider.',{sarif:str('Optional SARIF input path; not read by the scaffold'),config:str('Optional scanner configuration path; not read by the scaffold'),plan:bool('Inspect the intended workflow and current limitations')},[],'discover',undefined,undefined,true),
+  tool('bypass_discover_status','Scanner run-status interface; returns not_implemented without creating state.',{run:identityKey},['run'],'discover status',a=>[a.run],()=>({}),true),
+  tool('bypass_discover_resume','Scanner continuation interface. Muse supplies reasoning; no API profile is accessed. Currently not implemented.',{run:identityKey},['run'],'discover resume',a=>[a.run],()=>({}),true),
+  tool('bypass_discover_cancel','Scanner cancellation interface; currently not implemented and changes no state.',{run:identityKey},['run'],'discover cancel',a=>[a.run],()=>({}),true),
+  tool('bypass_discover_report','Scanner JSON/Markdown report interface; currently not implemented. No report is fabricated.',{run:identityKey,format:str('Report format',{enum:['json','md']})},['run'],'discover report',a=>[a.run],a=>a.format?{format:a.format}:{},true),
+  tool('bypass_scanner_doctor','Inspect Docker and the scanner scaffold image. No model configuration, build, or inference.',{},[],'scanner doctor',undefined,undefined,true),
+  tool('bypass_scanner_prepare','Explicitly build the local scanner scaffold image. Analysis remains unimplemented; no LLM settings are required.',{},[],'scanner prepare'),
+  tool('bypass_scanner_capabilities','Inspect the versioned scanner contract and scaffold capabilities; no Docker or inference.',{},[],'discover capabilities',undefined,undefined,true),
+  tool('bypass_discover_next_task','Reasoning-task interface; currently returns not_implemented. Never start a nested AI worker.',{run:identityKey},['run'],'discover next_task',a=>[a.run],()=>({}),true),
+  tool('bypass_discover_evidence','Scoped evidence-tool interface; currently returns not_implemented without reading source.',{run:identityKey,task:identityKey,operation:str('Evidence operation',{enum:['inventory','read','search','navigate','artifact','check','checkpoint']}),arguments:{type:'object',properties:{},additionalProperties:true}},['run','task','operation'],'discover evidence',a=>[a.run],a=>Object.fromEntries(Object.entries(a).filter(([k])=>k!=='run')),true),
+  tool('bypass_discover_submit','Typed submission interface; currently not implemented and creates no finding.',{run:identityKey,task:identityKey,sourceRevision:str('Task source revision'),result:{type:'object',properties:{},additionalProperties:true}},['run','task','sourceRevision','result'],'discover submit',a=>[a.run],a=>Object.fromEntries(Object.entries(a).filter(([k])=>k!=='run')),true),
   tool('bypass_help','Discover everything available inside Muse: workflows, native tools, CLI equivalents, and the few host-owned setup steps. No project required.',{query:str('Optional feature, command or tool to find')},[],'plugin-help',undefined,undefined,true),
   tool('bypass_dashboard','Show Done / Now / Next, the selected application, latest run, saved checks and actual monitor worker health. No scan or inference.',{},[],'plugin-dashboard',undefined,undefined,true),
   tool('bypass_onboarding','Start or resume setup with one question at a time. Reuse the user-supplied app URL and environment; do not ask again or substitute an example local port. Remembers an explicitly selected review mode and returns the next picker/action. No scanning or app requests.',{intent:str('Requested experience; real is recommended',{enum:['real','preview']}),mode:str('Explicit selection: code, combined, or live (app only). Omit to show the review-type picker.',{enum:['code','combined','live']}),repository:repositorySelection.repository,dir:repositorySelection.dir,url:str('App address explicitly supplied by the user for this repository; not an unconfirmed README/example URL'),environment:str('Only when already identified by the user; loopback is inferred automatically',{enum:['local','preview','staging','production']}),reviewScope:bool('Show the method picker and current scope when the user wants to change allowed methods or paths')},[],'onboarding'),
@@ -157,7 +168,8 @@ export async function serveMCP(cwd=process.cwd(),io={input:process.stdin,output:
     if(token!==undefined)send({jsonrpc:'2.0',method:'notifications/progress',params:{progressToken:token,progress:0,message:'Starting Bypass operation'}});
     try{
       let result;
-      if(selectedRoot)registerProjectCredentials(read(selectedRoot));
+      const scannerCommand=t.command==='discover'||t.command.startsWith('discover ')||t.command.startsWith('scanner ');
+      if(selectedRoot&&!scannerCommand)registerProjectCredentials(read(selectedRoot));
       if(t.command==='plugin-help')result=outcome(pluginHelp(toolDefinitions,args.query));
       else if(t.command==='plugin-dashboard')result=pluginDashboard(selectedRoot);
       else if(t.command==='onboarding'){
@@ -213,6 +225,8 @@ export async function serveMCP(cwd=process.cwd(),io={input:process.stdin,output:
           result.session={selectedRepository:selectedRoot,hostWorkspace:cwd,allSubsequentToolsUse:selectedRoot,selectionPersists:persistence.remembered?'future sessions opened from this host folder':'this MCP session only',editorWorkspaceMatches:path.resolve(cwd)===selectedRoot,...persistence};
           result.onboarding=await pluginOnboarding(cwd,selectedRoot,{...setupChoices,signal:controller.signal});
         }finally{selecting=false;}
+      }else if(t.command==='discover'||t.command.startsWith('discover ')||t.command.startsWith('scanner ')){
+        result=await execute(t.command,t.makeArgs(args),{...t.makeOptions(args),project:selectedRoot||cwd},operationContext);
       }else if(!selectedRoot&&['status','context'].includes(t.command))result=outcome(await pluginOnboarding(cwd,null));
       else{
         need(selectedRoot&&!selecting,'Follow bypass_onboarding to connect the selected repository or app-only URL first. The current Muse folder is not selected automatically.');

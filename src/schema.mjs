@@ -9,7 +9,7 @@ export function validateJSON(schema, value, label='arguments', depth=0) {
   const matches=t=>t==='null'?value===null:t==='array'?Array.isArray(value):t==='object'?value!==null&&typeof value==='object'&&!Array.isArray(value):t==='integer'?Number.isInteger(value):typeof value===t;
   need(types.some(matches),`Invalid type for ${label}.`,3);
   if(schema.enum)need(schema.enum.includes(value),`Unsupported ${label}.`,3);
-  if(typeof value==='string')need(value.length<=(schema.maxLength??64000),`${label} exceeds length limit.`,3);
+  if(typeof value==='string')need(value.length>=(schema.minLength??0)&&value.length<=(schema.maxLength??64000),`${label} outside length limits.`,3);
   if(typeof value==='number')need(Number.isFinite(value)&&(schema.minimum===undefined||value>=schema.minimum)&&(schema.maximum===undefined||value<=schema.maximum),`${label} outside bounds.`,3);
   if(Array.isArray(value)){need(value.length<=(schema.maxItems??1000),`${label} exceeds item limit.`,3);value.forEach(v=>validateJSON(schema.items,v,label,depth+1));}
   else if(value&&typeof value==='object'){
