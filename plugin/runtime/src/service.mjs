@@ -55,6 +55,10 @@ export function readiness(root){
 
 export async function execute(key,args=[],o={},context={}){
   const working=path.resolve(o.project||context.cwd||process.cwd());
+  if(key==='discover'||key.startsWith('discover ')||key.startsWith('scanner ')){
+    const {scannerService}=await import('./scanner/service.mjs');
+    return scannerService(key,args,o,{...context,cwd:working});
+  }
   if(['scan','verify','retest','test run'].includes(key)){
     const fixtureRoot=rootFrom(working,false);
     if(fixtureRoot&&read(fixtureRoot).poc){const {resumePOC}=await import('./poc.mjs');await resumePOC(fixtureRoot,{automatic:true,signal:context.signal});}

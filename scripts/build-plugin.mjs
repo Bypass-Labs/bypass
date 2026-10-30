@@ -2,10 +2,17 @@ import { build } from 'esbuild';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { scannerPackageFiles } from '../src/scanner/runtime.mjs';
 const root=path.resolve(path.dirname(fileURLToPath(import.meta.url)),'..');
 const runtime=path.join(root,'plugin/runtime');
 fs.mkdirSync(runtime,{recursive:true});
 for(const directory of ['src','bin','agents','examples/poc-api'])fs.cpSync(path.join(root,directory),path.join(runtime,directory),{recursive:true});
+fs.rmSync(path.join(runtime,'scanner'),{recursive:true,force:true});
+for(const relative of scannerPackageFiles(path.join(root,'scanner'))){
+  const destination=path.join(runtime,'scanner',relative);
+  fs.mkdirSync(path.dirname(destination),{recursive:true});
+  fs.copyFileSync(path.join(root,'scanner',relative),destination);
+}
 // Bundle the official SDK to keep native Muse install hashing/copying bounded.
 fs.rmSync(path.join(runtime,'node_modules'),{recursive:true,force:true});
 fs.mkdirSync(path.join(runtime,'vendor'),{recursive:true});
