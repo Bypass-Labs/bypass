@@ -53,14 +53,16 @@ export function scopeReady(target, pathname, method) {
   if (pathname) need(pathAllowed(pathname,auth.paths), `Path ${pathname} is outside the authorized scope.`, 3);
   return true;
 }
-export async function safeRequest(value, {allowLocal=false,allowPrivate=false,method='GET',headers={},body,timeout=8000,maxBytes=131072,signal,onHeaders,onChunk} = {}) {
+export async function safeRequest(value, {allowLocal=false,allowPrivate=false,allowRemoteHttp=false,method='GET',headers={},body,timeout=8000,maxBytes=131072,signal,onHeaders,onChunk} = {}) {
   if(signal?.aborted)throw abortFault(signal);
   const url = new URL(value);
   need(!url.username && !url.password, 'URL credentials are not allowed.');
   const host = url.hostname.replace(/^\[|\]$/g,'');
   need(['http:','https:'].includes(url.protocol), 'Only HTTP(S) is supported.');
   const local = loopback(host);
-  need((local && allowLocal) || (!local && url.protocol === 'https:'), 'Remote requests require HTTPS; local requests require explicit local scope.', 3);
+  const anonymousHttp = allowRemoteHttp === true && ['GET','HEAD'].includes(method) &&
+    body == null && !Object.keys(headers).some(name => /^(authorization|proxy-authorization|cookie)$/i.test(name));
+  need((local && allowLocal) || (!local && (url.protocol === 'https:' || anonymousHttp)), 'Remote requests require HTTPS unless explicitly scoped anonymous HTTP reads; local requests require explicit local scope.', 3);
   let addresses;
   try { addresses = net.isIP(host) ? [{address:host,family:net.isIP(host)}] : await abortable(dns.lookup(host,{all:true}),signal); }
   catch { if(signal?.aborted)throw abortFault(signal);throw new Fault(`DNS lookup failed for ${host}.`,3); }

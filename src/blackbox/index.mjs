@@ -377,7 +377,7 @@ export async function runAudit({url, root = process.cwd(), scopeFile = null, ove
   }
   const allowLocal = loopback(new URL(scope.target.origin).hostname);
   const run = `bx-${new Date().toISOString().slice(0, 10).replaceAll('-', '')}-${randomBytes(4).toString('hex')}`;
-  const runDir = out ? path.resolve(out) : path.join(projectRoot, '.bypass/runs', run);
+  const runDir = out ? path.resolve(projectRoot, out) : path.join(projectRoot, '.bypass/runs', run);
   need(!fs.existsSync(runDir) || fs.readdirSync(runDir).length === 0,
     `Run folder must be new or empty: ${runDir}.`);
   fs.mkdirSync(runDir, {recursive: true, mode: 0o700});

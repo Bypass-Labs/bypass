@@ -336,12 +336,15 @@ function recordedRun(root, run) {
   need(integrity.ok, `Evidence ledger is broken at ${integrity.brokenAt}.`, 3);
   const proofs = fs.readFileSync(path.join(runDir, 'evidence.jsonl'), 'utf8').split('\n').filter(Boolean)
     .map(line => JSON.parse(line)).filter(record => record.step === 'poc' && record.proof?.path);
-  const proofByPath = new Map(proofs.map(record => [path.resolve(record.proof.path), record.proof]));
+  const canonical = value => {
+    try { return fs.realpathSync(value); } catch { return path.resolve(value); }
+  };
+  const proofByPath = new Map(proofs.map(record => [canonical(record.proof.path), record.proof]));
   const pocDir = path.join(runDir, 'poc');
   for (const entry of fs.existsSync(pocDir) ? fs.readdirSync(pocDir, {withFileTypes: true}).filter(item => item.isDirectory()) : []) {
     const dir = path.join(pocDir, entry.name);
     const script = path.join(dir, 'poc.mjs');
-    const record = proofByPath.get(path.resolve(script));
+    const record = proofByPath.get(canonical(script));
     need(record && fs.existsSync(script) && fs.existsSync(path.join(dir, 'spec.json')) &&
       record.specHash === hash(fs.readFileSync(path.join(dir, 'spec.json'))) &&
       record.scriptHash === hash(fs.readFileSync(script)) &&
@@ -387,7 +390,13 @@ export async function verifyRun(root, run, {env = process.env} = {}) {
         reason: 'A self-declared private field does not establish an independent access policy or denial control'});
       continue;
     }
-    const completed = await execFile(process.execPath, [file], {env, timeout: 20000});
+    let completed;
+    try { completed = await execFile(process.execPath, [file], {env, timeout: 20000}); }
+    catch {
+      proofs.push({id: entry.name, kind: spec.kind, verdict: 'inconclusive',
+        exitCode: 3, controls: [], reason: 'Proof execution failed or exceeded its time/output limit.'});
+      continue;
+    }
     let response;
     try { response = JSON.parse(completed.stdout); } catch { response = {verdict: 'inconclusive', reason: 'proof output was not JSON'}; }
     const observation = spec.kind === 'model-http-sequence';
@@ -415,7 +424,7 @@ export function exportRun(root, run, {out = null} = {}) {
   const pocDir = path.join(runDir, 'poc');
   const entries = fs.existsSync(pocDir) ? fs.readdirSync(pocDir, {withFileTypes: true}).filter(item => item.isDirectory()) : [];
   need(entries.length > 0, `Run ${run} has no generated proofs.`, 3);
-  const output = out ? path.resolve(out) : path.join(root, 'tests/security/blackbox');
+  const output = out ? path.resolve(root, out) : path.join(root, 'tests/security/blackbox');
   fs.mkdirSync(output, {recursive: true});
   const runtime = path.join(output, 'blackbox-runtime.mjs');
   const source = fs.readFileSync(path.join(pocDir, 'runtime.mjs'), 'utf8');

@@ -2,7 +2,7 @@
 
 The Muse plugin is the primary experience. Use ordinary requests or its slash commands; Muse calls these tools for you. You do not need to learn MCP syntax or leave Muse for project operations.
 
-Standalone model setup has a deliberate mode boundary: plugin model tools explain host ownership and cannot configure or invoke API inference. This reference is generated from the CLI catalog and plugin definitions. CI checks all 100 public CLI commands and their options; there are 97 typed tools. Regenerate with `node scripts/check-plugin-parity.mjs --write` after intentionally changing the catalog.
+Standalone model setup has a deliberate mode boundary: plugin model tools explain host ownership and cannot configure or invoke API inference. This reference is generated from the CLI catalog and plugin definitions. CI checks all 107 public CLI commands and their options; there are 108 typed tools. Regenerate with `node scripts/check-plugin-parity.mjs --write` after intentionally changing the catalog.
 
 ## Start inside Muse
 
@@ -33,6 +33,13 @@ CLI global `--project` maps to the selected repository; `--json` maps to structu
 | `blackbox verify` | `bypass_blackbox_verify` | Re-execute generated proofs and check ledger integrity. |
 | `blackbox export` | `bypass_blackbox_export` | Write Node regression tests for confirmed findings. |
 | `blackbox resume` | `bypass_blackbox_resume` | Continue saved Muse research in a fresh scoped audit. |
+| `discover` | `bypass_discover` | Inspect the whitebox scanner scaffold; analysis is not implemented. |
+| `discover status` | `bypass_discover_status` | Scanner run-status interface; execution is not implemented. |
+| `discover resume` | `bypass_discover_resume` | Scanner continuation interface; execution is not implemented. |
+| `discover cancel` | `bypass_discover_cancel` | Scanner cancellation interface; execution is not implemented. |
+| `discover report` | `bypass_discover_report` | Scanner report interface; generation is not implemented. |
+| `scanner doctor` | `bypass_scanner_doctor` | Inspect Docker and the local scanner scaffold image; no inference. |
+| `scanner prepare` | `bypass_scanner_prepare` | Build the local Python scanner scaffold image; analysis remains unavailable. |
 | `poc` | `bypass_demo_start` · {"kind":"real"} | Conversational real demo replaces the standalone terminal screen. |
 | `poc start` | `bypass_demo_start` · {"kind":"real"} | Create a separate real fixture for Muse to investigate; no plugin API key or Docker required. |
 | `poc resume` | `bypass_demo_control` · {"action":"resume"} | Restart the saved generated local fixture; preserve findings and tests. |

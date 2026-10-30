@@ -22,7 +22,8 @@ try{
   const first=install();assert.equal(first.state,'review_required');assert.equal(first.reviewRequired,true);
   let inspected=run('muse',['plugins','inspect','bypass','--json']);
   assert.ok(inspected.record.cache_path.startsWith(root+path.sep));
-  assert.equal(inspected.plugin.capabilities.commands.length,9);
+  const expectedCommands=JSON.parse(fs.readFileSync(path.join(copy,'plugin/.muse-plugin/plugin.json'))).capabilities.commands.length;
+  assert.equal(inspected.plugin.capabilities.commands.length,expectedCommands);
   assert.equal(inspected.runtime_capabilities.length,2);
   assert.ok(inspected.runtime_capabilities.every(row=>row.status==='review_needed'));
   const installedAt=inspected.record.installed_at;

@@ -8,7 +8,7 @@ import {credentialQueryKey, validateUrl} from './scope.mjs';
 import {contentBoundaryShapeReason, requestSuppliesPrivateMaterial,
   verifyContentBoundary} from './content-boundary.mjs';
 import {responseCached, modelExperimentReason, stateChangeCanaries,
-  validModelExperiment, validModelFixedFields,
+  validModelExperiment, validModelFixedFields, MAX_SEQUENCE_STEPS,
   validModelHeaders, sequencePointerType, validSequencePointer,
   captureSequenceScalar, uniqueJsonStringField,
   boundSequencePath, renderCapturedHtml, xssPayload, sequenceJsonBody} from './poc-runtime.mjs';
@@ -686,7 +686,8 @@ export function validateResearchFlow(spec, surface, scope, {env = {}, inventory 
       spec.assertion?.location !== 'body' ||
       !protectedReadRoutes(surface, scope, env, derivedAvailable).includes(spec.protectedPath)))
     return fail('protected-boundary');
-  if (!Array.isArray(spec.prelude) || !Array.isArray(spec.observe))
+  if (!Array.isArray(spec.prelude) || !Array.isArray(spec.observe) ||
+      spec.prelude.length > MAX_SEQUENCE_STEPS || spec.observe.length > MAX_SEQUENCE_STEPS)
     return fail('unobserved-read-step');
   const rawBindings = proposedBindings(spec);
   const reviewedPrelude = spec.prelude.map((step, index) => reviewedSequenceStep(step,
@@ -866,7 +867,7 @@ const FLOW_SCHEMA = {type: 'object', properties: {
   priority: {type: 'integer'}, as: {type: 'string', enum: ['anonymous', 'owner', 'outsider', 'derived']},
   oracle: {type: 'string', maxLength: 80},
   protectedPath: {type: 'string', maxLength: 300},
-  prelude: {type: 'array', items: PRELUDE_STEP_SCHEMA},
+  prelude: {type: 'array', maxItems: MAX_SEQUENCE_STEPS, items: PRELUDE_STEP_SCHEMA},
   subject: {type: 'object', properties: {method: {type: 'string', enum: ['GET', 'HEAD', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS']},
     path: {type: 'string', maxLength: 300},
     placement: {type: 'string', enum: ['query', 'header', 'json', 'xml', 'form']},
@@ -879,7 +880,7 @@ const FLOW_SCHEMA = {type: 'object', properties: {
     headers: STEP_SCHEMA.properties.headers},
   required: ['method', 'path', 'placement', 'key', 'fixedFields', 'bodyTemplate', 'headers'],
   additionalProperties: false},
-  observe: {type: 'array', items: STEP_SCHEMA},
+  observe: {type: 'array', maxItems: MAX_SEQUENCE_STEPS, items: STEP_SCHEMA},
   binding: {...BINDING_SCHEMA, type: ['object', 'null']},
   bindings: {type: 'array', items: BINDING_SCHEMA},
   controlValue: {type: 'string', maxLength: 256},

@@ -149,6 +149,10 @@ export async function runSessionChains(leads, scope, {requester, env = {}} = {})
         denied(anonymous) && denied(invalid) && ![owner, anonymous, invalid].some(unstable)) {
       const ownerToken = env[scope.identities.owner.env];
       for (let index = 0; index < 2; index++) {
+        if (typeof ownerToken !== 'string' || !/^[\x21-\x7e]{16,4096}$/.test(ownerToken)) {
+          reason = 'The configured token is outside the supported replay format; public-token replay was not tested.';
+          break;
+        }
         const source = await send(lead.sourcePath, 'anonymous', index ? 'reverify' : 'task',
           {omitExcerpt: true, rawForSessionChain: true});
         if (source.blocked || source.refused) {

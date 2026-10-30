@@ -45,7 +45,7 @@ jobs:
     needs: windows-accounts
     if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-24.04
-    timeout-minutes: 25
+    timeout-minutes: 90
     permissions:
       contents: read
       id-token: write

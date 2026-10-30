@@ -56,6 +56,10 @@
       {
         "id": "help",
         "path": "commands/help.md"
+      },
+      {
+        "id": "discover",
+        "path": "commands/discover.md"
       }
     ],
     "mcpServers": [

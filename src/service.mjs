@@ -145,6 +145,10 @@ export async function execute(key,args=[],o={},context={}){
       log:event=>context.onProgress?.(event)});
     return outcome(result,result.exitCode);
   }
+  if(key==='discover'||key.startsWith('discover ')||key.startsWith('scanner ')){
+    const {scannerService}=await import('./scanner/service.mjs');
+    return scannerService(key,args,o,{...context,cwd:working});
+  }
   if(['scan','verify','retest','test run'].includes(key)){
     const fixtureRoot=rootFrom(working,false);
     if(fixtureRoot&&read(fixtureRoot).poc){const {resumePOC}=await import('./poc.mjs');await resumePOC(fixtureRoot,{automatic:true,signal:context.signal});}

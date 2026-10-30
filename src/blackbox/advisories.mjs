@@ -86,7 +86,8 @@ export async function lookupAdvisories(summaries, {enabled = false, offline = fa
         response = await query(payload, {timeoutMs: Math.max(1, Math.min(5000, deadline - nowMs()))});
         if (response?.status !== 200) throw Error(`OSV returned HTTP ${response?.status ?? 'unknown'}`);
         body = JSON.parse(response.body);
-        if (!body || !Array.isArray(body.vulns ?? []) || body.vulns.length > 1000)
+        if (!body || typeof body !== 'object' || Array.isArray(body) ||
+            !Array.isArray(body.vulns ?? []) || (body.vulns ?? []).length > 1000)
           throw Error('OSV returned an invalid or oversized result.');
       } catch (cause) {error = clean(cause?.message ?? 'OSV query failed', 160);}
       const entries = error ? [] : body.vulns ?? [];

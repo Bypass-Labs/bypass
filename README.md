@@ -1,5 +1,9 @@
 # Bypass for Muse
 
+Whitebox scanner scaffold: `bypass discover --plan` or `/bypass:discover` in Muse.
+The new Python/Docker integration exposes contracts and diagnostics; analysis is
+not implemented yet. [Design and current scope](docs/VULNERABILITY_DISCOVERY.md#implemented-skeleton).
+
 **Find an account-access bug. Verify the fix. Keep the test and security context for your next feature.**
 
 Inside **Muse Code**, Muse plans the investigation; Bypass reads bounded source, executes approved HTTP tests, and preserves evidence. Reviews report findings, recommend fixes and save regression tests. Application fixes require a separate explicit request. No separate model key or Docker is needed for the plugin. Standalone source review uses your provider API key and isolated Docker workers; the standalone blackbox audit uses a Meta API key without Docker.

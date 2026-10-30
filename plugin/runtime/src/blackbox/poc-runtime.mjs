@@ -1,6 +1,8 @@
 // Copied beside generated proofs and tests. Node built-ins only; no credential values are stored.
 import {createHash, createPrivateKey, createPublicKey, randomBytes} from 'node:crypto';
 import {execFile as childExecFile} from 'node:child_process';
+import {AsyncLocalStorage} from 'node:async_hooks';
+import {setTimeout as wait} from 'node:timers/promises';
 import dns from 'node:dns/promises';
 import fs from 'node:fs';
 import http from 'node:http';
@@ -25,6 +27,10 @@ const DOM_SCRIPT_BYTES = 2 * 1024 * 1024;
 // Byte-range file proofs retain their smaller limits.
 const MODEL_RESPONSE_BYTES = 16 * 1024 * 1024;
 const DERIVED_SESSION_REPLAY = Symbol('derived-session-replay');
+const replayBudget = new AsyncLocalStorage();
+export const MAX_SEQUENCE_STEPS = 8;
+const MAX_PROOF_REQUESTS = 128;
+const MAX_PROOF_MS = 60000;
 const domScriptLimit = value => Number.isSafeInteger(value) && value > 0 &&
   value <= 16 * 1024 * 1024 ? value : DOM_SCRIPT_BYTES;
 export const HTML_INJECTION_STYLES = Object.freeze(['plain', 'double-quote', 'single-quote',
@@ -88,7 +94,8 @@ export function modelExperimentReason(spec) {
     const reason = modelValueReason(value, markers, 256, localSyntax, observation);
     if (reason) return reason;
   }
-  if (!validModelHeaders(spec?.headers ?? [], markers)) return 'headers';
+  if (!validModelHeaders(spec?.headers ?? [], markers) ||
+      (spec?.headers ?? []).some(header => header.name.toLowerCase() === 'content-type')) return 'headers';
   if (new Set(values).size !== values.length) return 'duplicate-values';
   return null;
 }
@@ -671,7 +678,10 @@ export async function renderCapturedHtml(body, originalCsp, marker,
       '--proxy-bypass-list=<-loopback>',
       `--user-data-dir=${profile}`, '--dump-dom', pageUrl.href];
     const candidates = process.env.BYPASS_CHROME ? [process.env.BYPASS_CHROME] :
-      process.platform === 'win32' ? ['chrome.exe'] : ['google-chrome', 'chromium', 'chromium-browser'];
+      process.platform === 'win32' ? ['chrome.exe'] : process.platform === 'darwin' ?
+        ['/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
+          path.join(os.homedir(), 'Applications/Google Chrome.app/Contents/MacOS/Google Chrome'),
+          'google-chrome', 'chromium', 'chromium-browser'] : ['google-chrome', 'chromium', 'chromium-browser'];
     for (const command of candidates) {
       for (let attempt = 0; attempt < 2; attempt++) {
         try {
@@ -712,6 +722,12 @@ function publicIp(address) {
 }
 async function guardedRequest(url, {method = 'GET', headers = {}, body = null,
   allowRemoteHttp = false, maxBodyBytes = MODEL_RESPONSE_BYTES} = {}) {
+  const budget = replayBudget.getStore();
+  if (budget) {
+    if (budget.signal.aborted || budget.requests >= MAX_PROOF_REQUESTS)
+      throw Error('Proof replay exceeded its request or time budget.');
+    budget.requests++;
+  }
   const host = url.hostname.replace(/^\[|\]$/g, '');
   const local = localHost(host);
   if (!local && url.protocol !== 'https:' && !(allowRemoteHttp && url.protocol === 'http:'))
@@ -723,6 +739,7 @@ async function guardedRequest(url, {method = 'GET', headers = {}, body = null,
   return new Promise((resolve, reject) => {
     const client = url.protocol === 'https:' ? https : http;
     const request = client.request(url, {method, headers: {accept: 'application/json', ...headers}, agent: false,
+      signal: budget?.signal,
       family: chosen.family, servername: net.isIP(host) ? undefined : host,
       lookup: (_name, options, callback) => options?.all ? callback(null, [chosen]) :
         callback(null, chosen.address, chosen.family)}, response => {
@@ -750,10 +767,12 @@ const guardedGet = (url, headers, allowRemoteHttp = false, maxBodyBytes = MODEL_
   guardedRequest(url, {headers, allowRemoteHttp, maxBodyBytes});
 
 async function pace(spec) {
+  const budget = replayBudget.getStore();
+  if (budget?.signal.aborted) throw Error('Proof replay exceeded its time budget.');
   const spacing = 1000 / Math.max(0.5, Math.min(100, Number(spec.rps) || 2));
   const at = Math.max(Date.now(), nextRequestAt);
   nextRequestAt = at + spacing;
-  if (at > Date.now()) await new Promise(resolve => setTimeout(resolve, at - Date.now()));
+  if (at > Date.now()) await wait(at - Date.now(), undefined, {signal: budget?.signal});
 }
 
 function neverMatches(spec, path, search, {pathOnly = false} = {}) {
@@ -1484,6 +1503,7 @@ export function validModelHttpSequence(spec) {
       !['anonymous', 'owner', 'outsider', 'derived'].includes(spec.as) ||
       !object(subject) || !object(assertion) ||
       !Array.isArray(spec.prelude) || !Array.isArray(spec.observe) ||
+      spec.prelude.length > MAX_SEQUENCE_STEPS || spec.observe.length > MAX_SEQUENCE_STEPS ||
       !['GET', 'HEAD', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'].includes(subject.method) ||
       !['query', 'header', 'json', 'xml', 'form'].includes(subject.placement) ||
       !['subject', 'observe'].includes(assertion.step) ||
@@ -3186,6 +3206,12 @@ async function checkGraphqlBola(spec, env) {
 
 /** Replay the recorded requests. Only statuses, hashes and the deterministic verdict leave this function. */
 export async function check(spec, env = process.env, replay = null) {
+  if (replayBudget.getStore()) return checkWithinBudget(spec, env, replay);
+  return replayBudget.run({requests: 0, signal: AbortSignal.timeout(MAX_PROOF_MS)},
+    () => checkWithinBudget(spec, env, replay));
+}
+
+async function checkWithinBudget(spec, env, replay) {
   try {
     env = {...env};
     if (spec.expiresAt && Date.parse(spec.expiresAt) <= Date.now()) throw Error('Proof scope has expired.');
@@ -3253,7 +3279,7 @@ export async function check(spec, env = process.env, replay = null) {
               url.pathname !== path && !url.search).map(url => url.pathname);
         };
         const matches = item => (rangedFile ? item.status === 200 || item.status === 206 &&
-          /^bytes 0-\d{1,2}\/\d+$/i.test(item.headers?.['content-range'] ?? '') :
+          /^bytes 0-\d{1,4}\/\d+$/i.test(item.headers?.['content-range'] ?? '') :
           item.status === 200) && (
           spec.signature === 'directory index' ? links(item).length > 0 :
           spec.signature === 'KeePass KDBX header' ? /^03d9a29a67fb4bb5/i.test(item.prefixHex ?? '') :

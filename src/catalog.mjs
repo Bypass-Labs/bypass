@@ -7,6 +7,13 @@ export const commands={
   'blackbox verify':command('blackbox verify <run-id>','Re-execute generated proofs and check ledger integrity.'),
   'blackbox export':command('blackbox export <run-id>','Write Node regression tests for confirmed findings.','out'),
   'blackbox resume':command('blackbox resume <run-id>','Continue saved Muse research in a fresh scoped audit.','scope model offline agents http-workers rps model-calls max-urls max-tasks minutes dom-script-bytes'),
+  discover:command('discover','Inspect the whitebox scanner scaffold; analysis is not implemented.','sarif config plan'),
+  'discover status':command('discover status <run>','Scanner run-status interface; execution is not implemented.'),
+  'discover resume':command('discover resume <run>','Scanner continuation interface; execution is not implemented.'),
+  'discover cancel':command('discover cancel <run>','Scanner cancellation interface; execution is not implemented.'),
+  'discover report':command('discover report <run>','Scanner report interface; generation is not implemented.','format'),
+  'scanner doctor':command('scanner doctor','Inspect Docker and the local scanner scaffold image; no inference.'),
+  'scanner prepare':command('scanner prepare','Build the local Python scanner scaffold image; analysis remains unavailable.'),
   poc:command('poc','Open a real-AI, two-container POC with a local test app.','dir model'),
   'poc start':command('poc start','Create a separate POC app with public accounts and real Docker agents.','dir port model'),
   'poc resume':command('poc resume','Restart the saved generated local fixture; preserve findings and tests.'),
@@ -127,7 +134,7 @@ export function parse(argv){
   return {key,args:words,options};
 }
 export function help(key,reference=false){
-  if(!key&&!reference)return `BYPASS  /  security checks that stay with your code\n\nMuse plugin (recommended): /bypass:start inside Muse\n\n  bypass onboard       Connect your application\n  bypass poc           Try the real local demonstration\n  bypass status        See what is done and what comes next\n  bypass scan          Review configured source and live checks\n  bypass test run --all  Replay saved regressions without AI\n\nCredentials are optional. Account-boundary tests need two accounts.\nStandalone AI needs an API-key profile; Muse uses its active session.\n\nFull reference: bypass --help --reference\nCommand details: bypass <command> --help\n`;
+  if(!key&&!reference)return `BYPASS  /  security checks that stay with your code\n\nMuse plugin (recommended): /bypass:start inside Muse\n\n  bypass onboard       Connect your application\n  bypass poc           Try the real local demonstration\n  bypass status        See what is done and what comes next\n  bypass scan          Review configured source and live checks\n  bypass discover --plan  Inspect the whitebox scanner scaffold (analysis pending)\n  bypass test run --all  Replay saved regressions without AI\n\nCredentials are optional. Account-boundary tests need two accounts.\nStandalone AI needs an API-key profile; Muse uses its active session.\n\nFull reference: bypass --help --reference\nCommand details: bypass <command> --help\n`;
   const selected=commands[key];
   if(selected)return `bypass ${selected.usage}\n\n${selected.description}\n\nOptions: ${selected.flags.map(x=>'--'+x).join(', ')||'(none)'}\nGlobal: --project <path>, --json, --non-interactive, --help\n`;
   const entries=Object.entries(commands).filter(([k,v])=>!v.hidden&&(!key||k.startsWith(key+' ')));
