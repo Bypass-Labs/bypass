@@ -8,13 +8,16 @@ import {randomBytes} from 'node:crypto';
 import {DatabaseSync} from 'node:sqlite';
 import {execFileSync, spawn, spawnSync} from 'node:child_process';
 import {temp} from './helpers.mjs';
-import {execFile} from '../src/util.mjs';
+import {execFile, redact} from '../src/util.mjs';
 import {CLI} from '../src/demo.mjs';
 
 async function cliWithEnv(root, env, ...args) {
   const completed = await execFile(process.execPath,
     [CLI, ...args, '--project', root, '--json', '--non-interactive'],
     {cwd: root, env, timeout: 90000});
+  const stderr = Object.values(env).filter(value => typeof value === 'string' && value.length >= 4)
+    .reduce((output, value) => output.replaceAll(value, '[REDACTED]'), redact(completed.stderr));
+  assert.ok(completed.stdout, `CLI exited ${completed.code} without JSON: ${stderr.slice(0, 600)}`);
   return {code: completed.code, data: JSON.parse(completed.stdout), stderr: completed.stderr};
 }
 

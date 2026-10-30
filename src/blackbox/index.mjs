@@ -484,7 +484,7 @@ export async function runAudit({url, root = process.cwd(), scopeFile = null, ove
   let assessment = null;
   let stats = {startedAt, model: null, modelCalls: 0, requests: 0, cached: 0, tasks: 0, agents: 0};
   try {
-    const testMuse = !noModel && !modelProfileOverride && !modelName &&
+    const testMuse = !noModel && infer === modelInfer && !modelProfileOverride && !modelName &&
       env.BYPASS_TEST_LEGACY_MUSE === '1' &&
       fs.existsSync(path.join(env.PATH?.split(path.delimiter)[0] ?? '', 'muse'));
     const model = noModel ? null : modelProfileOverride ??
