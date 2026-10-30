@@ -31,12 +31,14 @@ The CLI follows the same choices-first pattern with arrow/number selection, sugg
 
 ## Host account and privacy
 
-For `/bypass:discover` or explicit whitebox scanner scaffold requests, use
-`bypass_discover` with `plan: true` and follow `commands/discover.md`. This separate
-Python/Docker scaffold reports analysis as not implemented. Do not run normal app
-onboarding, configure an external model, launch nested AI, or substitute an HTTP
-review. The active Muse session owns reasoning; current task/evidence/submission
-tools are interfaces only and must not be retried as though a worker is running.
+For `/bypass:discover` or explicit whitebox/CodeQL scanner requests, follow
+`commands/discover.md`. Use `bypass_discover` to scan explicitly selected source;
+`plan: true` explains prerequisites without starting Docker. First use prepares
+the bundled image automatically. Poll status, page signals/artifacts, and report
+unevaluated candidates with coverage gaps. Exact rule IDs include/exclude queries;
+build networking needs explicit config. CodeQL requires Docker and makes zero
+model calls. Do not configure an external model, launch nested AI, or substitute
+an HTTP review. AI task/evidence/submission tools remain unavailable.
 
 Use the active signed-in Muse session. Explain once that Bypass does not receive session billing attestation through the current Muse MCP/hook interfaces; subscription usage is **not verified**. Ask the user to confirm subscription mode in Muse account/settings if it is unknown. If supported host status or the user explicitly says API billing is active, stop the AI review and tell them to switch Muse to subscription mode, then resume. Do not infer billing from credential files, environment variables, an available subscription allowance, or a successful chat. Never read credentials to establish billing.
 

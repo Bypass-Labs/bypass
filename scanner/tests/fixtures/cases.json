@@ -1,0 +1,140 @@
+{
+  "license": "MIT",
+  "cases": [
+    {
+      "name": "cpp",
+      "language": "cpp",
+      "rule": "cpp/unbounded-write",
+      "files": {
+        "main.cpp": "#include <cstdio>\nint main(){char value[8]; std::scanf(\"%s\", value); return 0;}\n"
+      },
+      "safe": {
+        "main.cpp": "#include <cstdio>\nint main(){char value[8]; std::scanf(\"%7s\", value); return 0;}\n"
+      }
+    },
+    {
+      "name": "csharp",
+      "language": "csharp",
+      "rule": "cs/weak-encryption",
+      "files": {
+        "Program.cs": "using System.Security.Cryptography;\nclass Program { static void Main() { using(var cipher = new DESCryptoServiceProvider()) { cipher.GenerateKey(); } } }\n",
+        "fixture.csproj": "<Project Sdk=\"Microsoft.NET.Sdk\"><PropertyGroup><TargetFramework>net8.0</TargetFramework><OutputType>Exe</OutputType></PropertyGroup></Project>\n"
+      },
+      "safe": {
+        "Program.cs": "using System.Security.Cryptography;\nclass Program { static void Main() { using(var cipher = new AesCryptoServiceProvider()) { cipher.GenerateKey(); } } }\n"
+      }
+    },
+    {
+      "name": "go",
+      "language": "go",
+      "rule": "go/weak-cryptographic-algorithm",
+      "files": {
+        "main.go": "package main\nimport(\"crypto/des\";\"fmt\")\nfunc main(){ c,_:=des.NewCipher([]byte(\"12345678\")); dst:=make([]byte,8); c.Encrypt(dst,[]byte(\"12345678\")); fmt.Println(dst) }\n",
+        "go.mod": "module example.com/bypass-fixture\n\ngo 1.22\n"
+      },
+      "safe": {
+        "main.go": "package main\nimport(\"crypto/aes\";\"fmt\")\nfunc main(){ c,_:=aes.NewCipher([]byte(\"1234567812345678\")); dst:=make([]byte,16); c.Encrypt(dst,[]byte(\"1234567812345678\")); fmt.Println(dst) }\n"
+      }
+    },
+    {
+      "name": "java",
+      "language": "java",
+      "rule": "java/weak-cryptographic-algorithm",
+      "files": {
+        "Main.java": "import javax.crypto.Cipher;\nclass Main { public static void main(String[] args) throws Exception { System.out.println(Cipher.getInstance(\"DES/ECB/PKCS5Padding\")); } }\n"
+      },
+      "safe": {
+        "Main.java": "import javax.crypto.Cipher;\nclass Main { public static void main(String[] args) throws Exception { System.out.println(Cipher.getInstance(\"AES/GCM/NoPadding\")); } }\n"
+      }
+    },
+    {
+      "name": "kotlin",
+      "language": "java",
+      "rule": "java/weak-cryptographic-algorithm",
+      "build": {
+        "mode": "manual",
+        "command": [
+          "kotlinc",
+          "Main.kt",
+          "-d",
+          "fixture.jar"
+        ]
+      },
+      "files": {
+        "Main.kt": "import javax.crypto.Cipher\nfun main() { println(Cipher.getInstance(\"DES/ECB/PKCS5Padding\")) }\n"
+      },
+      "safe": {
+        "Main.kt": "import javax.crypto.Cipher\nfun main() { println(Cipher.getInstance(\"AES/GCM/NoPadding\")) }\n"
+      }
+    },
+    {
+      "name": "javascript",
+      "language": "javascript",
+      "rule": "js/command-line-injection",
+      "files": {
+        "main.js": "const express=require('express');const cp=require('child_process');const app=express();\napp.get('/run',(req,res)=>cp.exec(req.query.cmd,(err,out)=>res.send(out)));\n",
+        "package.json": "{\"name\": \"bypass-codeql-fixture\", \"version\": \"1.0.0\", \"license\": \"MIT\", \"dependencies\": {\"express\": \"4.21.2\"}}"
+      },
+      "safe": {
+        "main.js": "const express=require('express');const cp=require('child_process');const app=express();\napp.get('/run',(req,res)=>cp.execFile('/usr/bin/id',[],(err,out)=>res.send(out)));\n"
+      }
+    },
+    {
+      "name": "typescript",
+      "language": "javascript",
+      "rule": "js/command-line-injection",
+      "files": {
+        "main.ts": "import express from 'express'; import {exec} from 'child_process'; const app=express();\napp.get('/run',(req,res)=>exec(String(req.query.cmd),(err,out)=>res.send(out)));\n",
+        "package.json": "{\"name\": \"bypass-codeql-fixture\", \"version\": \"1.0.0\", \"license\": \"MIT\", \"dependencies\": {\"express\": \"4.21.2\"}}"
+      },
+      "safe": {
+        "main.ts": "import express from 'express'; import {execFile} from 'child_process'; const app=express();\napp.get('/run',(req,res)=>execFile('/usr/bin/id',[],(err,out)=>res.send(out)));\n"
+      }
+    },
+    {
+      "name": "python",
+      "language": "python",
+      "rule": "py/weak-cryptographic-algorithm",
+      "files": {
+        "main.py": "from Crypto.Cipher import DES\ncipher = DES.new(b'12345678', DES.MODE_ECB)\ncipher.encrypt(b'12345678')\n"
+      },
+      "safe": {
+        "main.py": "from Crypto.Cipher import AES\ncipher = AES.new(b'1234567812345678', AES.MODE_GCM)\ncipher.encrypt(b'1234567812345678')\n"
+      }
+    },
+    {
+      "name": "ruby",
+      "language": "ruby",
+      "rule": "rb/weak-cryptographic-algorithm",
+      "files": {
+        "main.rb": "require 'openssl'\ncipher = OpenSSL::Cipher.new('des')\n"
+      },
+      "safe": {
+        "main.rb": "require 'openssl'\ncipher = OpenSSL::Cipher.new('aes-256-gcm')\n"
+      }
+    },
+    {
+      "name": "rust",
+      "language": "rust",
+      "rule": "rust/access-invalid-pointer",
+      "files": {
+        "src/main.rs": "#![allow(deref_nullptr)]\nfn main() { let p = std::ptr::null::<u8>(); unsafe { println!(\"{}\", *p); } }\n",
+        "Cargo.toml": "[package]\nname = \"bypass-codeql-fixture\"\nversion = \"0.1.0\"\nedition = \"2021\"\nlicense = \"MIT\"\n"
+      },
+      "safe": {
+        "src/main.rs": "fn main() { let value = 7_u8; let p = &value as *const u8; unsafe { println!(\"{}\", *p); } }\n"
+      }
+    },
+    {
+      "name": "actions",
+      "language": "actions",
+      "rule": "actions/code-injection/critical",
+      "files": {
+        ".github/workflows/test.yml": "name: synthetic fixture\non: issue_comment\npermissions:\n  contents: write\njobs:\n  test:\n    runs-on: ubuntu-latest\n    steps:\n      - run: echo \"${{ github.event.comment.body }}\"\n"
+      },
+      "safe": {
+        ".github/workflows/test.yml": "name: synthetic fixture\non: issue_comment\npermissions:\n  contents: write\njobs:\n  test:\n    runs-on: ubuntu-latest\n    steps:\n      - env:\n          BODY: ${{ github.event.comment.body }}\n        run: printf '%s\\n' \"$BODY\"\n"
+      }
+    }
+  ]
+}

@@ -13,6 +13,8 @@
   "scripts": {
     "start": "node bin/bypass.mjs",
     "test": "node --import ./test/legacy-muse-env.mjs --test --test-concurrency=1 test/*.test.mjs",
+    "test:scanner": "node scripts/test-scanner.mjs",
+    "test:codeql": "node scripts/codeql-smoke.mjs && node scripts/codeql-boundaries.mjs && node scripts/codeql-scope-smoke.mjs",
     "check": "node scripts/check.mjs && node scripts/check-plugin-parity.mjs",
     "demo": "node bin/bypass.mjs demo",
     "plugin:build": "node scripts/build-plugin.mjs",

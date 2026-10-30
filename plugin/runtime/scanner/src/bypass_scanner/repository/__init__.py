@@ -1,5 +1,4 @@
-"""Future evidence interface: bounded source reads, search, and navigation.
+"""Source inventory and immutable, content-addressed snapshots.
 
-Reads must bind evidence to snapshots and delivered ranges. No source access
-is performed by this scaffold.
+Future evaluation reads/search must bind delivered ranges to these snapshots.
 """

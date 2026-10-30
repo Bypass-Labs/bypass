@@ -51,6 +51,28 @@ Updating/repairing uses that same command. It preserves identical-package approv
 
 Interactive installation reads consent from the real terminal, including when the script arrives through `curl | bash`. Empty input, decline and cancellation do not approve anything. CI, redirected output and `BYPASS_NO_OPEN_MUSE=1` leave approval and opening Muse to the user. The fallback is `/plugins` → Installed → Bypass → Runtime, followed by a new session and `/bypass:start`. An unexpected capability or a package that changes while the user is deciding requires a new review.
 
+### Manual runtime approval and missing MCP tools
+
+Confirmed with Muse Code 1.4.14 on 2026-10-30: Bypass was enabled and its slash
+commands were visible, but its `security` MCP server remained `review_needed`.
+The MCP panel showed **No MCP servers configured**. After reviewing Bypass's
+runtime permissions, this terminal command resolved the approval blocker:
+
+```bash
+MUSE_NO_AUTO_UPDATE=1 muse plugins approve bypass
+MUSE_NO_AUTO_UPDATE=1 muse plugins inspect bypass --json
+```
+
+Verify `trusted_enabled` for both required runtime capabilities: MCP server
+`security` and hook `session-context`. Then start a **new Muse session**. Enabled
+status, visible slash commands, and an approved hook alone do not establish that
+the MCP server is available. Recheck approval after changing the installed package.
+
+For CodeQL, first call `bypass_scanner_capabilities` through the native Muse
+session, then run discovery. A successful CLI scan or direct packaged-server
+test does not prove native Muse tool exposure. If tools are missing, report the
+activation blocker and stop instead of substituting the CLI during the MCP test.
+
 ## Optional: install from inside Muse
 
 Ask: `Read https://bypasslabs.ai/install/muse.md and install Bypass for Muse.` The host reads the skill and executes the same OS-specific installer. This is a convenience for users already in a chat; it adds no capabilities over the direct command. Headless installation does not open a nested Muse session or record approval; the user completes the manual fallback above.

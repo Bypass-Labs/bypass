@@ -3,12 +3,16 @@
 For the proposed discovery pipeline, see
 [Vulnerability discovery service](VULNERABILITY_DISCOVERY.md).
 
-The whitebox scanner skeleton is in `scanner/` (Python core/protocol) and
+The whitebox CodeQL scanner is in `scanner/` (Python core/protocol) and
 `src/scanner/` (Node Docker/MCP/API-driver boundaries). It has separate discover
 commands and Muse tools, with no integration into existing assessment findings.
-Only MCP capability inspection is executable; analysis returns not_implemented.
-Muse supplies reasoning through its active session; the standalone entry point
-requires API settings and currently stops before any model request. See the
+Python owns snapshots, language detection, exact rule selection, extraction,
+query execution, SARIF normalization, durable lifecycle, and discovery reports.
+Node prepares the bundled Docker recipe on first use, controls offline containers
+and explicitly network-enabled build helpers, and exposes the same operations to
+CLI and Muse. Deterministic discovery requires no API settings or model calls.
+AI discovery/evaluation remain unavailable. Future Muse reasoning uses the active
+session; the reserved standalone API driver requires explicit API settings. See the
 [scanner README](../scanner/README.md) for packaging and development instructions.
 
 ## Shared application core

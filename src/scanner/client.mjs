@@ -61,7 +61,7 @@ export class ScannerClient {
 
   receive(message) {
     need(message && message.jsonrpc === '2.0' && !Array.isArray(message), 'Invalid scanner envelope.', 3);
-    // This scaffold advertises no notifications or server-initiated requests.
+    // The server advertises no notifications or server-initiated requests.
     const entry = this.pending.get(message.id);
     need(entry && Number.isInteger(message.id) && (Object.hasOwn(message, 'result') !== Object.hasOwn(message, 'error')), 'Unexpected scanner response.', 3);
     if (message.error) need(Number.isInteger(message.error.code) && typeof message.error.message === 'string', 'Invalid scanner error.', 3);
@@ -109,8 +109,10 @@ export class ScannerClient {
     try {
       need(Array.isArray(response?.content) && response.content.length === 1 && response.content[0].type === 'text' && typeof response.content[0].text === 'string' && typeof response.isError === 'boolean', 'Invalid scanner tool result.', 3);
       const result = JSON.parse(response.content[0].text);
-      validateJSON(manifest.schemas[response.isError ? 'error' : 'capabilities'], result, 'scanner result');
-      need(result.protocolVersion === protocolVersion && (response.isError ? result.operation === operation : operation === 'capabilities'), 'Scanner result does not match its operation.', 3);
+      need(result?.protocolVersion === protocolVersion, 'Incompatible scanner application protocol. Prepare the matching scanner image.', 3);
+      validateJSON(manifest.schemas[manifest.operations[operation].responseSchema], result, 'scanner result');
+      need(operation === 'capabilities' || result.operation === operation, 'Scanner result does not match its operation.', 3);
+      need(response.isError === ['error','not_implemented'].includes(result.status), 'Scanner error flag does not match its result.', 3);
       return result;
     } catch (error) { this.fail(new Fault('Invalid scanner tool result.', 3)); throw this.failure; }
   }

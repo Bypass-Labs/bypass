@@ -1,12 +1,17 @@
 # Bypass for Muse
 
-Whitebox scanner scaffold: `bypass discover --plan` or `/bypass:discover` in Muse.
-The new Python/Docker integration exposes contracts and diagnostics; analysis is
-not implemented yet. [Design and current scope](docs/VULNERABILITY_DISCOVERY.md#implemented-skeleton).
+Whitebox CodeQL discovery: `bypass discover --plan` or `/bypass:discover` in Muse.
+Scan selected source with pinned upstream queries, exact rule inclusion/exclusion,
+and durable SARIF/signals/reports. Docker is required; no LLM API settings are
+needed. The image builds automatically on first use. AI evaluation is pending.
+Tests, fixtures, examples, and generated copies are excluded from analysis by
+default; use `--include-tests`, `--include-examples`, or `--include-generated`
+when needed.
+[Usage and configuration](scanner/README.md).
 
 **Find an account-access bug. Verify the fix. Keep the test and security context for your next feature.**
 
-Inside **Muse Code**, Muse plans the investigation; Bypass reads bounded source, executes approved HTTP tests, and preserves evidence. Reviews report findings, recommend fixes and save regression tests. Application fixes require a separate explicit request. No separate model key or Docker is needed for the plugin. Standalone source review uses your provider API key and isolated Docker workers; the standalone blackbox audit uses a Meta API key without Docker.
+Inside **Muse Code**, Muse plans the investigation; Bypass reads bounded source, executes approved HTTP tests, and preserves evidence. Reviews report findings, recommend fixes and save regression tests. Application fixes require a separate explicit request. The guided plugin review needs no separate model key or Docker; CodeQL discovery requires Docker. Standalone source review uses your provider API key and isolated Docker workers; the standalone blackbox audit uses a Meta API key without Docker.
 
 The guided review is a working POC for missing authentication and cross-account access to configured JSON/HTML resources, plus bounded registration and email-verification checks. The separate `blackbox` audit maps a running app and tests observed leads with Muse; its report states exactly what was tested and missed. Source citations are hypotheses; actual HTTP controls establish confirmation. Passing these checks is not a complete security assessment.
 
@@ -33,6 +38,22 @@ This installs the full Muse plugin and CLI, includes Node, and sets up PATH. No 
 **2. Choose “Enable these permissions and open Muse” (`1` or `y`).**
 
 The installer explains Bypass's two permissions, records your choice through Muse, and opens a fresh Muse session in the same folder with setup already started. You do not need to navigate plugin menus or type a startup command. Muse may still ask you to sign in or trust the workspace if you have not done that before.
+
+If Bypass shows **needs review**, or `/mcp` shows **No MCP servers configured**,
+check its runtime approval. An enabled plugin can expose slash commands while
+its MCP server is still awaiting review. After reviewing Bypass's runtime
+permissions, run this in your terminal (confirmed with Muse Code 1.4.14):
+
+```bash
+MUSE_NO_AUTO_UPDATE=1 muse plugins approve bypass
+MUSE_NO_AUTO_UPDATE=1 muse plugins inspect bypass --json
+```
+
+In the inspection output, the `security` MCP server and `session-context` hook
+should both have status `trusted_enabled`. Start a **new Muse session** after
+approval; an existing session keeps its loaded capabilities. For a scanner
+connection check, ask Muse to call `bypass_scanner_capabilities` through MCP.
+[Scanner activation and verification](scanner/README.md#enable-scanner-tools-in-muse).
 
 To return to setup in a later Muse session:
 
