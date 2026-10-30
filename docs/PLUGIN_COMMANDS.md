@@ -6,7 +6,7 @@ Standalone model setup has a deliberate mode boundary: plugin model tools explai
 
 ## Start inside Muse
 
-Use /bypass:blackbox to audit an authorized running app through the active Muse session, then replay proofs and export regressions. A bare command asks in chat for the exact target URL, allowed paths, request rate, Muse-call cap and time limit; the user can type custom numbers or choose 120 Muse calls and 30 minutes as separate defaults. It does not start an audit of an app selected in an earlier session.
+Use `/bypass:blackbox` to confirm the app, then choose recommended settings or Customize settings in the native picker. Saved scope and account settings are reused; unknown credentials do not block anonymous checks or authorized signup attempts. Explicit rate changes can use `bypass_authorize_target` with `rps`; paths, methods and omitted limits remain unchanged. Engine-decision budgets exclude Muse setup and reporting turns.
 
 - `/bypass:start`: reuse your repository and active Muse reasoning, and finish missing app/DNS/scope setup; accounts are optional.
 - `/bypass:demo`: a real local Muse-directed demonstration, through proof, fixture fix, saved test, deliberate regression, one monitor tick and security context. Ask for an offline preview explicitly to use seeded discovery.

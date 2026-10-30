@@ -18,15 +18,13 @@ function directory(t) {const root=temp();t.after(()=>fs.rmSync(root,{recursive:t
 function variable(t,key,value){const prior=process.env[key];process.env[key]=value;t.after(()=>{if(prior===undefined)delete process.env[key];else process.env[key]=prior;});}
 const host = work => inExecutionMode('muse-host',work);
 
-test('requested blackbox accounts cannot silently degrade to an anonymous audit',async t=>{
+test('missing explicit blackbox credentials leave setup ready for anonymous checks and authorized signup',async t=>{
  const root=directory(t),url='http://127.0.0.1:1';
- const options={'owner-env':'UAT_MISSING_OWNER','other-env':'UAT_MISSING_OTHER',include:'/','identity-path':'/api/me'};
- const setup=await host(()=>prepareBlackboxSetup(root,url,options));
- assert.equal(setup.ready,false);assert.equal(setup.accounts.mode,'anonymous-only');assert.equal(setup.accounts.warnings.length,2);
- assert.equal(setup.modelCheck,null);assert.match(setup.next,/bypass_import_identity/);
- assert.equal(setup.nextAction,undefined);assert.equal(setup.steps[0].kind,'accounts');
- await assert.rejects(runAudit({root,url,scopeFile:setup.scopeFile,noModel:true,env:{}}),/account UAT_MISSING_OWNER is unavailable/);
- assert.equal(fs.existsSync(path.join(root,'.bypass/runs')),false,'do not start a misleading anonymous run');
+ const setup=await host(()=>prepareBlackboxSetup(root,url,{'owner-env':'UAT_MISSING_OWNER','other-env':'UAT_MISSING_OTHER',include:'/','identity-path':'/api/me'}));
+ assert.equal(setup.ready,true);assert.equal(setup.accounts.mode,'anonymous-only');assert.equal(setup.accounts.warnings.length,2);
+ assert.equal(setup.modelCheck,null);assert.equal(setup.nextAction.tool,'bypass_blackbox_start');assert.equal(setup.steps[0].kind,'run');
+ assert.deepEqual(await blackboxEnvironment(root,JSON.parse(fs.readFileSync(setup.scopeFile)),{env:{}}),{});
+ assert.match(setup.accounts.warnings[0],/Continue available checks and authorized account creation/);
 });
 
 test('new blackbox project reuses valid domain ownership without inheriting scope',async t=>{
@@ -86,6 +84,11 @@ test('real blackbox audit and proof replay use the saved vault pair and preserve
  const url=`http://127.0.0.1:${server.address().port}`;await execute('init',[root]);await execute('target add',['local'],{project:root,url,environment:'local'});await execute('target verify',['local'],{project:root,method:'local'});
  const auth=path.join(root,'scope.json');fs.writeFileSync(auth,JSON.stringify({paths:['/'],methods:['GET','HEAD','POST'],maxRequestsPerSecond:10,expiresAt:new Date(Date.now()+86400000).toISOString()}));
  await execute('target authorize',['local'],{project:root,'scope-file':auth,accept:true});
+ const anonymousSetup=await prepareBlackboxSetup(root,url,{'owner-env':'UAT_OWNER','other-env':'UAT_OUTSIDER',rps:10,'max-urls':8,'max-tasks':5,minutes:1});
+ const anonymousScope=JSON.parse(fs.readFileSync(anonymousSetup.scopeFile));anonymousScope.discovery.sensitivePaths=false;anonymousScope.harvest.sequentialNeighbors=0;anonymousScope.discover=['/openapi.json'];fs.writeFileSync(anonymousSetup.scopeFile,JSON.stringify(anonymousScope));
+ const anonymous=await runAudit({root,url,scopeFile:anonymousSetup.scopeFile,noModel:true,env:{}});
+ assert.ok(anonymous.stats.requests>0,'missing references do not stop real anonymous HTTP checks');assert.equal(seen.size,0);
+ assert.equal(anonymous.findings.some(f=>f.kind==='idor'),false);
  const file=path.join(privateDir,'accounts.json');fs.writeFileSync(file,JSON.stringify(tokens),{mode:0o600});
  for(const name of ['owner','outsider'])await execute('identity import',[name],{project:root,file,'token-field':name,target:'local',type:'bearer','secret-env':`UAT_${name.toUpperCase()}`,'check-path':'/api/me'});
  const setup=await prepareBlackboxSetup(root,url,{rps:10,'max-urls':8,'max-tasks':5,minutes:1});
@@ -96,5 +99,5 @@ test('real blackbox audit and proof replay use the saved vault pair and preserve
  fixed=true;assert.equal((await verifyRun(root,first.run,{env:{}})).exitCode,0);
  const exported=exportRun(root,first.run);assert.ok(exported.files.length);assert.doesNotMatch(fs.readFileSync(exported.files[0],'utf8'),/private-uat-(owner|outsider)-token/);
  await execute('target revoke',['local'],{project:root});await assert.rejects(blackboxEnvironment(root,scope,{env:{}}),/ownership|authorization/);
- const different={...scope,target:{...scope.target,origin:'http://127.0.0.1:32198'}};await assert.rejects(blackboxEnvironment(root,different,{env:{}}),/unavailable/);
+ const different={...scope,target:{...scope.target,origin:'http://127.0.0.1:32198'}};assert.deepEqual(await blackboxEnvironment(root,different,{env:{}}),{});
 });

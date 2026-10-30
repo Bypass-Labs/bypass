@@ -30,6 +30,7 @@ import { specFor, saveCheck, bindCheck, exportChecks } from './checks.mjs';
 import { dispatchRun, watchRun, startWorker, workerStatus, runMonitor } from './jobs.mjs';
 import { startDemo, updateDemo, serveDemo, demoConfig, CLI } from './demo.mjs';
 import { prepareScopeTemplate, prepareBlackboxSetup } from './blackbox/setup.mjs';
+import {blackboxOnboarding} from './blackbox/onboarding.mjs';
 import { runAudit } from './blackbox/index.mjs';
 import { verifyRun as verifyBlackboxRun, exportRun as exportBlackboxRun } from './blackbox/poc.mjs';
 
@@ -112,7 +113,7 @@ export async function execute(key,args=[],o={},context={}){
         `Review ${file}, then run bypass blackbox ${origin}${runLimits}` :
         `Review ${file}, then run bypass blackbox setup ${origin}${runLimits} to prepare target ownership and authorization.`});
   }
-  if(key==='blackbox setup')return outcome(await prepareBlackboxSetup(working,args[0],o));
+  if(key==='blackbox setup')return outcome(o.plan?blackboxOnboarding(working,args[0],o):await prepareBlackboxSetup(working,args[0],o));
   if(key==='blackbox'){
     let auditRps=o.rps;
     if(args[0]&&!o.scope&&
@@ -257,8 +258,16 @@ export async function execute(key,args=[],o={},context={}){
     case 'target authorize':{
       const name=args[0]||s.activeTarget;
       need(o['scope-file']||o.accept,'Review scope, then provide --scope-file or --accept --paths /api. Ownership alone is not authorization.');
-      need(!(o['scope-file']&&o.methods!==undefined),'Choose methods in the scope file or with --methods, not both.');
-      const scope=context.scope||(o['scope-file']?loadJSON(o['scope-file']):{paths:(o.paths||'/api').split(','),methods:o.methods,productionAcknowledged:!!o.production,publicConfigDiscovery:o['public-config']??named(s.targets,name,'Target').authorization?.publicConfigDiscovery});
+      need(!(o['scope-file']&&(o.methods!==undefined||o.rps!==undefined)),'Choose methods and rate in the scope file or with --methods/--rps, not both.');
+      const previous=named(s.targets,name,'Target').authorization;
+      if(o.rps!==undefined)need((typeof o.rps==='number'||typeof o.rps==='string'&&o.rps.trim()!=='')&&Number.isFinite(Number(o.rps))&&Number(o.rps)>0&&Number(o.rps)<=10,'--rps must be greater than 0 and at most 10.');
+      const scope=context.scope||(o['scope-file']?loadJSON(o['scope-file']):{
+        ...previous,
+        paths:o.paths!==undefined?o.paths.split(','):previous?.paths||['/api'],
+        methods:o.methods??previous?.methods,
+        maxRequestsPerSecond:o.rps!==undefined?Number(o.rps):previous?.maxRequestsPerSecond??2,
+        productionAcknowledged:o.production??previous?.productionAcknowledged??false,
+        publicConfigDiscovery:o['public-config']??previous?.publicConfigDiscovery});
       result=await change(root,state=>{const t=named(state.targets,name,'Target');t.authorization=authorization(t,scope);event(state,'authorized',`${name}: testing authorized`,{scope:t.authorization});return {target:t.name,authorization:t.authorization};});break;
     }
     case 'target revoke':case 'target remove':result=await change(root,state=>{

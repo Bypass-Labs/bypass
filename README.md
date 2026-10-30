@@ -77,9 +77,9 @@ Muse runs the same installer. Agent-run or noninteractive installs leave permiss
 
 ## Black-box audit
 
-Use `/bypass:blackbox` inside Muse Code for an authorized running app. Muse asks for the target, allowed paths, request rate, Muse-call limit and time limit, then makes its planning decisions in the active session. Bypass executes scoped requests, records evidence, replays promising proofs and offers regression export. No separate model key or Docker is needed for this plugin path.
+Use `/bypass:blackbox` inside Muse Code for a running app. Confirm the app and choose the recommended review or customize its settings. Muse plans in the active session; Bypass executes authorized requests, records evidence, replays promising proofs and exports regressions. No separate model key or Docker is needed for this plugin path.
 
-You can include optional limits in the same request, for example: `/bypass:blackbox Audit http://127.0.0.1:3002; allow /; use 10 rps, 240 Muse calls, 600 recon URLs, 45 minutes, 12 Muse investigators and 12 HTTP workers.` A bare command asks for the target, paths, rate, Muse-call count and time limit in chat. Enter your own positive numbers or choose the separate defaults of 120 Muse calls and 30 minutes. Muse calls and minutes are per-run limits. A lower rate applies to one run; a higher rate updates only the saved scope rate for review before testing.
+Use `/bypass:blackbox` to confirm the app, then choose recommended settings or Customize settings in the native picker. Saved scope and account settings are reused; unknown credentials do not block anonymous checks or authorized signup attempts. In Muse, say “set the request limit to 1 per second”; in the CLI, use `bypass target authorize production --rps 1 --accept`. Paths, methods and omitted limits remain unchanged. Engine-decision budgets exclude Muse setup and reporting turns.
 
 In the interactive Bypass terminal, select an app-only workspace, configure the Meta model profile with the `LLM_KEY` environment-variable name, then type `/blackbox`. The wizard asks for the target, allowed paths and request rate and shows progress and report actions.
 

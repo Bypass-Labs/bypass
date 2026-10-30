@@ -1,0 +1,52 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import path from 'node:path';
+import {temp} from './helpers.mjs';
+import {mcpClient} from './mcp-client.mjs';
+import {execute} from '../src/service.mjs';
+import {read} from '../src/store.mjs';
+import {execFile} from '../src/util.mjs';
+import {CLI} from '../src/demo.mjs';
+const directory=t=>{const p=temp();t.after(()=>fs.rmSync(p,{recursive:true,force:true}));return p;};
+for(const packaged of [false,true])test(`${packaged?'packaged':'source'} plugin offers read-only recommended/custom setup and preserves scope on rate edits`,async t=>{
+ const root=directory(t),stateDir=directory(t);fs.writeFileSync(path.join(root,'app.mjs'),'export const app=true;\n');
+ const c=await mcpClient(root,{stateDir,packaged});t.after(()=>c.close());
+ const empty=await c.call('bypass_blackbox_setup',{plan:true});assert.equal(empty.input.field,'url');assert.equal(empty.input.allowCustom,true);
+ assert.equal(fs.existsSync(path.join(root,'.bypass')),false);
+ await c.call('bypass_connect_repository',{repository:root,confirmed:true});
+ await c.call('bypass_add_target',{name:'local',url:'http://127.0.0.1:12345',environment:'local'});
+ await c.call('bypass_verify_target',{name:'local',method:'local'});
+ await c.call('bypass_authorize_target',{name:'local',paths:'/api',methods:'GET,HEAD,POST',rps:0.75,accept:true,'public-config':true});
+ const before=read(root).targets[0].authorization;
+ const confirm=await c.call('bypass_blackbox_setup',{plan:true});assert.equal(confirm.input.choices[0].value,'http://127.0.0.1:12345');assert.equal(confirm.input.choices[0].recommended,true);
+ const plan=await c.call('bypass_blackbox_setup',{plan:true,url:'http://127.0.0.1:12345'});
+ assert.equal(plan.input.hostControl,'request_user_input');assert.deepEqual(plan.input.choices.map(c=>c.id),['recommended','custom']);
+ assert.equal(plan.input.allowCustom,true);assert.deepEqual(plan.settings,{url:'http://127.0.0.1:12345',include:'/api',rps:0.75,'model-calls':120,minutes:30});
+ assert.equal(plan.nextAction.requiresSelection,true);assert.equal(fs.existsSync(path.join(root,'blackbox.scope.json')),false);
+ await c.call('bypass_blackbox_setup',plan.settings);
+ const file=path.join(root,'blackbox.scope.json'),scopeBytes=fs.readFileSync(file,'utf8');
+ const again=await c.call('bypass_blackbox_setup',{plan:true,url:'http://127.0.0.1:12345'});
+ assert.equal(again.savedScope,true);assert.match(again.input.choices[0].label,/saved settings/);assert.equal(fs.readFileSync(file,'utf8'),scopeBytes);
+ await c.call('bypass_authorize_target',{name:'local',rps:0.5,accept:true});
+ const after=read(root).targets[0].authorization;
+ for(const field of ['paths','methods','expiresAt','publicConfigDiscovery','productionAcknowledged'])assert.deepEqual(after[field],before[field],field);
+ assert.equal(after.maxRequestsPerSecond,0.5);
+ await c.call('bypass_authorize_target',{name:'local',methods:'GET,HEAD',accept:true});assert.equal(read(root).targets[0].authorization.maxRequestsPerSecond,0.5);
+ const saved=JSON.stringify(read(root).targets[0].authorization);
+ for(const rps of [0,-1,10.01,'slow']){const bad=await c.raw('bypass_authorize_target',{name:'local',rps,accept:true});assert.ok(bad.error||bad.result?.isError);assert.equal(JSON.stringify(read(root).targets[0].authorization),saved);}
+ const denied=await c.raw('bypass_authorize_target',{name:'local',rps:2,accept:false});assert.equal(denied.result.isError,true);assert.equal(JSON.stringify(read(root).targets[0].authorization),saved);
+ const different=await c.call('bypass_blackbox_setup',{plan:true,url:'http://127.0.0.1:12346'});assert.equal(different.input.field,'scope');assert.equal(fs.readFileSync(file,'utf8'),scopeBytes);
+});
+
+test('CLI accepts a rate directly and retains exact paths, methods and omitted rate',async t=>{
+ const root=directory(t);await execute('init',[root]);await execute('target add',['local'],{project:root,url:'http://127.0.0.1:12345',environment:'local'});await execute('target verify',['local'],{project:root,method:'local'});
+ const cli=(...args)=>execFile(process.execPath,[CLI,...args,'--project',root,'--json','--non-interactive'],{cwd:root,timeout:10000});
+ assert.equal((await cli('target','authorize','local','--accept','--paths','/api','--methods','GET,HEAD,POST','--rps','1.5')).code,0);
+ const original=read(root).targets[0].authorization;
+ assert.equal((await cli('target','authorize','local','--accept','--rps','1')).code,0);
+ assert.deepEqual(read(root).targets[0].authorization.methods,original.methods);assert.deepEqual(read(root).targets[0].authorization.paths,original.paths);
+ assert.equal((await cli('target','authorize','local','--accept','--methods','GET,HEAD')).code,0);assert.equal(read(root).targets[0].authorization.maxRequestsPerSecond,1);
+ for(const rps of ['nope','0','-1','11'])assert.notEqual((await cli('target','authorize','local','--accept','--rps',rps)).code,0);
+ assert.equal(read(root).targets[0].authorization.maxRequestsPerSecond,1);
+});

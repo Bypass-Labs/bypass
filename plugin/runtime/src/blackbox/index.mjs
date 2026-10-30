@@ -263,8 +263,7 @@ export async function runAudit({url, root = process.cwd(), scopeFile = null, ove
   const file = scopeFile ?? (fs.existsSync(defaultScope) ? defaultScope : null);
   const {scope, hash: scopeHash} = loadScope({file, origin: url,
     overrides: effectiveOverrides, targets: registeredTargets});
-  if (!dryRun) env = await blackboxEnvironment(projectRoot, scope, {env, signal,
-    required: [...(overrides.ownerEnv ? ['owner'] : []), ...(overrides.otherEnv ? ['outsider'] : [])]});
+  if (!dryRun) env = await blackboxEnvironment(projectRoot, scope, {env, signal});
   // Resume may change execution budgets without changing the reviewed target,
   // paths, methods or authorization. Rebuild the prior effective scope with
   // its saved budgets to detect any actual scope-file change.

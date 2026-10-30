@@ -3,7 +3,7 @@ const command=(usage,description,flags='',extra={})=>({usage,description,flags:f
 export const commands={
   blackbox:command('blackbox <url>','Run a scoped black-box audit and save evidence under .bypass/runs/.','scope include domains audit-domains owner-env other-env auth identity-path model agents http-workers rps model-calls max-urls max-tasks minutes dom-script-bytes out source accept-local no-model dry-run no-discovery offline'),
   'blackbox scope':command('blackbox scope <url>','Write a reviewable blackbox.scope.json.','include domains audit-domains credential-origins never owner-env other-env auth identity-path identity-cookie-name environment agents http-workers rps model-calls max-urls max-tasks minutes dom-script-bytes out force'),
-  'blackbox setup':command('blackbox setup <url>','Prepare scope, target challenges and reviewable authorization files.','include domains audit-domains credential-origins never owner-env other-env auth identity-path identity-cookie-name environment agents http-workers rps model-calls max-urls max-tasks minutes dom-script-bytes out force'),
+  'blackbox setup':command('blackbox setup [url]','Prepare scope, target challenges and reviewable authorization files.','include domains audit-domains credential-origins never owner-env other-env auth identity-path identity-cookie-name environment agents http-workers rps model-calls max-urls max-tasks minutes dom-script-bytes out force plan'),
   'blackbox verify':command('blackbox verify <run-id>','Re-execute generated proofs and check ledger integrity.'),
   'blackbox export':command('blackbox export <run-id>','Write Node regression tests for confirmed findings.','out'),
   'blackbox resume':command('blackbox resume <run-id>','Continue saved Muse research in a fresh scoped audit.','scope model offline agents http-workers rps model-calls max-urls max-tasks minutes dom-script-bytes'),
@@ -39,7 +39,7 @@ export const commands={
   'target show':command('target show [name]','Show target, challenge, and scope.'),
   'target use':command('target use <name>','Select an active target.'),
   'target verify':command('target verify [name]','Check DNS/HTTP control, or acknowledge local ownership.','method wait renew'),
-  'target authorize':command('target authorize [name]','Record explicit paths, HTTP methods and expiring testing scope.','scope-file paths methods accept production public-config'),
+  'target authorize':command('target authorize [name]','Record explicit paths, HTTP methods and expiring testing scope.','scope-file paths methods rps accept production public-config'),
   request:command('request','Send one scoped HTTP request; record status and an optional resource ID without replaying writes.','target method path identity body-file id-field'),
   'target revoke':command('target revoke <name>','Revoke testing and pause target monitors.'),
   'target remove':command('target remove <name>','Disconnect a target while retaining historical evidence.'),

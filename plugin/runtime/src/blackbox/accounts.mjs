@@ -2,7 +2,6 @@ import fs from 'node:fs';
 import path from 'node:path';
 import {read} from '../store.mjs';
 import {credentialStatus, resolveCredential} from '../credentials.mjs';
-import {need} from '../util.mjs';
 
 const roles = ['owner', 'outsider'];
 const defaults = {owner: 'OWNER_TOKEN', outsider: 'OTHER_TOKEN'};
@@ -54,31 +53,26 @@ export function blackboxAccounts(root, scope, {env = process.env, required = []}
       required: configured};
   });
   const missing = accounts.filter(item => item.required && !item.available);
-  return {accounts, ready: missing.length === 0,
+  return {accounts, ready: true,
     mode: accounts.every(item => item.available) ? 'two-accounts' : accounts.some(item => item.available) ? 'one-account' : 'anonymous-only',
-    warnings: missing.map(item => `${item.role} account ${item.reference} is unavailable (${item.status}). Connect it with bypass_import_identity using a private file; no terminal export or Muse restart is needed.`),
+    warnings: missing.map(item => `${item.role} account ${item.reference} is unavailable (${item.status}). Continue available checks and authorized account creation; authenticated coverage remains limited until an identity is established.`),
     note: 'Account availability is configuration readiness; distinct signed-in identities still need HTTP validation.'};
 }
 
-export async function blackboxEnvironment(root, scope, {env = process.env, signal, required = [], strict = true, request} = {}) {
+export async function blackboxEnvironment(root, scope, {env = process.env, signal, request} = {}) {
   const {state, target} = project(root, scope.target.origin);
   const result = {...env};
   for (const role of roles) {
     const reference = scope.identities[role]?.env;
     if (!reference || !target) continue;
     const matches = state.identities.filter(item => item.target === target.name && item.secretEnv === reference);
-    need(matches.length <= 1, `Multiple accounts use ${reference}. Choose distinct saved credential references.`, 3);
+    if (matches.length !== 1) continue;
     const identity = matches[0];
-    if (!identity) continue;
-    need(placement(identity) === scope.identities.auth &&
-      (!scope.identities.identityPath || identity.checkPath === scope.identities.identityPath),
-    `Saved ${role} account differs from the reviewed authentication method or identity endpoint. Review the account configuration.`, 3);
+    if (placement(identity) !== scope.identities.auth ||
+        scope.identities.identityPath && identity.checkPath !== scope.identities.identityPath) continue;
+    if (!credentialStatus(state, target, identity, env).available) continue;
     const value = await resolveCredential(state, target, identity, {env, signal, ...(request ? {request} : {})});
     if (value) result[reference] = value;
-  }
-  if (strict) {
-    const status = blackboxAccounts(root, scope, {env: result, required});
-    need(status.ready, status.warnings.join(' '), 3);
   }
   return result;
 }

@@ -247,11 +247,10 @@ export async function prepareBlackboxSetup(working, rawUrl, options = {}) {
   const auditCommand = `bypass blackbox ${quote(origin)}${scopeFlag}${projectFlag}${rateFlag}${modelCallsFlag}${minutesFlag}`;
   if (scope.target.environment === 'local') return {kind: 'blackbox-setup', root, scopeFile: file,
     origin, credentialOrigins: scope.credentialOrigins, created: prepared.created,
-    updated: prepared.updated ?? false, ready: accounts.ready,
-    modelCheck, accounts, ...(host && accounts.ready ? {nextAction} : {}),
-    targets: [], steps: accounts.ready ? [{kind: 'run', command: auditCommand}] :
-      [{kind: 'accounts', message: accounts.warnings.join(' ')}],
-    next: accounts.ready ? host ? 'Continue with bypass_blackbox_start in this Muse session.' : auditCommand : accounts.warnings.join(' ')};
+    updated: prepared.updated ?? false, ready: true,
+    modelCheck, accounts, ...(host ? {nextAction} : {}),
+    targets: [], steps: [{kind: 'run', command: auditCommand}],
+    next: host ? 'Continue with bypass_blackbox_start in this Muse session.' : auditCommand};
   need(scope.limits.rps <= 10, 'Deployed black-box scope rates must be at most 10 requests per second.');
 
   if (!fs.existsSync(path.join(root, '.bypass/state.json'))) initStore(root, await repositoryInfo(root));
@@ -308,7 +307,6 @@ export async function prepareBlackboxSetup(working, rawUrl, options = {}) {
       production: target.environment === 'production',
       command: `bypass target authorize ${target.name} --scope-file ${quote(authFile)}${projectFlag}`});
   }
-  if (!accounts.ready) steps.push({kind: 'accounts', message: accounts.warnings.join(' ')});
   steps.push({kind: 'run', command: auditCommand});
   return {kind: 'blackbox-setup', root, scopeFile: file, origin, created: prepared.created,
     updated: prepared.updated ?? false,

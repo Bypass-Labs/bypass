@@ -395,7 +395,7 @@ export async function verifyRun(root, run, {env = process.env} = {}) {
     try {
       const proofEnv = await blackboxEnvironment(root, {target: {origin: spec.origin},
         identities: {owner: {env: spec.identities?.owner}, outsider: {env: spec.identities?.outsider},
-          auth: spec.auth, identityPath: spec.identityPath}}, {env, strict: false});
+          auth: spec.auth, identityPath: spec.identityPath}}, {env});
       completed = await execFile(process.execPath, [file], {env: proofEnv, timeout: 20000});
     }
     catch {
