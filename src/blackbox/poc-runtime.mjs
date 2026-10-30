@@ -606,6 +606,7 @@ export async function renderCapturedHtml(body, originalCsp, marker,
   const source = sourceUrl ? new URL(sourceUrl) : new URL('/', fakeOrigin);
   const pageUrl = new URL(`${source.pathname}${source.search}`, fakeOrigin);
   const pageRequestUrl = pageUrl.href;
+  const captureTag = `data-bypass-captured="${marker}"`;
   pageUrl.hash = fragment;
   const captured = new Map(scripts.map(item => {
     const original = new URL(item.url, source);
@@ -621,23 +622,30 @@ export async function renderCapturedHtml(body, originalCsp, marker,
       const script = [...captured].find(([, value]) => value.original === original);
       return script ? `${space}src="${script[0]}"` : attribute;
     })) : body;
+  const capturedHtml = /<html\b/i.test(rewritten) ?
+    rewritten.replace(/<html\b/i, `<html ${captureTag}`) :
+    `<meta ${captureTag}>${rewritten}`;
   const server = http.createServer((request, response) => {
+    let requested;
+    try {requested = new URL(request.url, fakeOrigin);} catch { /* Deny malformed proxy requests. */ }
+    const authorized = requested?.origin === fakeOrigin &&
+      (!request.url.startsWith('/') || /^bypass-audit\.invalid(?::80)?$/i.test(request.headers.host ?? ''));
     if (request.method !== 'GET') {
       response.writeHead(403, {'content-type': 'text/plain', 'cache-control': 'no-store'});
       response.end('Blocked by audit browser proxy.');
       return;
     }
-    if (request.url === pageRequestUrl) {
+    if (authorized && requested.href === pageRequestUrl) {
       const policies = (Array.isArray(originalCsp) ? originalCsp : [originalCsp])
         .filter(policy => typeof policy === 'string' && policy);
       const csp = [...policies, ISOLATION_CSP];
       response.writeHead(200, {'content-type': 'text/html; charset=utf-8', 'content-security-policy': csp,
         'cache-control': 'no-store'});
-      response.end(rewritten);
+      response.end(capturedHtml);
       return;
     }
-    if (captured.has(request.url)) {
-      const script = captured.get(request.url);
+    if (authorized && captured.has(requested.href)) {
+      const script = captured.get(requested.href);
       response.writeHead(200, {'content-type': script.type ?? 'application/javascript; charset=utf-8',
         ...(script.nosniff ? {'x-content-type-options': 'nosniff'} : {}), 'cache-control': 'no-store'});
       response.end(script.body);
@@ -646,32 +654,49 @@ export async function renderCapturedHtml(body, originalCsp, marker,
     response.writeHead(403, {'content-type': 'text/plain', 'cache-control': 'no-store'});
     response.end('Blocked by audit browser proxy.');
   });
-  server.on('connect', (_request, socket) => socket.end('HTTP/1.1 403 Forbidden\r\nConnection: close\r\n\r\n'));
+  server.on('connect', (_request, socket) => {
+    socket.on('error', () => {});
+    socket.end('HTTP/1.1 403 Forbidden\r\nConnection: close\r\n\r\n');
+  });
+  server.on('clientError', (_error, socket) => {
+    socket.on('error', () => {});
+    socket.destroy();
+  });
   try {
     await new Promise((resolve, reject) => {server.once('error', reject);server.listen(0, '127.0.0.1', resolve);});
     const args = ['--headless=new', '--no-sandbox', '--disable-gpu', '--disable-background-networking',
       '--disable-extensions', '--disable-sync', '--disable-component-update', '--no-first-run',
-      '--no-default-browser-check', '--virtual-time-budget=1200',
+      '--no-default-browser-check', '--disable-dev-shm-usage', '--virtual-time-budget=2000',
       `--proxy-server=127.0.0.1:${server.address().port}`,
       '--proxy-bypass-list=<-loopback>',
       `--user-data-dir=${profile}`, '--dump-dom', pageUrl.href];
     const candidates = process.env.BYPASS_CHROME ? [process.env.BYPASS_CHROME] :
       process.platform === 'win32' ? ['chrome.exe'] : ['google-chrome', 'chromium', 'chromium-browser'];
     for (const command of candidates) {
-      try {
-        const output = await new Promise((resolve, reject) => childExecFile(command, args,
-          {timeout: 8000, maxBuffer: 1_000_000}, (error, stdout) => error ? reject(error) : resolve(stdout)));
-        return {executed: new RegExp(`<html\\b[^>]*\\bdata-bypass-xss="${marker}"`, 'i').test(output),
-          elementInserted: detectHtml ? hasHtmlCanary(output, marker) : false};
-      } catch (error) {
-        if (error.code === 'ENOENT') continue;
-        return {executed: false, blocked: true, reason: `Chrome did not complete (${error.code ?? 'error'}).`};
+      for (let attempt = 0; attempt < 2; attempt++) {
+        try {
+          const runArgs = attempt ? args.map(arg => arg === `--user-data-dir=${profile}` ?
+            `--user-data-dir=${profile}-retry` : arg) : args;
+          const output = await new Promise((resolve, reject) => childExecFile(command, runArgs,
+            {timeout: 12000, maxBuffer: 1_000_000}, (error, stdout) => error ? reject(error) : resolve(stdout)));
+          if (!output.includes(captureTag)) {
+            if (!attempt) continue;
+            return {executed: false, blocked: true, reason: 'Chrome did not render the captured page.'};
+          }
+          return {executed: new RegExp(`<html\\b[^>]*\\bdata-bypass-xss="${marker}"`, 'i').test(output),
+            elementInserted: detectHtml ? hasHtmlCanary(output, marker) : false};
+        } catch (error) {
+          if (error.code === 'ENOENT') break;
+          if (!attempt) continue;
+          return {executed: false, blocked: true, reason: `Chrome did not complete (${error.code ?? 'error'}).`};
+        }
       }
     }
     return {executed: false, blocked: true, reason: 'Chrome is not available.'};
   } finally {
     await new Promise(resolve => server.close(resolve));
     fs.rmSync(profile, {recursive: true, force: true});
+    fs.rmSync(`${profile}-retry`, {recursive: true, force: true});
   }
 }
 function publicIp(address) {

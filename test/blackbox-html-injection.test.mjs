@@ -37,6 +37,43 @@ test('isolated Chrome distinguishes a parsed canary element from escaped and emb
   }
 });
 
+test('browser proxy retries a Chrome error page and accepts a relative captured-page request', async t => {
+  const root = temp();
+  const fake = path.join(root, 'fake-chrome.cjs');
+  const count = path.join(root, 'attempts');
+  fs.writeFileSync(fake, [
+    `#!${process.execPath}`,
+    "const fs=require('node:fs'),http=require('node:http'),net=require('node:net');",
+    "const file=process.env.BX_BROWSER_RETRY_COUNT;",
+    "const n=Number(fs.existsSync(file)?fs.readFileSync(file,'utf8'):0)+1;",
+    "fs.writeFileSync(file,String(n));",
+    "if(n===1){console.log('<html><body>proxy error</body></html>');process.exit(0);}",
+    "const port=Number(process.argv.find(x=>x.startsWith('--proxy-server='))?.split(':').at(-1));",
+    "const socket=net.connect(port,'127.0.0.1',()=>{socket.write('CONNECT blocked.invalid:443 HTTP/1.1\\r\\nHost: blocked.invalid:443\\r\\n\\r\\n');socket.destroy();});",
+    "socket.on('error',()=>{});",
+    "const req=http.get({host:'127.0.0.1',port,path:'/',headers:{host:'bypass-audit.invalid'}},res=>{let data='';res.on('data',chunk=>data+=chunk);res.on('end',()=>process.stdout.write(data));});",
+    "req.on('error',()=>process.exit(1));",
+  ].join('\n') + '\n', {mode: 0o700});
+  const previousChrome = process.env.BYPASS_CHROME;
+  const previousCount = process.env.BX_BROWSER_RETRY_COUNT;
+  process.env.BYPASS_CHROME = fake;
+  process.env.BX_BROWSER_RETRY_COUNT = count;
+  t.after(() => {
+    if (previousChrome == null) delete process.env.BYPASS_CHROME;
+    else process.env.BYPASS_CHROME = previousChrome;
+    if (previousCount == null) delete process.env.BX_BROWSER_RETRY_COUNT;
+    else process.env.BX_BROWSER_RETRY_COUNT = previousCount;
+    fs.rmSync(root, {recursive: true, force: true});
+  });
+  const marker = randomBytes(12).toString('hex');
+  const result = await renderCapturedHtml(
+    `<html><body><b id="bx-html-${marker}"></b></body></html>`, '', marker,
+    {detectHtml: true});
+  assert.equal(result.blocked, undefined, JSON.stringify(result));
+  assert.equal(result.elementInserted, true);
+  assert.equal(fs.readFileSync(count, 'utf8'), '2');
+});
+
 test('actual CLI proves markup insertion under a no-script CSP and its regression clears after escaping', async t => {
   const chrome = process.env.BYPASS_CHROME ?? 'google-chrome';
   if (spawnSync(chrome, ['--version'], {stdio: 'ignore'}).status !== 0) {
