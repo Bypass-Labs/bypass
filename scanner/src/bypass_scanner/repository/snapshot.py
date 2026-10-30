@@ -59,17 +59,19 @@ def inventory(root, include_generated=False):
     try:
         result = subprocess.run(['git', '-c', f'safe.directory={root}', '-c', 'core.fsmonitor=false', '-c', 'core.hooksPath=/dev/null',
                                  '-C', str(root), 'ls-files', '-z', '--cached', '--others', '--exclude-standard'],
-                                stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, timeout=30, check=False)
+                                stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, timeout=30, check=False)
     except (OSError, subprocess.TimeoutExpired):
         result = None
     if result is not None and result.returncode == 0:
-        candidates = result.stdout.decode('utf-8').split('\0')
+        candidates = os.fsdecode(result.stdout).split('\0')
     else:
         candidates = []
         def walk(directory):
             for entry in sorted(os.scandir(directory), key=lambda item: item.name):
                 name = Path(entry.path).relative_to(root).as_posix()
-                if ignored(name, custom, include_generated) or entry.is_symlink():
+                if any(0xD800 <= ord(char) <= 0xDFFF for char in name):
+                    exclusions.append({'path': name.encode('utf-8', errors='backslashreplace').decode(), 'reason': 'filename is not valid UTF-8'})
+                elif ignored(name, custom, include_generated) or entry.is_symlink():
                     exclusions.append({'path': name, 'reason': 'excluded path or symlink'})
                 elif entry.is_dir(follow_symlinks=False):
                     walk(entry.path)
@@ -79,6 +81,9 @@ def inventory(root, include_generated=False):
     files = []
     for name in sorted(set(candidates)):
         if not name:
+            continue
+        if any(0xD800 <= ord(char) <= 0xDFFF for char in name):
+            exclusions.append({'path': name.encode('utf-8', errors='backslashreplace').decode(), 'reason': 'filename is not valid UTF-8'})
             continue
         if ignored(name, custom, include_generated):
             exclusions.append({'path': name, 'reason': 'excluded by source policy'})

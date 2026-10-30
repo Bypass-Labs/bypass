@@ -8,6 +8,7 @@ import signal
 import subprocess
 import time
 
+from bypass_scanner.contracts import MANIFEST
 from bypass_scanner.discovery.languages import LANGUAGES
 from bypass_scanner.repository.snapshot import contained
 
@@ -28,19 +29,32 @@ def environment(directory):
     return env
 
 
+def signal_group(child, sig):
+    # The process can exit between poll() and killpg().
+    try:
+        os.killpg(child.pid, sig)
+    except ProcessLookupError:
+        pass
+
+
 def execute(argv, cwd, directory, name, cancel, timeout=None):
+    timeout = MANIFEST['resourceDefaults']['timeoutSeconds'] if timeout is None else timeout
+    if timeout <= 0:
+        raise RuntimeError(f'{name} exceeded its configured timeout; see its log.')
+    if cancel.is_set():
+        raise InterruptedError('Scan cancelled.')
     directory.mkdir(parents=True, exist_ok=True)
     with (directory / (name + '.log')).open('ab') as log:
-        child = subprocess.Popen(argv, cwd=cwd, env=environment(directory), stdout=log, stderr=log, start_new_session=True)
+        child = subprocess.Popen(argv, cwd=cwd, env=environment(directory), stdin=subprocess.DEVNULL, stdout=log, stderr=log, start_new_session=True)
         started = time.monotonic()
         try:
             while child.poll() is None:
-                if cancel.is_set() or (timeout is not None and time.monotonic() - started > timeout):
-                    os.killpg(child.pid, signal.SIGTERM)
+                if cancel.is_set() or time.monotonic() - started >= timeout:
+                    signal_group(child, signal.SIGTERM)
                     try:
                         child.wait(timeout=3)
                     except subprocess.TimeoutExpired:
-                        os.killpg(child.pid, signal.SIGKILL)
+                        signal_group(child, signal.SIGKILL)
                     if cancel.is_set():
                         raise InterruptedError('Scan cancelled.')
                     raise RuntimeError(f'{name} exceeded its configured timeout; see its log.')
@@ -49,8 +63,8 @@ def execute(argv, cwd, directory, name, cancel, timeout=None):
                 raise RuntimeError(f'{name} failed with exit code {child.returncode}; see its log.')
         finally:
             if child.poll() is None:
-                os.killpg(child.pid, signal.SIGKILL)
-            child.wait()
+                signal_group(child, signal.SIGKILL)
+            child.wait(timeout=3)
 
 
 def extraction(directory, language, build, resources, cancel):
@@ -69,9 +83,11 @@ def extraction(directory, language, build, resources, cancel):
     cwd = work if cwd_value == '.' else contained(work, cwd_value)
     if not cwd.is_dir():
         raise ValueError('Build working directory must exist inside the source snapshot.')
-    timeout = resources.get('timeoutSeconds')
+    # Preparation and extraction share one budget, rather than multiplying it
+    # by the number of preparation commands.
+    deadline = time.monotonic() + resources.get('timeoutSeconds', MANIFEST['resourceDefaults']['timeoutSeconds'])
     for index, command in enumerate(build.get('prepare', [])):
-        execute(command, cwd, target, f'prepare-{index}', cancel, timeout)
+        execute(command, cwd, target, f'prepare-{index}', cancel, deadline - time.monotonic())
     database = target / 'database'
     if database.exists():
         shutil.rmtree(database)
@@ -92,7 +108,7 @@ def extraction(directory, language, build, resources, cancel):
         args.append('--command=/bin/sh ' + json.dumps(str(launcher)))
     else:
         args.append('--build-mode=' + mode)
-    execute(args, cwd, target, 'extract', cancel, timeout)
+    execute(args, cwd, target, 'extract', cancel, deadline - time.monotonic())
     if not (database / 'codeql-database.yml').is_file():
         raise RuntimeError('CodeQL did not create a finalized database.')
 

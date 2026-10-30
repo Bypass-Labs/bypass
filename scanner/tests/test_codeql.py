@@ -233,6 +233,29 @@ else: raise SystemExit(10)
         self.assertEqual(self.wait(run)['status'],'completed')
         self.assertEqual(self.engine.read(run)['languages'][0]['network'],'on')
 
+    def test_default_timeout_and_preparation_share_an_extraction_budget(self):
+        self.assertEqual(settings({})['resources'], MANIFEST['resourceDefaults'])
+        self.assertGreater(settings({})['resources']['timeoutSeconds'], 0)
+        self.source.joinpath('a.py').write_text('VULNERABLE')
+        prepare = [[sys.executable, '-c', 'import time; time.sleep(.7)']] * 2
+        run = self.start({'resources':{'timeoutSeconds':1}, 'builds':{'python':{'prepare':prepare}}})
+        status = self.wait(run)
+        self.assertEqual(status['status'], 'incomplete')
+        self.assertIn('prepare-', status['languages'][0]['message'])
+        self.assertIn('exceeded its configured timeout', status['languages'][0]['message'])
+        self.assertEqual(self.calls(), [])
+
+    def test_network_extraction_without_a_helper_times_out_and_retires_job(self):
+        self.source.joinpath('a.py').write_text('VULNERABLE')
+        with patch.dict(MANIFEST, {'networkStartupSeconds':0}):
+            run = self.start({'resources':{'timeoutSeconds':1}, 'builds':{'python':{'network':'on'}}})
+            status = self.wait(run)
+        self.assertEqual(status['status'], 'incomplete')
+        self.assertIn('exceeded its configured timeout', status['languages'][0]['message'])
+        self.assertNotIn('networkJob', status)
+        self.assertEqual(len(list((self.engine.directory(run)/'network').glob('*.cancel.json'))), 1)
+        self.assertEqual(self.calls(), [])
+
     def test_project_lease_and_invalid_builds(self):
         (self.control/'slow-python').touch();self.source.joinpath('a.py').write_text('VULNERABLE')
         self.start()

@@ -30,7 +30,8 @@ try{
     const client=await connect();
     // Inspect actual network topology without contacting any external service.
     const check=[
-      'import os,pathlib',
+      'import os,pathlib,sys',
+      "assert sys.stdin.read()=='', 'build inherited the MCP input pipe'",
       "routes=pathlib.Path('/proc/net/route').read_text().splitlines()[1:]",
       "online=any(line.split()[1]=='00000000' for line in routes if line.split())",
       `assert online is ${network==='on'?'True':'False'}, routes`,
@@ -53,6 +54,17 @@ try{
     assert.equal(fs.existsSync(path.join(root,'forbidden-write')),false);
     await client.close();
     console.log('PASS '+network+': actual build networking, offline controller, read-only source, unprivileged user, no host secret');
+  }
+
+  for(const network of ['off','on']){
+    const client=await connect();
+    const started=await client.call('start',input({resources:{timeoutSeconds:1},builds:{python:{network,prepare:[['python','-c','import time; time.sleep(60)']]}}}));
+    const run=await wait(client,started.run.id);
+    assert.equal(run.status,'incomplete',JSON.stringify(run));
+    assert.ok(run.languages.some(value=>value.message.includes('configured timeout')),JSON.stringify(run));
+    assert.equal(run.modelCalls,0);
+    await client.close();
+    console.log('PASS '+network+': configured build deadline stops extraction and preserves incomplete artifacts');
   }
 
   const client=await connect();

@@ -41,16 +41,30 @@ class ProtocolTests(unittest.TestCase):
             validate(MANIFEST['schemas']['response'], result)
 
     def test_input_validation(self):
-        for name, value in [('status', {}), ('status', {'run':''}), ('start', {'apiKey':'secret'}), ('rules', {'limit':0}), ('report', {'run':'r','format':'html'})]:
+        for name, value in [('status', {}), ('status', {'run':''}), ('status', {'run':7}), ('__proto__', {}),
+                            ('start', {'apiKey':'secret'}), ('rules', {'limit':0}), ('report', {'run':'r','format':'html'})]:
             with self.subTest(name=name), self.assertRaises(ValueError):
                 invoke(name, value)
+        evaluation = {'caseId':'case', 'outcome':'needs_review', 'rationale':'pending', 'severity':'unknown',
+                      'severityRationale':'pending', 'evidence':[], 'prerequisites':[], 'impact':'unknown',
+                      'openQuestions':[], 'nextAction':'review'}
+        validate(MANIFEST['schemas']['evaluation'], evaluation)
+        for outcome in ('true_positive', 'false_positive', 'vulnerable', 'safe', 'uncertain'):
+            with self.subTest(outcome=outcome), self.assertRaisesRegex(ValueError, 'outcome'):
+                validate(MANIFEST['schemas']['evaluation'], {**evaluation, 'outcome':outcome})
 
     def test_transport(self):
         server = Server()
         def request(method, params=None):
             return server.handle({'jsonrpc':'2.0','id':1,'method':method,'params':params or {}})
         self.assertEqual(request('tools/list')['error']['code'], -32002)
+        self.assertEqual(request('initialize', {'protocolVersion':'unknown'})['error']['code'], -32602)
+        self.assertFalse(server.initialized)
+        self.assertIsNone(server.handle({'jsonrpc':'2.0','method':'notifications/initialized'}))
+        self.assertFalse(server.initialized)
         self.assertIn('serverInfo', request('initialize', {'protocolVersion':'2025-11-25'})['result'])
+        self.assertEqual(request('initialize', {'protocolVersion':'2025-11-25'})['error']['code'], -32602)
+        self.assertIsNone(server.handle({'jsonrpc':'2.0','method':'notifications/initialized'}))
         self.assertEqual(len(request('tools/list')['result']['tools']), len(MANIFEST['operations']))
         self.assertEqual(request('ping')['result'], {})
         inspected = request('tools/call', {'name':'scanner_capabilities'})['result']
@@ -58,6 +72,9 @@ class ProtocolTests(unittest.TestCase):
         self.assertEqual(json.loads(inspected['content'][0]['text'])['protocolVersion'], 'bypass-scanner.v2')
         self.assertEqual(request('tools/call', {'name':'scanner_next_task','arguments':{'run':'r'}})['result']['isError'], True)
         self.assertEqual(request('tools/call', {'name':'scanner_status'})['error']['code'], -32602)
+        self.assertEqual(request('tools/call', {'name':[]})['error']['code'], -32602)
+        self.assertEqual(request('tools/call', {'name':'scanner_status','arguments':{'run':7}})['error']['code'], -32602)
+        self.assertEqual(request('tools/call', {'name':'scanner___proto__'})['error']['code'], -32602)
         self.assertEqual(request('unknown')['error']['code'], -32601)
 
     def test_wire_bounds(self):

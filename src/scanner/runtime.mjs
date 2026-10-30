@@ -2,12 +2,12 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { randomUUID } from 'node:crypto';
-import { spawn } from 'node:child_process';
 import { execFile, hash, need, abortFault, Fault } from '../util.mjs';
 import { ScannerClient } from './client.mjs';
+import { manifest } from './contracts.mjs';
 
 export const scannerDirectory = fileURLToPath(new URL('../../scanner/', import.meta.url));
-export const defaultResources = {threads:2, ramMb:4096, memoryMb:8192, cpus:2};
+export const defaultResources = {...manifest.resourceDefaults};
 export const imagePlatform = 'linux/amd64';
 
 export function scannerPackageFiles(root = scannerDirectory) {
@@ -110,28 +110,28 @@ export async function connectScanner({root,output,sarif,resources={},signal,onPr
   };
   client=new ScannerClient('docker',['start','--attach','--interactive',name],{timeoutMs,onClose:cleanup});
   client.scanner={root,output,sarif,resources,image:diagnostics.image.id};
-  client.stopBuilds=async()=>{await Promise.allSettled([...helpers.values()].map(item=>remove(item.name)));};
+  client.stopBuilds=async run=>{await Promise.allSettled([...helpers.values()].filter(item=>!item.finished&&(!run||item.run===run)).map(item=>remove(item.name)));};
   client.pumpBuild=async run=>{
     const job=run.networkJob;
+    // A backend deadline can retire a job while its helper is still running.
+    await Promise.allSettled([...helpers.entries()].filter(([id,item])=>!item.finished&&item.run===run.id&&id!==job?.id).map(([,item])=>remove(item.name)));
     if(!job||helpers.has(job.id))return;
     need(/^scan_[a-f0-9]{24}$/.test(run.id)&&/^[a-f0-9]{32}$/.test(job.id),'Invalid scanner build request.',3);
     const helperName=`bypass-codeql-build-${job.id}`;
-    const item={name:helperName};helpers.set(job.id,item);
+    const item={name:helperName,run:run.id};helpers.set(job.id,item);
     item.done=(async()=>{
       try{
         const creation=await runner('docker',scannerContainerArgs(helperName,diagnostics.image.id,{output,resources,network:'bridge',worker:{run:run.id,job:job.id}}),{timeout:20000,killGroup:true});
         need(creation.code===0,'Could not create the explicitly network-enabled extraction worker.',3);
         onProgress?.({stage:'scanner-extract',message:`${job.language}: running configured network-enabled extraction in a separate container; query analysis stays offline.`});
-        await new Promise((resolve,reject)=>{
-          const child=spawn('docker',['start','--attach',helperName],{stdio:['ignore','ignore','pipe'],shell:false});
-          item.child=child;let bytes=0;
-          child.stderr.on('data',chunk=>{bytes+=chunk.length;if(bytes>1048576)child.kill('SIGTERM');});
-          child.on('error',reject);child.on('close',resolve);
+        await runner('docker',['start','--attach',helperName],{
+          timeout:((resources.timeoutSeconds??defaultResources.timeoutSeconds)+manifest.networkStartupSeconds)*1000,killGroup:true
         });
       }catch{/* The backend records a failed extraction receipt below. */}
       finally{
         await remove(helperName);
         if(!client.failure)await client.call('build_failed',{run:run.id,job:job.id}).catch(()=>{});
+        item.finished=true;
       }
     })();
   };

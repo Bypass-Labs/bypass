@@ -21,7 +21,8 @@ def run(run_id, job):
     if request['build'].get('network') != 'on':
         raise ValueError('This extraction was not configured for network access.')
     try:
-        extraction(directory, request['language'], request['build'], request['resources'], CancellationToken(directory / 'cancel-request.json'))
+        extraction(directory, request['language'], request['build'], request['resources'],
+                   CancellationToken(directory / 'cancel-request.json', directory / 'network' / (job + '.cancel.json')))
         result = {'success': True}
     except Exception as error:
         result = {'success': False, 'message': str(error)[:2000]}

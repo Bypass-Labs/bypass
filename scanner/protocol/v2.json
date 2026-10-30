@@ -1,5 +1,13 @@
 {
   "protocolVersion": "bypass-scanner.v2",
+  "resourceDefaults": {
+    "threads": 2,
+    "ramMb": 4096,
+    "memoryMb": 8192,
+    "cpus": 2,
+    "timeoutSeconds": 1800
+  },
+  "networkStartupSeconds": 30,
   "mcpProtocolVersions": [
     "2025-11-25",
     "2025-06-18",

@@ -143,6 +143,16 @@ build copy, never the original source:
 }
 ```
 
+The default `timeoutSeconds` is 1,800 (30 minutes). Preparation commands and
+extraction share that budget per language; query analysis has a separate budget
+of the same length. Diagnostics are limited to 60 seconds. The network-worker
+handoff allows 30 extra seconds for startup and fails if no receipt arrives;
+expired workers are cancelled and removed. Timeout failures retain artifacts
+and leave the language incomplete for inspection or resume. Build/CodeQL/git
+subprocesses receive closed input, so they cannot consume MCP protocol messages.
+Non-UTF-8 filenames are excluded with an escaped path and reason in
+`source-manifest.json`; they do not abort analysis of the remaining source.
+
 Network defaults to `off`. This example explicitly permits dependency downloads
 and builds in a separate network-enabled extraction container. The controller and
 query-analysis container always use `--network none`. Image preparation downloads
@@ -279,7 +289,12 @@ evidence, cancellation, resume, and network handoff. Node tests cover CLI/Muse
 parity, provider isolation, MCP bounds, and process cleanup. The opt-in matrix
 runs vulnerable/corrected MIT fixtures across supported families plus Kotlin and
 TypeScript, then a packaged Muse MCP scan. Set `BYPASS_CODEQL_CASES=python` to
-select cases. Artifacts remain in the printed temporary directory.
+select cases. Artifacts remain in the printed temporary directory. Pull requests
+also run `npm run test:codeql` in a separate Docker job with a 120-minute limit,
+disk cleanup for the multi-language image, and `BYPASS_CODEQL_CONCURRENCY=1`
+to stay within hosted-runner memory. Local runs default to two fixture cases at
+a time. This job covers the actual pinned bundle, isolation/recovery, and scope;
+the smaller Python suite remains independent of Docker.
 
 Transport development:
 

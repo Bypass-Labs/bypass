@@ -12,6 +12,8 @@ const definitions=JSON.parse(fs.readFileSync(new URL('../scanner/tests/fixtures/
 const filter=process.env.BYPASS_CODEQL_CASES?.split(',');
 const cases=definitions.cases.filter(item=>!filter||filter.includes(item.name));
 assert.ok(cases.length,'No selected acceptance fixtures');
+const concurrency=Number(process.env.BYPASS_CODEQL_CONCURRENCY||2);
+assert.ok([1,2].includes(concurrency),'CodeQL fixture concurrency must be 1 or 2');
 const output=fs.mkdtempSync(path.join(os.tmpdir(),'bypass-codeql-acceptance-'));
 console.log('Artifacts: '+output);
 const results=[], failures=[];
@@ -38,8 +40,8 @@ async function runCase(item,variant){
  console.log(`PASS ${item.name}/${variant}: ${count} signals`);
 }
 // Stay within the default Docker memory budget, including CodeQL's JVM overhead.
-for(let start=0;start<cases.length;start+=2){
- await Promise.all(cases.slice(start,start+2).map(async item=>{for(const variant of ['vulnerable','safe']){try{await runCase(item,variant);}catch(error){failures.push({case:item.name,variant,message:error.message});console.error(`FAIL ${item.name}/${variant}: ${error.message}`);}}}));
+for(let start=0;start<cases.length;start+=concurrency){
+ await Promise.all(cases.slice(start,start+concurrency).map(async item=>{for(const variant of ['vulnerable','safe']){try{await runCase(item,variant);}catch(error){failures.push({case:item.name,variant,message:error.message});console.error(`FAIL ${item.name}/${variant}: ${error.message}`);}}}));
  fs.writeFileSync(path.join(output,'results.json'),JSON.stringify({results,failures},null,2));
 }
 if(results.some(item=>item.case==='javascript'&&item.variant==='vulnerable')){

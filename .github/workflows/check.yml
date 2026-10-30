@@ -2,6 +2,9 @@ name: Check pull requests
 on: pull_request
 permissions:
   contents: read
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
 jobs:
   check:
     runs-on: ubuntu-24.04
@@ -18,3 +21,24 @@ jobs:
       - run: npm run test:scanner
       - run: command -v zsh || (sudo apt-get update && sudo apt-get install -y zsh)
       - run: BYPASS_DOCKER_TESTS=1 npm test
+  codeql:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    env:
+      # One extractor/query process at a time on the standard hosted runner.
+      BYPASS_CODEQL_CONCURRENCY: '1'
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: '22.23.4'
+      - name: Free disk space for the multi-language CodeQL image
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL
+          docker system prune --all --force
+          df -h /
+      - run: npm ci --ignore-scripts
+      - name: Test real CodeQL fixtures, Docker boundaries, and source scope
+        run: npm run test:codeql

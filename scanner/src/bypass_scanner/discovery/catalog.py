@@ -33,7 +33,8 @@ def build(root, output, executable):
             raise ValueError(f'Unexpected upstream pack version for {language}: {version}')
         packs[language] = {'name': f'codeql/{language}-queries', 'version': version}
         suite = pack / f'codeql-suites/{language}-security-extended.qls'
-        default = set(json.loads(subprocess.check_output([executable, 'resolve', 'queries', str(suite), '--format=json'], text=True)))
+        default = set(json.loads(subprocess.check_output([executable, 'resolve', 'queries', str(suite), '--format=json'],
+                                                       text=True, stdin=subprocess.DEVNULL, timeout=120)))
         auxiliary[language] = []
         for path in sorted(pack.rglob('*.ql')):
             fields = metadata(path.read_text())
@@ -48,7 +49,8 @@ def build(root, output, executable):
     identities = [rule['id'] for rule in rules]
     if len(set(identities)) != len(identities):
         raise ValueError('Duplicate upstream rule IDs in the pinned catalog.')
-    data = {'version': 1, 'codeqlVersion': subprocess.check_output([executable, 'version', '--format=json'], text=True).strip(),
+    data = {'version': 1, 'codeqlVersion': subprocess.check_output([executable, 'version', '--format=json'],
+                                                               text=True, stdin=subprocess.DEVNULL, timeout=120).strip(),
             'packs': packs, 'rules': rules, 'auxiliary': auxiliary}
     data['identity'] = digest(data)
     output.write_text(json.dumps(data, indent=2) + '\n')

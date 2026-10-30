@@ -6,7 +6,7 @@ import { fileURLToPath } from 'node:url';
 import { spawnSync } from 'node:child_process';
 import { manifest, scannerCapabilities, protocolVersion, unavailable, resolveManifest } from '../src/scanner/contracts.mjs';
 import { ScannerClient } from '../src/scanner/client.mjs';
-import { scannerContainerArgs, scannerPackageFiles, scannerDirectory, scannerDoctor, prepareScanner, connectScanner } from '../src/scanner/runtime.mjs';
+import { scannerContainerArgs, scannerPackageFiles, scannerDirectory, scannerDoctor, prepareScanner, connectScanner, defaultResources } from '../src/scanner/runtime.mjs';
 import { runAPIDriver } from '../src/scanner/api-driver.mjs';
 import { inExecutionMode } from '../src/execution-mode.mjs';
 import { validateJSON } from '../src/schema.mjs';
@@ -49,6 +49,8 @@ readline.createInterface({input:process.stdin}).on('line',line=>{
 
 test('scanner schemas and command family expose the agreed contract', () => {
   assert.equal(protocolVersion, 'bypass-scanner.v2');
+  assert.deepEqual(defaultResources,manifest.resourceDefaults);
+  assert.ok(defaultResources.timeoutSeconds>0);
   for(const name of ['capabilities','config','response','evaluation','evidence','run','signal','task'])assert.ok(manifest.schemas[name]);
   validateJSON(manifest.schemas.capabilities, scannerCapabilities());
   for (const name of Object.keys(manifest.operations)) validateJSON(manifest.schemas.error, unavailable(name));
@@ -288,6 +290,53 @@ test('a status-only observer never launches another process owner\'s network bui
     await inExecutionMode('muse-host',()=>execute('discover status',[initial.run.id],{project:root},context));
     assert.equal(pumped,0);
   }finally{await closeScannerSessions();}
+});
+
+test('read and cancel operations reuse the active session despite older resource settings',async()=>{
+  const root=temp();await execute('init',[root]);
+  fs.writeFileSync(path.join(root,'scanner.json'),JSON.stringify({resources:{cpus:1,timeoutSeconds:60}}));
+  const activeId='scan_'+'a'.repeat(24),oldId='scan_'+'b'.repeat(24),calls=[],stops=[];
+  const old=path.join(root,'.bypass/scanner',oldId);fs.mkdirSync(old,{recursive:true});
+  fs.writeFileSync(path.join(old,'manifest.json'),JSON.stringify({config:{resources:{cpus:2,timeoutSeconds:30}}}));
+  let connections=0,closed=0;
+  const context={scannerConnect:async()=>{
+    connections++;
+    const client=deterministicClient(root,calls);
+    return {...client,close:async()=>{closed++;},stopBuilds:async run=>stops.push(run),call:async(op,input)=>{
+      if(op==='start'){
+        const result=await client.call(op,input);result.status=result.run.status='running';return result;
+      }
+      calls.push({operation:op,input});
+      return {protocolVersion,operation:op,status:'completed',modelCalls:0,message:''};
+    }};
+  }};
+  try{
+    await inExecutionMode('muse-host',()=>execute('discover',[],{project:root,config:'scanner.json'},context));
+    for(const operation of ['status','report','signals','artifact','cancel']){
+      await inExecutionMode('muse-host',()=>execute('discover '+operation,[oldId],{project:root,...(operation==='artifact'?{path:'report.md'}:{})},context));
+    }
+    assert.equal(connections,1);assert.equal(closed,0);
+    assert.deepEqual(stops,[oldId]);
+    assert.notEqual(stops[0],activeId);
+    // Starting/resuming with different limits still cannot replace the owner.
+    await assert.rejects(inExecutionMode('muse-host',()=>execute('discover resume',[oldId],{project:root},context)),/different input\/resource/);
+  }finally{await closeScannerSessions();}
+});
+
+test('capabilities inspect current image readiness without building or selecting source',async()=>{
+  for(const available of [false,true]){
+    const calls=[];
+    const runner=async(_command,args)=>{
+      calls.push(args);
+      if(args[0]==='version')return {code:0,stdout:'fixture'};
+      assert.equal(args[0],'image');
+      return available?{code:0,stdout:'sha256:'+'a'.repeat(64)}:{code:1,stdout:''};
+    };
+    const result=await inExecutionMode('muse-host',()=>execute('discover capabilities',[],{}, {runner}));
+    assert.equal(result.features.codeqlReady,available);
+    assert.equal(result.independentModelRequests,0);
+    assert.equal(calls.length,2);
+  }
 });
 
 test('report continuation reads its artifact and finishes after the last page', async () => {

@@ -29,12 +29,13 @@ def now():
 
 class CancellationToken(threading.Event):
     """Cancellation survives client/container boundaries through a durable marker."""
-    def __init__(self, path):
+    def __init__(self, path, *additional_paths):
         super().__init__()
         self.path = path
+        self.additional_paths = additional_paths
 
     def is_set(self):
-        return super().is_set() or self.path.is_file()
+        return super().is_set() or self.path.is_file() or any(path.is_file() for path in self.additional_paths)
 
     def wait(self, timeout=None):
         if self.is_set():
@@ -55,7 +56,7 @@ def settings(value):
     validate(MANIFEST['schemas']['config'], value)
     result = {'languages': list(dict.fromkeys(value.get('languages', []))), 'includeRules': list(dict.fromkeys(value.get('includeRules', []))),
               'excludeRules': list(dict.fromkeys(value.get('excludeRules', []))), 'builds': value.get('builds', {}), **scope_options(value),
-              'resources': {'threads': 2, 'ramMb': 4096, 'memoryMb': 8192, 'cpus': 2, **value.get('resources', {})}}
+              'resources': {**MANIFEST['resourceDefaults'], **value.get('resources', {})}}
     if result['resources']['memoryMb'] < result['resources']['ramMb'] + 1024:
         raise ValueError('Container memory must exceed CodeQL RAM by at least 1024 MB.')
     for language, build in result['builds'].items():
@@ -335,10 +336,17 @@ class Workflow:
         state['networkJob'] = {'id': job, 'language': entry['language']}
         self.save(state)
         result = directory / 'network' / (job + '.result.json')
-        while not result.is_file():
-            if cancel.wait(0.2):
-                raise InterruptedError()
-        state.pop('networkJob', None)
+        deadline = time.monotonic() + state['config']['resources'].get('timeoutSeconds', MANIFEST['resourceDefaults']['timeoutSeconds']) + MANIFEST['networkStartupSeconds']
+        try:
+            while not result.is_file():
+                if time.monotonic() >= deadline:
+                    atomic(directory / 'network' / (job + '.cancel.json'), {'requestedAt': now()})
+                    raise RuntimeError('Network-enabled extraction exceeded its configured timeout; retry or resume the run.')
+                if cancel.wait(0.2):
+                    raise InterruptedError()
+        finally:
+            state.pop('networkJob', None)
+            self.save(state)
         value = json.loads(result.read_text())
         if not value.get('success'):
             raise RuntimeError(value.get('message', 'Network-enabled extraction failed.'))

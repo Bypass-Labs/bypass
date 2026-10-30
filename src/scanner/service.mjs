@@ -68,18 +68,18 @@ function runResources(root,run) {
   return {...defaultResources,...state.config.resources};
 }
 
-async function connection(root,options,context,resources,sarif) {
+async function connection(root,options,context,resources,sarif,reuse=false) {
   // Concurrent Muse calls must share a single owned container per project.
   while(connecting.has(root))await connecting.get(root).catch(()=>{});
-  const pending=openConnection(root,options,context,resources,sarif);
+  const pending=openConnection(root,options,context,resources,sarif,reuse);
   connecting.set(root,pending);
   try{return await pending;}finally{connecting.delete(root);}
 }
 
-async function openConnection(root,options,context,resources,sarif) {
+async function openConnection(root,options,context,resources,sarif,reuse) {
   let session=sessions.get(root);
   if(session?.client.failure){clearInterval(session.timer);sessions.delete(root);session=null;}
-  if(session&&((sarif!==undefined&&session.sarif!==sarif)||JSON.stringify(session.resources)!==JSON.stringify(resources))){
+  if(session&&!reuse&&((sarif!==undefined&&session.sarif!==sarif)||JSON.stringify(session.resources)!==JSON.stringify(resources))){
     need(![...session.runs.values()].some(run=>!terminal(run)),'A scanner is active with different input/resource settings; finish or cancel it first.',3);
     clearInterval(session.timer);await session.client.close();sessions.delete(root);session=null;
   }
@@ -115,7 +115,7 @@ async function waitForRun(session,result,context) {
   let phase='';
   while(!terminal(result.run)){
     if(context.signal?.aborted){
-      await session.client.stopBuilds?.();
+      await session.client.stopBuilds?.(id);
       await session.client.call('cancel',{run:id});
       for(let i=0;i<40;i++){
         result=await session.client.call('status',{run:id});
@@ -146,7 +146,11 @@ export async function scannerService(key,args=[],options={},context={}) {
     return outcome({plan:discoveryPlan(options,configuration(base,options).config),ai});
   }
   const operation=key==='scanner rules'?'rules':key==='discover'?'start':key.slice('discover '.length);
-  if(operation==='capabilities')return outcome({...scannerCapabilities(),ai});
+  if(operation==='capabilities'){
+    // Inspect only: no source selection, image build, or provider access.
+    const diagnostics=await scannerDoctor(context);
+    return outcome({...scannerCapabilities(diagnostics.image.available),ai});
+  }
   if(['next_task','evidence','submit'].includes(operation)){
     const input={run:args[0],...Object.fromEntries(['task','sourceRevision','result','operation','arguments'].filter(name=>options[name]!==undefined).map(name=>[name,options[name]]))};
     validateOperation(operation,input);return outcome({...unavailable(operation),ai},3);
@@ -169,9 +173,9 @@ export async function scannerService(key,args=[],options={},context={}) {
     input={run:args[0],...Object.fromEntries(['format','path','offset','cursor','limit'].filter(name=>options[name]!==undefined).map(name=>[name,['offset','cursor','limit'].includes(name)?Number(options[name]):options[name]]))};
   }
   validateOperation(operation,input);
-  const session=await connection(root,options,context,resources,sarif);
+  const session=await connection(root,options,context,resources,sarif,!['start','resume'].includes(operation));
   try{
-    if(operation==='cancel')await session.client.stopBuilds?.();
+    if(operation==='cancel')await session.client.stopBuilds?.(args[0]);
     let result=await session.client.call(operation,input,{signal:context.signal});
     if(result.run){
       session.runs.set(result.run.id,result.run);

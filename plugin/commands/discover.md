@@ -12,6 +12,10 @@ The security MCP server must show trusted_enabled; a new Muse session is require
 after approval. Do not grant approval on the user's behalf or substitute a shell
 CLI scan for this Muse MCP operation.
 
+Capabilities inspect Docker/image availability without building it.
+features.codeqlReady=false can mean the local image needs preparation; it does
+not mean CodeQL discovery is unimplemented. Use bypass_scanner_doctor for diagnostics.
+
 Use bypass_discover with plan=true to explain scope/prerequisites when requested.
 For a scan, select an explicit source repository using Bypass project tools, then
 call bypass_discover with detector=codeql and any requested languages, rule,
