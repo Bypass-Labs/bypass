@@ -1,1 +1,1 @@
-"""Whitebox scanner service scaffold. No detectors or model clients are loaded."""
+"""Whitebox CodeQL discovery service; no model client is loaded."""

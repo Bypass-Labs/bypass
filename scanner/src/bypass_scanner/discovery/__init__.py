@@ -1,5 +1,4 @@
-"""Future detector interface: emit signals and scope/coverage diagnostics.
+"""Pinned CodeQL catalog, execution, and unevaluated SARIF signals.
 
-CodeQL and independent AI policy discovery will implement this boundary.
-No detector execution or Scratch imports are present in the scaffold.
+Independent AI policy discovery and custom Scratch rules remain future work.
 """

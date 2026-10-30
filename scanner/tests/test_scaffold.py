@@ -1,83 +1,84 @@
+"""Protocol v2 and read-only capability checks (no local CodeQL required)."""
 import io
 import json
-import os
-from pathlib import Path
-import tempfile
 import unittest
 
-from bypass_scanner.service import MANIFEST, capabilities, invoke, validate
+from bypass_scanner.contracts import MANIFEST, validate, resolve_manifest
+from bypass_scanner.service import capabilities, invoke
 from bypass_scanner.transports.mcp import MAX_BYTES, Server, serve
 
 
-class ScaffoldTests(unittest.TestCase):
+class ProtocolTests(unittest.TestCase):
+    def test_shared_definitions_expand_without_wire_references(self):
+        self.assertNotIn('"$ref"', json.dumps(MANIFEST))
+        self.assertEqual(MANIFEST['operations']['start']['inputSchema']['properties']['config'], MANIFEST['schemas']['config'])
+        self.assertEqual(MANIFEST['schemas']['response']['properties']['run'], MANIFEST['schemas']['run'])
+        self.assertEqual(MANIFEST['schemas']['error'], MANIFEST['schemas']['response'])
+        self.assertEqual(MANIFEST['schemas']['signal']['properties']['evidence']['items'], MANIFEST['schemas']['evidence'])
+
+    def test_invalid_contract_references_fail_without_external_reads(self):
+        for value in [{'$ref':'https://example.invalid/schema'}, {'$ref':'file:///etc/hosts'}, {'$ref':'#/missing'},
+                      {'a':{'$ref':'#/a'}}, {'a':{'$ref':'#/b'},'b':{'$ref':'#/a'}},
+                      {'a':{'type':'string'},'b':{'$ref':'#/a','description':'sibling'}},
+                      {'a':[],'b':{'$ref':'#/a'}}, {'a':'text','b':{'$ref':'#/a'}}]:
+            with self.subTest(value=value), self.assertRaises(ValueError):
+                resolve_manifest(value)
+        self.assertEqual(resolve_manifest({'a/b':{'type':'string'},'schema':{'$ref':'#/a~1b'}})['schema'],{'type':'string'})
+
     def test_contract_and_capabilities(self):
-        self.assertEqual(MANIFEST['protocolVersion'], 'bypass-scanner.v1')
-        self.assertEqual(set(MANIFEST['schemas']), {'capabilities', 'run', 'signal', 'task', 'evidence', 'evaluation', 'error'})
+        self.assertEqual(MANIFEST['protocolVersion'], 'bypass-scanner.v2')
+        self.assertEqual(len(capabilities()['languages']), 9)
         validate(MANIFEST['schemas']['capabilities'], capabilities())
-        self.assertFalse(capabilities()['analysisImplemented'])
-        self.assertEqual(capabilities()['implementedOperations'], ['capabilities'])
+        self.assertTrue(capabilities()['features']['codeqlDiscovery'])
+        self.assertFalse(capabilities()['features']['evaluation'])
+        self.assertEqual(capabilities()['independentModelRequests'], 0)
 
-    def test_all_analysis_operations_are_unavailable_without_side_effects(self):
-        inputs = {
-            'start': {'sarif': '/nonexistent/findings.sarif', 'config': '/nonexistent/config'},
-            'status': {'run': 'r'}, 'next_task': {'run': 'r'},
-            'evidence': {'run': 'r', 'task': 't', 'operation': 'read', 'arguments': {'path': '/nonexistent/source'}},
-            'submit': {'run': 'r', 'task': 't', 'sourceRevision': 's', 'result': {}},
-            'resume': {'run': 'r'}, 'cancel': {'run': 'r'}, 'report': {'run': 'r', 'format': 'md'},
-        }
-        original = Path.cwd()
-        with tempfile.TemporaryDirectory() as directory:
-            try:
-                os.chdir(directory)
-                for operation, arguments in inputs.items():
-                    with self.subTest(operation=operation):
-                        result = invoke(operation, arguments)
-                        validate(MANIFEST['schemas']['error'], result)
-                        self.assertEqual(result['status'], 'not_implemented')
-                        self.assertEqual(result['modelCalls'], 0)
-                        self.assertEqual(result['sourceReads'], 0)
-                self.assertEqual(list(Path('.').iterdir()), [])
-            finally:
-                os.chdir(original)
+    def test_reserved_ai_operations_are_unavailable(self):
+        for name, value in [('next_task', {'run':'r'}), ('submit', {'run':'r','task':'t','sourceRevision':'s','result':{}}), ('evidence', {'run':'r','task':'t','operation':'read'})]:
+            result = invoke(name, value)
+            self.assertEqual(result['code'], 'not_implemented')
+            self.assertEqual(result['modelCalls'], 0)
+            validate(MANIFEST['schemas']['response'], result)
 
-    def test_invalid_operation_arguments(self):
-        for operation, value in [('status', {}), ('status', {'run': ''}), ('status', {'run': 1}), ('start', {'apiKey': 'secret'}), ('report', {'run': 'r', 'format': 'html'}), ('__proto__', {})]:
-            with self.subTest(operation=operation, value=value), self.assertRaises(ValueError):
-                invoke(operation, value)
+    def test_input_validation(self):
+        for name, value in [('status', {}), ('status', {'run':''}), ('status', {'run':7}), ('__proto__', {}),
+                            ('start', {'apiKey':'secret'}), ('rules', {'limit':0}), ('report', {'run':'r','format':'html'})]:
+            with self.subTest(name=name), self.assertRaises(ValueError):
+                invoke(name, value)
+        evaluation = {'caseId':'case', 'outcome':'needs_review', 'rationale':'pending', 'severity':'unknown',
+                      'severityRationale':'pending', 'evidence':[], 'prerequisites':[], 'impact':'unknown',
+                      'openQuestions':[], 'nextAction':'review'}
+        validate(MANIFEST['schemas']['evaluation'], evaluation)
+        for outcome in ('true_positive', 'false_positive', 'vulnerable', 'safe', 'uncertain'):
+            with self.subTest(outcome=outcome), self.assertRaisesRegex(ValueError, 'outcome'):
+                validate(MANIFEST['schemas']['evaluation'], {**evaluation, 'outcome':outcome})
 
-    def test_evaluation_schema_rejects_legacy_verdict(self):
-        schema = MANIFEST['schemas']['evaluation']['properties']['outcome']
-        for value in ('confirmed', 'refuted', 'needs_review'):
-            validate(schema, value)
-        with self.assertRaises(ValueError):
-            validate(schema, 'true_positive')
-
-    def test_transport_lifecycle_and_errors(self):
+    def test_transport(self):
         server = Server()
-        request = lambda method, params={}: server.handle({'jsonrpc': '2.0', 'id': 1, 'method': method, 'params': params})
+        def request(method, params=None):
+            return server.handle({'jsonrpc':'2.0','id':1,'method':method,'params':params or {}})
         self.assertEqual(request('tools/list')['error']['code'], -32002)
-        self.assertEqual(request('initialize', {'protocolVersion': 'unknown'})['error']['code'], -32602)
-        self.assertIn('serverInfo', request('initialize', {'protocolVersion': '2025-11-25'})['result'])
-        self.assertIsNone(server.handle({'jsonrpc': '2.0', 'method': 'notifications/initialized'}))
-        tools = request('tools/list')['result']['tools']
-        self.assertEqual({tool['name'] for tool in tools}, {'scanner_' + name for name in MANIFEST['operations']})
+        self.assertEqual(request('initialize', {'protocolVersion':'unknown'})['error']['code'], -32602)
+        self.assertFalse(server.initialized)
+        self.assertIsNone(server.handle({'jsonrpc':'2.0','method':'notifications/initialized'}))
+        self.assertFalse(server.initialized)
+        self.assertIn('serverInfo', request('initialize', {'protocolVersion':'2025-11-25'})['result'])
+        self.assertEqual(request('initialize', {'protocolVersion':'2025-11-25'})['error']['code'], -32602)
+        self.assertIsNone(server.handle({'jsonrpc':'2.0','method':'notifications/initialized'}))
+        self.assertEqual(len(request('tools/list')['result']['tools']), len(MANIFEST['operations']))
         self.assertEqual(request('ping')['result'], {})
-        inspected = request('tools/call', {'name': 'scanner_capabilities', 'arguments': {}})['result']
+        inspected = request('tools/call', {'name':'scanner_capabilities'})['result']
         self.assertFalse(inspected['isError'])
-        result = request('tools/call', {'name': 'scanner_start', 'arguments': {}})['result']
-        self.assertTrue(result['isError'])
-        self.assertEqual(json.loads(result['content'][0]['text'])['code'], 'not_implemented')
-        self.assertEqual(request('tools/call', {'name': 'scanner_status', 'arguments': {}})['error']['code'], -32602)
-        self.assertEqual(request('tools/call', {'name': []})['error']['code'], -32602)
+        self.assertEqual(json.loads(inspected['content'][0]['text'])['protocolVersion'], 'bypass-scanner.v2')
+        self.assertEqual(request('tools/call', {'name':'scanner_next_task','arguments':{'run':'r'}})['result']['isError'], True)
+        self.assertEqual(request('tools/call', {'name':'scanner_status'})['error']['code'], -32602)
+        self.assertEqual(request('tools/call', {'name':[]})['error']['code'], -32602)
+        self.assertEqual(request('tools/call', {'name':'scanner_status','arguments':{'run':7}})['error']['code'], -32602)
+        self.assertEqual(request('tools/call', {'name':'scanner___proto__'})['error']['code'], -32602)
         self.assertEqual(request('unknown')['error']['code'], -32601)
-        self.assertEqual(request('initialize', {'protocolVersion': '2025-11-25'})['error']['code'], -32602)
 
-    def test_wire_parse_and_size_bounds(self):
-        for line in (b'not json\n', b'[]\n', b'{"x":NaN}\n', b'\xff\n', b'x' * (MAX_BYTES + 1)):
+    def test_wire_bounds(self):
+        for line in (b'not json\n', b'[]\n', b'{"x":NaN}\n', b'\xff\n', b'x'*(MAX_BYTES+1)):
             output = io.StringIO()
             serve(io.BytesIO(line), output)
             self.assertIn('error', json.loads(output.getvalue()))
-
-
-if __name__ == '__main__':
-    unittest.main()

@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "bypass-scanner"
-version = "0.1.0"
-description = "Whitebox scanner contracts and MCP scaffold; analysis is not implemented"
+version = "0.2.0"
+description = "Deterministic CodeQL discovery with durable signals and MCP integration"
 requires-python = ">=3.11"
 dependencies = []
 
@@ -16,4 +16,4 @@ bypass-scanner = "bypass_scanner.__main__:main"
 where = ["src"]
 
 [tool.setuptools.data-files]
-"share/bypass-scanner/protocol" = ["protocol/v1.json"]
+"share/bypass-scanner/protocol" = ["protocol/v2.json"]

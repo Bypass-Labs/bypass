@@ -3,7 +3,7 @@ import { checkedProfile } from '../providers.mjs';
 import { need } from '../util.mjs';
 import { unavailable } from './contracts.mjs';
 
-/** Future generic task/model/tool loop. The scaffold never constructs a session. */
+/** Reserved AI task loop. CodeQL discovery never imports this driver. */
 export function runAPIDriver(state) {
   requireStandaloneAPI();
   const profile = state?.models?.find(model => model.name === state.activeModel);

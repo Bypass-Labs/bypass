@@ -24,7 +24,8 @@ export async function repositoryInfo(root) {
   if(remote?.startsWith('https://')) { try { const u=new URL(remote);u.username='';u.password='';u.search='';remote=u.toString(); } catch { remote=null; } }
   return {kind:'git',path:root,gitRoot:result.stdout,branch:outputs[0].code===0?outputs[0].stdout:null,commit:outputs[1].code===0?outputs[1].stdout:null,remote};
 }
-const sourcePattern=/\.(?:[cm]?[jt]sx?|py|go|rb|rs|java|php)$/;
+const sourcePattern=/\.(?:[cm]?[jt]sx?|py|go|rb|rs|java|kt|kts|php|c|cc|cpp|cxx|h|hh|hpp|hxx|cs|swift)$/;
+const actionSource=file=>/\.ya?ml$/.test(file)&&(file.startsWith('.github/workflows/')||/(?:^|\/)action\.ya?ml$/.test(file));
 function ignored(file,patterns) {
   const pieces=file.split('/');
   if(file.startsWith('tests/security/bypass/')||/^(?:check_[a-z0-9_-]+\.test|bypass-regression-runtime)\.mjs$/.test(pieces.at(-1)))return true;
@@ -43,7 +44,7 @@ export async function inventory(root, base) {
   }
   let changedFiles=null;
   if(base){need(!base.startsWith('-'),'Invalid base reference.'); const r=await execFile('git',['-C',root,'diff','--name-only','-z',base,'--']);need(r.code===0,`Cannot compare against Git reference '${base}'.`);changedFiles=r.stdout.split('\0').filter(Boolean);}
-  files=[...new Set(files)].filter(f=>sourcePattern.test(f)&&!ignored(f,patterns)).sort();
+  files=[...new Set(files)].filter(f=>(sourcePattern.test(f)||actionSource(f))&&!ignored(f,patterns)).sort();
   const truncated=files.length>2000; files=files.slice(0,2000);
   const digests=[], routes=new Set(),routeLocations=[],fileLineCounts={};
   for(const file of files){
