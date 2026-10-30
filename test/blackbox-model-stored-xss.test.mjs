@@ -230,6 +230,8 @@ test('Muse selects a reviewed JSON POST and observed HTML GET for stored XSS pro
     const completed = await execFile(process.execPath,
       [CLI, 'blackbox', ...args, '--project', root, '--json', '--non-interactive'],
       {cwd: root, env, timeout: 90000});
+    assert.ok(completed.stdout,
+      `Blackbox CLI exited ${completed.code} without JSON (${completed.stderr.length} stderr bytes)`);
     return {code: completed.code, data: JSON.parse(completed.stdout)};
   };
   const baseline = await cli(origin, '--scope', scope, '--no-model', '--rps', '20');

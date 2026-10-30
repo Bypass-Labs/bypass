@@ -123,6 +123,8 @@ test('Muse-selected HTTP flow proves browser execution and replays red and green
     assert.ok(requests.filter(item => item === `POST ${postPath}`).length >= 6);
     assert.ok(!requests.includes(`POST ${decoy}`));
     const proved = await execFile(process.execPath, [finding.proof], {env, timeout: 30000});
+    assert.ok(proved.stdout,
+      `PoC exited ${proved.code} without JSON (${proved.stderr.length} stderr bytes)`);
     const proof = JSON.parse(proved.stdout);
     assert.equal(proof.verdict, 'confirmed');
     assert.ok(proof.controls.some(item => item.label === 'control-browser' &&
