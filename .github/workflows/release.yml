@@ -1,13 +1,14 @@
 name: Test and publish main downloads
 on:
+  pull_request:
   push:
     branches: [main]
   workflow_dispatch:
 permissions:
   contents: read
 concurrency:
-  group: bypass-main-downloads
-  cancel-in-progress: false
+  group: ${{ github.event_name == 'pull_request' && format('bypass-pr-platforms-{0}', github.event.pull_request.number) || 'bypass-main-downloads' }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 jobs:
   windows-accounts:
     runs-on: windows-2022
@@ -19,11 +20,12 @@ jobs:
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: '22.23.4'
+      - run: npm ci --ignore-scripts
+      - name: Build plugin runtime from source
+        run: npm run plugin:build
       - name: Verify private account storage and same-session plugin onboarding on Windows
         shell: pwsh
         run: |
-          npm ci --ignore-scripts
-          if ($LASTEXITCODE) { exit $LASTEXITCODE }
           node --test test/credentials.test.mjs
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
   macos-terminal:
@@ -36,9 +38,11 @@ jobs:
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: '22.23.4'
+      - run: npm ci --ignore-scripts
+      - name: Build plugin runtime from source
+        run: npm run plugin:build
       - name: Verify piped installer hands interactive input to Muse on macOS
         run: |
-          npm ci --ignore-scripts
           python3 scripts/smoke-muse-terminal.py "$(command -v node)"
           python3 scripts/smoke-install-progress.py "$(command -v node)"
   release:
