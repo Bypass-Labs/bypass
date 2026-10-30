@@ -2,9 +2,11 @@
 
 The Muse plugin is the primary experience. Use ordinary requests or its slash commands; Muse calls these tools for you. You do not need to learn MCP syntax or leave Muse for project operations.
 
-Standalone model setup has a deliberate mode boundary: plugin model tools explain host ownership and cannot configure or invoke API inference. This reference is generated from the CLI catalog and plugin definitions. CI checks all 101 public CLI commands and their options; there are 99 typed tools. Regenerate with `node scripts/check-plugin-parity.mjs --write` after intentionally changing the catalog.
+Standalone model setup has a deliberate mode boundary: plugin model tools explain host ownership and cannot configure or invoke API inference. This reference is generated from the CLI catalog and plugin definitions. CI checks all 107 public CLI commands and their options; there are 108 typed tools. Regenerate with `node scripts/check-plugin-parity.mjs --write` after intentionally changing the catalog.
 
 ## Start inside Muse
+
+Use /bypass:blackbox to audit an authorized running app through the active Muse session, then replay proofs and export regressions. A bare command asks in chat for the exact target URL, allowed paths, request rate, Muse-call cap and time limit; the user can type custom numbers or choose 120 Muse calls and 30 minutes as separate defaults. It does not start an audit of an app selected in an earlier session.
 
 - `/bypass:start`: reuse your repository and active Muse reasoning, and finish missing app/DNS/scope setup; accounts are optional.
 - `/bypass:demo`: a real local Muse-directed demonstration, through proof, fixture fix, saved test, deliberate regression, one monitor tick and security context. Ask for an offline preview explicitly to use seeded discovery.
@@ -25,6 +27,12 @@ CLI global `--project` maps to the selected repository; `--json` maps to structu
 
 | CLI command | Muse tool | Behavior |
 | --- | --- | --- |
+| `blackbox` | `bypass_blackbox_start` | Run a scoped black-box audit and save evidence under .bypass/runs/. |
+| `blackbox scope` | `bypass_blackbox_scope` | Write a reviewable blackbox.scope.json. |
+| `blackbox setup` | `bypass_blackbox_setup` | Prepare scope, target challenges and reviewable authorization files. |
+| `blackbox verify` | `bypass_blackbox_verify` | Re-execute generated proofs and check ledger integrity. |
+| `blackbox export` | `bypass_blackbox_export` | Write Node regression tests for confirmed findings. |
+| `blackbox resume` | `bypass_blackbox_resume` | Continue saved Muse research in a fresh scoped audit. |
 | `discover` | `bypass_discover` | Inspect the whitebox scanner scaffold; analysis is not implemented. |
 | `discover status` | `bypass_discover_status` | Scanner run-status interface; execution is not implemented. |
 | `discover resume` | `bypass_discover_resume` | Scanner continuation interface; execution is not implemented. |

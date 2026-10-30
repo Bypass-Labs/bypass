@@ -17,6 +17,7 @@ import { pluginHelp } from './plugin-parity.mjs';
 import { pluginDashboard, runProgress, progressSnapshot, startPluginDemo, controlPluginDemo, validateProjectOutput, operationFailed } from './plugin-experience.mjs';
 import { duration } from './util.mjs';
 import { registerProjectCredentials } from './credentials.mjs';
+import { BlackboxHostBridge } from './blackbox/host-bridge.mjs';
 
 const str=(description,extra={})=>({type:'string',description,...extra});
 const bool=description=>({type:'boolean',description});
@@ -25,6 +26,28 @@ const target=str('Configured target name');
 function tool(name,description,properties,required,command,makeArgs=()=>[],makeOptions=a=>a,readOnly=false){return {name,description,inputSchema:{type:'object',properties,required,additionalProperties:false},annotations:{readOnlyHint:readOnly,destructiveHint:!readOnly,idempotentHint:readOnly,openWorldHint:!readOnly},command,makeArgs,makeOptions};}
 const identityKey=str('Finding, check, or run ID');
 const repositorySelection={repository:str('Application repository: explicit local folder or Git URL selected by the user'),dir:str('Empty clone destination for a Git URL'),config:str('Optional user-selected JSON setup file; repository selection remains explicit'),confirmed:bool('True only when the user has identified or confirmed this repository'),allowBypassSource:bool('Only true when the user specifically wants to review Bypass tooling itself'),name:str('Optional project display name')};
+const blackboxLimits={agents:integer('Concurrent Muse decisions',1,100),'http-workers':integer('Concurrent scoped HTTP workers',1,100),
+  rps:{type:'number',description:'Shared maximum HTTP requests per second'},
+  'model-calls':{type:'integer',description:'Muse decision-call budget'},
+  'max-urls':{type:'integer',description:'Authenticated recon URL limit; 0 means unlimited'},
+  'max-tasks':{type:'integer',description:'Test task limit; 0 means unlimited'},
+  minutes:{type:'number',description:'Audit duration in minutes'},
+  'dom-script-bytes':integer('Maximum captured script bytes',1,16*1024*1024)};
+const blackboxScope={url:str('Exact authorized application origin'),include:str('Comma-separated authorized path prefixes'),
+  domains:str('Comma-separated owned apex domains'),'audit-domains':str('Comma-separated owned descendant-domain audit targets'),
+  'credential-origins':str('Comma-separated authorized credential origins'),never:str('Comma-separated excluded paths'),
+  'owner-env':str('Owner test-account environment prefix'),'other-env':str('Outsider test-account environment prefix'),
+  auth:str('Test-account authentication scheme'),'identity-path':str('Exact identity endpoint'),
+  'identity-cookie-name':str('Cookie name for the identity endpoint'),environment:str('Target environment'),
+  ...blackboxLimits,out:str('Scope output path'),force:bool('Replace an existing scope only when requested')};
+const blackboxRun={url:blackboxScope.url,scope:str('Reviewed scope file path'),
+  include:blackboxScope.include,domains:blackboxScope.domains,'audit-domains':blackboxScope['audit-domains'],
+  'owner-env':blackboxScope['owner-env'],'other-env':blackboxScope['other-env'],
+  auth:blackboxScope.auth,'identity-path':blackboxScope['identity-path'],...blackboxLimits,
+  out:str('Audit output directory'),source:str('Optional operator-supplied source directory'),
+  'accept-local':bool('User authorizes this loopback target'),'no-model':bool('Run without Muse decisions'),
+  'dry-run':bool('Plan without live tests'),'no-discovery':bool('Skip descendant discovery'),
+  offline:bool('Do not query external discovery services')};
 export const toolDefinitions=[
   tool('bypass_discover','Inspect the whitebox scanner scaffold. plan=true explains prerequisites without Docker or inference. Analysis returns not_implemented. Muse owns reasoning; never configure an API provider.',{sarif:str('Optional SARIF input path; not read by the scaffold'),config:str('Optional scanner configuration path; not read by the scaffold'),plan:bool('Inspect the intended workflow and current limitations')},[],'discover',undefined,undefined,true),
   tool('bypass_discover_status','Scanner run-status interface; returns not_implemented without creating state.',{run:identityKey},['run'],'discover status',a=>[a.run],()=>({}),true),
@@ -118,6 +141,15 @@ export const toolDefinitions=[
   tool('bypass_report','Read a run report or export it within the selected application.',{run:identityKey,format:str('Report format',{enum:['json','md']}),out:str('Optional repository-relative output filename')},[],'report'),
   tool('bypass_runs','List durable review, regression and monitor runs.',{},[],'run list',undefined,undefined,true),
   tool('bypass_watch_run','Wait up to 20 seconds for new progress or completion. Returns compact Done / Now / Next, new events and a cursor. Repeat with that cursor until terminal; does not stop the job when waiting ends.',{id:identityKey,after:integer('Last progress cursor'),timeout:str('Maximum wait; defaults to 10s, at most 20s')},['id'],'plugin-watch',undefined,undefined,true),
+  tool('bypass_blackbox_scope','Write or reuse a reviewable blackbox scope. A higher requested rate updates only its rate; force replaces the scope.',blackboxScope,['url'],'blackbox scope',a=>[a.url],a=>({...a,reuse:true})),
+  tool('bypass_blackbox_setup','Prepare or reuse the reviewable blackbox scope and ownership steps. A higher requested rate updates only its rate; Muse calls and minutes are run overrides.',blackboxScope,['url'],'blackbox setup',a=>[a.url]),
+  tool('bypass_blackbox_start','Start the existing blackbox engine. Muse decisions are requested through bypass_blackbox_next and answered with bypass_blackbox_submit; no API key is used.',blackboxRun,['url'],'blackbox',a=>[a.url]),
+  tool('bypass_blackbox_resume','Resume an earlier blackbox research queue through the active Muse session.',{run:identityKey,scope:blackboxRun.scope,offline:blackboxRun.offline,...blackboxLimits},['run'],'blackbox resume',a=>[a.run]),
+  tool('bypass_blackbox_next','Read pending blackbox model decisions and progress. Use the active Muse session to answer each request.',{after:integer('Last progress cursor; defaults to zero')},[],'blackbox-host-next',undefined,undefined,true),
+  tool('bypass_blackbox_submit','Submit one active Muse decision to the existing blackbox engine.',{id:str('Pending decision ID'),decision:{type:'object',description:'JSON decision matching the supplied schema',additionalProperties:true}},['id','decision'],'blackbox-host-submit'),
+  tool('bypass_blackbox_stop','Stop this session’s blackbox audit and preserve its partial evidence.',{},[],'blackbox-host-stop'),
+  tool('bypass_blackbox_verify','Replay every saved blackbox proof against the authorized target.',{run:identityKey},['run'],'blackbox verify',a=>[a.run]),
+  tool('bypass_blackbox_export','Export Node regression tests for confirmed blackbox findings.',{run:identityKey,out:str('Repository-relative output directory')},['run'],'blackbox export',a=>[a.run]),
   tool('bypass_run_monitor','Run a saved monitor immediately using real deterministic replay.',{name:str('Monitor name')},['name'],'monitor run',a=>[a.name]),
   tool('bypass_resume_monitor','Resume an existing monitor after checking current authorization.',{name:str('Monitor name')},['name'],'monitor resume',a=>[a.name]),
   tool('bypass_remove_monitor','Remove a schedule while retaining its prior run evidence.',{name:str('Monitor name')},['name'],'monitor remove',a=>[a.name]),
@@ -130,6 +162,7 @@ const validate=(schema,input)=>validateJSON(schema,input);
 const protocolVersions=['2026-07-28','2025-11-25','2025-06-18','2025-03-26','2024-11-05'];
 export async function serveMCP(cwd=process.cwd(),io={input:process.stdin,output:process.stdout}){
   let initialized=false,buffer='',selectedRoot=(()=>{const saved=savedSelection(cwd);if(saved)return saved;try{const root=rootFrom(cwd);return !isBypassSource(root)?root:null;}catch{return null;}})(),selecting=false,previousApplication=null,demoRoot=null;const pending=new Map(),tasks=new Set();let setupChoices={};
+  const blackboxBridge = new BlackboxHostBridge();
   // Migrate only the active workspace and saved selection, never search arbitrary folders.
   for(const root of new Set([rootFrom(cwd,false),selectedRoot].filter(Boolean))){try{const state=read(root);rememberProjectOwnership(state);}catch(error){if(!error.message.startsWith('Cannot read Bypass state'))throw error;}}
   const context=async()=>selectedRoot?{...await execute('context',[],{project:selectedRoot,json:true,'non-interactive':true}),pluginVersion:VERSION}:outcome(await pluginOnboarding(cwd,null));
@@ -230,7 +263,22 @@ export async function serveMCP(cwd=process.cwd(),io={input:process.stdin,output:
       }else if(!selectedRoot&&['status','context'].includes(t.command))result=outcome(await pluginOnboarding(cwd,null));
       else{
         need(selectedRoot&&!selecting,'Follow bypass_onboarding to connect the selected repository or app-only URL first. The current Muse folder is not selected automatically.');
-        if(t.command==='plugin-watch'){
+        if(t.command==='blackbox-host-next'){
+          result=outcome({kind:'blackbox-host',...blackboxBridge.status(args.after??0)});
+        }else if(t.command==='blackbox-host-submit'){
+          result=outcome({kind:'blackbox-host-decision',...blackboxBridge.submit(args.id,args.decision)});
+        }else if(t.command==='blackbox-host-stop'){
+          result=outcome({kind:'blackbox-host',...blackboxBridge.stop()});
+        }else if(['blackbox','blackbox resume'].includes(t.command)){
+          if(args.out)validateProjectOutput(selectedRoot,args.out);
+          const options={...t.makeOptions(args),project:selectedRoot,json:true,'non-interactive':true};
+          delete options.url;
+          delete options.run;
+          const selected=selectedRoot;
+          result=outcome({kind:'blackbox-host',...blackboxBridge.start(({infer,signal,onProgress})=>
+            execute(t.command,t.makeArgs(args),options,{cwd:selected,signal,onProgress,
+              infer,modelProfile:{name:'Active Muse session',provider:'muse-host',model:'muse-code-session'}}))});
+        }else if(t.command==='plugin-watch'){
           const waitMs=args.timeout?duration(args.timeout):10000;need(waitMs<=20000,'A Muse progress wait is at most 20s; repeat with its returned cursor.');
           result=await runProgress(selectedRoot,args.id,{after:args.after,waitMs,signal:controller.signal,onProgress});
         }else if(t.command==='plugin-demo-control'){
@@ -273,7 +321,8 @@ export async function serveMCP(cwd=process.cwd(),io={input:process.stdin,output:
       buffer+=chunk;if(Buffer.byteLength(buffer)>1_048_576){error(null,-32700,'Message exceeds 1 MiB');buffer='';return;}
       let index;while((index=buffer.indexOf('\n'))!==-1){const line=buffer.slice(0,index).trim();buffer=buffer.slice(index+1);if(!line)continue;let message;try{message=JSON.parse(line);}catch{error(null,-32700,'Invalid JSON');continue;}const task=inExecutionMode('muse-host',()=>handle(message)).catch(e=>error(message?.id??null,-32603,e.message));tasks.add(task);task.finally(()=>tasks.delete(task));}
     });
-    io.input.on('end',()=>{for(const c of pending.values())c.abort();Promise.allSettled([...tasks]).then(resolve);});
-    io.input.on('error',()=>{for(const c of pending.values())c.abort();resolve();});
+    io.input.on('end',()=>{blackboxBridge.stop();for(const c of pending.values())c.abort();
+      Promise.allSettled([...tasks,blackboxBridge.job?.done].filter(Boolean)).then(resolve);});
+    io.input.on('error',()=>{blackboxBridge.stop();for(const c of pending.values())c.abort();resolve();});
   });
 }

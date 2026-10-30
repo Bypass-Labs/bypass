@@ -6,7 +6,14 @@ import { scannerPackageFiles } from '../src/scanner/runtime.mjs';
 const root=path.resolve(path.dirname(fileURLToPath(import.meta.url)),'..');
 const runtime=path.join(root,'plugin/runtime');
 fs.mkdirSync(runtime,{recursive:true});
-for(const directory of ['src','bin','agents','examples/poc-api'])fs.cpSync(path.join(root,directory),path.join(runtime,directory),{recursive:true});
+for(const directory of ['src','bin','agents','examples/poc-api']){
+  const destination=path.join(runtime,directory);
+  fs.rmSync(destination,{recursive:true,force:true});
+  fs.cpSync(path.join(root,directory),destination,{recursive:true});
+}
+fs.mkdirSync(path.join(runtime,'docs'),{recursive:true});
+fs.copyFileSync(path.join(root,'docs/muse_spark_bug_bounty_tier_1_tier_2.md'),
+  path.join(runtime,'docs/muse_spark_bug_bounty_tier_1_tier_2.md'));
 fs.rmSync(path.join(runtime,'scanner'),{recursive:true,force:true});
 for(const relative of scannerPackageFiles(path.join(root,'scanner'))){
   const destination=path.join(runtime,'scanner',relative);

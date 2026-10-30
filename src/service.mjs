@@ -14,7 +14,7 @@ import { rootFrom, read, change, initStore, snapshot, atomic, event } from './st
 import { need, named, safeName, envName, now, duration, outcome, execFile, Fault, redact } from './util.mjs';
 import { samePluginPackage, museInstallState } from './muse-install-state.mjs';
 import { connectRepository, repositoryInfo, inventory } from './repository.mjs';
-import { appOriginInput, targetURL, makeChallenge, verifyOwnership, authorization, scopeReady, safeRequest } from './network.mjs';
+import { appOriginInput, targetURL, makeChallenge, verifyOwnership, authorization, scopeReady, safeRequest, loopback } from './network.mjs';
 import { modelProfile, testModel } from './models.mjs';
 import { scanPlan, executeRun, verifyFinding } from './engine.mjs';
 import { monitorSummary } from './plugin-context.mjs';
@@ -29,6 +29,9 @@ import { dockerStatus, prepareAgents } from './agent-runtime.mjs';
 import { specFor, saveCheck, bindCheck, exportChecks } from './checks.mjs';
 import { dispatchRun, watchRun, startWorker, workerStatus, runMonitor } from './jobs.mjs';
 import { startDemo, updateDemo, serveDemo, demoConfig, CLI } from './demo.mjs';
+import { prepareScopeTemplate, prepareBlackboxSetup } from './blackbox/setup.mjs';
+import { runAudit } from './blackbox/index.mjs';
+import { verifyRun as verifyBlackboxRun, exportRun as exportBlackboxRun } from './blackbox/poc.mjs';
 
 export const PACKAGE_ROOT=path.resolve(path.dirname(fileURLToPath(import.meta.url)),'..');
 function loadJSON(file){try{return JSON.parse(fs.readFileSync(path.resolve(file),'utf8'));}catch{throw new Fault(`Cannot parse JSON file: ${file}`);}}
@@ -42,7 +45,7 @@ export function readiness(root){
   const next=active?(latest.executionMode==='muse-host'?`Continue review ${latest.id} in Muse`:`run watch ${latest.id}`):realEngine(s)&&shared.sourceBlockers.length?'model test':latest?.status==='failed'?(latest.result?.details?.next||`run show ${latest.id}`):s.checks.some(c=>c.enabled)?'test run --all':findings.length?'finding list':liveReview?`scan --mode ${mode}`:mode==='live'?'target show':'scan --mode code';
   return {runtime:runtimeIdentity(),project:s.project,root,ai:host?hostAI():{mode:'standalone-api'},engine:{mode:host?'host':realEngine(s)?'docker':'mock',analysisImplemented:host||realEngine(s),label:host?'Muse plans; Bypass executes':realEngine(s)?'Docker agents · real source review and scoped HTTP proof':'MOCK analysis · real setup and saved-test replay'},
     review:(executionMode()==='muse-host'?hostPlan:scanPlan)(s,{mode}),
-    model:host?{name:'Active Muse session',provider:'muse-host',destination:'Host session',connection:'host managed'}:model?{name:model.name,provider:model.provider,destination:model.dataDestination,connection:model.lastAttempt?.status||model.lastTest?.status||'not tested'}:null,
+    model:host?{name:'Active Muse session',provider:'muse-host',destination:'Host session',connection:'host managed'}:model?{name:model.name,provider:model.provider,modelId:model.model,destination:model.dataDestination,connection:model.lastAttempt?.status||model.lastTest?.status||'not tested'}:null,
     target:target?{name:target.name,url:target.url,environment:target.environment,ownership:target.ownership?.status||'pending',authorized:liveReady}:null,
     ready:{repository:hasSource,model:host||realEngine(s)?shared.modelReady:!!model,source:hasSource&&mode!=='live'&&(host||realEngine(s)?shared.source:true),target:!!target,authorized:liveReady,liveTesting:liveReview,liveReview,canValidateLive:shared.canValidateLive},probes:shared.probes,coverageGaps:shared.coverageGaps,registration:registrationStatus(target),blockers:{source:shared.sourceBlockers,live:shared.liveBlockers},
     findings:{total:findings.length,hiddenSimulated:s.findings.length-findings.length,confirmed:findings.filter(f=>f.status==='confirmed').length,fixtureConfirmed:findings.filter(f=>f.status==='confirmed_fixture').length,simulated:findings.filter(f=>f.status==='simulated_unproven').length,fixed:findings.filter(f=>f.status==='fixed_verified').length},
@@ -55,6 +58,93 @@ export function readiness(root){
 
 export async function execute(key,args=[],o={},context={}){
   const working=path.resolve(o.project||context.cwd||process.cwd());
+  if(key==='model test'&&executionMode()!=='muse-host'&&
+    !fs.existsSync(path.join(rootFrom(working,false),'.bypass/state.json'))){
+    need(!args[0]||args[0]==='meta-blackbox',
+      'No named model profile exists in this folder. Omit the name to test the Meta API default.');
+    const model=modelProfile('meta-blackbox',{provider:'meta',
+      'secret-env':process.env.META_API_KEY?'META_API_KEY':process.env.LLM_KEY?'LLM_KEY':'MODEL_API_KEY'});
+    const check=await testModel(model,working,context);
+    return outcome({model:model.name,check});
+  }
+  if(key==='blackbox verify'){
+    const result=await verifyBlackboxRun(rootFrom(working,false),args[0]);
+    return outcome(result,result.exitCode);
+  }
+  if(key==='blackbox export'){
+    const result=exportBlackboxRun(rootFrom(working,false),args[0],{out:o.out||null});
+    return outcome(result);
+  }
+  if(key==='blackbox resume'){
+    need(/^bx-\d{8}-[0-9a-f]{8}$/.test(args[0]??''), 'Provide a saved black-box run ID.');
+    const projectRoot=rootFrom(working,false);
+    const priorDir=path.join(projectRoot,'.bypass/runs',args[0]);
+    const metadataFile=fs.existsSync(path.join(priorDir,'run.json'))?
+      path.join(priorDir,'run.json'):path.join(priorDir,'run-start.json');
+    need(fs.existsSync(metadataFile),`Run ${args[0]} has no saved scope metadata.`);
+    const metadata=JSON.parse(fs.readFileSync(metadataFile,'utf8'));
+    const result=await runAudit({url:metadata.origin??metadata.scope?.target?.origin,
+      root:working,scopeFile:o.scope||metadata.scopeFile||null,resumeFrom:args[0],
+      overrides:{rps:o.rps??metadata.rps??metadata.scope?.limits?.rps,
+        modelAgents:o.agents,
+        httpWorkers:o['http-workers'],
+        modelCalls:o['model-calls']??metadata.scope?.limits?.modelCalls,
+        maxUrls:o['max-urls']??metadata.scope?.limits?.maxUrls,
+        maxTasks:o['max-tasks']??metadata.scope?.limits?.tasks,
+        minutes:o.minutes??metadata.scope?.limits?.minutes,
+        domScriptBytes:o['dom-script-bytes']??metadata.scope?.limits?.domScriptBytes,
+        acceptLocal:!metadata.scopeFile && loopback(new URL(metadata.origin??
+          metadata.scope?.target?.origin).hostname)},
+      modelName:o.model||null,offline:!!o.offline,
+      signal:context.signal, infer:context.infer, modelProfileOverride:context.modelProfile,
+      log:event=>context.onProgress?.(event)});
+    return outcome(result,result.exitCode);
+  }
+  if(key==='blackbox scope'){
+    const {origin,file,scope}=prepareScopeTemplate(working,args[0],o,{reuse:o.reuse===true});
+    const runLimits=`${o.rps!=null?` --rps ${Number(o.rps)}`:''}${o['model-calls']!=null?
+      ` --model-calls ${Number(o['model-calls'])}`:''}${o.minutes!=null?
+      ` --minutes ${Number(o.minutes)}`:''}`;
+    return outcome({kind:'blackbox-scope',file,origin,include:scope.include,domains:scope.domains,
+      auditDomains:scope.discovery.auditDomains,credentialOrigins:scope.credentialOrigins,
+      identities:{owner:scope.identities.owner.env,outsider:scope.identities.outsider.env},
+      next:scope.target.environment==='local' ?
+        `Review ${file}, then run bypass blackbox ${origin}${runLimits}` :
+        `Review ${file}, then run bypass blackbox setup ${origin}${runLimits} to prepare target ownership and authorization.`});
+  }
+  if(key==='blackbox setup')return outcome(await prepareBlackboxSetup(working,args[0],o));
+  if(key==='blackbox'){
+    let auditRps=o.rps;
+    if(args[0]&&!o.scope&&
+      !fs.existsSync(path.join(rootFrom(working,false),'blackbox.scope.json'))){
+      const origin=appOriginInput(args[0]);
+      if(loopback(new URL(origin).hostname)){
+        auditRps ??= 5;
+        const prepared=prepareScopeTemplate(working,origin,
+          {include:o.include||'/',rps:auditRps,'model-calls':o['model-calls'],
+            agents:o.agents,'http-workers':o['http-workers'],
+            'max-urls':o['max-urls'],
+            'max-tasks':o['max-tasks'],
+            minutes:o.minutes,
+            'dom-script-bytes':o['dom-script-bytes']},{reuse:true});
+        context.onProgress?.({stage:'setup',message:`Created local scope ${prepared.file} · includes ${prepared.scope.include.join(', ')} · ${auditRps} rps · ${prepared.scope.limits.minutes} min · ${prepared.scope.limits.modelCalls} Muse calls · ${prepared.scope.limits.maxUrls || 'unlimited'} authenticated recon URLs.`});
+      }
+    }
+    const result=await runAudit({url:args[0],root:working,scopeFile:o.scope||null,out:o.out||null,
+      overrides:{acceptLocal:!!o['accept-local'],ownerEnv:o['owner-env'],otherEnv:o['other-env'],auth:o.auth,
+        identityPath:o['identity-path'],modelAgents:o.agents,httpWorkers:o['http-workers'],
+        rps:auditRps,modelCalls:o['model-calls'],domains:o.domains,
+        maxUrls:o['max-urls'],
+        maxTasks:o['max-tasks'],
+        minutes:o.minutes,
+        domScriptBytes:o['dom-script-bytes'],
+        auditDomains:o['audit-domains'],includes:o.include},
+      noModel:!!o['no-model'],dryRun:!!o['dry-run'],noDiscovery:!!o['no-discovery'],offline:!!o.offline,
+      modelName:o.model||null,sourcePath:o.source||null,
+      signal:context.signal, infer:context.infer, modelProfileOverride:context.modelProfile,
+      log:event=>context.onProgress?.(event)});
+    return outcome(result,result.exitCode);
+  }
   if(key==='discover'||key.startsWith('discover ')||key.startsWith('scanner ')){
     const {scannerService}=await import('./scanner/service.mjs');
     return scannerService(key,args,o,{...context,cwd:working});

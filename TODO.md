@@ -1,5 +1,9 @@
 # UAT bugs and release gates
 
+## October 30 integration acceptance
+
+Current merge, defect fixes, validation status and next actions are tracked in [the integration UAT report](docs/MERGE_UAT_2026_10_30.md). Historical acceptance items below remain historical; fixture passes do not close native Muse or production gates.
+
 ## 0.7.7 release
 
 Includes the October 28 choices-first onboarding, correct repository selection, same-origin ownership reuse, public signup-config discovery and assessment-continuation fixes. Final local suite: 208 passed, zero failed, two opt-in Docker tests skipped. Native interactive acceptance items below remain open; publishing does not turn fixture results into production UAT evidence.

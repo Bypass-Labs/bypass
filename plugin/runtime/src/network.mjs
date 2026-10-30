@@ -47,18 +47,22 @@ export function scopeReady(target, pathname, method) {
   const auth = target.authorization;
   need(auth && !authorizationRevoked(target) && auth.origin === target.url && Date.parse(auth.expiresAt) > Date.now(), 'Target authorization is missing, expired or revoked. Run target authorize.', 3);
   const required=method||(pathname?'GET':null);
-  if(required)need(auth.methods.includes(required), `Method ${required} is outside the authorized scope. Allowed: ${auth.methods.join(', ')}. Update testing permission to include ${required} before retrying.`, 3);
+  const exactXmlPost=required==='POST' && typeof pathname==='string' &&
+    auth.xmlPostPaths?.includes(pathname);
+  if(required)need(auth.methods.includes(required)||exactXmlPost, `Method ${required} is outside the authorized scope. Allowed: ${auth.methods.join(', ')}. Update testing permission to include ${required} before retrying.`, 3);
   if (pathname) need(pathAllowed(pathname,auth.paths), `Path ${pathname} is outside the authorized scope.`, 3);
   return true;
 }
-export async function safeRequest(value, {allowLocal=false,allowPrivate=false,method='GET',headers={},body,timeout=8000,maxBytes=131072,signal,onHeaders,onChunk} = {}) {
+export async function safeRequest(value, {allowLocal=false,allowPrivate=false,allowRemoteHttp=false,method='GET',headers={},body,timeout=8000,maxBytes=131072,signal,onHeaders,onChunk} = {}) {
   if(signal?.aborted)throw abortFault(signal);
   const url = new URL(value);
   need(!url.username && !url.password, 'URL credentials are not allowed.');
   const host = url.hostname.replace(/^\[|\]$/g,'');
   need(['http:','https:'].includes(url.protocol), 'Only HTTP(S) is supported.');
   const local = loopback(host);
-  need((local && allowLocal) || (!local && url.protocol === 'https:'), 'Remote requests require HTTPS; local requests require explicit local scope.', 3);
+  const anonymousHttp = allowRemoteHttp === true && ['GET','HEAD'].includes(method) &&
+    body == null && !Object.keys(headers).some(name => /^(authorization|proxy-authorization|cookie)$/i.test(name));
+  need((local && allowLocal) || (!local && (url.protocol === 'https:' || anonymousHttp)), 'Remote requests require HTTPS unless explicitly scoped anonymous HTTP reads; local requests require explicit local scope.', 3);
   let addresses;
   try { addresses = net.isIP(host) ? [{address:host,family:net.isIP(host)}] : await abortable(dns.lookup(host,{all:true}),signal); }
   catch { if(signal?.aborted)throw abortFault(signal);throw new Fault(`DNS lookup failed for ${host}.`,3); }
@@ -73,7 +77,9 @@ export async function safeRequest(value, {allowLocal=false,allowPrivate=false,me
       onHeaders?.({status:response.statusCode,headers:response.headers});
       let bytes=0; const chunks=[];
       response.on('data',chunk=>{ bytes+=chunk.length; if(bytes>maxBytes) request.destroy(new Error('Response exceeds size limit')); else if(onChunk)onChunk(chunk); else chunks.push(chunk); });
-      response.on('end',()=>resolve({status:response.statusCode,body:Buffer.concat(chunks).toString('utf8'),headers:response.headers}));
+      response.on('end',()=>{const data=Buffer.concat(chunks);
+        resolve({status:response.statusCode,body:data.toString('utf8'),
+          prefixHex:data.subarray(0,16).toString('hex'),headers:response.headers});});
       response.on('error',()=>reject(new Fault('Response interrupted.',3)));
     });
     request.setTimeout(timeout,()=>request.destroy(new Error('Request timeout')));
@@ -107,10 +113,36 @@ export function authorization(target, scope, acceptedBy = 'local operator') {
   need(!ownershipRevoked(target)&&target.ownership?.status==='verified' && Date.parse(target.ownership.expiresAt)>Date.now(),'Verify control before authorizing testing.',3);
   need(Array.isArray(scope.paths) && scope.paths.length && scope.paths.every(p=>typeof p==='string' && p.startsWith('/') && !/[?#*\\]/.test(p) && pathAllowed(p,[p])), 'Scope requires explicit path prefixes, e.g. ["/api"].');
   const methods=httpMethods(scope.methods);
+  const exactPath = p => typeof p==='string' && p.startsWith('/') &&
+    !/[?#%\\;*]/.test(p) && !p.split('/').some(segment=>segment==='.'||segment==='..') &&
+    pathAllowed(p,scope.paths);
+  const loginPaths=scope.loginPaths ?? [];
+  need(Array.isArray(loginPaths) && loginPaths.every(exactPath),
+    'loginPaths must list exact non-query paths inside the authorized paths.');
+  const xmlPostPaths=scope.xmlPostPaths ?? [];
+  need(Array.isArray(xmlPostPaths) && xmlPostPaths.length<=20 && xmlPostPaths.every(exactPath),
+    'xmlPostPaths must list at most 20 exact non-query paths inside the authorized paths.');
+  const writeOperations=scope.writeOperations ?? [];
+  need(Array.isArray(writeOperations) && writeOperations.length<=100 &&
+    writeOperations.every(item=>item && typeof item==='object' &&
+      ['POST','PUT','PATCH','DELETE','OPTIONS'].includes(item.method) &&
+      ['json','form','xml','query','header'].includes(item.placement) &&
+      (item.method!=='OPTIONS'||['query','header'].includes(item.placement)) &&
+      methods.includes(item.method) && typeof item.path==='string' &&
+      /^\/[A-Za-z0-9/_.-]{1,200}$/.test(item.path) && !item.path.endsWith('/') &&
+      !item.path.split('/').some(segment=>segment==='.'||segment==='..') &&
+      pathAllowed(item.path,scope.paths)),
+    'writeOperations must list at most 100 exact method, path, and placement contracts inside the authorized paths.');
   const rps=scope.maxRequestsPerSecond ?? 2;
   need(Number.isFinite(rps)&&rps>0&&rps<=10,'maxRequestsPerSecond must be between 0 and 10.');
   const expiresAt=scope.expiresAt ?? new Date(Date.now()+7*86400000).toISOString();
   need(Date.parse(expiresAt)>Date.now() && Date.parse(expiresAt)<=Date.now()+30*86400000, 'Authorization expiry must be within 30 days.');
   need(target.environment!=='production' || scope.productionAcknowledged===true, 'Production scope requires productionAcknowledged: true.');
-  return {...(scope.publicConfigDiscovery===true?{publicConfigDiscovery:true}:{}),origin:target.url,paths:[...new Set(scope.paths)],methods,maxRequestsPerSecond:rps,expiresAt,acceptedAt:now(),acceptedBy,productionAcknowledged:!!scope.productionAcknowledged};
+  return {...(scope.publicConfigDiscovery===true?{publicConfigDiscovery:true}:{}),origin:target.url,paths:[...new Set(scope.paths)],methods,
+    ...(loginPaths.length?{loginPaths:[...new Set(loginPaths)]}:{}),
+    ...(xmlPostPaths.length?{xmlPostPaths:[...new Set(xmlPostPaths)]}:{}),
+    ...(writeOperations.length?{writeOperations:[...new Map(writeOperations.map(item=>
+      [`${item.method} ${item.path} ${item.placement}`,
+        {method:item.method,path:item.path,placement:item.placement}])).values()]}:{}),
+    maxRequestsPerSecond:rps,expiresAt,acceptedAt:now(),acceptedBy,productionAcknowledged:!!scope.productionAcknowledged};
 }

@@ -31,6 +31,13 @@ test('slash search, arrow selection, completion and command history work with re
   answer=tty.ui.command('review');tty.key('return');assert.equal(await answer,'review');
 });
 
+test('a line-feed Enter selects blackbox without a false no-match warning',async t=>{
+  const tty=terminal(t);
+  const answer=tty.ui.command('review');tty.type('/blackbox\n');
+  assert.equal(await answer,'/blackbox');
+  assert.doesNotMatch(transcriptLines(tty.ui.state,100).join('\n'),/No match/);
+});
+
 test('bracketed multiline paste fills one answer and never submits extra commands',async t=>{
   const tty=terminal(t);let resolved=false;
   const answer=tty.ui.ask('Repository').then(value=>{resolved=true;return value;});

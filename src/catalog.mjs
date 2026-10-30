@@ -1,6 +1,12 @@
 // One catalog drives strict CLI parsing, help, and the command reference.
 const command=(usage,description,flags='',extra={})=>({usage,description,flags:flags.split(' ').filter(Boolean),...extra});
 export const commands={
+  blackbox:command('blackbox <url>','Run a scoped black-box audit and save evidence under .bypass/runs/.','scope include domains audit-domains owner-env other-env auth identity-path model agents http-workers rps model-calls max-urls max-tasks minutes dom-script-bytes out source accept-local no-model dry-run no-discovery offline'),
+  'blackbox scope':command('blackbox scope <url>','Write a reviewable blackbox.scope.json.','include domains audit-domains credential-origins never owner-env other-env auth identity-path identity-cookie-name environment agents http-workers rps model-calls max-urls max-tasks minutes dom-script-bytes out force'),
+  'blackbox setup':command('blackbox setup <url>','Prepare scope, target challenges and reviewable authorization files.','include domains audit-domains credential-origins never owner-env other-env auth identity-path identity-cookie-name environment agents http-workers rps model-calls max-urls max-tasks minutes dom-script-bytes out force'),
+  'blackbox verify':command('blackbox verify <run-id>','Re-execute generated proofs and check ledger integrity.'),
+  'blackbox export':command('blackbox export <run-id>','Write Node regression tests for confirmed findings.','out'),
+  'blackbox resume':command('blackbox resume <run-id>','Continue saved Muse research in a fresh scoped audit.','scope model offline agents http-workers rps model-calls max-urls max-tasks minutes dom-script-bytes'),
   discover:command('discover','Inspect the whitebox scanner scaffold; analysis is not implemented.','sarif config plan'),
   'discover status':command('discover status <run>','Scanner run-status interface; execution is not implemented.'),
   'discover resume':command('discover resume <run>','Scanner continuation interface; execution is not implemented.'),
@@ -105,7 +111,7 @@ export const commands={
   _run:command('_run <id>','Internal detached run entry point.','',{hidden:true}),
   '_demo-serve':command('_demo-serve','Internal fixture server.','',{hidden:true})
 };
-export const booleanFlags=new Set(['agent','public-config','reference','require-verification','json','help','version','non-interactive','plan','full','detach','all','force','accept','production','renew','once','stop','device','install','replace','allow-private']);
+export const booleanFlags=new Set(['agent','public-config','reference','require-verification','json','help','version','non-interactive','plan','full','detach','all','force','accept','production','renew','once','stop','device','install','replace','allow-private','accept-local','no-model','dry-run','no-discovery','offline']);
 export const globalFlags=['project','json','help','version','non-interactive','reference'];
 export function parse(argv){
   const options={},words=[];

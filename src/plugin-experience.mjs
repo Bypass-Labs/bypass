@@ -103,6 +103,7 @@ export function operationFailed(result){
   if(result?.plan)return false;
   const code=result?.exitCode??0;
   if(code===0)return false;
-  if(code===1&&(result?.verification?.status==='failed'||result?.run?.status==='completed'))return false;
+  if(code===1&&(result?.verification?.status==='failed'||result?.run?.status==='completed'||
+    result?.kind==='blackbox-verify'||result?.kind==='blackbox-audit'))return false;
   return true;
 }
