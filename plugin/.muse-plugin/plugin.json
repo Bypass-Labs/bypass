@@ -34,6 +34,10 @@
         "path": "commands/review.md"
       },
       {
+        "id": "blackbox",
+        "path": "commands/blackbox.md"
+      },
+      {
         "id": "tests",
         "path": "commands/tests.md"
       },

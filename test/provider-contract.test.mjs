@@ -57,6 +57,20 @@ test('Responses replays opaque reasoning and function results without previous_r
   assert.equal(calls[1].body.input[1].encrypted_content,'opaque');assert.deepEqual(calls[1].body.input.at(-1),{type:'function_call_output',call_id:'c1',output:'result'});
 });
 
+test('Responses reports a safe incomplete-output reason without response contents',async t=>{
+  const {profile}=await endpoint(t,(_req,res)=>{
+    res.setHeader('content-type','application/json');
+    res.end(JSON.stringify({status:'incomplete',incomplete_details:{reason:'max_output_tokens'},
+      output:[{type:'message',content:[{type:'output_text',text:'PRIVATE_BODY'}]}]}));
+  },{transport:'responses'});
+  await assert.rejects(new ProviderSession(profile).turn([{role:'user',content:'x'}],{schema}),error=>{
+    assert.equal(error.details.reason,'incomplete_output');
+    assert.equal(error.details.providerReason,'max_output_tokens');
+    assert.doesNotMatch(error.message,/PRIVATE_BODY/);
+    return true;
+  });
+});
+
 test('malformed arguments, unknown fields and unsupported tool names cannot execute',async t=>{
   for(const value of ['not-json','{"focus":4}','{"focus":"ok","shell":"bad"}']){
     const {profile}=await endpoint(t,(_req,res)=>{const a=action({});a.tool_calls[0].function.arguments=value;chat(res,a);});

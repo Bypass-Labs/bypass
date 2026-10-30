@@ -8,7 +8,7 @@ Global: --project <path>, --json, --non-interactive, --help, --version.
 
 ## Interactive shortcuts
 
-Run `./bypass --project /path/to/your/app` to open the persistent workspace. Press Enter for the suggested action. Type `/` for a searchable command list: `/engine`, `/poc`, `/repo`, `/review`, `/results`, `/demo`, `/tests`, `/app`, `/models`, `/status`, `/memory`, `/context`, `/history`, `/plugin`, `/settings`, `/help`, and `/quit`. The slash is optional. `?`, `back`, and `q` still work. `/help all` shows the complete catalog.
+Run `./bypass --project /path/to/your/app` to open the persistent workspace. Press Enter for the suggested action. Type `/` for a searchable command list: `/blackbox`, `/engine`, `/poc`, `/repo`, `/review`, `/results`, `/demo`, `/tests`, `/app`, `/models`, `/status`, `/memory`, `/context`, `/history`, `/plugin`, `/settings`, `/help`, and `/quit`. The slash is optional. `?`, `back`, and `q` still work. `/help all` shows the complete catalog.
 
 Use ↑↓ and Enter in menus, Tab to complete a slash command, ↑↓ on an empty command bar to recall session commands, Ctrl+O to expand operation details, PgUp/PgDn to scroll, and Esc to clear a draft, go back, or stop a running operation. Ctrl+C exits with saved project state retained. Enter skips a running model connection check. A local fixture startup finishes its short setup before cleanup; its footer says when it cannot be interrupted.
 
@@ -17,6 +17,14 @@ Use ↑↓ and Enter in menus, Tab to complete a slash command, ↑↓ on an emp
 These shortcuts belong to the interactive screen; shell commands use the catalog below. Raw catalog commands also work inside the workspace, except processes that need their own terminal (`auth login`, `mcp serve`, internal server commands). A foreground monitor worker requested in the workspace starts detached; `monitor worker --once` runs a single tick. Stopping `run watch` stops watching, not the background job; use `run stop <id>` to request job cancellation.
 
 For a scrolling interface or screen reader, use `BYPASS_PLAIN=1 ./bypass`. `TERM=dumb` also selects the plain interface. `NO_COLOR=1` disables color. JSON and noninteractive output never use the full-screen renderer.
+
+## blackbox
+
+`bypass blackbox <url>` audits an authorized running app. For loopback targets it creates a reviewable `blackbox.scope.json` when needed; `--accept-local` confirms the local target. A deployed target needs `blackbox setup <url>`, scope review, ownership verification and authorization before the audit. `blackbox scope <url>` writes the scope file without registering the target.
+
+The standalone audit uses the selected API model profile or the Meta default (`META_API_KEY`, then `LLM_KEY`, then `MODEL_API_KEY`). New terminal profiles suggest the generic `LLM_KEY` name while keeping existing provider-specific variable names available. The key value stays in the launching environment. `--no-model` runs the code-only path. `--rps` limits shared HTTP rate; `--agents` controls concurrent Muse decisions and `--http-workers` controls concurrent HTTP tasks. `--model-calls`, `--max-urls`, `--max-tasks`, `--minutes` and `--dom-script-bytes` set the recorded limits; zero means unlimited only for URL and task counts. Optional `--source <dir>` supplies source for hypothesis generation, while HTTP behavior remains the proof boundary.
+
+`blackbox resume <run-id>` continues saved model research, `blackbox verify <run-id>` replays generated proofs, and `blackbox export <run-id>` writes standalone Node regressions. Runs save `report.md`, `coverage.json`, `evidence.jsonl` and PoCs under `.bypass/runs/<run-id>/`. A confirmed finding returns exit 1; incomplete coverage remains explicit. In Muse Code, `/bypass:blackbox` uses the active Muse session through the same runner and needs no separate API key. [Detailed scope and current limits](BLACKBOX_AUDIT.md).
 
 ## poc / poc start / poc stop
 

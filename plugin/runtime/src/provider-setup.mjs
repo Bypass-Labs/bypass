@@ -7,7 +7,8 @@ export async function promptAPIProfile(ask,pick){
   if(!selection)return null;
   const p=selection.preset||providers[selection.provider];
   const config={provider:selection.provider};
-  config['secret-env']=await promptValue(ask,'API key environment variable NAME (never paste its value)',[p.secretEnv]);
+  config['secret-env']=await promptValue(ask,'API key environment variable NAME (never paste its value)',
+    [...new Set(['LLM_KEY',p.secretEnv,...(selection.provider==='meta'?['META_API_KEY']:[])])]);
   config.model=await promptValue(ask,'Model ID',p.model?[p.model]:[]);
   config['base-url']=await promptValue(ask,'API base URL (press Enter for this provider)',p.baseUrl?[p.baseUrl]:[]);
   config.transport=p.transport;

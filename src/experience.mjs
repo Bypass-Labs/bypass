@@ -6,19 +6,21 @@ export function homeActions(state) {
   const active=latest&&['queued','running'].includes(latest.status);
   const needsConnection=['connection','orchestrator','white-box','black-box'].includes(latest?.result?.details?.stage)&&(Date.parse(model?.lastAttempt?.checkedAt)||0)<=(Date.parse(latest.finishedAt)||0);
   return [
-    active?{id:`run watch ${latest.id}`,label:'Watch the active review'}:needsConnection?{id:'model test',label:'Check model connection before retrying'}:checks?{id:'tests',label:'Replay saved tests'}:results?{id:'results',label:'Open review results'}:{id:'review',label:state.settings?.analysisEngine==='docker'?'Run my first real AI review':'Run my first review preview'},
+    active?{id:`run watch ${latest.id}`,label:'Watch the active review'}:needsConnection?{id:'model test',label:'Check model connection before retrying'}:checks?{id:'tests',label:'Replay saved tests'}:results?{id:'results',label:'Open review results'}:state.project?.repository?.kind==='app'?{id:'blackbox',label:'Start a black-box audit'}:{id:'review',label:state.settings?.analysisEngine==='docker'?'Run my first real AI review':'Run my first review preview'},
     {id:'walkthrough',label:'Walk through prove → fix → retest → regression'},
     {id:'settings',label:'Settings & optional connections'}
   ];
 }
 export function previewRun(run) {return run?.kind==='scan'&&run.result?.simulation===true&&!!run.result.inventory;}
 export function reviewSummary(plan){
-  const repository=plan.repository.kind==='app'?'Source review: not selected (running app only)':`Repository: ${plan.repository.path}${plan.repository.branch?` (${plan.repository.branch})`:''}\nGit remote: ${plan.repository.remote||'local folder; no remote configured'}`;
+  if(plan.repository.kind==='app')return `Source review: not selected (running app only)\nApp: ${plan.app?.url||'not connected'}\nBlack-box audit: use /blackbox to choose scope and request rate, then inspect its coverage report.`;
+  const repository=`Repository: ${plan.repository.path}${plan.repository.branch?` (${plan.repository.branch})`:''}\nGit remote: ${plan.repository.remote||'local folder; no remote configured'}`;
   return `${repository}\nApp: ${plan.app?.url||'not connected; code preview is available'}\nWhite-box / code: ${plan.whiteBox.status}\nBlack-box / live app: ${plan.blackBox.status}\n${plan.blackBox.description}`;
 }
 export const quickCommands=`Commands you can type here (no IDs needed; / prefix optional):
   repo       Choose or change the application repository
   review     Run the selected analysis engine on this repository
+  blackbox   Audit an authorized running app with Muse
   engine     Enable real Docker agents and configure HTTP proof
   poc        Create a separate local app for real AI testing
   results    Open findings and their next step

@@ -5,7 +5,14 @@ import { fileURLToPath } from 'node:url';
 const root=path.resolve(path.dirname(fileURLToPath(import.meta.url)),'..');
 const runtime=path.join(root,'plugin/runtime');
 fs.mkdirSync(runtime,{recursive:true});
-for(const directory of ['src','bin','agents','examples/poc-api'])fs.cpSync(path.join(root,directory),path.join(runtime,directory),{recursive:true});
+for(const directory of ['src','bin','agents','examples/poc-api']){
+  const destination=path.join(runtime,directory);
+  fs.rmSync(destination,{recursive:true,force:true});
+  fs.cpSync(path.join(root,directory),destination,{recursive:true});
+}
+fs.mkdirSync(path.join(runtime,'docs'),{recursive:true});
+fs.copyFileSync(path.join(root,'docs/muse_spark_bug_bounty_tier_1_tier_2.md'),
+  path.join(runtime,'docs/muse_spark_bug_bounty_tier_1_tier_2.md'));
 // Bundle the official SDK to keep native Muse install hashing/copying bounded.
 fs.rmSync(path.join(runtime,'node_modules'),{recursive:true,force:true});
 fs.mkdirSync(path.join(runtime,'vendor'),{recursive:true});

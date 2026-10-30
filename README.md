@@ -2,9 +2,9 @@
 
 **Find an account-access bug. Verify the fix. Keep the test and security context for your next feature.**
 
-Inside **Muse Code**, Muse plans the investigation; Bypass reads bounded source, executes approved HTTP tests, and preserves evidence. Reviews report findings, recommend fixes and save regression tests. Application fixes require a separate explicit request. No separate model key or Docker is needed for the plugin. The **standalone CLI** uses your explicit provider API key and isolated Docker workers.
+Inside **Muse Code**, Muse plans the investigation; Bypass reads bounded source, executes approved HTTP tests, and preserves evidence. Reviews report findings, recommend fixes and save regression tests. Application fixes require a separate explicit request. No separate model key or Docker is needed for the plugin. Standalone source review uses your provider API key and isolated Docker workers; the standalone blackbox audit uses a Meta API key without Docker.
 
-This is a working POC for missing authentication and cross-account access to configured JSON/HTML resources, plus bounded registration and email-verification checks. Source citations are hypotheses; actual HTTP controls establish confirmation. Passing these checks is not a complete security assessment.
+The guided review is a working POC for missing authentication and cross-account access to configured JSON/HTML resources, plus bounded registration and email-verification checks. The separate `blackbox` audit maps a running app and tests observed leads with Muse; its report states exactly what was tested and missed. Source citations are hypotheses; actual HTTP controls establish confirmation. Passing these checks is not a complete security assessment.
 
 ## Start in Muse
 
@@ -71,6 +71,24 @@ Muse runs the same installer. Agent-run or noninteractive installs leave permiss
 
 **Account/privacy boundary:** Bypass uses the active Muse session and makes no independent model requests. The current MCP interface does not attest session billing, so Bypass cannot verify subscription usage. Confirm subscription mode in Muse; if the host shows API billing, switch to subscription mode. For confidential/personal code, turn Contributor mode off in Muse `/settings` and use Standard mode. Bypass does not change those settings. [Meta's requirements](https://dev.meta.ai/help/subscriptions/muse-code-contributor-mode).
 
+## Black-box audit
+
+Use `/bypass:blackbox` inside Muse Code for an authorized running app. Muse asks for the target, allowed paths, request rate, Muse-call limit and time limit, then makes its planning decisions in the active session. Bypass executes scoped requests, records evidence, replays promising proofs and offers regression export. No separate model key or Docker is needed for this plugin path.
+
+You can include optional limits in the same request, for example: `/bypass:blackbox Audit http://127.0.0.1:3002; allow /; use 10 rps, 240 Muse calls, 600 recon URLs, 45 minutes, 12 Muse investigators and 12 HTTP workers.` A bare command asks for the target, paths, rate, Muse-call count and time limit in chat. Enter your own positive numbers or choose the separate defaults of 120 Muse calls and 30 minutes. Muse calls and minutes are per-run limits. A lower rate applies to one run; a higher rate updates only the saved scope rate for review before testing.
+
+In the interactive Bypass terminal, select an app-only workspace, configure the Meta model profile with the `LLM_KEY` environment-variable name, then type `/blackbox`. The wizard asks for the target, allowed paths and request rate and shows progress and report actions.
+
+From the standalone CLI, load your Meta Model API key privately as `LLM_KEY` (or keep an existing `META_API_KEY` or `MODEL_API_KEY`), then run:
+
+```bash
+read -rsp 'LLM API key: ' LLM_KEY; echo
+export LLM_KEY
+bypass blackbox http://127.0.0.1:3000 --accept-local --rps 5
+```
+
+That command prepares a local scope and starts the audit. For a deployed target, run `bypass blackbox setup https://app.example.com --include / --rps 2`, review the scope, complete the printed ownership and authorization steps, then run the audit command it prints. Use `blackbox resume <run-id>` for saved research, `blackbox verify <run-id>` to replay proofs, and `blackbox export <run-id>` to write Node regression tests. `coverage.json` identifies untested hosts, routes and vulnerability classes. [Scope and current coverage](docs/BLACKBOX_AUDIT.md).
+
 ## See the complete demo
 
 Inside Muse:
@@ -97,6 +115,7 @@ Muse drives every reasoning step. You do not copy JSON, configure a second model
 | --- | --- |
 | `/bypass:start` | Resume missing setup |
 | `/bypass:review` | Test the agreed scope; report findings and save regressions |
+| `/bypass:blackbox` | Map and test an authorized running app through the active Muse session |
 | `/bypass:status` | Done / Now / Next and evidence |
 | `/bypass:tests` | Replay, export and manage saved checks |
 | `/bypass:build` / `/bypass:context` | Security context for feature work |
@@ -217,7 +236,7 @@ curl -fsSL https://bypasslabs.ai/install | bash
 
 On Windows: `irm https://bypasslabs.ai/install.ps1 | iex`. On macOS/Linux, open a new terminal or use the activation command printed by the installer. Windows updates the current PowerShell session and user PATH.
 
-AI review requires Docker and **your provider API key**. Coding-agent subscriptions and login tokens are never used. Repository setup, reports, memory and saved tests do not require an AI key.
+The standalone source review requires Docker and **your provider API key**. The `blackbox` CLI uses a Meta API key and does not require Docker. Coding-agent subscriptions and login tokens are not used by standalone CLI inference. Repository setup, reports, memory and saved tests do not require an AI key.
 
 ```bash
 bypass

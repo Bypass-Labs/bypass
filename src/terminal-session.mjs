@@ -9,6 +9,7 @@ import { createTheme } from './terminal-theme.mjs';
 export const commands = [
   ['review', 'Review the connected repository'],
   ['demo', 'Walk through proof, fix and regression'],
+  ['blackbox', 'Audit an authorized running app'],
   ['engine', 'Real Docker agents and HTTP proof setup'],
   ['poc', 'Start a real AI POC with a separate local app'],
   ['results', 'Open results and their next action'],
@@ -102,7 +103,7 @@ export function frame(state, columns, rows, now=Date.now()) {
   }
   if(height>=20){
     const current=state.operation?.label||activeTask?.label||(state.pending?.kind==='command'?'Ready for your next action':'Waiting for your choice');
-    add(`NOW   ${current}`,state.operation?'accent':'normal');
+    add(`NOW   ${current}${state.operation?` · ${duration(now-state.operation.started)}`:''}`,state.operation?'accent':'normal');
     add(`NEXT  ${state.next||'Choose an action below'}`,'info');
   }
   const menu=state.menu||[];
@@ -150,7 +151,7 @@ export function frame(state, columns, rows, now=Date.now()) {
       side();
     }
     side('PROJECT','title');
-    side(shortPath(state.context.repo)||'Choose your application source');
+    side(shortPath(state.context.repo)||(state.context.app?'Running app only · no repository needed':'Choose your application source'));
     side();side('LIVE APP','title');side(state.context.app||'Optional · connect with /app');
     side();side('MODEL','title');side(state.context.model||'API key for CLI · /models');
     if(state.context.checks!==undefined){side();side(`${state.context.checks} saved tests · ${state.context.memory||0} memories`,'success');}
@@ -235,7 +236,7 @@ export function createTerminalSession({input=process.stdin,output=process.stdout
       else if(state.pending?.kind!=='command')complete(undefined,cancel());
       return;
     }
-    if(state.operation){if(state.operation.skipOnEnter&&key.name==='return')state.operation.controller.abort(new Fault('Connection check skipped.',130,{skipped:true}));return;}
+    if(state.operation){if(state.operation.skipOnEnter&&['return','enter'].includes(key.name))state.operation.controller.abort(new Fault('Connection check skipped.',130,{skipped:true}));return;}
     if(!state.pending)return;
     if(key.ctrl&&key.name==='d'&&!state.input){shutdown();return;}
     if(key.ctrl&&key.name==='l'){state.scroll=0;mark();return;}
@@ -252,7 +253,7 @@ export function createTerminalSession({input=process.stdin,output=process.stdout
     if(state.pending.kind==='multiselect'&&!state.input&&(key.name==='space'||str===' ')){
       const value=state.menu[state.selected]?.id;if(value)state.pending.values=state.pending.values.includes(value)?state.pending.values.filter(v=>v!==value):[...state.pending.values,value];mark();return;
     }
-    if(key.name==='return') {
+    if(['return','enter'].includes(key.name)) {
       if(state.pending.kind==='multiselect'){
         const values=state.input.trim()?state.input.trim().split(/[,\s]+/).filter(Boolean):state.pending.values;
         if(!values.length){write('Choose at least one method, or type a custom list.');return;}
@@ -322,7 +323,7 @@ export function createTerminalSession({input=process.stdin,output=process.stdout
     }
     if(transcriptPath)output.write(`Session transcript: ${transcriptPath}\n`);
   };
-  write('Security that stays with your code.\n\nConnect your source and app. Prove the issue. Keep the fix as a test.\n\n/ commands     /demo guided walkthrough     Ctrl+O activity details');
+  write('Security that stays with your code.\n\nAudit a running app or review a repository. Prove the issue. Keep the fix as a test.\n\n/ commands     /demo guided walkthrough     Ctrl+O activity details');
   render();
   return {rich:true,ask,select,multiselect,write,activity,run:work=>activity('Check model connection',work,{skipOnEnter:true}),signal:controller.signal,
     command:(fallback)=>{state.recommended='/'+fallback;historyIndex=history.length;return question('Choose your next action',fallback,{kind:'command'});},

@@ -23,12 +23,12 @@ test('full real fixture journey: discover → prove → fix → retest → stand
   const check=read(root).checks[0];assert.ok(check);assert.equal(retest.data.verification.controls[1].status,403);
   const repeated=await cli(root,'retest',finding.id);assert.equal(repeated.code,0);assert.equal(read(root).checks.length,1);
   const exported=await cli(root,'test','export','--all');assert.equal(exported.code,0);
-  const standalone=await execFile(process.execPath,['--test',...exported.data.files],{cwd:root,env:{NODE_TEST_CONTEXT:undefined}});assert.equal(standalone.code,0,standalone.stdout+standalone.stderr);assert.match(standalone.stdout,/# tests 1/);
+  const standalone=await execFile(process.execPath,['--test',...exported.data.files],{cwd:root,env:{NODE_TEST_CONTEXT:undefined}});assert.equal(standalone.code,0,standalone.stdout+standalone.stderr);assert.match(standalone.stdout,/(?:#|ℹ) tests 1/);
   const clean=await cli(root,'test','run','--all');assert.equal(clean.code,0);assert.equal(clean.data.run.result.modelCalls,0);
   const rescan=await cli(root,'scan');assert.equal(rescan.data.run.result.findings.length,0);assert.equal(rescan.data.run.result.exactPassingChecksExcluded.length,1);
   await cli(root,'demo','regress');
   const regression=await cli(root,'test','run','--all');assert.equal(regression.code,1);assert.equal(regression.data.run.result.results[0].status,'failed');assert.equal(regression.data.run.result.modelCalls,0);
-  const failedStandalone=await execFile(process.execPath,['--test',...exported.data.files],{cwd:root,env:{NODE_TEST_CONTEXT:undefined}});assert.equal(failedStandalone.code,1,failedStandalone.stdout+failedStandalone.stderr);assert.match(failedStandalone.stdout,/# fail 1/);
+  const failedStandalone=await execFile(process.execPath,['--test',...exported.data.files],{cwd:root,env:{NODE_TEST_CONTEXT:undefined}});assert.equal(failedStandalone.code,1,failedStandalone.stdout+failedStandalone.stderr);assert.match(failedStandalone.stdout,/(?:#|ℹ) fail 1/);
   const monitor=await cli(root,'monitor','add','hourly','--target','demo','--every','1h');assert.equal(monitor.code,0);
   const worker=await cli(root,'monitor','worker','--once');assert.equal(worker.code,0);assert.equal(worker.data.runs.length,1);
   const context=await cli(root,'context');assert.ok(context.data.recentEvents.some(e=>e.kind==='monitor-result'&&e.message.includes('regression detected')));

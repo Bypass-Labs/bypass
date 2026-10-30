@@ -56,7 +56,9 @@ export async function onboard(options={}, args=[], io={}) {
   let savedMode;try{savedMode=read(options.project||process.cwd()).settings.reviewMode;}catch{}
   const mode=options.mode||savedMode||(await pick(reviewQuestion,reviewChoices,1)).id;
   need(['code','combined','live'].includes(mode),'Choose code, combined, or live review.');
-  say('CLI AI review uses Docker and your provider API key. Setup and saved tests need no model.');
+  say(mode==='live'
+    ? 'A black-box audit uses your provider API key and does not need Docker. Setup and saved tests need no model.'
+    : 'Source AI review uses Docker and your provider API key. Setup and saved tests need no model.');
   io.setTasks?.('Setup',[mode==='live'?'Connect running app':'Connect application source','Choose inference connection',mode==='code'?'App testing skipped':'Verify app / choose permissions','Save setup and open project']);
   io.task?.(0,'running');
   say(`\nStep 1 of 4 / ${mode==='live'?'Connect your running app':'Connect your repository'}`);
@@ -97,7 +99,7 @@ export async function onboard(options={}, args=[], io={}) {
     const result=await call(root,'model add',[name],config);await call(root,'model use',[name]);model=result.model;
     io.setContext?.({model:`${model.name} · ${model.provider} · not tested`});
     say(`✓ Model choice saved: ${model.name}\nModel runs through: ${model.dataDestination}\nConnection has not been checked yet.`);
-    say('Only the environment-variable reference is saved. Set its value privately before running an AI review.');
+    say(`Only the environment-variable name is saved. Set ${model.secretEnv} privately before starting an AI audit.`);
   });}
   if(model&&(model.lastAttempt||model.lastTest)?.status!=='connected'){
     say('Optional: send one small test prompt. Provider usage may apply. You can finish setup without this check.');
@@ -152,7 +154,10 @@ export async function onboard(options={}, args=[], io={}) {
       }
       say('These are environment references for CLI/CI. To connect accounts without shell exports, use identity import; Muse imports known private account files itself. Test connections in Targets & identities.');
     });
-  }else say((mode==='live'?'App-only review selected.':'You can review source now.')+' Accounts are optional; anonymous checks and authorized registration testing are available. Use /engine for account-boundary probes.');
+  }else say((mode==='live'
+    ? 'App-only review selected. Use /blackbox to choose its scope and run the audit.'
+    : 'You can review source now. Use /engine for account-boundary probes.')+
+    ' Accounts are optional; add two test accounts for cross-account checks.');
   if(advanced&&await yes('Connect the Muse Code plugin now?'))try{
     say('Checking the existing Muse plugin installation…');
     const integration=await call(root,'integrate muse',[],{scope:'project'});museInstalled=true;
@@ -211,12 +216,15 @@ export async function onboard(options={}, args=[], io={}) {
     rememberSelection(options.project||process.cwd(),root);
     const info=readiness(root);
     io.setContext?.({model:info.model?`${info.model.name} · ${info.model.provider} · ${info.model.connection}`:'not configured',app:info.target?`${info.target.url} · ${info.target.authorized?'authorized':info.target.ownership==='verified'?'scope required':'DNS pending'}`:'not connected · source review available'});
-    io.task?.(3,'done');io.setNext?.('Run /review; type / to see commands');
+    io.task?.(3,'done');io.setNext?.(mode==='live'?'Run /blackbox; type / to see commands':'Run /review; type / to see commands');
     say('\nSetup saved\n');
     say(`  ${mode==='live'?'App profile   ':'Repository    '}${root}\n  Model         ${info.model?`${info.model.name} · ${info.model.connection}`:'add later'}\n  App           ${info.target?`${info.target.url} · ${info.target.authorized?'verified and authorized':info.target.ownership==='verified'?'scope required':'verification pending'}`:'add later; code-only review available'}\n  Test accounts ${read(root).identities.length} references\n  Muse plugin   ${museInstalled?'installed; approve in Muse':'optional'}`);
-    say(info.engine.mode==='docker'?'\nReal AI selected. The first review checks your model connection before sending source.':'\nYour saved offline-preview choice is retained. Use /engine to switch to real AI.');
+    if(mode==='live')say('\nUse /blackbox to audit the running app. The selected API model runs without Docker; check its connection in /models.');
+    else say(info.engine.mode==='docker'?'\nReal AI selected. The first review checks your model connection before sending source.':'\nYour saved offline-preview choice is retained. Use /engine to switch to real AI.');
     say('\nYour review\n'+reviewSummary(info.review));
-    say(`Press Enter on the next screen to review ${mode==='live'?'the app':'source'}. Live checks need verified app scope. Accounts are optional; add them for cross-account checks or authorize registration testing.\nType / for commands; /app resumes DNS and /models changes the model.`);
+    say(mode==='live'
+      ? 'Press Enter to open the project, then use /blackbox. It asks for target, scope and request rate. /models checks the API connection.'
+      : 'Press Enter on the next screen to review source. Live checks need verified app scope. Accounts are optional; add them for cross-account checks or authorize registration testing.\nType / for commands; /app resumes DNS and /models changes the model.');
     const openDashboard=io.inDashboard||io.rich||await yes('Open my project?','y');
     return outcome({root,interactive:true,openDashboard,readiness:info});
   }

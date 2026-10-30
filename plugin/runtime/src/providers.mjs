@@ -68,6 +68,12 @@ export function providerFailure(error) {
   // Never include error.message, body, headers, request options or credential values.
   return new Fault(`API request failed${status?` (HTTP ${status})`:''}. ${advice[reason]}`,3,{reason,...(status?{httpStatus:status}:{}),retryable:status===429||status>=500});
 }
+function incompleteResponse(response) {
+  const reason = response?.incomplete_details?.reason;
+  const safeReason = ['max_output_tokens', 'content_filter'].includes(reason) ? reason : null;
+  return new Fault(`Provider response incomplete${safeReason?` (${safeReason})`:''}; no action executed.`,3,
+    {reason:'incomplete_output',...(safeReason?{providerReason:safeReason}:{})});
+}
 export class ProviderSession {
   constructor(profile){this.profile=profile;this.history=[];this.pending=null;this.turns=0;}
   async turn(messages,{schema,signal,onProgress,timeoutMs}={}) {
@@ -93,7 +99,8 @@ export class ProviderSession {
       if(p.transport==='responses'){
         const request={...common,input:this.history,max_output_tokens:p.maxTokens,store:false,...(providers[p.provider].encryptedReplay?{include:['reasoning.encrypted_content']}:{}) ,...(p.effort?{reasoning:{effort:p.effort}}:{})};
         let response=await client.responses.create(request,{signal:active});
-        if(p.stream){let final;for await(const event of response){if(event.type==='response.completed')final=event.response;if(['response.failed','response.incomplete','error'].includes(event.type))throw new Fault('Provider response incomplete; no action executed.',3,{reason:'incomplete_output'});}response=need(final,'Stream ended without a completed response.',3);}
+        if(p.stream){let final;for await(const event of response){if(event.type==='response.completed')final=event.response;if(['response.failed','response.incomplete','error'].includes(event.type))throw incompleteResponse(event.response);}response=need(final,'Stream ended without a completed response.',3);}
+        if(response.status==='incomplete')throw incompleteResponse(response);
         need(!response.status||response.status==='completed','Provider response did not complete.',3);
         need(Array.isArray(response.output),'Invalid Responses output.',3);
         this.history.push(...response.output); // Includes opaque/encrypted reasoning replay; never persisted or logged.
