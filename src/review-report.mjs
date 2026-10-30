@@ -29,7 +29,9 @@ export function assessmentCoverage(state,currentInventory,{run:runId,target}={})
   const work=workProgress(run,state),sourceChanged=run.host.mode!=='live'&&run.host.inventory.fingerprint!==currentInventory.fingerprint;
   const awaiting=run.status==='awaiting_host',needsContinuation=work.pending>0;
   return {runId:run.id,recordedStatus:run.status,legacyWorklist:legacy,sourceChanged,sourceReadEvidence:run.host.sourceCoverage?'recorded delivered ranges':'legacy run; complete delivered ranges were not recorded',
-    scope:run.host.scope||null,scopeProvenance:run.host.scope?'recorded at review start':'legacy run: scope snapshot unavailable; reconstructed routes use current permission and do not attest historical coverage',
+    scope:run.host.scope||null,scopeProvenance:run.host.scope?'recorded at review start':Object.hasOwn(run.host,'scope')?
+      'No live testing permission recorded at review start; source-only work does not require it.':
+      'legacy run: scope snapshot unavailable; reconstructed routes use current permission and do not attest historical coverage',
     work,worklist:run.host.worklist,summary,complete:false,completionClaimSupported:!legacy&&!sourceChanged&&work.canFinish&&work.scopeExecuted,needsContinuation,
     message:needsContinuation?'Assessment work remains. A completed run or a short findings list does not mean the agreed scope was executed. Continue available work without asking whether to go deeper.':'Read the blockers and individual behavior evidence. No result is an exhaustive security clearance.',
     nextAction:awaiting&&!sourceChanged?{tool:'bypass_review_step',arguments:{id:run.id,action:work.next.action,...work.next.arguments},message:work.next.message}:{tool:'bypass_scan',arguments:{mode:run.host.mode,...(run.host.target?{target:run.host.target}:{})},message:sourceChanged?'Source changed. Start a fresh assessment using saved app setup and permissions; keep prior evidence.':'Start a continuation assessment using saved setup; exact passing checks are reused. No new DNS or account setup is implied.'}};

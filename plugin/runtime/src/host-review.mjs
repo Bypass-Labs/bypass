@@ -29,6 +29,9 @@ export function hostPlan(state, options={}) {
     message:'Bounded authentication and account-boundary POC; source hypotheses alone are not confirmed vulnerabilities.'};
 }
 const receipt=(root,run)=>{const work=workProgress(run,read(root));return ({runId:run.id,status:run.status,executionMode:'muse-host',pluginModelCalls:0,simulation:false,coverageComplete:false,
+  completion:{terminal:['completed','incomplete','cancelled','failed'].includes(run.status),
+    finalReportAllowed:run.status!=='awaiting_host',
+    requiredAction:run.status==='awaiting_host'?`Continue with ${work.next.action}; ${work.source.remainingFiles} source files and ${work.routes.pending} routes remain. Do not end this task or call remaining work optional.`:null},
   assessmentPolicy,work,continueRequired:run.status==='awaiting_host'&&work.pending>0,
   progress:{stage:run.stage,work,lastCompleted:run.steps.at(-1)||null,elapsedSeconds:Math.floor((Date.now()-Date.parse(run.startedAt))/1000),waitingSeconds:Math.floor((Date.now()-Date.parse(run.steps.at(-1)?.at||run.startedAt))/1000),waitingFor:run.status==='awaiting_host'?'Muse reasoning; no internal worker':null,resume:{tool:'bypass_review_step',arguments:{id:run.id,action:run.status==='cancelled'?'resume':'status'}},cancel:{tool:'bypass_stop_run',arguments:{id:run.id}}},
   evidence:`${root}/.bypass/runs/${run.id}.json`,findings:run.result?.findings||[],probes:run.result?.probes||[],registration:run.result?.registration,coverageGaps:run.result?.coverageGaps||[],
@@ -149,7 +152,10 @@ export async function hostReviewStep(root,args,{signal,onProgress}={}) {
       }
     }
     need(['read','source','probe','refresh','coverage','complete','finish'].includes(args.action),'Unsupported host review action.',3);
-    run.stage=args.action;run.host.operations++;delete run.host.lastError;run.steps.push({at:now(),stage:args.action,message:`Muse-directed ${args.action} complete`});
+    run.stage=result.finishDeferred?'continuing':args.action;run.host.operations++;delete run.host.lastError;
+    run.steps.push({at:now(),stage:run.stage,message:result.finishDeferred?
+      `Assessment remains open: ${workProgress(run,read(root)).source.remainingFiles} source files and ${workProgress(run,read(root)).routes.pending} routes still need work. Follow nextAction now.`:
+      `Muse-directed ${args.action} complete`});
     await change(root,s=>{Object.assign(named(s.runs,args.id,'Run'),run);});writeEvidence(root,run);await consolidateMemory(root);
     return outcome({...receipt(root,run),...result});
   } catch(error) {

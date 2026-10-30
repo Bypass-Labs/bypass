@@ -28,7 +28,7 @@ const identityKey=str('Finding, check, or run ID');
 const repositorySelection={repository:str('Application repository: explicit local folder or Git URL selected by the user'),dir:str('Empty clone destination for a Git URL'),config:str('Optional user-selected JSON setup file; repository selection remains explicit'),confirmed:bool('True only when the user has identified or confirmed this repository'),allowBypassSource:bool('Only true when the user specifically wants to review Bypass tooling itself'),name:str('Optional project display name')};
 const blackboxLimits={agents:integer('Concurrent Muse decisions',1,100),'http-workers':integer('Concurrent scoped HTTP workers',1,100),
   rps:{type:'number',description:'Shared maximum HTTP requests per second'},
-  'model-calls':{type:'integer',description:'Muse decision-call budget'},
+  'model-calls':{type:'integer',description:'Engine model-decision budget; setup, progress and reporting add host turns. Not a total session usage cap.'},
   'max-urls':{type:'integer',description:'Authenticated recon URL limit; 0 means unlimited'},
   'max-tasks':{type:'integer',description:'Test task limit; 0 means unlimited'},
   minutes:{type:'number',description:'Audit duration in minutes'},
@@ -36,7 +36,8 @@ const blackboxLimits={agents:integer('Concurrent Muse decisions',1,100),'http-wo
 const blackboxScope={url:str('Exact authorized application origin'),include:str('Comma-separated authorized path prefixes'),
   domains:str('Comma-separated owned apex domains'),'audit-domains':str('Comma-separated owned descendant-domain audit targets'),
   'credential-origins':str('Comma-separated authorized credential origins'),never:str('Comma-separated excluded paths'),
-  'owner-env':str('Owner test-account environment prefix'),'other-env':str('Outsider test-account environment prefix'),
+  'owner-env':str('Exact owner credential reference; environment variable name or saved identity secretEnv, not a prefix'),
+  'other-env':str('Exact outsider credential reference; environment variable name or saved identity secretEnv, not a prefix'),
   auth:str('Test-account authentication scheme'),'identity-path':str('Exact identity endpoint'),
   'identity-cookie-name':str('Cookie name for the identity endpoint'),environment:str('Target environment'),
   ...blackboxLimits,out:str('Scope output path'),force:bool('Replace an existing scope only when requested')};

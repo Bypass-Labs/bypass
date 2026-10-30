@@ -3,6 +3,7 @@ import path from 'node:path';
 import {atomic} from '../store.mjs';
 import {execFile, need, hash} from '../util.mjs';
 import {verifyLedger} from './ledger.mjs';
+import {blackboxEnvironment} from './accounts.mjs';
 
 // Capture the proof runtime with the audit process's code version. Reading these
 // files only at proof time can mix versions if the CLI is edited during a run.
@@ -391,7 +392,12 @@ export async function verifyRun(root, run, {env = process.env} = {}) {
       continue;
     }
     let completed;
-    try { completed = await execFile(process.execPath, [file], {env, timeout: 20000}); }
+    try {
+      const proofEnv = await blackboxEnvironment(root, {target: {origin: spec.origin},
+        identities: {owner: {env: spec.identities?.owner}, outsider: {env: spec.identities?.outsider},
+          auth: spec.auth, identityPath: spec.identityPath}}, {env, strict: false});
+      completed = await execFile(process.execPath, [file], {env: proofEnv, timeout: 20000});
+    }
     catch {
       proofs.push({id: entry.name, kind: spec.kind, verdict: 'inconclusive',
         exitCode: 3, controls: [], reason: 'Proof execution failed or exceeded its time/output limit.'});

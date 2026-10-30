@@ -35,6 +35,7 @@ import {planGraphqlBola} from './graphql-bola.mjs';
 import {followupInconclusive} from './followup.mjs';
 import {auditPublicPrivateKeys, auditPublicCredentials} from './secret-exposure.mjs';
 import {lookupAdvisories} from './advisories.mjs';
+import {blackboxEnvironment} from './accounts.mjs';
 
 const RESEARCH_KINDS = new Set(['model-differential', 'model-json-differential', 'model-http-sequence']);
 const ACCEPTED_RESEARCH_CHECKPOINT = /^(?:json-experiment|access-boundary)(?:-derived-[0-9a-f]{12})?(?:-queue-[0-9a-f]{12})?-checkpoint\.json$/;
@@ -262,6 +263,8 @@ export async function runAudit({url, root = process.cwd(), scopeFile = null, ove
   const file = scopeFile ?? (fs.existsSync(defaultScope) ? defaultScope : null);
   const {scope, hash: scopeHash} = loadScope({file, origin: url,
     overrides: effectiveOverrides, targets: registeredTargets});
+  if (!dryRun) env = await blackboxEnvironment(projectRoot, scope, {env, signal,
+    required: [...(overrides.ownerEnv ? ['owner'] : []), ...(overrides.otherEnv ? ['outsider'] : [])]});
   // Resume may change execution budgets without changing the reviewed target,
   // paths, methods or authorization. Rebuild the prior effective scope with
   // its saved budgets to detect any actual scope-file change.

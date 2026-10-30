@@ -55,6 +55,8 @@ export class BlackboxHostBridge {
     const job = this.job;
     if (!job) return {status: 'idle', pending: [], events: [], cursor: 0};
     return {status: job.status, startedAt: job.startedAt,
+      modelBudget: {unit: 'engine model decisions',
+        note: 'The model-calls limit counts engine decisions. Muse setup, status, reporting and other host turns are additional; this is not a total session usage or billing cap.'},
       pending: [...job.pending.values()].map(item => item.request),
       events: job.events.filter(item => item.cursor > after).slice(-20),
       cursor: job.eventCursor, result: job.result, error: job.error};

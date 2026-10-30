@@ -7,6 +7,9 @@ import {appOriginInput, loopback, makeChallenge, pathAllowed, targetURL} from '.
 import {atomic, change, initStore, rootFrom} from '../store.mjs';
 import {repositoryInfo} from '../repository.mjs';
 import {envName, hash, need, safeName} from '../util.mjs';
+import {sharedOwnership} from '../ownership-store.mjs';
+import {executionMode} from '../execution-mode.mjs';
+import {savedAccountOptions, blackboxAccounts} from './accounts.mjs';
 
 const list = value => String(value).split(',').map(item => item.trim()).filter(Boolean);
 const credentialOrigins = (origin, value) => [...new Set([origin, ...list(value).map(appOriginInput)])];
@@ -82,6 +85,7 @@ export function prepareScopeTemplate(working, rawUrl, options = {}, {reuse = fal
     return {root, origin, file, scope, created: false, updated: false};
   }
   const local = loopback(new URL(origin).hostname);
+  options = savedAccountOptions(root, origin, options);
   const environment = options.environment || (local ? 'local' : 'staging');
   targetURL(origin, environment);
   const scope = structuredClone(DEFAULT_SCOPE);
@@ -227,8 +231,15 @@ function authorizationFile(file, target, scope, {primary, credentialed}) {
 export async function prepareBlackboxSetup(working, rawUrl, options = {}) {
   const prepared = prepareScopeTemplate(working, rawUrl, options, {reuse: true});
   const {root, origin, file, scope} = prepared;
+  const accounts = blackboxAccounts(root, scope, {required: [
+    ...(options['owner-env'] ? ['owner'] : []), ...(options['other-env'] ? ['outsider'] : [])]});
+  const host = executionMode() === 'muse-host';
   const projectFlag = ` --project ${quote(root)}`;
-  const modelCheck = `bypass model test${projectFlag}`;
+  const modelCheck = host ? null : `bypass model test${projectFlag}`;
+  const nextAction = {tool: 'bypass_blackbox_start', arguments: {url: origin, scope: file,
+    ...(options.rps != null ? {rps: Number(options.rps)} : {}),
+    ...(options['model-calls'] != null ? {'model-calls': Number(options['model-calls'])} : {}),
+    ...(options.minutes != null ? {minutes: Number(options.minutes)} : {})}};
   const scopeFlag = file === path.join(root, 'blackbox.scope.json') ? '' : ` --scope ${quote(file)}`;
   const rateFlag = options.rps != null ? ` --rps ${Number(options.rps)}` : '';
   const modelCallsFlag = options['model-calls'] != null ? ` --model-calls ${Number(options['model-calls'])}` : '';
@@ -236,10 +247,11 @@ export async function prepareBlackboxSetup(working, rawUrl, options = {}) {
   const auditCommand = `bypass blackbox ${quote(origin)}${scopeFlag}${projectFlag}${rateFlag}${modelCallsFlag}${minutesFlag}`;
   if (scope.target.environment === 'local') return {kind: 'blackbox-setup', root, scopeFile: file,
     origin, credentialOrigins: scope.credentialOrigins, created: prepared.created,
-    updated: prepared.updated ?? false, ready: true,
-    modelCheck,
-    targets: [], steps: [{kind: 'run', command: auditCommand}],
-    next: auditCommand};
+    updated: prepared.updated ?? false, ready: accounts.ready,
+    modelCheck, accounts, ...(host && accounts.ready ? {nextAction} : {}),
+    targets: [], steps: accounts.ready ? [{kind: 'run', command: auditCommand}] :
+      [{kind: 'accounts', message: accounts.warnings.join(' ')}],
+    next: accounts.ready ? host ? 'Continue with bypass_blackbox_start in this Muse session.' : auditCommand : accounts.warnings.join(' ')};
   need(scope.limits.rps <= 10, 'Deployed black-box scope rates must be at most 10 requests per second.');
 
   if (!fs.existsSync(path.join(root, '.bypass/state.json'))) initStore(root, await repositoryInfo(root));
@@ -263,7 +275,7 @@ export async function prepareBlackboxSetup(working, rawUrl, options = {}) {
       if (!target) {
         const name = targetName(entry.url, names);
         target = {name, url: entry.url, environment: scope.target.environment,
-          createdAt: new Date().toISOString(), ownership: {status: 'pending'}, authorization: null};
+          createdAt: new Date().toISOString(), ownership: sharedOwnership(entry.url) || {status: 'pending'}, authorization: null};
         target.challenge = makeChallenge(state.project, target);
         state.targets.push(target);
         state.activeTarget ??= name;
@@ -296,10 +308,11 @@ export async function prepareBlackboxSetup(working, rawUrl, options = {}) {
       production: target.environment === 'production',
       command: `bypass target authorize ${target.name} --scope-file ${quote(authFile)}${projectFlag}`});
   }
+  if (!accounts.ready) steps.push({kind: 'accounts', message: accounts.warnings.join(' ')});
   steps.push({kind: 'run', command: auditCommand});
   return {kind: 'blackbox-setup', root, scopeFile: file, origin, created: prepared.created,
     updated: prepared.updated ?? false,
-    credentialOrigins: scope.credentialOrigins, ready: steps.length === 1,
-    modelCheck,
-    targets: registered, steps, next: steps[0].command};
+    credentialOrigins: scope.credentialOrigins, ready: steps.length === 1 && accounts.ready,
+    modelCheck, accounts, ...(host && steps.length === 1 && accounts.ready ? {nextAction} : {}),
+    targets: registered, steps, next: steps[0].command || steps[0].message};
 }
