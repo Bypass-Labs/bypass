@@ -16,4 +16,4 @@ bypass-scanner = "bypass_scanner.__main__:main"
 where = ["src"]
 
 [tool.setuptools.data-files]
-"share/bypass-scanner/protocol" = ["protocol/v1.json", "protocol/v2.json"]
+"share/bypass-scanner/protocol" = ["protocol/v2.json"]

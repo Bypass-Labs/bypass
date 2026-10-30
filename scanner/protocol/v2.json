@@ -58,50 +58,7 @@
           "maxItems": 1000
         },
         "evidence": {
-          "type": "array",
-          "items": {
-            "type": "object",
-            "properties": {
-              "id": {
-                "type": "string",
-                "minLength": 1,
-                "maxLength": 160
-              },
-              "path": {
-                "type": "string",
-                "minLength": 1,
-                "maxLength": 2000
-              },
-              "startLine": {
-                "type": "integer",
-                "minimum": 1
-              },
-              "endLine": {
-                "type": "integer",
-                "minimum": 1
-              },
-              "sourceRevision": {
-                "type": "string",
-                "minLength": 1,
-                "maxLength": 160
-              },
-              "contentHash": {
-                "type": "string",
-                "minLength": 1,
-                "maxLength": 160
-              }
-            },
-            "required": [
-              "id",
-              "path",
-              "startLine",
-              "endLine",
-              "sourceRevision",
-              "contentHash"
-            ],
-            "additionalProperties": false
-          },
-          "maxItems": 1000
+          "$ref": "#/schemas/evidenceList"
         },
         "assumptions": {
           "type": "array",
@@ -234,50 +191,7 @@
           "maxLength": 64000
         },
         "inputEvidence": {
-          "type": "array",
-          "items": {
-            "type": "object",
-            "properties": {
-              "id": {
-                "type": "string",
-                "minLength": 1,
-                "maxLength": 160
-              },
-              "path": {
-                "type": "string",
-                "minLength": 1,
-                "maxLength": 2000
-              },
-              "startLine": {
-                "type": "integer",
-                "minimum": 1
-              },
-              "endLine": {
-                "type": "integer",
-                "minimum": 1
-              },
-              "sourceRevision": {
-                "type": "string",
-                "minLength": 1,
-                "maxLength": 160
-              },
-              "contentHash": {
-                "type": "string",
-                "minLength": 1,
-                "maxLength": 160
-              }
-            },
-            "required": [
-              "id",
-              "path",
-              "startLine",
-              "endLine",
-              "sourceRevision",
-              "contentHash"
-            ],
-            "additionalProperties": false
-          },
-          "maxItems": 1000
+          "$ref": "#/schemas/evidenceList"
         },
         "allowedOperations": {
           "type": "array",
@@ -390,50 +304,7 @@
           "maxLength": 2000
         },
         "evidence": {
-          "type": "array",
-          "items": {
-            "type": "object",
-            "properties": {
-              "id": {
-                "type": "string",
-                "minLength": 1,
-                "maxLength": 160
-              },
-              "path": {
-                "type": "string",
-                "minLength": 1,
-                "maxLength": 2000
-              },
-              "startLine": {
-                "type": "integer",
-                "minimum": 1
-              },
-              "endLine": {
-                "type": "integer",
-                "minimum": 1
-              },
-              "sourceRevision": {
-                "type": "string",
-                "minLength": 1,
-                "maxLength": 160
-              },
-              "contentHash": {
-                "type": "string",
-                "minLength": 1,
-                "maxLength": 160
-              }
-            },
-            "required": [
-              "id",
-              "path",
-              "startLine",
-              "endLine",
-              "sourceRevision",
-              "contentHash"
-            ],
-            "additionalProperties": false
-          },
-          "maxItems": 1000
+          "$ref": "#/schemas/evidenceList"
         },
         "prerequisites": {
           "type": "array",
@@ -756,445 +627,31 @@
           "type": "object",
           "properties": {
             "cpp": {
-              "type": "object",
-              "properties": {
-                "mode": {
-                  "type": "string",
-                  "enum": [
-                    "none",
-                    "autobuild",
-                    "manual"
-                  ]
-                },
-                "command": {
-                  "type": "array",
-                  "items": {
-                    "type": "string",
-                    "minLength": 1,
-                    "maxLength": 8000
-                  },
-                  "maxItems": 100
-                },
-                "prepare": {
-                  "type": "array",
-                  "items": {
-                    "type": "array",
-                    "items": {
-                      "type": "string",
-                      "minLength": 1,
-                      "maxLength": 8000
-                    },
-                    "maxItems": 100
-                  },
-                  "maxItems": 20
-                },
-                "cwd": {
-                  "type": "string",
-                  "minLength": 1,
-                  "maxLength": 2000
-                },
-                "network": {
-                  "type": "string",
-                  "enum": [
-                    "off",
-                    "on"
-                  ]
-                }
-              },
-              "required": [],
-              "additionalProperties": false
+              "$ref": "#/schemas/build"
             },
             "csharp": {
-              "type": "object",
-              "properties": {
-                "mode": {
-                  "type": "string",
-                  "enum": [
-                    "none",
-                    "autobuild",
-                    "manual"
-                  ]
-                },
-                "command": {
-                  "type": "array",
-                  "items": {
-                    "type": "string",
-                    "minLength": 1,
-                    "maxLength": 8000
-                  },
-                  "maxItems": 100
-                },
-                "prepare": {
-                  "type": "array",
-                  "items": {
-                    "type": "array",
-                    "items": {
-                      "type": "string",
-                      "minLength": 1,
-                      "maxLength": 8000
-                    },
-                    "maxItems": 100
-                  },
-                  "maxItems": 20
-                },
-                "cwd": {
-                  "type": "string",
-                  "minLength": 1,
-                  "maxLength": 2000
-                },
-                "network": {
-                  "type": "string",
-                  "enum": [
-                    "off",
-                    "on"
-                  ]
-                }
-              },
-              "required": [],
-              "additionalProperties": false
+              "$ref": "#/schemas/build"
             },
             "go": {
-              "type": "object",
-              "properties": {
-                "mode": {
-                  "type": "string",
-                  "enum": [
-                    "none",
-                    "autobuild",
-                    "manual"
-                  ]
-                },
-                "command": {
-                  "type": "array",
-                  "items": {
-                    "type": "string",
-                    "minLength": 1,
-                    "maxLength": 8000
-                  },
-                  "maxItems": 100
-                },
-                "prepare": {
-                  "type": "array",
-                  "items": {
-                    "type": "array",
-                    "items": {
-                      "type": "string",
-                      "minLength": 1,
-                      "maxLength": 8000
-                    },
-                    "maxItems": 100
-                  },
-                  "maxItems": 20
-                },
-                "cwd": {
-                  "type": "string",
-                  "minLength": 1,
-                  "maxLength": 2000
-                },
-                "network": {
-                  "type": "string",
-                  "enum": [
-                    "off",
-                    "on"
-                  ]
-                }
-              },
-              "required": [],
-              "additionalProperties": false
+              "$ref": "#/schemas/build"
             },
             "java": {
-              "type": "object",
-              "properties": {
-                "mode": {
-                  "type": "string",
-                  "enum": [
-                    "none",
-                    "autobuild",
-                    "manual"
-                  ]
-                },
-                "command": {
-                  "type": "array",
-                  "items": {
-                    "type": "string",
-                    "minLength": 1,
-                    "maxLength": 8000
-                  },
-                  "maxItems": 100
-                },
-                "prepare": {
-                  "type": "array",
-                  "items": {
-                    "type": "array",
-                    "items": {
-                      "type": "string",
-                      "minLength": 1,
-                      "maxLength": 8000
-                    },
-                    "maxItems": 100
-                  },
-                  "maxItems": 20
-                },
-                "cwd": {
-                  "type": "string",
-                  "minLength": 1,
-                  "maxLength": 2000
-                },
-                "network": {
-                  "type": "string",
-                  "enum": [
-                    "off",
-                    "on"
-                  ]
-                }
-              },
-              "required": [],
-              "additionalProperties": false
+              "$ref": "#/schemas/build"
             },
             "javascript": {
-              "type": "object",
-              "properties": {
-                "mode": {
-                  "type": "string",
-                  "enum": [
-                    "none",
-                    "autobuild",
-                    "manual"
-                  ]
-                },
-                "command": {
-                  "type": "array",
-                  "items": {
-                    "type": "string",
-                    "minLength": 1,
-                    "maxLength": 8000
-                  },
-                  "maxItems": 100
-                },
-                "prepare": {
-                  "type": "array",
-                  "items": {
-                    "type": "array",
-                    "items": {
-                      "type": "string",
-                      "minLength": 1,
-                      "maxLength": 8000
-                    },
-                    "maxItems": 100
-                  },
-                  "maxItems": 20
-                },
-                "cwd": {
-                  "type": "string",
-                  "minLength": 1,
-                  "maxLength": 2000
-                },
-                "network": {
-                  "type": "string",
-                  "enum": [
-                    "off",
-                    "on"
-                  ]
-                }
-              },
-              "required": [],
-              "additionalProperties": false
+              "$ref": "#/schemas/build"
             },
             "python": {
-              "type": "object",
-              "properties": {
-                "mode": {
-                  "type": "string",
-                  "enum": [
-                    "none",
-                    "autobuild",
-                    "manual"
-                  ]
-                },
-                "command": {
-                  "type": "array",
-                  "items": {
-                    "type": "string",
-                    "minLength": 1,
-                    "maxLength": 8000
-                  },
-                  "maxItems": 100
-                },
-                "prepare": {
-                  "type": "array",
-                  "items": {
-                    "type": "array",
-                    "items": {
-                      "type": "string",
-                      "minLength": 1,
-                      "maxLength": 8000
-                    },
-                    "maxItems": 100
-                  },
-                  "maxItems": 20
-                },
-                "cwd": {
-                  "type": "string",
-                  "minLength": 1,
-                  "maxLength": 2000
-                },
-                "network": {
-                  "type": "string",
-                  "enum": [
-                    "off",
-                    "on"
-                  ]
-                }
-              },
-              "required": [],
-              "additionalProperties": false
+              "$ref": "#/schemas/build"
             },
             "ruby": {
-              "type": "object",
-              "properties": {
-                "mode": {
-                  "type": "string",
-                  "enum": [
-                    "none",
-                    "autobuild",
-                    "manual"
-                  ]
-                },
-                "command": {
-                  "type": "array",
-                  "items": {
-                    "type": "string",
-                    "minLength": 1,
-                    "maxLength": 8000
-                  },
-                  "maxItems": 100
-                },
-                "prepare": {
-                  "type": "array",
-                  "items": {
-                    "type": "array",
-                    "items": {
-                      "type": "string",
-                      "minLength": 1,
-                      "maxLength": 8000
-                    },
-                    "maxItems": 100
-                  },
-                  "maxItems": 20
-                },
-                "cwd": {
-                  "type": "string",
-                  "minLength": 1,
-                  "maxLength": 2000
-                },
-                "network": {
-                  "type": "string",
-                  "enum": [
-                    "off",
-                    "on"
-                  ]
-                }
-              },
-              "required": [],
-              "additionalProperties": false
+              "$ref": "#/schemas/build"
             },
             "rust": {
-              "type": "object",
-              "properties": {
-                "mode": {
-                  "type": "string",
-                  "enum": [
-                    "none",
-                    "autobuild",
-                    "manual"
-                  ]
-                },
-                "command": {
-                  "type": "array",
-                  "items": {
-                    "type": "string",
-                    "minLength": 1,
-                    "maxLength": 8000
-                  },
-                  "maxItems": 100
-                },
-                "prepare": {
-                  "type": "array",
-                  "items": {
-                    "type": "array",
-                    "items": {
-                      "type": "string",
-                      "minLength": 1,
-                      "maxLength": 8000
-                    },
-                    "maxItems": 100
-                  },
-                  "maxItems": 20
-                },
-                "cwd": {
-                  "type": "string",
-                  "minLength": 1,
-                  "maxLength": 2000
-                },
-                "network": {
-                  "type": "string",
-                  "enum": [
-                    "off",
-                    "on"
-                  ]
-                }
-              },
-              "required": [],
-              "additionalProperties": false
+              "$ref": "#/schemas/build"
             },
             "actions": {
-              "type": "object",
-              "properties": {
-                "mode": {
-                  "type": "string",
-                  "enum": [
-                    "none",
-                    "autobuild",
-                    "manual"
-                  ]
-                },
-                "command": {
-                  "type": "array",
-                  "items": {
-                    "type": "string",
-                    "minLength": 1,
-                    "maxLength": 8000
-                  },
-                  "maxItems": 100
-                },
-                "prepare": {
-                  "type": "array",
-                  "items": {
-                    "type": "array",
-                    "items": {
-                      "type": "string",
-                      "minLength": 1,
-                      "maxLength": 8000
-                    },
-                    "maxItems": 100
-                  },
-                  "maxItems": 20
-                },
-                "cwd": {
-                  "type": "string",
-                  "minLength": 1,
-                  "maxLength": 2000
-                },
-                "network": {
-                  "type": "string",
-                  "enum": [
-                    "off",
-                    "on"
-                  ]
-                }
-              },
-              "required": [],
-              "additionalProperties": false
+              "$ref": "#/schemas/build"
             }
           },
           "required": [],
@@ -1294,126 +751,7 @@
           "maxLength": 100
         },
         "run": {
-          "type": "object",
-          "properties": {
-            "id": {
-              "type": "string",
-              "minLength": 1,
-              "maxLength": 160
-            },
-            "status": {
-              "type": "string",
-              "enum": [
-                "queued",
-                "running",
-                "completed",
-                "incomplete",
-                "cancelled",
-                "failed",
-                "interrupted"
-              ]
-            },
-            "stage": {
-              "type": "string",
-              "enum": [
-                "discovery"
-              ]
-            },
-            "phase": {
-              "type": "string",
-              "minLength": 1,
-              "maxLength": 2000
-            },
-            "sourceRevision": {
-              "type": "string",
-              "minLength": 0,
-              "maxLength": 160
-            },
-            "executionMode": {
-              "type": "string",
-              "enum": [
-                "muse-host",
-                "standalone-api"
-              ]
-            },
-            "modelCalls": {
-              "type": "integer",
-              "enum": [
-                0
-              ]
-            },
-            "signalCount": {
-              "type": "integer",
-              "minimum": 0
-            },
-            "sourceReads": {
-              "type": "integer",
-              "minimum": 0
-            },
-            "languages": {
-              "type": "array",
-              "items": {
-                "type": "object",
-                "properties": {},
-                "required": [],
-                "additionalProperties": true
-              },
-              "maxItems": 100
-            },
-            "coverageComplete": {
-              "type": "boolean"
-            },
-            "evaluation": {
-              "type": "string",
-              "enum": [
-                "not_run"
-              ]
-            },
-            "message": {
-              "type": "string",
-              "minLength": 0,
-              "maxLength": 8000
-            },
-            "createdAt": {
-              "type": "string",
-              "minLength": 1,
-              "maxLength": 2000
-            },
-            "updatedAt": {
-              "type": "string",
-              "minLength": 1,
-              "maxLength": 2000
-            },
-            "networkJob": {
-              "type": "object",
-              "properties": {},
-              "required": [],
-              "additionalProperties": true
-            },
-            "scope": {
-              "type": "object",
-              "properties": {},
-              "additionalProperties": true
-            }
-          },
-          "required": [
-            "id",
-            "status",
-            "stage",
-            "phase",
-            "sourceRevision",
-            "executionMode",
-            "modelCalls",
-            "signalCount",
-            "sourceReads",
-            "languages",
-            "coverageComplete",
-            "evaluation",
-            "message",
-            "createdAt",
-            "updatedAt"
-          ],
-          "additionalProperties": false
+          "$ref": "#/schemas/run"
         },
         "rules": {
           "type": "array",
@@ -1482,230 +820,75 @@
       "additionalProperties": false
     },
     "error": {
+      "$ref": "#/schemas/response"
+    },
+    "build": {
       "type": "object",
       "properties": {
-        "protocolVersion": {
+        "mode": {
           "type": "string",
           "enum": [
-            "bypass-scanner.v2"
+            "none",
+            "autobuild",
+            "manual"
           ]
         },
-        "operation": {
-          "type": "string",
-          "minLength": 1,
-          "maxLength": 100
+        "command": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 8000
+          },
+          "maxItems": 100
         },
-        "status": {
-          "type": "string",
-          "enum": [
-            "ready",
-            "queued",
-            "running",
-            "completed",
-            "incomplete",
-            "cancelled",
-            "failed",
-            "interrupted",
-            "error",
-            "not_implemented"
-          ]
-        },
-        "modelCalls": {
-          "type": "integer",
-          "enum": [
-            0
-          ]
-        },
-        "message": {
-          "type": "string",
-          "minLength": 0,
-          "maxLength": 8000
-        },
-        "code": {
-          "type": "string",
-          "minLength": 1,
-          "maxLength": 100
-        },
-        "run": {
-          "type": "object",
-          "properties": {
-            "id": {
+        "prepare": {
+          "type": "array",
+          "items": {
+            "type": "array",
+            "items": {
               "type": "string",
               "minLength": 1,
-              "maxLength": 160
-            },
-            "status": {
-              "type": "string",
-              "enum": [
-                "queued",
-                "running",
-                "completed",
-                "incomplete",
-                "cancelled",
-                "failed",
-                "interrupted"
-              ]
-            },
-            "stage": {
-              "type": "string",
-              "enum": [
-                "discovery"
-              ]
-            },
-            "phase": {
-              "type": "string",
-              "minLength": 1,
-              "maxLength": 2000
-            },
-            "sourceRevision": {
-              "type": "string",
-              "minLength": 0,
-              "maxLength": 160
-            },
-            "executionMode": {
-              "type": "string",
-              "enum": [
-                "muse-host",
-                "standalone-api"
-              ]
-            },
-            "modelCalls": {
-              "type": "integer",
-              "enum": [
-                0
-              ]
-            },
-            "signalCount": {
-              "type": "integer",
-              "minimum": 0
-            },
-            "sourceReads": {
-              "type": "integer",
-              "minimum": 0
-            },
-            "languages": {
-              "type": "array",
-              "items": {
-                "type": "object",
-                "properties": {},
-                "required": [],
-                "additionalProperties": true
-              },
-              "maxItems": 100
-            },
-            "coverageComplete": {
-              "type": "boolean"
-            },
-            "evaluation": {
-              "type": "string",
-              "enum": [
-                "not_run"
-              ]
-            },
-            "message": {
-              "type": "string",
-              "minLength": 0,
               "maxLength": 8000
             },
-            "createdAt": {
-              "type": "string",
-              "minLength": 1,
-              "maxLength": 2000
-            },
-            "updatedAt": {
-              "type": "string",
-              "minLength": 1,
-              "maxLength": 2000
-            },
-            "networkJob": {
-              "type": "object",
-              "properties": {},
-              "required": [],
-              "additionalProperties": true
-            }
+            "maxItems": 100
           },
-          "required": [
-            "id",
-            "status",
-            "stage",
-            "phase",
-            "sourceRevision",
-            "executionMode",
-            "modelCalls",
-            "signalCount",
-            "sourceReads",
-            "languages",
-            "coverageComplete",
-            "evaluation",
-            "message",
-            "createdAt",
-            "updatedAt"
-          ],
-          "additionalProperties": false
+          "maxItems": 20
         },
-        "rules": {
-          "type": "array",
-          "items": {
-            "type": "object",
-            "properties": {},
-            "required": [],
-            "additionalProperties": true
-          },
-          "maxItems": 100
-        },
-        "signals": {
-          "type": "array",
-          "items": {
-            "type": "object",
-            "properties": {},
-            "required": [],
-            "additionalProperties": true
-          },
-          "maxItems": 100
-        },
-        "nextCursor": {
-          "type": "integer",
-          "minimum": -1
-        },
-        "artifacts": {
-          "type": "array",
-          "items": {
-            "type": "object",
-            "properties": {
-              "path": {
-                "type": "string",
-                "minLength": 1,
-                "maxLength": 2000
-              },
-              "bytes": {
-                "type": "integer",
-                "minimum": 0
-              }
-            },
-            "required": [
-              "path",
-              "bytes"
-            ],
-            "additionalProperties": false
-          },
-          "maxItems": 100
-        },
-        "text": {
+        "cwd": {
           "type": "string",
-          "minLength": 0,
-          "maxLength": 64000
+          "minLength": 1,
+          "maxLength": 2000
         },
-        "nextOffset": {
-          "type": "integer",
-          "minimum": -1
+        "network": {
+          "type": "string",
+          "enum": [
+            "off",
+            "on"
+          ]
+        }
+      },
+      "required": [],
+      "additionalProperties": false
+    },
+    "evidenceList": {
+      "type": "array",
+      "items": {
+        "$ref": "#/schemas/evidence"
+      },
+      "maxItems": 1000
+    },
+    "runRequest": {
+      "type": "object",
+      "properties": {
+        "run": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 160
         }
       },
       "required": [
-        "protocolVersion",
-        "operation",
-        "status",
-        "modelCalls",
-        "message"
+        "run"
       ],
       "additionalProperties": false
     }
@@ -1772,539 +955,7 @@
             ]
           },
           "config": {
-            "type": "object",
-            "properties": {
-              "languages": {
-                "type": "array",
-                "items": {
-                  "type": "string",
-                  "enum": [
-                    "cpp",
-                    "csharp",
-                    "go",
-                    "java",
-                    "javascript",
-                    "python",
-                    "ruby",
-                    "rust",
-                    "actions"
-                  ]
-                },
-                "maxItems": 9
-              },
-              "includeRules": {
-                "type": "array",
-                "items": {
-                  "type": "string",
-                  "minLength": 1,
-                  "maxLength": 160
-                },
-                "maxItems": 1000
-              },
-              "excludeRules": {
-                "type": "array",
-                "items": {
-                  "type": "string",
-                  "minLength": 1,
-                  "maxLength": 160
-                },
-                "maxItems": 1000
-              },
-              "builds": {
-                "type": "object",
-                "properties": {
-                  "cpp": {
-                    "type": "object",
-                    "properties": {
-                      "mode": {
-                        "type": "string",
-                        "enum": [
-                          "none",
-                          "autobuild",
-                          "manual"
-                        ]
-                      },
-                      "command": {
-                        "type": "array",
-                        "items": {
-                          "type": "string",
-                          "minLength": 1,
-                          "maxLength": 8000
-                        },
-                        "maxItems": 100
-                      },
-                      "prepare": {
-                        "type": "array",
-                        "items": {
-                          "type": "array",
-                          "items": {
-                            "type": "string",
-                            "minLength": 1,
-                            "maxLength": 8000
-                          },
-                          "maxItems": 100
-                        },
-                        "maxItems": 20
-                      },
-                      "cwd": {
-                        "type": "string",
-                        "minLength": 1,
-                        "maxLength": 2000
-                      },
-                      "network": {
-                        "type": "string",
-                        "enum": [
-                          "off",
-                          "on"
-                        ]
-                      }
-                    },
-                    "required": [],
-                    "additionalProperties": false
-                  },
-                  "csharp": {
-                    "type": "object",
-                    "properties": {
-                      "mode": {
-                        "type": "string",
-                        "enum": [
-                          "none",
-                          "autobuild",
-                          "manual"
-                        ]
-                      },
-                      "command": {
-                        "type": "array",
-                        "items": {
-                          "type": "string",
-                          "minLength": 1,
-                          "maxLength": 8000
-                        },
-                        "maxItems": 100
-                      },
-                      "prepare": {
-                        "type": "array",
-                        "items": {
-                          "type": "array",
-                          "items": {
-                            "type": "string",
-                            "minLength": 1,
-                            "maxLength": 8000
-                          },
-                          "maxItems": 100
-                        },
-                        "maxItems": 20
-                      },
-                      "cwd": {
-                        "type": "string",
-                        "minLength": 1,
-                        "maxLength": 2000
-                      },
-                      "network": {
-                        "type": "string",
-                        "enum": [
-                          "off",
-                          "on"
-                        ]
-                      }
-                    },
-                    "required": [],
-                    "additionalProperties": false
-                  },
-                  "go": {
-                    "type": "object",
-                    "properties": {
-                      "mode": {
-                        "type": "string",
-                        "enum": [
-                          "none",
-                          "autobuild",
-                          "manual"
-                        ]
-                      },
-                      "command": {
-                        "type": "array",
-                        "items": {
-                          "type": "string",
-                          "minLength": 1,
-                          "maxLength": 8000
-                        },
-                        "maxItems": 100
-                      },
-                      "prepare": {
-                        "type": "array",
-                        "items": {
-                          "type": "array",
-                          "items": {
-                            "type": "string",
-                            "minLength": 1,
-                            "maxLength": 8000
-                          },
-                          "maxItems": 100
-                        },
-                        "maxItems": 20
-                      },
-                      "cwd": {
-                        "type": "string",
-                        "minLength": 1,
-                        "maxLength": 2000
-                      },
-                      "network": {
-                        "type": "string",
-                        "enum": [
-                          "off",
-                          "on"
-                        ]
-                      }
-                    },
-                    "required": [],
-                    "additionalProperties": false
-                  },
-                  "java": {
-                    "type": "object",
-                    "properties": {
-                      "mode": {
-                        "type": "string",
-                        "enum": [
-                          "none",
-                          "autobuild",
-                          "manual"
-                        ]
-                      },
-                      "command": {
-                        "type": "array",
-                        "items": {
-                          "type": "string",
-                          "minLength": 1,
-                          "maxLength": 8000
-                        },
-                        "maxItems": 100
-                      },
-                      "prepare": {
-                        "type": "array",
-                        "items": {
-                          "type": "array",
-                          "items": {
-                            "type": "string",
-                            "minLength": 1,
-                            "maxLength": 8000
-                          },
-                          "maxItems": 100
-                        },
-                        "maxItems": 20
-                      },
-                      "cwd": {
-                        "type": "string",
-                        "minLength": 1,
-                        "maxLength": 2000
-                      },
-                      "network": {
-                        "type": "string",
-                        "enum": [
-                          "off",
-                          "on"
-                        ]
-                      }
-                    },
-                    "required": [],
-                    "additionalProperties": false
-                  },
-                  "javascript": {
-                    "type": "object",
-                    "properties": {
-                      "mode": {
-                        "type": "string",
-                        "enum": [
-                          "none",
-                          "autobuild",
-                          "manual"
-                        ]
-                      },
-                      "command": {
-                        "type": "array",
-                        "items": {
-                          "type": "string",
-                          "minLength": 1,
-                          "maxLength": 8000
-                        },
-                        "maxItems": 100
-                      },
-                      "prepare": {
-                        "type": "array",
-                        "items": {
-                          "type": "array",
-                          "items": {
-                            "type": "string",
-                            "minLength": 1,
-                            "maxLength": 8000
-                          },
-                          "maxItems": 100
-                        },
-                        "maxItems": 20
-                      },
-                      "cwd": {
-                        "type": "string",
-                        "minLength": 1,
-                        "maxLength": 2000
-                      },
-                      "network": {
-                        "type": "string",
-                        "enum": [
-                          "off",
-                          "on"
-                        ]
-                      }
-                    },
-                    "required": [],
-                    "additionalProperties": false
-                  },
-                  "python": {
-                    "type": "object",
-                    "properties": {
-                      "mode": {
-                        "type": "string",
-                        "enum": [
-                          "none",
-                          "autobuild",
-                          "manual"
-                        ]
-                      },
-                      "command": {
-                        "type": "array",
-                        "items": {
-                          "type": "string",
-                          "minLength": 1,
-                          "maxLength": 8000
-                        },
-                        "maxItems": 100
-                      },
-                      "prepare": {
-                        "type": "array",
-                        "items": {
-                          "type": "array",
-                          "items": {
-                            "type": "string",
-                            "minLength": 1,
-                            "maxLength": 8000
-                          },
-                          "maxItems": 100
-                        },
-                        "maxItems": 20
-                      },
-                      "cwd": {
-                        "type": "string",
-                        "minLength": 1,
-                        "maxLength": 2000
-                      },
-                      "network": {
-                        "type": "string",
-                        "enum": [
-                          "off",
-                          "on"
-                        ]
-                      }
-                    },
-                    "required": [],
-                    "additionalProperties": false
-                  },
-                  "ruby": {
-                    "type": "object",
-                    "properties": {
-                      "mode": {
-                        "type": "string",
-                        "enum": [
-                          "none",
-                          "autobuild",
-                          "manual"
-                        ]
-                      },
-                      "command": {
-                        "type": "array",
-                        "items": {
-                          "type": "string",
-                          "minLength": 1,
-                          "maxLength": 8000
-                        },
-                        "maxItems": 100
-                      },
-                      "prepare": {
-                        "type": "array",
-                        "items": {
-                          "type": "array",
-                          "items": {
-                            "type": "string",
-                            "minLength": 1,
-                            "maxLength": 8000
-                          },
-                          "maxItems": 100
-                        },
-                        "maxItems": 20
-                      },
-                      "cwd": {
-                        "type": "string",
-                        "minLength": 1,
-                        "maxLength": 2000
-                      },
-                      "network": {
-                        "type": "string",
-                        "enum": [
-                          "off",
-                          "on"
-                        ]
-                      }
-                    },
-                    "required": [],
-                    "additionalProperties": false
-                  },
-                  "rust": {
-                    "type": "object",
-                    "properties": {
-                      "mode": {
-                        "type": "string",
-                        "enum": [
-                          "none",
-                          "autobuild",
-                          "manual"
-                        ]
-                      },
-                      "command": {
-                        "type": "array",
-                        "items": {
-                          "type": "string",
-                          "minLength": 1,
-                          "maxLength": 8000
-                        },
-                        "maxItems": 100
-                      },
-                      "prepare": {
-                        "type": "array",
-                        "items": {
-                          "type": "array",
-                          "items": {
-                            "type": "string",
-                            "minLength": 1,
-                            "maxLength": 8000
-                          },
-                          "maxItems": 100
-                        },
-                        "maxItems": 20
-                      },
-                      "cwd": {
-                        "type": "string",
-                        "minLength": 1,
-                        "maxLength": 2000
-                      },
-                      "network": {
-                        "type": "string",
-                        "enum": [
-                          "off",
-                          "on"
-                        ]
-                      }
-                    },
-                    "required": [],
-                    "additionalProperties": false
-                  },
-                  "actions": {
-                    "type": "object",
-                    "properties": {
-                      "mode": {
-                        "type": "string",
-                        "enum": [
-                          "none",
-                          "autobuild",
-                          "manual"
-                        ]
-                      },
-                      "command": {
-                        "type": "array",
-                        "items": {
-                          "type": "string",
-                          "minLength": 1,
-                          "maxLength": 8000
-                        },
-                        "maxItems": 100
-                      },
-                      "prepare": {
-                        "type": "array",
-                        "items": {
-                          "type": "array",
-                          "items": {
-                            "type": "string",
-                            "minLength": 1,
-                            "maxLength": 8000
-                          },
-                          "maxItems": 100
-                        },
-                        "maxItems": 20
-                      },
-                      "cwd": {
-                        "type": "string",
-                        "minLength": 1,
-                        "maxLength": 2000
-                      },
-                      "network": {
-                        "type": "string",
-                        "enum": [
-                          "off",
-                          "on"
-                        ]
-                      }
-                    },
-                    "required": [],
-                    "additionalProperties": false
-                  }
-                },
-                "required": [],
-                "additionalProperties": false
-              },
-              "resources": {
-                "type": "object",
-                "properties": {
-                  "threads": {
-                    "type": "integer",
-                    "minimum": 1,
-                    "maximum": 64
-                  },
-                  "ramMb": {
-                    "type": "integer",
-                    "minimum": 1024,
-                    "maximum": 131072
-                  },
-                  "memoryMb": {
-                    "type": "integer",
-                    "minimum": 2048,
-                    "maximum": 262144
-                  },
-                  "cpus": {
-                    "type": "integer",
-                    "minimum": 1,
-                    "maximum": 64
-                  },
-                  "timeoutSeconds": {
-                    "type": "integer",
-                    "minimum": 1,
-                    "maximum": 604800
-                  }
-                },
-                "required": [],
-                "additionalProperties": false
-              },
-              "includeTests": {
-                "type": "boolean",
-                "default": false
-              },
-              "includeExamples": {
-                "type": "boolean",
-                "default": false
-              },
-              "includeGenerated": {
-                "type": "boolean",
-                "default": false
-              }
-            },
-            "required": [],
-            "additionalProperties": false
+            "$ref": "#/schemas/config"
           },
           "importSarif": {
             "type": "boolean"
@@ -2325,54 +976,21 @@
     "status": {
       "description": "Status for deterministic CodeQL discovery; zero model calls.",
       "inputSchema": {
-        "type": "object",
-        "properties": {
-          "run": {
-            "type": "string",
-            "minLength": 1,
-            "maxLength": 160
-          }
-        },
-        "required": [
-          "run"
-        ],
-        "additionalProperties": false
+        "$ref": "#/schemas/runRequest"
       },
       "responseSchema": "response"
     },
     "resume": {
       "description": "Resume for deterministic CodeQL discovery; zero model calls.",
       "inputSchema": {
-        "type": "object",
-        "properties": {
-          "run": {
-            "type": "string",
-            "minLength": 1,
-            "maxLength": 160
-          }
-        },
-        "required": [
-          "run"
-        ],
-        "additionalProperties": false
+        "$ref": "#/schemas/runRequest"
       },
       "responseSchema": "response"
     },
     "cancel": {
       "description": "Cancel for deterministic CodeQL discovery; zero model calls.",
       "inputSchema": {
-        "type": "object",
-        "properties": {
-          "run": {
-            "type": "string",
-            "minLength": 1,
-            "maxLength": 160
-          }
-        },
-        "required": [
-          "run"
-        ],
-        "additionalProperties": false
+        "$ref": "#/schemas/runRequest"
       },
       "responseSchema": "response"
     },
@@ -2483,18 +1101,7 @@
     "next_task": {
       "description": "AI evaluation is not implemented.",
       "inputSchema": {
-        "type": "object",
-        "properties": {
-          "run": {
-            "type": "string",
-            "minLength": 1,
-            "maxLength": 160
-          }
-        },
-        "required": [
-          "run"
-        ],
-        "additionalProperties": false
+        "$ref": "#/schemas/runRequest"
       },
       "responseSchema": "response"
     },

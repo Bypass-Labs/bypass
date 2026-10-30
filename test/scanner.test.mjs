@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { spawnSync } from 'node:child_process';
-import { manifest, scannerCapabilities, protocolVersion, unavailable } from '../src/scanner/contracts.mjs';
+import { manifest, scannerCapabilities, protocolVersion, unavailable, resolveManifest } from '../src/scanner/contracts.mjs';
 import { ScannerClient } from '../src/scanner/client.mjs';
 import { scannerContainerArgs, scannerPackageFiles, scannerDirectory, scannerDoctor, prepareScanner, connectScanner } from '../src/scanner/runtime.mjs';
 import { runAPIDriver } from '../src/scanner/api-driver.mjs';
@@ -60,6 +60,24 @@ test('scanner schemas and command family expose the agreed contract', () => {
   const options=parse(['discover','--include-tests','--include-examples','--include-generated']).options;
   assert.equal(options['include-tests'],true);assert.equal(options['include-examples'],true);assert.equal(options['include-generated'],true);
   for(const key of ['includeTests','includeExamples','includeGenerated'])assert.equal(manifest.schemas.config.properties[key].type,'boolean');
+});
+
+test('scanner contract expands shared definitions into self-contained wire schemas',()=>{
+  const raw=JSON.parse(fs.readFileSync(path.join(scannerDirectory,'protocol/v2.json')));
+  assert.deepEqual(raw.operations.start.inputSchema.properties.config,{$ref:'#/schemas/config'});
+  assert.deepEqual(manifest.operations.start.inputSchema.properties.config,manifest.schemas.config);
+  assert.deepEqual(manifest.schemas.response.properties.run,manifest.schemas.run);
+  assert.deepEqual(manifest.schemas.error,manifest.schemas.response);
+  assert.deepEqual(manifest.schemas.signal.properties.evidence.items,manifest.schemas.evidence);
+  assert.equal(JSON.stringify(manifest).includes('"$ref"'),false);
+  for(const schema of Object.values(manifest.schemas.config.properties.builds.properties))assert.deepEqual(schema,manifest.schemas.build);
+});
+
+test('scanner contract references cannot load external data or form cycles',()=>{
+  for(const value of [{$ref:'https://example.invalid/schema'},{$ref:'file:///etc/hosts'},{$ref:'#/missing'},
+    {a:{$ref:'#/a'}}, {a:{$ref:'#/b'},b:{$ref:'#/a'}}, {a:{type:'string'},b:{$ref:'#/a',description:'sibling'}},
+    {a:[],b:{$ref:'#/a'}}, {a:'text',b:{$ref:'#/a'}}])assert.throws(()=>resolveManifest(value));
+  assert.deepEqual(resolveManifest({'a/b':{type:'string'},schema:{$ref:'#/a~1b'}}).schema,{type:'string'});
 });
 
 test('Python MCP and Node read identical capabilities and operation schemas', { skip: !pythonAvailable }, async t => {
@@ -118,7 +136,8 @@ test('default containers have no mounts/network and package only allowlisted fil
   assert.equal(helper[helper.indexOf('--network')+1],'bridge');
   assert.deepEqual(helper.slice(-4),['-m','bypass_scanner.worker','r','j']);
   const files = scannerPackageFiles();
-  assert.ok(files.includes('protocol/v1.json'));
+  assert.ok(files.includes('protocol/v2.json'));
+  assert.equal(files.includes('protocol/v1.json'),false);
   assert.ok(files.includes('src/bypass_scanner/transports/mcp.py'));
   assert.ok(files.every(file => !file.includes('__pycache__') && !file.startsWith('tests/')));
   const calls = [];

@@ -11,7 +11,7 @@ export const defaultResources = {threads:2, ramMb:4096, memoryMb:8192, cpus:2};
 export const imagePlatform = 'linux/amd64';
 
 export function scannerPackageFiles(root = scannerDirectory) {
-  const files = ['Dockerfile','.dockerignore','pyproject.toml','README.md','codeql-lock.json','protocol/v1.json','protocol/v2.json'];
+  const files = ['Dockerfile','.dockerignore','pyproject.toml','README.md','codeql-lock.json','protocol/v2.json'];
   function visit(relative) {
     for (const entry of fs.readdirSync(path.join(root,relative),{withFileTypes:true}).sort((a,b)=>a.name.localeCompare(b.name))) {
       const name = `${relative}/${entry.name}`;

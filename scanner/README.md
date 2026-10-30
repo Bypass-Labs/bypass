@@ -160,8 +160,13 @@ locations and hashes refer to that snapshot. Uncitable alerts remain in raw SARI
 
 ## Installation and Docker
 
-Plugin installation ships Python source, protocol, lock file, and Docker recipe
-via an explicit allowlist. It does **not** build an image at installation. With
+The plugin build generates `plugin/runtime/scanner/` from this directory using an
+explicit allowlist. `plugin/runtime/` is ignored build output, not a second source
+tree. Plugin and release builds include that generated copy so installations are
+self-contained. Edit the sources here and rebuild with `npm run plugin:build`.
+
+Plugin installation ships Python source, protocol, lock file, and Docker recipe.
+It does **not** build an image at installation. With
 Docker installed/running, the first scan or rule listing builds the local image
 automatically. Plugin users need no clone, host Python, or host CodeQL.
 `scanner prepare` prewarms the same image.
@@ -236,7 +241,7 @@ and stops without sending a model request.
 
 | File/directory | Responsibility |
 | --- | --- |
-| `protocol/v2.json` | Shared schemas, operations/version; v1 retained as historical scaffold contract |
+| `protocol/v2.json` | Shared authored schemas, operations/version, and local schema references |
 | `contracts.py` | Manifest loading and structural validation |
 | `service.py` | Transport-independent routing and bounded response pages |
 | `workflow.py` | Project lease, durable lifecycle/checkpoints, reports, artifact allowlist |
@@ -252,6 +257,14 @@ and stops without sending a model request.
 
 Python 3.11+ is needed only for local development/tests. No Python runtime package
 dependencies are required.
+
+Repeated protocol shapes use local `$ref` pointers within `protocol/v2.json`.
+Python and Node expand them at load time, so MCP clients still receive
+self-contained schemas. External references, cycles, and unresolved pointers
+are rejected. There is one authored definition for configuration, build settings,
+run responses, and evidence; packaging copies the same document without rewriting
+it. The reference loaders do not make network requests.
+Only the active v2 contract ships; the retired v1 scaffold remains in Git history.
 
 ```sh
 npm run test:scanner

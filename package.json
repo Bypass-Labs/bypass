@@ -22,7 +22,12 @@
     "test:live": "node scripts/live-poc.mjs",
     "release:build": "node scripts/build-release.mjs",
     "release:upload": "node scripts/publish-release.mjs",
-    "release:promote": "node scripts/publish-release.mjs --promote"
+    "release:promote": "node scripts/publish-release.mjs --promote",
+    "pretest": "npm run plugin:build",
+    "precheck": "npm run plugin:build",
+    "preplugin:validate": "npm run plugin:build",
+    "pretest:codeql": "npm run plugin:build",
+    "pretest:live": "npm run plugin:build"
   },
   "dependencies": {
     "openai": "7.45.1"

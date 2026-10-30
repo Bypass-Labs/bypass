@@ -4,10 +4,38 @@ from pathlib import Path
 import sysconfig
 
 
+def resolve_manifest(document):
+    """Expand local JSON references into self-contained MCP/validator schemas."""
+    def expand(value, stack=(), depth=0):
+        if depth >= 64:
+            raise ValueError('Scanner contract exceeds nesting limit.')
+        if isinstance(value, list):
+            return [expand(item, stack, depth + 1) for item in value]
+        if not isinstance(value, dict):
+            return value
+        if '$ref' in value:
+            reference = value['$ref']
+            if len(value) != 1 or not isinstance(reference, str) or not reference.startswith('#/'):
+                raise ValueError('Scanner contract supports only local references without siblings.')
+            if reference in stack:
+                raise ValueError('Cyclic scanner contract reference.')
+            target = document
+            for token in reference[2:].split('/'):
+                key = token.replace('~1', '/').replace('~0', '~')
+                if not isinstance(target, dict) or key not in target:
+                    raise ValueError('Missing scanner contract reference.')
+                target = target[key]
+            if not isinstance(target, dict):
+                raise ValueError('Scanner contract reference must target an object.')
+            return expand(target, stack + (reference,), depth + 1)
+        return {key: expand(item, stack, depth + 1) for key, item in value.items()}
+    return expand(document)
+
+
 def load_manifest():
     source = Path(__file__).resolve().parents[2] / 'protocol/v2.json'
     installed = Path(sysconfig.get_path('data')) / 'share/bypass-scanner/protocol/v2.json'
-    return json.loads((source if source.is_file() else installed).read_text())
+    return resolve_manifest(json.loads((source if source.is_file() else installed).read_text()))
 
 
 MANIFEST = load_manifest()

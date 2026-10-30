@@ -1,7 +1,6 @@
 *
 !Dockerfile
 !protocol/
-!protocol/v1.json
 !protocol/v2.json
 !codeql-lock.json
 !src/

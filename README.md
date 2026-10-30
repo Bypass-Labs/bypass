@@ -296,6 +296,13 @@ Version 0.5 separates host reasoning from CLI API billing. Existing `muse-code`,
 
 ## Develop and verify
 
+Authored code lives in `src/`, `scanner/`, and the plugin's manifest, commands,
+skill, hooks, and MCP entry points. `plugin/runtime/` is ignored build output;
+it is generated from those sources and bundled for installation, never maintained
+as a second source tree. `npm run check`, `npm test`, and the plugin validation /
+CodeQL integration scripts build it automatically. For a local Muse installation,
+run `npm run plugin:build` before installing `plugin/`.
+
 ```bash
 npm ci --ignore-scripts
 npm run plugin:build
