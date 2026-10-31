@@ -321,4 +321,4 @@ BYPASS_DOCKER_TESTS=1 npm test
 
 [Architecture and provider limits](docs/AI_MODES.md) · [POC execution details](docs/REAL_POC.md) · [Job Radar setup](docs/JOB_RADAR.md) · [Verification results](docs/AI_VALIDATION.md)
 
-[Installation design and comparison with Strix, Superpowers and Context7](docs/INSTALLATION_DESIGN.md)
+[Installation design](docs/INSTALLATION_DESIGN.md)

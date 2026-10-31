@@ -10,8 +10,6 @@ The main customer experience should be a GitHub App. Its execution package shoul
 
 Meta's recipe combines GitHub Actions, OpenCode and the Meta Model API. It separates specialist roles and gates code-writing actions behind maintainer requests. Its setup requires runtime configuration, agent files, a workflow and an API secret. We should adopt the role separation and explicit authority boundaries while packaging their configuration for customers. [Meta GitHub agent cookbook](https://dev.meta.ai/docs/cookbook/github-agent)
 
-Strix documents headless scanning, PR diff scoping, configurable severity gates and a short GitHub workflow using a model secret. This is a useful simplicity benchmark. Those pages describe pipeline scanning; they do not establish the connected finding → deployed-fix verification → durable regression journey proposed here. That is a comparison of the cited documentation, not a claim that Strix lacks every related capability. [Strix CI/CD](https://docs.strix.ai/integrations/ci-cd), [Strix GitHub Actions](https://docs.strix.ai/integrations/github-actions)
-
 Avoid copying examples literally: production packaging should pin executable dependencies, handle forks explicitly and separate untrusted repository input from credentials and publishing authority. Disabling one agent tool is not an operating-system network boundary.
 
 ## 2. Product entry and setup

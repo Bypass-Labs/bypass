@@ -8,56 +8,24 @@ security invariants, including authorization mistakes that produce no CodeQL
 alert. Outputs remain candidate signals with `evaluation: not_run`. Formal
 confirmation/refutation, runtime reproduction, and patching remain separate work.
 
-## Research and implications
+## Design principles
 
-### Strix
+Bypass policies are reasoning playbooks that define security invariants and
+evidence requirements. A policy name or vulnerability-class checklist alone
+does not establish a detector.
 
-Reviewed the public source at commit
-[`6b7ae2e`](https://github.com/usestrix/strix/tree/6b7ae2ebe4d47037a927aade23265ff4e4f27e84).
-
-- [Prompt assembly](https://github.com/usestrix/strix/blob/6b7ae2ebe4d47037a927aade23265ff4e4f27e84/strix/agents/prompt.py)
-  combines shared analysis guidance, scan mode, requested specialist skills,
-  white-box guidance, and run-specific scope. The
-  [skill tool](https://github.com/usestrix/strix/blob/6b7ae2ebe4d47037a927aade23265ff4e4f27e84/strix/tools/load_skill/tool.py)
-  can supply additional reference material during a task. These are reasoning
-  playbooks, rather than executable detection rules.
-- The [root coordination skill](https://github.com/usestrix/strix/blob/6b7ae2ebe4d47037a927aade23265ff4e4f27e84/strix/skills/coordination/root_agent.md)
-  establishes a shared threat model and decomposes work across security surfaces.
-  Its model is shared within the run and supports attributed amendments.
-- [Source-aware discovery](https://github.com/usestrix/strix/blob/6b7ae2ebe4d47037a927aade23265ff4e4f27e84/strix/skills/analysis/source_aware_discovery.md)
-  preserves separately reachable instances and records entrypoints, controls,
-  and sinks. Finding one problem does not establish coverage of sibling paths.
-- [Counterevidence guidance](https://github.com/usestrix/strix/blob/6b7ae2ebe4d47037a927aade23265ff4e4f27e84/strix/skills/analysis/counterevidence.md)
-  distinguishes supported findings, demonstrated controls, and unresolved proof
-  gaps. Some white-box/scan-mode instructions emphasize runtime proof; this
-  guidance also permits a complete source trace with disclosed runtime gaps.
-  We should make our own discovery/evaluation boundary explicit and consistent.
-- [Reporting](https://github.com/usestrix/strix/blob/6b7ae2ebe4d47037a927aade23265ff4e4f27e84/strix/tools/reporting/tool.py)
-  validates structured evidence/confidence fields.
-  [Semantic deduplication](https://github.com/usestrix/strix/blob/6b7ae2ebe4d47037a927aade23265ff4e4f27e84/strix/report/dedupe.py)
-  can call a configured model. Bypass must not adopt this as a hidden Python-side
-  inference operation.
-
-### Codex Security
-
-These observations come from official documentation, not an implementation audit.
-
-- [Local scans](https://learn.chatgpt.com/docs/security/plugin/scans) accept
-  threat-model context and repository `SECURITY.md` guidance, including nested
-  policy scope. The guidance describes invariants, finding criteria, exclusions,
-  and severity context. It is policy data rather than executable instructions.
-- [Cloud threat models](https://learn.chatgpt.com/docs/security/threat-model)
-  describe entrypoints, actors, trust boundaries, sensitive actions, and uncertain
-  deployment assumptions. A generated draft can be edited and reused for future
-  scans. This persistence differs from Strix's documented per-run model.
-- The [CLI reference](https://learn.chatgpt.com/docs/security/cli/reference)
-  separates knowledge-base documents, scan instructions, and validation
-  procedures. It retains findings and coverage artifacts and distinguishes scan
-  execution completion from evidence that a surface was reviewed.
-
-The transferable design is contextual, evidence-backed review. Neither source
-establishes that a policy name or a vulnerability-class checklist alone is a
-detector. We will author Bypass policies and contracts for our execution model.
+- Map entrypoints, actors, trust boundaries, sensitive operations, and uncertain
+  deployment assumptions before scheduling focused review tasks.
+- Trace source input through controls to sensitive operations. Preserve distinct
+  reachable instances and inspect counterevidence; one finding does not establish
+  coverage of sibling paths.
+- Treat repository `SECURITY.md` and threat-model documents as scoped context,
+  separate from executable scan instructions and validation procedures.
+- Validate structured evidence and retain findings, proof gaps, and coverage
+  artifacts. Execution completion does not establish that every surface was reviewed.
+- Keep discovery separate from formal evaluation. Any semantic deduplication that
+  requires model reasoning must be an explicit task through the selected executor,
+  never a hidden Python-side inference operation.
 
 ## MVP decisions
 
