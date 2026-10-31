@@ -4,6 +4,7 @@ Research checked on 2026-10-27 against the primary sources below and installed M
 
 | Integration | What makes starting easier | What Bypass adopts |
 | --- | --- | --- |
+| [Strix coding-agent skills](https://github.com/usestrix/strix#-use-strix-from-your-coding-agent) | A skill brings the workflow into the agent; its CLI/cloud runtime is a separate concern. | A discoverable installation skill that installs the full product and explains its actual readiness. |
 | [Superpowers](https://github.com/obra/superpowers#installation) | Uses native plugins where supported, and a “fetch and follow” prompt for OpenCode. Its Muse integration still requires runtime approval and a new session. | Native Runtime review and a fresh session. A fetch-and-follow prompt remains an optional installation route. |
 | [Context7](https://github.com/upstash/context7#installation) | One setup command handles client configuration, with explicit CLI/skill and MCP choices. | One installer handles platform, runtime, PATH and registration, with an explicit Muse versus standalone entry point. |
 | [Vercel Skills](https://github.com/vercel-labs/skills/blob/main/docs/commands.md#skills-add) | Can install a SKILL.md directly from HTTPS, not only GitHub. | Serve the bootstrap from the existing release domain; GitHub source access is unnecessary. |
@@ -22,8 +23,9 @@ This follows the [Command Line Interface Guidelines](https://clig.dev/) on immed
 
 The old question mixed an address, an environment and the option to skip live testing. Muse could turn this into a menu that elevated a documented local port into an apparent running-app recommendation. Repository documentation is not evidence of a current deployment, and a local address must not replace a production URL the user already supplied.
 
-Bypass reuses the repository and app URL already given in the conversation. The revised flow also adopts two patterns checked against primary documentation on 2026-10-27:
+The revised flow adopts three patterns checked against primary documentation on 2026-10-27:
 
+- [Strix CLI](https://github.com/usestrix/strix/blob/main/docs/usage/cli.mdx) accepts repositories and URLs directly, including both in one command. Bypass reuses the repository and app URL already given in the conversation.
 - [Vercel project linking](https://vercel.com/docs/cli/project-linking) offers an identified matching project and remembers the link. Bypass reuses an exact saved app and its ownership record; an unconfirmed README address is not an identified deployment.
 - [OpenClaw onboarding](https://docs.openclaw.ai/start/wizard) separates Quick start from custom configuration and reuses configured choices. Bypass asks for the next missing input and postpones advanced details until relevant. The [CLI Guidelines](https://clig.dev/) also recommend human-readable output, useful defaults and clear interaction.
 

@@ -25,6 +25,6 @@ The workspace offers defined commands and guided actions. Free-form model conver
 
 ## Interaction references
 
-The command palette follows the discoverable slash-command pattern documented by [OpenCode's TUI](https://opencode.ai/docs/tui/). Transcript expansion, command history, task visibility and interrupt controls draw on [Claude Code's interactive mode](https://code.claude.com/docs/en/interactive-mode).
+The command palette follows the discoverable slash-command pattern documented by [OpenCode's TUI](https://opencode.ai/docs/tui/). Transcript expansion, command history, task visibility and interrupt controls draw on [Claude Code's interactive mode](https://code.claude.com/docs/en/interactive-mode). [Strix](https://github.com/usestrix/strix) is a reference for an integrated security-testing CLI, not a claim of engine parity.
 
 Bypass reports actual operation timing and completed stages. It does not invent completion percentages or display a fabricated model thought process.
