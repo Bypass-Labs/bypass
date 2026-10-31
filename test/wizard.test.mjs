@@ -136,7 +136,7 @@ test('wizard invalid flow and noninteractive invocation fail before writing setu
 });
 
 test('repository setup redirects an accidental tooling checkout to the chosen application',async()=>{
-  const tooling=temp(),app=temp();fs.writeFileSync(path.join(tooling,'package.json'),JSON.stringify({name:'@bypass-labs/cli-skeleton'}));
+  const tooling=temp(),app=temp();fs.writeFileSync(path.join(tooling,'package.json'),JSON.stringify({name:'@bypass-labs/bypass'}));
   const result=await wizard(app,['n',app,'1','BYPASS_UNIT_API_KEY','','','n','n'],{repo:tooling,mode:'code'});
   assert.equal(result.result.root,app);
   assert.equal(fs.existsSync(path.join(tooling,'.bypass/state.json')),false);

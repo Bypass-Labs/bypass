@@ -15,7 +15,7 @@
         if (-not (Get-Command muse -ErrorAction SilentlyContinue)) { throw 'Muse Code was not found on PATH. Install Muse from https://dev.meta.ai, open it and sign in, then retry this same installer. No Bypass files were changed.' }
     }
     Write-BypassStage "`nBYPASS LABS"
-    if ($Muse) { Write-Host 'Installing Bypass for Muse' }
+    if ($Muse) { Write-Host 'Installing Bypass for Muse Code' }
     else { Write-Host 'Security that stays with your code.' }
     function Write-AtomicText([string]$File, [string]$Value, [bool]$Bom = $false) {
         $temporary = $File + '.new-' + [guid]::NewGuid().ToString('N')

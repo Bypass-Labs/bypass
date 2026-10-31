@@ -7,7 +7,13 @@ import { read, rootFrom, FILE } from './store.mjs';
 
 export const projectPath=(value,base=process.cwd())=>path.resolve(base,value==='~'?os.homedir():value.startsWith('~/')?path.join(os.homedir(),value.slice(2)):value);
 export function isBypassSource(root){
-  try{return JSON.parse(fs.readFileSync(path.join(root,'package.json'),'utf8')).name==='@bypass-labs/cli-skeleton';}catch{return false;}
+  try{return ['@bypass-labs/bypass','@bypass-labs/cli-skeleton'].includes(JSON.parse(fs.readFileSync(path.join(root,'package.json'),'utf8')).name);}catch{return false;}
+}
+export function isBypassRepositoryURL(value){
+  try{
+    const url=new URL(value.trim().replace(/^git@([^:]+):(.+)$/i,'ssh://git@$1/$2'));
+    return ['https:','ssh:'].includes(url.protocol)&&url.hostname.toLowerCase()==='github.com'&&/^\/Bypass-Labs\/(?:bypass|bypass-for-muse)(?:\.git)?\/?$/i.test(url.pathname);
+  }catch{return false;}
 }
 export async function workspaceInfo(cwd,selectedRoot=null){
   const root=selectedRoot||rootFrom(cwd,false),repository=await repositoryInfo(root);

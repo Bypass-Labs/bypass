@@ -11,7 +11,7 @@ test('a source-only checkout builds a self-contained plugin and removes stale ou
   const root=fs.mkdtempSync(path.join(os.tmpdir(),'bypass-source-build-'));
   t.after(()=>fs.rmSync(root,{recursive:true,force:true}));
   const generated=path.join(source,'plugin/runtime');
-  const authored=['package.json','package-lock.json','src','bin','agents','scanner','examples','docs','scripts','test','infra','plugin'];
+  const authored=['package.json','package-lock.json','LICENSE','NOTICE','THIRD_PARTY_NOTICES.md','src','bin','agents','scanner','examples','docs','scripts','test','infra','plugin'];
   for(const name of authored)fs.cpSync(path.join(source,name),path.join(root,name),{recursive:true,filter:file=>
     file!==generated&&!['node_modules','__pycache__','.venv','.bypass','.demo','.tmp','.env'].includes(path.basename(file))});
   const runtime=path.join(root,'plugin/runtime');
@@ -23,6 +23,13 @@ test('a source-only checkout builds a self-contained plugin and removes stale ou
   const checked=await execFile(process.platform==='win32'?'npm.cmd':'npm',['run','check'],{cwd:root,timeout:90000});
   assert.equal(checked.code,0,checked.stderr||checked.stdout);
   assert.equal(fs.existsSync(path.join(runtime,'stale-file')),false);
+  const packagedMetadata=JSON.parse(fs.readFileSync(path.join(runtime,'package.json')));
+  assert.equal(packagedMetadata.name,'@bypass-labs/bypass');
+  assert.equal(packagedMetadata.repository.url,'https://github.com/Bypass-Labs/bypass.git');
+  for(const name of ['LICENSE','NOTICE','THIRD_PARTY_NOTICES.md'])
+    assert.deepEqual(fs.readFileSync(path.join(source,name)),fs.readFileSync(path.join(runtime,name)));
+  for(const name of ['src/internal/qs/LICENSE.md','src/_vendor/partial-json-parser/LICENSE','src/_vendor/zod-to-json-schema/LICENSE'])
+    assert.deepEqual(fs.readFileSync(path.join(source,'node_modules/openai',name)),fs.readFileSync(path.join(runtime,'vendor/openai-licenses',name)));
   assert.deepEqual(fs.readFileSync(path.join(root,'scanner/protocol/v3.json')),fs.readFileSync(path.join(runtime,'scanner/protocol/v3.json')));
   assert.equal(fs.existsSync(path.join(runtime,'scanner/protocol/v1.json')),false);
 

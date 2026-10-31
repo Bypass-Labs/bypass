@@ -112,7 +112,7 @@ test('result gating and summary never equate failed coverage or source concern w
 test('CLI and Muse expose pinned GitHub setup; source-only setup needs no model or live target',async()=>{
   const root=temp();initStore(root,{kind:'local',path:root},'test');
   const r=await cli(root,'ci','init','--agent','--action-ref',SHA);assert.equal(r.code,0,JSON.stringify(r.data));
-  const workflow=fs.readFileSync(path.join(root,'.github/workflows/bypass-security.yml'),'utf8');assert.ok(workflow.includes(`bypass-for-muse@${SHA}`));assert.ok(!workflow.includes('actions/checkout'));assert.ok(!workflow.includes('pull_request_target'));assert.ok(!workflow.includes('schedule:'));assert.ok(workflow.includes('github.token'));
+  const workflow=fs.readFileSync(path.join(root,'.github/workflows/bypass-security.yml'),'utf8');assert.ok(workflow.includes(`bypass@${SHA}`));assert.ok(!workflow.includes('actions/checkout'));assert.ok(!workflow.includes('pull_request_target'));assert.ok(!workflow.includes('schedule:'));assert.ok(workflow.includes('github.token'));
   assert.ok(toolDefinitions.find(t=>t.name==='bypass_ci').inputSchema.properties.agent);
   const output=generateGitHubAgent(temp(),{}, {'action-ref':SHA});assert.deepEqual(output.secrets,['MODEL_API_KEY']);
   assert.throws(()=>generateGitHubAgent(temp(),{}, {'action-ref':'main'}),/40-character/);

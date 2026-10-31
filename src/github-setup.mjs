@@ -78,7 +78,7 @@ jobs:
         with:
           node-version: '22.23.4'
       # No checkout, package install, repository scripts or downloaded artifact execution.
-      - uses: Bypass-Labs/bypass-for-muse@${options['action-ref']}
+      - uses: Bypass-Labs/bypass@${options['action-ref']}
         id: bypass
         with:
           github-token: \${{ github.token }}

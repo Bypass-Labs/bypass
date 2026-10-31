@@ -1,11 +1,11 @@
 ---
 name: bypass
-description: Review application security with Muse-directed source investigation, scoped HTTP proof, saved regressions and security context for feature work.
+description: Security testing inside Muse Code with source investigation, scoped HTTP proof, saved regressions, and security context for feature work.
 ---
 
-# Bypass in Muse
+# Bypass for Muse Code
 
-Muse is the reasoning agent. Bypass exposes deterministic security operations. During a review you plan tests, interpret evidence, continue remaining checks, recommend fixes and save regressions. Application edits require a separate explicit remediation request; permission to test is never permission to fix. Do not delegate to another coding agent, start a nested Muse process, configure a model profile, call an external model endpoint, or use inherited API keys. The CLI's API configuration is a separate execution mode.
+Muse Code is the reasoning agent. Bypass exposes deterministic security operations. During a review you plan tests, interpret evidence, continue remaining checks, recommend fixes and save regressions. Application edits require a separate explicit remediation request; permission to test is never permission to fix. Do not delegate to another coding agent, start a nested Muse process, configure a model profile, call an external model endpoint, or use inherited API keys. The CLI's API configuration is a separate execution mode.
 
 ## Black-box audit
 

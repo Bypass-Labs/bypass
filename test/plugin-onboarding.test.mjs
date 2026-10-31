@@ -24,7 +24,7 @@ async function sourceReady(){const root=temp();fs.writeFileSync(path.join(root,'
 
 test('unselected context guides repository selection without leaking host demo history or mutating it',async t=>{
   const host=temp();environment(t,{BYPASS_PLUGIN_STATE_DIR:temp()});
-  fs.writeFileSync(path.join(host,'package.json'),JSON.stringify({name:'@bypass-labs/cli-skeleton'}));
+  fs.writeFileSync(path.join(host,'package.json'),JSON.stringify({name:'@bypass-labs/bypass'}));
   await execute('init',[host]);await change(host,s=>{s.demo={target:'demo'};s.events.push({message:'OLD_DEMO_FAILURE_SENTINEL'});});
   const before=fs.readFileSync(path.join(host,'.bypass/state.json'),'utf8');
   const status=await checklist(host,null);assert.equal(status.version,VERSION);assert.equal(status.workspace.isBypassSource,true);

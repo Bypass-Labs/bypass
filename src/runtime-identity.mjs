@@ -4,7 +4,7 @@ import { VERSION, execFile } from './util.mjs';
 import { safeRequest } from './network.mjs';
 
 const sourcePath=path.resolve(path.dirname(fileURLToPath(import.meta.url)),'..');
-export const runtimeIdentity=()=>({version:VERSION,sourcePath,launchCommand:`node ${path.join(sourcePath,'bin/bypass.mjs')}`,product:'Bypass for Muse'});
+export const runtimeIdentity=()=>({version:VERSION,sourcePath,launchCommand:`node ${path.join(sourcePath,'bin/bypass.mjs')}`,product:'Bypass for Muse Code'});
 
 export function comparePlugin(record,running=runtimeIdentity()){
   const cached=running.sourcePath.includes('/plugins/cache/');

@@ -51,7 +51,7 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 90
     permissions:
-      contents: read
+      contents: write
       id-token: write
     outputs:
       release_id: ${{ steps.build.outputs.release_id }}
@@ -76,6 +76,10 @@ jobs:
         run: |
           npm run release:build
           echo "release_id=$(node -p "JSON.parse(require('fs').readFileSync('dist/releases/release.json')).releaseId")" >> "$GITHUB_OUTPUT"
+      - name: Archive identical assets in a draft GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: npm run release:github
       - name: Upload immutable artifacts to R2 with GitHub OIDC
         run: npm run release:upload
       - name: Test the public versioned installer before promotion
@@ -148,7 +152,7 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:
-      contents: read
+      contents: write
       id-token: write
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
@@ -164,7 +168,12 @@ jobs:
           mkdir -p dist/releases
           curl -fsSL "https://bypasslabs.ai/downloads/bypass/releases/$RELEASE_ID/release.json" -o dist/releases/release.json
       - name: Atomically promote the complete tested release
-        run: npm run release:promote
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_ID: ${{ needs.release.outputs.release_id }}
+        run: |
+          npm run release:github -- --from-r2 "$RELEASE_ID" --verify
+          npm run release:promote
       - name: Verify both public installer entry points
         shell: bash
         run: |
@@ -182,3 +191,8 @@ jobs:
             curl -fsSL "https://bypasslabs.ai/install/$route" -o "$RUNNER_TEMP/$file"
             cmp "$RUNNER_TEMP/bootstrap-expected/$file" "$RUNNER_TEMP/$file"
           done
+      - name: Publish the verified GitHub Release after promotion and installer checks
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_ID: ${{ needs.release.outputs.release_id }}
+        run: npm run release:github -- --from-r2 "$RELEASE_ID" --publish
