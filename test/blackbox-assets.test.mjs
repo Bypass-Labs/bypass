@@ -874,7 +874,7 @@ test('a 1933-name map still mines and sends its last embedded app source to Muse
   assert.ok(interpreted.notes.some(note => note.path === '/api/late-map-original'));
 });
 
-test('Muse receives every client-script chunk, including exact late source text', async () => {
+test('Muse receives every client-script chunk with late source text redacted', async () => {
   const origin = 'http://127.0.0.1:9132';
   const cookieName = `gate_${randomBytes(5).toString('hex')}`;
   const secret = `sk_live_${randomBytes(18).toString('hex')}`;
@@ -888,21 +888,23 @@ test('Muse receives every client-script chunk, including exact late source text'
     const [type, body] = pages[new URL(url).pathname] ?? ['text/plain', 'missing'];
     return {status: body === 'missing' ? 404 : 200, type, body, evidenceId: 'ev-client'};
   }});
-  let sawCookie = false, sawExactSource = false;
+  let sawCookie = false, sawLateSource = false, sawSecret = false;
   const interpreted = await interpretAssets(summary, {model: 'fixture', maxPages: 20,
     infer: async (_model, messages) => {
       const input = messages.at(-1).content;
       const page = JSON.parse(input);
       sawCookie ||= page.files.some(file => file.sourceText?.includes(cookieName));
-      sawExactSource ||= page.files.some(file => file.sourceText?.includes(`const apiKey = '${secret}';`));
+      sawLateSource ||= page.files.some(file => file.sourceText?.includes("fetch('/api/unlock'"));
+      sawSecret ||= input.includes(secret);
       return {files: page.files.map(file => ({id: file.id, role: 'app', why: '',
         authFlow: file.sourceText?.includes(cookieName) ?
-          `The ${cookieName} cookie is set after unlock; unrelated key ${secret}` : '',
+          `The ${cookieName} cookie is set after unlock` : '',
         routes: file.routes.map(route => ({path: route.path, method: route.method,
           purpose: 'Observed client call', parameters: []})), proposals: []}))};
     }});
   assert.equal(sawCookie, true);
-  assert.equal(sawExactSource, true);
+  assert.equal(sawLateSource, true);
+  assert.equal(sawSecret, false);
   assert.ok(interpreted.coverage.sourceChunksSent >= 2);
   assert.ok(summary.files.some(file => file.analysis?.authFlow?.includes(cookieName)));
   assert.ok(!JSON.stringify(summary).includes(secret));
