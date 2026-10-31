@@ -6,9 +6,42 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number }}
   cancel-in-progress: true
 jobs:
-  check:
+  fast:
+    name: Fast checks
     runs-on: ubuntu-24.04
-    timeout-minutes: 60
+    timeout-minutes: 10
+    outputs:
+      full: ${{ steps.plan.outputs.full }}
+      matrix: ${{ steps.plan.outputs.matrix }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: '22.23.4'
+          cache: npm
+      - name: Plan complete test coverage and classify changes
+        id: plan
+        env:
+          CI_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          CI_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: node scripts/ci-tests.mjs plan
+      - run: npm ci --ignore-scripts
+      - run: npm run check
+      - run: node --test test/ci.test.mjs
+      - run: npm run test:scanner
+  regression:
+    name: Regression shard ${{ matrix.shard }}/4
+    needs: fast
+    if: needs.fast.outputs.full == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    strategy:
+      # Finish independent shards even when another shard fails.
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.fast.outputs.matrix) }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
@@ -16,12 +49,29 @@ jobs:
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: '22.23.4'
+          cache: npm
       - run: npm ci --ignore-scripts
-      - run: npm run check
-      - run: npm run test:scanner
+      - run: npm run plugin:build
       - run: command -v zsh || (sudo apt-get update && sudo apt-get install -y zsh)
-      - run: BYPASS_DOCKER_TESTS=1 npm test
+      - name: Run the complete assigned shard, serially within this runner
+        env:
+          BYPASS_DOCKER_TESTS: '1'
+          CI_SHARD: ${{ matrix.shard }}
+        shell: bash
+        run: |
+          set -o pipefail
+          node scripts/ci-tests.mjs run "$CI_SHARD" | tee "$RUNNER_TEMP/regression-$CI_SHARD.tap"
+      - name: Retain test output for timing and failure analysis
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: regression-${{ matrix.shard }}
+          path: ${{ runner.temp }}/regression-${{ matrix.shard }}.tap
+          retention-days: 7
+          if-no-files-found: ignore
   policy:
+    needs: fast
+    if: needs.fast.outputs.full == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     steps:
@@ -31,15 +81,19 @@ jobs:
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: '22.23.4'
+          cache: npm
       - run: npm ci --ignore-scripts
       - name: Exercise lightweight policy Docker and packaged Muse MCP without paid inference
         run: npm run test:policy
   codeql:
+    needs: fast
+    if: needs.fast.outputs.full == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 120
     env:
-      # One extractor/query process at a time on the standard hosted runner.
+      # Keep extractors serial on each runner; caching changes preparation only.
       BYPASS_CODEQL_CONCURRENCY: '1'
+      DOCKER_BUILD_RECORD_UPLOAD: 'false'
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
@@ -47,11 +101,45 @@ jobs:
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: '22.23.4'
+          cache: npm
       - name: Free disk space for the multi-language CodeQL image
         run: |
           sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL
           docker system prune --all --force
           df -h /
       - run: npm ci --ignore-scripts
+      - name: Resolve the scanner image tag from the current source
+        id: image
+        run: node --input-type=module -e "import {scannerTag} from './src/scanner/runtime.mjs'; console.log('tag='+scannerTag());" >> "$GITHUB_OUTPUT"
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
+      - name: Prepare CodeQL image using reusable build layers
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
+        with:
+          context: ./scanner
+          file: ./scanner/Dockerfile
+          platforms: linux/amd64
+          tags: ${{ steps.image.outputs.tag }}
+          load: true
+          push: false
+          provenance: false
+          cache-from: type=gha,scope=bypass-codeql-linux-amd64-v1
+          cache-to: type=gha,scope=bypass-codeql-linux-amd64-v1,mode=min,ignore-error=true,timeout=5m
       - name: Test real CodeQL fixtures, Docker boundaries, and source scope
         run: npm run test:codeql
+  check:
+    # Preserve the required check name, including for documentation-only PRs.
+    if: always()
+    needs: [fast, regression, policy, codeql]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: '22.23.4'
+      - name: Require every applicable check to succeed
+        env:
+          CI_NEEDS_JSON: ${{ toJSON(needs) }}
+        run: node scripts/ci-tests.mjs gate
