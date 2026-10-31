@@ -224,8 +224,12 @@ export async function auditDiscoveredHosts(discovery, scope, {requester, ledger,
   for (const [index, host] of hosts.entries()) {
     const share = Math.ceil(remaining / (hosts.length - index));
     const loopback = ['localhost', '127.0.0.1', '::1'].includes(new URL(host.origin).hostname);
+    const auditDomain = scope.discovery.auditDomains.find(domain => under(host.host, domain));
+    const apexAuthorization = scope.authorizedDomains?.[auditDomain];
     const hostScope = {...scope, target: {...scope.target, origin: host.origin,
-      environment: loopback ? 'local' : scope.target.environment === 'local' ? 'staging' : scope.target.environment}};
+      environment: loopback ? 'local' : scope.target.environment === 'local' ? 'staging' : scope.target.environment},
+    authorizedOrigins: apexAuthorization ?
+      {...scope.authorizedOrigins, [host.origin]: apexAuthorization} : scope.authorizedOrigins};
     const hostRequester = options => requester({...options, url: new URL(options.url, host.origin).href});
     const surface = {origin: host.origin, patterns: patternsFromOperations(host), mined: host.assets,
       operationNotes: (host.operations ?? []).filter(item => item.purpose || item.parameterMeanings?.length)

@@ -12,6 +12,16 @@ import {runWebProbes} from '../src/blackbox/web-probes.mjs';
 import {proveFindings} from '../src/blackbox/poc.mjs';
 import {execFile} from '../src/util.mjs';
 
+function authorizeDescendant(scope) {
+  const expiresAt = new Date(Date.now() + 60_000).toISOString();
+  scope.authorizedDomains = {'example.test': {
+    url: 'https://example.test',
+    ownership: {status: 'verified', expiresAt},
+    authorization: {origin: 'https://example.test', paths: ['/api'],
+      methods: scope.methods, expiresAt},
+  }};
+}
+
 test('independent recon responses reach Muse without waiting for a slow peer', async () => {
   const scope = structuredClone(DEFAULT_SCOPE);
   scope.limits.agents = 2;
@@ -91,6 +101,7 @@ test('authorized descendants get independent web probes from observed GET parame
   scope.domains = ['example.test'];
   scope.discovery.auditDomains = ['example.test'];
   scope.include = ['/api'];
+  authorizeDescendant(scope);
   const operation = {method: 'GET', path: '/api/next', params: [{name: 'after.path', in: 'query'}],
     source: ['document:/openapi.json'], purpose: 'Continue after login',
     parameterMeanings: [{name: 'after.path', meaning: 'destination URL for browser navigation'}]};
@@ -145,6 +156,7 @@ test('descendant response facts reach Muse after the former three-page cap', asy
   scope.domains = ['example.test'];
   scope.discovery.auditDomains = ['example.test'];
   scope.include = ['/api'];
+  authorizeDescendant(scope);
   const origin = 'https://app.example.test';
   const operations = Array.from({length: 25}, (_, index) => ({method: 'GET',
     path: `/api/route-${index}`, params: [], source: ['document:/openapi.json']}));
@@ -175,6 +187,7 @@ test('descendant web checks return scoped response route hints with their host o
   scope.domains = ['example.test'];
   scope.discovery.auditDomains = ['example.test'];
   scope.include = ['/api'];
+  authorizeDescendant(scope);
   const origin = 'https://app.example.test';
   const discovery = {hosts: [{host: 'app.example.test', origin,
     operations: [{method: 'GET', path: '/api/lookup',
@@ -279,6 +292,7 @@ test('descendant feedback keeps a route pending when Muse cannot review its resp
   scope.domains = ['example.test'];
   scope.discovery.auditDomains = ['example.test'];
   scope.include = ['/api'];
+  authorizeDescendant(scope);
   const origin = 'https://app.example.test';
   const discovery = {hosts: [{host: 'app.example.test', origin,
     operations: [{method: 'GET', path: '/api/seed',

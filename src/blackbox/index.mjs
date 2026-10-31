@@ -1457,11 +1457,15 @@ export async function runAudit({url, root = process.cwd(), scopeFile = null, ove
           const inputKey = (method, path, placement, field) =>
             JSON.stringify([method, new URL(path, sessions.scope.target.origin).pathname,
               placement, field]);
+          const loginPathname = new URL(pending.loginPath,
+            sessions.scope.target.origin).pathname;
           const actionableInputs = new Set([
             ...nextSurface.patterns.flatMap(route => Object.keys(route.params ?? {})
               .map(field => inputKey('GET', route.pattern, 'query', field))),
             ...['jsonBodyOperations', 'formBodyOperations', 'xmlBodyOperations',
               'methodOperations'].flatMap(property => (nextSurface[property] ?? [])
+              .filter(operation => new URL(operation.path,
+                sessions.scope.target.origin).pathname !== loginPathname)
               .flatMap(operation => (operation.fields ?? []).map(field =>
                 inputKey(operation.method, operation.path,
                   operation.placement ?? property.replace('BodyOperations', '').toLowerCase(), field)))),
