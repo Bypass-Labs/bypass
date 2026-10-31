@@ -1,3 +1,17 @@
+FROM scratch AS sources
+COPY protocol/ /scanner/protocol/
+COPY src/ /scanner/src/
+COPY policies/ /scanner/policies/
+
+FROM python:3.13-slim-bookworm AS policy
+RUN apt-get update && apt-get install -y --no-install-recommends git \
+    && rm -rf /var/lib/apt/lists/*
+WORKDIR /scanner
+COPY --from=sources /scanner /scanner
+ENV PYTHONPATH=/scanner/src PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 HOME=/tmp
+USER 65532:65532
+ENTRYPOINT ["python", "-m", "bypass_scanner"]
+
 FROM node:24-bookworm-slim AS node
 FROM golang:1.26-bookworm AS go
 FROM rust:1.99.0-bookworm AS rust
@@ -28,8 +42,7 @@ ENV PATH="/opt/codeql:/opt/kotlinc/bin:/usr/local/go/bin:/usr/local/cargo/bin:${
     PYTHONPATH=/scanner/src PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 \
     BYPASS_CODEQL=/opt/codeql/codeql HOME=/tmp
 RUN rustup component add rust-src
-COPY protocol/ ./protocol/
-COPY src/ ./src/
+COPY --from=sources /scanner /scanner
 RUN python -m bypass_scanner.discovery.catalog \
     && python -c 'import json,subprocess; p={x:subprocess.run(a,capture_output=True,text=True).stdout.strip() for x,a in {"node":["node","--version"],"go":["go","version"],"rust":["rustc","--version"],"dotnet":["dotnet","--version"],"python":["python","--version"]}.items()}; open("/opt/bypass-toolchains.json","w").write(json.dumps(p))' \
     && chmod -R a+rX /scanner /opt/codeql /opt/bypass-codeql-catalog.json /opt/bypass-toolchains.json

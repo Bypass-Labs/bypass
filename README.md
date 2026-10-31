@@ -1,12 +1,16 @@
 # Bypass for Muse
 
-Whitebox CodeQL discovery: `bypass discover --plan` or `/bypass:discover` in Muse.
-Scan selected source with pinned upstream queries, exact rule inclusion/exclusion,
-and durable SARIF/signals/reports. Docker is required; no LLM API settings are
-needed. The image builds automatically on first use. AI evaluation is pending.
-Tests, fixtures, examples, and generated copies are excluded from analysis by
-default; use `--include-tests`, `--include-examples`, or `--include-generated`
-when needed.
+Whitebox discovery supports **SAST**, **Policy**, or **Both**. Use
+`bypass discover --detector both --plan` or `/bypass:discover` in Muse.
+SAST uses pinned CodeQL and needs no LLM settings. Policy discovery uses the active
+Muse session, or an explicit standalone LLM API profile when run through the CLI.
+Both require Docker; policy-only uses a lightweight Python evidence runtime.
+
+Filter SAST queries with `--rule` / `--exclude-rule` and policy rules with
+`--policy` / `--exclude-policy`. Each uses exact IDs and exclusions win. Tests,
+fixtures, examples, and generated copies are excluded by default; explicit include
+flags remain available. Results are unevaluated signals with durable evidence,
+coverage gaps, and reports. Formal AI evaluation remains pending.
 [Usage and configuration](scanner/README.md).
 
 **Find an account-access bug. Verify the fix. Keep the test and security context for your next feature.**

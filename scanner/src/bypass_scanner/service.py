@@ -1,4 +1,4 @@
-"""Transport-independent CodeQL discovery operations; no LLM or provider access."""
+"""Transport-independent discovery operations; no LLM or provider access."""
 import json
 import os
 from pathlib import Path
@@ -7,7 +7,7 @@ from bypass_scanner.contracts import MANIFEST, PROTOCOL_VERSION, validate
 from bypass_scanner.discovery.languages import LANGUAGES
 
 _WORKFLOW = None
-IMPLEMENTED = ['capabilities', 'rules', 'start', 'status', 'resume', 'cancel', 'report', 'signals', 'artifact', 'build_failed']
+IMPLEMENTED = ['capabilities', 'rules', 'policies', 'start', 'status', 'resume', 'cancel', 'report', 'signals', 'artifact', 'build_failed','next_task','evidence','submit']
 
 
 def workflow():
@@ -22,18 +22,18 @@ def capabilities():
     return {'protocolVersion': PROTOCOL_VERSION, 'status': 'ready', 'analysisImplemented': True,
             'independentModelRequests': 0, 'implementedOperations': IMPLEMENTED,
             'operations': list(MANIFEST['operations']), 'stages': ['discovery', 'evaluation', 'reporting'],
-            'features': {'codeqlDiscovery': True, 'aiDiscovery': False, 'evaluation': False,
+            'features': {'codeqlDiscovery': True, 'aiDiscovery': True, 'evaluation': False,
                          'codeqlReady': Path(os.environ.get('BYPASS_CODEQL_CATALOG', '/opt/bypass-codeql-catalog.json')).is_file()},
             'languages': list(LANGUAGES)}
 
 
 def response(operation, status='ready', message='', **values):
     return {'protocolVersion': PROTOCOL_VERSION, 'operation': operation, 'status': status,
-            'modelCalls': 0, 'message': message, **values}
+            'modelCalls': values.get('run',{}).get('modelCalls',0), 'message': message, **values}
 
 
 def unavailable(operation):
-    return response(operation, 'not_implemented', 'AI discovery/evaluation is not implemented. CodeQL discovery makes zero model calls.', code='not_implemented')
+    return response(operation, 'not_implemented', 'Formal AI evaluation is not implemented. Discovery signals remain unevaluated.', code='not_implemented')
 
 
 def invoke(operation, arguments, engine=None):
@@ -46,7 +46,23 @@ def invoke(operation, arguments, engine=None):
         return unavailable(operation)
     engine = engine or workflow()
     try:
-        if operation == 'rules':
+        if operation=='policies':
+            from bypass_scanner.discovery.policy import catalog
+            items=[{k:p[k] for k in ('id','version','title','file')} for p in catalog()]
+            query=arguments.get('query','').lower()
+            result=response(operation,policies=[p for p in items if query in (p['id']+' '+p['title']).lower()])
+        elif operation in ('next_task','evidence','submit'):
+            policy=engine.policy_engine()
+            if operation=='next_task':
+                run,task=policy.next_task(arguments['run'])
+                result=response(operation,run['status'],run['message'],run=run,**({'task':task} if task else {}))
+            elif operation=='evidence':
+                run,evidence=policy.evidence(arguments['run'],arguments['task'],arguments['operation'],arguments.get('arguments',{}))
+                result=response(operation,run['status'],run['message'],run=run,evidence=evidence)
+            else:
+                run=policy.submit(arguments['run'],arguments['task'],arguments['sourceRevision'],arguments['result'])
+                result=response(operation,run['status'],run['message'],run=run)
+        elif operation == 'rules':
             items = engine.catalog()['rules']
             if arguments.get('language'):
                 items = [rule for rule in items if rule['language'] == arguments['language']]

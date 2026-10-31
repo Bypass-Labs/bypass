@@ -1,8 +1,83 @@
-# Whitebox CodeQL discovery
+# Whitebox SAST and policy discovery
 
 The Python scanner runs deterministic CodeQL discovery inside Docker: source
 snapshot → per-language extraction → pinned queries → unevaluated signals and
-reports. AI discovery, evaluation, reproduction, and patching remain unavailable.
+reports. Policy discovery adds a source-only reasoning task loop. Formal evaluation,
+runtime reproduction, and patching remain unavailable.
+
+## Select detectors and rules
+
+`--detector sast` is the default; `codeql` remains an alias. Select `policy` for
+AI policy discovery or `both` for SAST followed by policy discovery on the same
+snapshot. `codeql,policy` and `sast,policy` are also accepted.
+
+```sh
+bypass scanner policies
+bypass discover --detector policy --plan
+bypass scanner prepare --detector policy
+bypass discover --detector policy --policy authz/object-access
+bypass discover --detector both --rule py/weak-cryptographic-algorithm \
+  --policy authz/object-access \
+  --exclude-policy filesystem/path-containment
+```
+
+Use actual SAST IDs from `scanner rules`; unknown IDs are errors. `--rule` and
+`--exclude-rule` affect only SAST. `--policy` and `--exclude-policy` affect only
+policy discovery. Each accepts exact case-sensitive comma-separated IDs. A
+nonempty inclusion replaces that detector's defaults; exclusions win. Explicit rule flags require their detector. Saved per-detector settings remain
+available when switching modes. Discovery plans and bundled policy lists
+require no Docker, model configuration, or inference.
+
+Bundled policies cover object ownership/tenant access, privileged action
+boundaries, outbound destinations, and filesystem containment. The JSON catalog
+under `policies/` references Markdown bodies authored once. Custom catalogs use
+the same schema, with unique IDs and repository-relative in-scope body paths.
+
+```json
+{
+  "detectors": ["codeql", "policy"],
+  "includeRules": ["py/weak-cryptographic-algorithm"],
+  "excludeRules": [],
+  "includePolicies": ["authz/object-access"],
+  "excludePolicies": [],
+  "policyCatalogs": ["docs/security/catalog.json"],
+  "contextFiles": ["docs/security/threat-model.md"],
+  "policyLimits": {"maxTasks":64,"taskTimeoutSeconds":300,"timeoutSeconds":1800}
+}
+```
+
+Catalog and context inputs are optional. The scanner freezes selected policy
+bodies and in-scope root/nested SECURITY.md context, creates a provisional source
+map, and schedules surface/policy tasks. Documents are context, not permission to
+execute code, read secrets, or change enabled policies. Existing test/example/
+generated exclusions apply to evidence reads too; unavailable controls become
+proof gaps rather than assumed missing checks.
+
+Muse receives `awaiting_reasoning`, calls `bypass_discover_next_task`, uses
+`bypass_discover_evidence` for inventory/literal search/ranged reads, and submits
+the declared result schema using issued evidence receipts. Search is navigation;
+read receipts are required for citations. Follow `nextAction` and `nextCursor`.
+The standalone CLI drives this loop automatically with its selected API profile.
+The server does not launch a model or a shell.
+
+Task leases, retry counts, model requests, evidence requests/bytes, follow-up
+levels, and run deadlines are bounded. Exact submissions are idempotent. Resume
+checks source/runtime/policy identity; expired run budgets require a new run.
+Cancellation preserves accepted results. A task budget exhausted with remaining
+surfaces yields deferred coverage, never a clean-coverage claim.
+
+Policy-only first use prepares a lightweight Python/git image via Docker's
+`policy` target, without downloading CodeQL or compiled-language toolchains.
+SAST and combined runs use the pinned CodeQL image. Status/report/artifact tools
+can inspect saved v2 CodeQL runs; the current wire contract is v3. Policy signals
+carry policy/task provenance rather than fabricated SARIF result positions.
+Policy artifacts include selection, context, threat model, coverage, issued
+evidence events, submissions, and signals alongside existing SAST artifacts.
+
+The automated task-loop tests use scripted reasoning responses. They verify
+orchestration, citation integrity, execution boundaries, and recovery; they are
+not a benchmark of LLM detection quality. Quality depends on the selected model
+and repository context. Keep source-grounded hypotheses separate from evaluation.
 
 ## Use it
 
@@ -39,7 +114,7 @@ or vendored copies from the analysis scope by default. This includes `test/`,
 `tests/`, `__tests__/`, `fixtures/`, `.test.*`/`.spec.*` files, Python `test_*.py`,
 Go `*_test.go`, Java/C# test-name conventions, `examples/`, `benchmarks/`,
 `generated/`, `dist/`, `vendor/`, and the packaged duplicate `plugin/runtime/`.
-The shared `sourceScope` policy in `protocol/v2.json` lists the exact patterns.
+The shared `sourceScope` policy in `protocol/v3.json` lists the exact patterns.
 
 Opt in separately when those sources matter:
 
@@ -236,22 +311,27 @@ that successful query execution established complete extraction.
 
 ## LLM boundary
 
-CodeQL discovery and SARIF import make **zero model calls** and require no LLM
-settings in Muse or the direct CLI. They never load the API driver. Reserved
-next-task/evidence/submission operations return `not_implemented`.
+SAST/CodeQL discovery and SARIF import make **zero model calls** and require no
+LLM settings in either interface. The SAST-only route never loads the API driver.
+Policy-only and combined runs perform policy mapping and discovery through
+`next_task`, `evidence`, and `submit`.
 
-For future evaluation, Python owns policy, task instructions, evidence checks, and
-stage transitions. Muse will reason through the active session and its settings,
-with no independent API profile, credential access, or fallback. MCP cannot attest
-subscription billing. Future direct CLI reasoning uses `src/scanner/api-driver.mjs`
-and explicit standalone API credentials; that driver currently validates settings
-and stops without sending a model request.
+Inside Muse the active session supplies all reasoning with its current settings.
+The plugin never looks up an API profile, reads model credentials, or performs
+independent inference. It cannot attest subscription billing or count host tokens;
+reports show zero independent requests and unknown host usage, rather than claiming
+no AI reasoning occurred. Direct CLI policy execution requires an explicit saved
+API profile and runs the same bounded protocol through `src/scanner/api-driver.mjs`.
+Its request attempts are recorded; provider token usage is currently unavailable.
+
+Formal confirmation/refutation is not implemented. Discovery submissions cannot
+set vulnerability verdicts, and all accepted signals keep `evaluation: not_run`.
 
 ## Files and development
 
 | File/directory | Responsibility |
 | --- | --- |
-| `protocol/v2.json` | Shared authored schemas, operations/version, and local schema references |
+| `protocol/v3.json` | Shared authored schemas, operations/version, and local schema references |
 | `contracts.py` | Manifest loading and structural validation |
 | `service.py` | Transport-independent routing and bounded response pages |
 | `workflow.py` | Project lease, durable lifecycle/checkpoints, reports, artifact allowlist |
@@ -268,7 +348,7 @@ and stops without sending a model request.
 Python 3.11+ is needed only for local development/tests. No Python runtime package
 dependencies are required.
 
-Repeated protocol shapes use local `$ref` pointers within `protocol/v2.json`.
+Repeated protocol shapes use local `$ref` pointers within `protocol/v3.json`.
 Python and Node expand them at load time, so MCP clients still receive
 self-contained schemas. External references, cycles, and unresolved pointers
 are rejected. There is one authored definition for configuration, build settings,
@@ -281,7 +361,8 @@ npm run test:scanner
 npm run plugin:build
 npm run check
 npm test
-npm run test:codeql                    # opt-in: real Docker/CodeQL fixtures
+npm run test:policy                    # real lightweight Docker + scripted-host MCP
+npm run test:codeql                    # real CodeQL fixtures, boundaries, scope and combined mode
 ```
 
 The deterministic Python suite uses a fake executable to test lifecycle, failures,
@@ -302,7 +383,7 @@ Transport development:
 PYTHONPATH=scanner/src PYTHONDONTWRITEBYTECODE=1 python3 -m bypass_scanner
 ```
 
-Initialize with a version in `protocol/v2.json`, send
+Initialize with a version in `protocol/v3.json`, send
 `notifications/initialized`, then inspect `tools/list`/`scanner_capabilities`.
 Without the image, transport/capabilities work but CodeQL operations report the
 missing catalog. Wire frames are capped at 1 MiB; artifact data are paged.

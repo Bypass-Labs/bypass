@@ -37,8 +37,8 @@ class Server:
                 return error(-32602, "Unsupported protocol version or repeated initialization.")
             self.initialized = True
             result = {"protocolVersion": requested, "capabilities": {"tools": {"listChanged": False}},
-                      "serverInfo": {"name": "bypass-scanner", "version": "0.2.0"},
-                      "instructions": "Deterministic CodeQL discovery only; zero model calls. Signals are unevaluated. AI evaluation is unavailable."}
+                      "serverInfo": {"name": "bypass-scanner", "version": "0.3.0"},
+                      "instructions": "SAST and policy discovery. Policy reasoning is supplied by the host or CLI task loop. Python never calls models. Signals remain unevaluated."}
         elif not self.initialized:
             return error(-32002, "Initialize the scanner first.")
         elif method == "ping":
@@ -47,7 +47,7 @@ class Server:
             result = {"tools": [
                 {"name": "scanner_" + name, "description": definition["description"],
                  "inputSchema": definition["inputSchema"],
-                 "annotations": {"readOnlyHint": name in ('capabilities', 'rules', 'status', 'signals', 'artifact'), "destructiveHint": False}}
+                 "annotations": {"readOnlyHint": name in ('capabilities', 'rules', 'policies', 'status', 'signals', 'artifact'), "destructiveHint": False}}
                 for name, definition in MANIFEST["operations"].items()
             ]}
         elif method == "tools/call":
