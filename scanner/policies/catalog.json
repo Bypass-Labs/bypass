@@ -1,0 +1,9 @@
+{
+  "version": 1,
+  "policies": [
+    {"id":"authz/object-access","version":1,"title":"Object ownership and tenant boundaries","file":"object-access.md"},
+    {"id":"authz/privileged-action","version":1,"title":"Server-side privileged action authorization","file":"privileged-action.md"},
+    {"id":"network/destination-boundary","version":1,"title":"Untrusted outbound destinations","file":"destination-boundary.md"},
+    {"id":"filesystem/path-containment","version":1,"title":"Filesystem containment before effects","file":"path-containment.md"}
+  ]
+}

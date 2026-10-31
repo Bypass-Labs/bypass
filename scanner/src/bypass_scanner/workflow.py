@@ -54,9 +54,14 @@ def atomic(path, value):
 
 def settings(value):
     validate(MANIFEST['schemas']['config'], value)
-    result = {'languages': list(dict.fromkeys(value.get('languages', []))), 'includeRules': list(dict.fromkeys(value.get('includeRules', []))),
+    result = {'detectors':list(dict.fromkeys('codeql' if d=='sast' else d for d in value.get('detectors',['codeql']))),
+              'languages': list(dict.fromkeys(value.get('languages', []))), 'includeRules': list(dict.fromkeys(value.get('includeRules', []))),
               'excludeRules': list(dict.fromkeys(value.get('excludeRules', []))), 'builds': value.get('builds', {}), **scope_options(value),
               'resources': {**MANIFEST['resourceDefaults'], **value.get('resources', {})}}
+    result.update({k:value.get(k,[]) for k in ('includePolicies','excludePolicies','policyCatalogs','contextFiles')})
+    result['policyLimits']={**MANIFEST['policyLimits'],**value.get('policyLimits',{})}
+    for name in result['policyCatalogs']+result['contextFiles']:
+        relative(name)
     if result['resources']['memoryMb'] < result['resources']['ramMb'] + 1024:
         raise ValueError('Container memory must exceed CodeQL RAM by at least 1024 MB.')
     for language, build in result['builds'].items():
@@ -85,6 +90,10 @@ class Workflow:
 
     def catalog(self):
         return self.catalog_override if self.catalog_override is not None else load_catalog()
+
+    def policy_engine(self):
+        from bypass_scanner.discovery.policy import PolicyEngine
+        return PolicyEngine(self)
 
     def directory(self, run):
         if not re.fullmatch(r'scan_[a-f0-9]{24}', run):
@@ -118,12 +127,18 @@ class Workflow:
             result['networkJob'] = {name: state['networkJob'][name] for name in ('id', 'language')}
         if state.get('scope'):
             result['scope'] = state['scope']
+        result['detectors']=state.get('config',{}).get('detectors',['codeql'])
+        for key in ('policy','reasoning'):
+            if key in state:result[key]=state[key]
         return result
 
     def status(self, run):
         with self.guard:
             state = self.read(run)
-            if state['status'] not in TERMINAL and run not in self.tasks:
+            if state['status']=='awaiting_reasoning':
+                data=self.policy_engine().load(run)
+                self.policy_engine().expire(state,data)
+            if state['status'] not in TERMINAL and state['status']!='awaiting_reasoning' and run not in self.tasks:
                 try:
                     fd = self.lease()
                 except ValueError:
@@ -138,13 +153,21 @@ class Workflow:
             return self.public(state)
 
     def start(self, arguments):
-        config = settings(arguments.get('config', {}))
+        config_value=dict(arguments.get('config', {}))
+        if arguments.get('detector'):
+            config_value['detectors']=MANIFEST['detectorAliases'][arguments['detector']]
+        config = settings(config_value)
         importing = arguments.get('importSarif', False)
         if not self.source.is_dir():
             raise ValueError('Connect an explicit source repository before discovery.')
         if importing and not Path(os.environ.get('BYPASS_SCANNER_SARIF', '/inputs/findings.sarif')).is_file():
             raise ValueError('The selected SARIF input is unavailable.')
-        if not importing:
+        if importing and 'codeql' not in config['detectors']:
+            raise ValueError('SARIF import requires the SAST detector.')
+        if 'policy' in config['detectors'] and not config['policyCatalogs']:
+            from bypass_scanner.discovery.policy import selected
+            selected(config)
+        if not importing and 'codeql' in config['detectors']:
             catalog = self.catalog()
             known = {rule['id'] for rule in catalog['rules']}
             if any(item not in known for item in [*config['includeRules'], *config['excludeRules']]):
@@ -152,6 +175,12 @@ class Workflow:
         fd = self.lease()
         run = 'scan_' + uuid4().hex[:24]
         try:
+            active=self.output/'active-run.json'
+            if active.is_file():
+                previous=self.read(json.loads(active.read_text())['run'])
+                if previous['status']=='awaiting_reasoning':
+                    self.policy_engine().expire(previous,self.policy_engine().load(previous['id']))
+                    if previous['status']=='awaiting_reasoning':raise ValueError(f"Policy run {previous['id']} is awaiting reasoning; resume or cancel it first.")
             self.directory(run).mkdir(mode=0o700)
             state = {'id': run, 'status': 'queued', 'stage': 'discovery', 'phase': 'snapshot', 'sourceRevision': '',
                      'executionMode': arguments.get('executionMode', 'standalone-api'), 'modelCalls': 0,
@@ -159,6 +188,7 @@ class Workflow:
                      'message': 'Preparing source snapshot.', 'createdAt': now(), 'updatedAt': now(), 'config': config,
                      'importSarif': importing, 'imageIdentity': os.environ.get('BYPASS_SCANNER_IMAGE', 'development')}
             self.save(state)
+            atomic(active,{'run':run})
             self.launch(state, fd, False)
             return self.public(state)
         except BaseException:
@@ -170,10 +200,21 @@ class Workflow:
         if state['status'] == 'completed' or run in self.tasks:
             return self.status(run)
         fd = self.lease()
-        if state['imageIdentity'] != os.environ.get('BYPASS_SCANNER_IMAGE', 'development'):
+        try:
+            active = self.output / 'active-run.json'
+            if active.is_file():
+                previous = self.read(json.loads(active.read_text())['run'])
+                if previous['id'] != run and previous['status'] == 'awaiting_reasoning':
+                    self.policy_engine().expire(previous, self.policy_engine().load(previous['id']))
+                    if previous['status'] == 'awaiting_reasoning':
+                        raise ValueError(f"Policy run {previous['id']} is awaiting reasoning; resume or cancel it first.")
+            if state['imageIdentity'] != os.environ.get('BYPASS_SCANNER_IMAGE', 'development'):
+                raise ValueError('Scanner image changed; start a new scan instead of reusing this run.')
+            atomic(active, {'run': run})
+            self.launch(state, fd, True)
+        except BaseException:
             os.close(fd)
-            raise ValueError('Scanner image changed; start a new scan instead of reusing this run.')
-        self.launch(state, fd, True)
+            raise
         return self.public(state)
 
     def launch(self, state, fd, resuming):
@@ -192,6 +233,10 @@ class Workflow:
             if state['status'] in TERMINAL:
                 return self.public(state)
             atomic(self.directory(run) / 'cancel-request.json', {'requestedAt': now()})
+            if state['status']=='awaiting_reasoning':
+                state.update(status='cancelled',message='Policy discovery cancelled. Accepted signals and evidence are retained.')
+                self.save(state);self.render(state)
+                return self.public(state)
             task = self.tasks.get(run)
             if task:
                 task[0].set()
@@ -221,12 +266,22 @@ class Workflow:
             atomic(directory / 'analysis-scope.json', scope_manifest)
             state['scope'] = scope_manifest['summary']
             self.save(state)
+            if 'policy' in state['config'].get('detectors',[]):
+                from bypass_scanner.discovery.policy import selected
+                selected(state['config'],directory/'snapshot',analysis['files'])
             if state['importSarif']:
                 self.import_sarif(state, analysis)
-            else:
-                self.scan(state, analysis, cancel)
+            elif 'codeql' in state['config'].get('detectors',['codeql']):
+                try:self.scan(state, analysis, cancel)
+                except InterruptedError:raise
+                except Exception as error:
+                    if 'policy' not in state['config'].get('detectors',[]):raise
+                    state['languages'].append({'language':'codeql','status':'failed','message':str(error)[:2000]})
             if cancel.is_set():
                 raise InterruptedError('Cancellation requested.')
+            if 'policy' in state['config'].get('detectors',[]):
+                self.policy_engine().prepare(state,analysis)
+                return
             state.update(status='incomplete' if any(item['status'] in ('failed', 'partial', 'unknown', 'no_files') for item in state['languages']) else 'completed',
                          phase='done', message='Discovery finished. Signals are not evaluated vulnerabilities; inspect coverage gaps.')
         except InterruptedError:
@@ -367,19 +422,34 @@ class Workflow:
             shutil.copyfile(os.environ.get('BYPASS_SCANNER_SARIF', '/inputs/findings.sarif'), target)
         filtered = []
         values, warnings = normalize(json.loads(target.read_text()), 'import', recorded, self.source, 'import.sarif', filtered=filtered)
+        included=set(state['config'].get('includeRules',[]));excluded=set(state['config'].get('excludeRules',[]))
+        selected=[]
+        for value in values:
+            if (included and value['ruleId'] not in included) or value['ruleId'] in excluded:
+                filtered.append({'ruleId':value['ruleId'],'origin':value['origin'],'reason':'SAST rule selection'})
+            else:selected.append(value)
+        values=selected
+        atomic(directory / 'sarif-signals.json', values)
         atomic(directory / 'signals.json', values)
         atomic(directory / 'filtered-signals.json', filtered)
         atomic(directory / 'normalization-warnings.json', warnings)
-        state.update(signalCount=len(values), languages=[{'language': 'import', 'status': 'partial' if warnings else 'completed', 'phase': 'done', 'signalCount': len(values), 'coverage': 'unknown'}])
+        state.update(signalCount=len(values), languages=[{'language': 'import', 'status': 'partial' if warnings else 'completed', 'phase': 'done', 'signalCount': len(values), 'coverage': 'unknown','filteredSignalCount':len(filtered)}])
         state['scope']['filteredSignals'] = len(filtered)
 
     def aggregate(self, state):
         directory = self.directory(state['id'])
         values = []
+        if state.get('importSarif'):
+            imported=directory/'sarif-signals.json'
+            if imported.is_file():values=json.loads(imported.read_text())
+            elif not state.get('policy') and (directory/'signals.json').exists():values=json.loads((directory/'signals.json').read_text())
         for entry in state['languages']:
             path = directory / 'languages' / entry['language'] / 'signals.json'
             if path.is_file():
                 values.extend(json.loads(path.read_text()))
+        if state.get('policy'):
+            policy=contained(directory,'policy/signals.json')
+            if policy.is_file():values.extend(json.loads(policy.read_text()))
         atomic(directory / 'signals.json', values)
         state['signalCount'] = len(values)
         if state.get('scope'):
@@ -399,8 +469,12 @@ class Workflow:
                   'selection': 'rule-selection.json' if (directory / 'rule-selection.json').exists() else None,
                   'notice': 'Detector signals are unevaluated. No confirmed/refuted vulnerability verdict or complete security coverage is claimed.'}
         atomic(directory / 'report.json', report)
-        lines = ['# CodeQL discovery report', '', f"Run: {state['id']}", f"Status: {state['status']}",
-                 f"Source revision: {state['sourceRevision']}", f"Signals: {len(signals)}", 'Model calls: 0', '', report['notice'], '', '## Coverage', '']
+        lines = ['# Security discovery report', '', f"Run: {state['id']}", f"Status: {state['status']}",
+                 f"Source revision: {state['sourceRevision']}", f"Signals: {len(signals)}",
+                 f"Independent API request attempts: {state.get('reasoning',{}).get('independentModelRequests',state.get('modelCalls',0))}",
+                 'Muse host reasoning usage: unknown' if state.get('reasoning',{}).get('hostReasoning') else 'Muse host reasoning: not used',
+                 '', report['notice'], '', '## Coverage', '']
+        if state.get('policy'):lines.append('- Policy discovery: '+json.dumps(state['policy'])+'; see policy/coverage.json for reviewed and deferred work.')
         lines.extend(f"- {entry['language']}: {entry['status']}; {entry.get('message', '')}" for entry in state['languages'])
         if state.get('unsupportedLanguages'):
             lines.append('- Unsupported/deferred: ' + ', '.join(state['unsupportedLanguages']))
@@ -412,16 +486,22 @@ class Workflow:
                           f"Filtered detector alerts: {scope['filteredSignals']}. See analysis-scope.json and filtered-signals.json artifacts.",
                           'Build context is retained; compiled builds can extract excluded inputs. Candidate alerts are filtered by primary location. These file counts do not establish extraction coverage.'])
         lines.extend(['', '## Unevaluated signals', ''])
-        lines.extend(f"- `{item['ruleId']}`: {item['suspectedIssue'].replace(chr(10), ' ')} (raw: {item['origin']['artifact']}, result {item['origin']['resultIndex']})" for item in signals)
+        lines.extend(f"- `{item['ruleId']}`: {item['suspectedIssue'].replace(chr(10), ' ')} (origin: {item['origin']['artifact']})" for item in signals)
         lines.extend(['', '## Run diagnostics', '', state['message']])
         (directory / 'report.md').write_text('\n'.join(lines) + '\n')
 
     def artifacts(self, run):
         directory = self.directory(run)
-        allowed = [directory / name for name in ('manifest.json', 'source-manifest.json', 'analysis-scope.json', 'rule-selection.json', 'signals.json', 'filtered-signals.json', 'normalization-warnings.json', 'import.sarif', 'report.json', 'report.md')]
+        allowed = [directory / name for name in ('manifest.json', 'source-manifest.json', 'analysis-scope.json', 'rule-selection.json', 'signals.json', 'sarif-signals.json', 'filtered-signals.json', 'normalization-warnings.json', 'import.sarif', 'report.json', 'report.md')]
         for folder in (directory / 'languages').glob('*') if (directory / 'languages').exists() else []:
             allowed.extend(folder / name for name in ('raw.sarif', 'diagnostics.sarif', 'coverage.json', 'signals.json', 'filtered-signals.json', 'normalization-warnings.json', 'selected.qls', 'codeql-scope.json'))
             allowed.extend(folder.glob('*.log'))
+        policy=directory/'policy'
+        if policy.is_dir() and not policy.is_symlink():
+            allowed.extend(policy/name for name in ('selection.json','context.json','threat-model.json','coverage.json','signals.json'))
+            for name in ('submissions','evidence'):
+                folder=policy/name
+                if folder.is_dir() and not folder.is_symlink():allowed.extend(folder.glob('*.json'))
         return [{'path': path.relative_to(directory).as_posix(), 'bytes': path.stat().st_size}
                 for path in allowed if path.is_file() and not path.is_symlink()]
 

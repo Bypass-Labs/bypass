@@ -1,9 +1,12 @@
 *
 !Dockerfile
 !protocol/
-!protocol/v2.json
+!protocol/v3.json
 !codeql-lock.json
 !src/
 !src/**
+!policies/
+!policies/*.json
+!policies/*.md
 **/__pycache__/
 **/*.pyc

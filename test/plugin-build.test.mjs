@@ -23,7 +23,7 @@ test('a source-only checkout builds a self-contained plugin and removes stale ou
   const checked=await execFile(process.platform==='win32'?'npm.cmd':'npm',['run','check'],{cwd:root,timeout:90000});
   assert.equal(checked.code,0,checked.stderr||checked.stdout);
   assert.equal(fs.existsSync(path.join(runtime,'stale-file')),false);
-  assert.deepEqual(fs.readFileSync(path.join(root,'scanner/protocol/v2.json')),fs.readFileSync(path.join(runtime,'scanner/protocol/v2.json')));
+  assert.deepEqual(fs.readFileSync(path.join(root,'scanner/protocol/v3.json')),fs.readFileSync(path.join(runtime,'scanner/protocol/v3.json')));
   assert.equal(fs.existsSync(path.join(runtime,'scanner/protocol/v1.json')),false);
 
   // The built plugin must launch with no development dependency tree present.
@@ -35,7 +35,7 @@ test('a source-only checkout builds a self-contained plugin and removes stale ou
     const listed=await client.request('tools/list');
     assert.ok(listed.result.tools.some(tool=>tool.name==='bypass_discover'));
     const capabilities=await client.call('bypass_scanner_capabilities');
-    assert.equal(capabilities.protocolVersion,'bypass-scanner.v2');
+    assert.equal(capabilities.protocolVersion,'bypass-scanner.v3');
     assert.equal(capabilities.features.codeqlDiscovery,true);
     assert.equal(capabilities.independentModelRequests,0);
   }finally{await client.close();}

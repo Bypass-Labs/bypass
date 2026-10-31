@@ -11,7 +11,7 @@ Bypass brings source scanning, live application testing, and reusable security c
 ### Key benefits
 
 - **Work inside Muse.** Use your active Muse account and model, with no separate API key for plugin reasoning.
-- **Inspect code and test behavior.** Run CodeQL against source, investigate with Muse, and use black-box testing to validate supported vulnerabilities against a running app.
+- **Inspect code and test behavior.** Choose CodeQL SAST, AI policy discovery, or both; investigate source evidence and use black-box testing to validate supported vulnerabilities against a running app.
 - **Keep the test.** Replay saved HTTP proofs after a fix and export supported checks to Node tests. Regression replay needs no model calls.
 - **Carry security context into feature work.** Retrieve past findings, source citations, and saved behavior requirements with `/bypass:build`. Changed source marks knowledge stale.
 - **Choose where inference runs.** Standalone AI reviews support provider APIs and API-key-protected local or self-hosted compatible endpoints. Evidence is saved locally; selected source and observations are available to the model you choose.
@@ -43,7 +43,7 @@ irm https://bypasslabs.ai/install/muse.ps1 | iex
 
 **2. Choose “Enable these permissions and open Muse” (`1` or `y`).**
 
-The installer explains the security-tools and security-memory permissions, registers the plugin, and opens Muse with setup started. It includes the runtime and CLI; no GitHub clone, npm, or separate model key is needed. Docker is needed only if you use the CodeQL scanner or standalone Docker review.
+The installer explains the security-tools and security-memory permissions, registers the plugin, and opens Muse with setup started. It includes the runtime and CLI; no GitHub clone, npm, or separate model key is needed. Docker is needed for SAST/policy discovery and standalone Docker review.
 
 **3. Tell Muse what to review.** For example:
 
@@ -57,7 +57,7 @@ Setup offers **Code only**, **Code + running app**, or **Running app only**. Sup
 
 For an app, setup also asks for its environment, verifies control with DNS TXT or an HTTPS verification file, and records allowed paths, HTTP methods, request rate, and expiry. Valid ownership is reused for the same app origin. Accounts are optional for anonymous checks; authenticated checks need usable test identities.
 
-**Choose the next command:** `/bypass:discover` for CodeQL, `/bypass:review` for Muse-assisted source review, or `/bypass:blackbox` for running-app discovery. See the examples below.
+**Choose the next command:** `/bypass:discover` for SAST, policy discovery, or both, `/bypass:review` for Muse-assisted source review, or `/bypass:blackbox` for running-app discovery. See the examples below.
 
 <details>
 <summary>Updating, permissions, and model privacy</summary>
@@ -74,7 +74,7 @@ Muse owns plugin reasoning and billing. Bypass cannot verify subscription billin
 
 | Workflow | In Muse | Standalone | Requirements |
 | --- | --- | --- | --- |
-| CodeQL source scan | `/bypass:discover` | `bypass discover` | Source + Docker; scanner makes zero model calls |
+| SAST and AI policy discovery | `/bypass:discover` → SAST / Policy / Both | `bypass discover --detector <mode>` | Source + Docker; SAST needs no model; policy uses Muse or a CLI API profile |
 | AI-assisted source review | `/bypass:review` | `bypass scan --mode code` | Muse session; CLI needs a provider key + Docker |
 | Running-app discovery and testing | `/bypass:blackbox` | `bypass blackbox <url>` | Verified target + scope; CLI needs an API key, Meta by default |
 | Saved regression replay | `/bypass:tests` | `bypass test run --all` | Saved checks and valid target setup; no model calls |
@@ -82,7 +82,7 @@ Muse owns plugin reasoning and billing. Bypass cannot verify subscription billin
 
 ## White-box source review
 
-### Scan with CodeQL
+### Discover source security signals
 
 Connect your source through `/bypass:start`, choose **Code only** or **Code + running app**, then run:
 
@@ -90,38 +90,51 @@ Connect your source through `/bypass:start`, choose **Code only** or **Code + ru
 /bypass:discover
 ```
 
-Docker must be running. First use prepares the pinned scanner image and downloads its toolchains; later scans reuse it. No host Python, host CodeQL installation, or LLM API key is required.
+Choose **SAST**, **Policy**, or **Both** in Muse:
+
+| Mode | What it checks | AI usage |
+| --- | --- | --- |
+| **SAST** | CodeQL security rules across supported languages | No model calls |
+| **Policy** | Source paths against policies for object access, privileged actions, outbound destinations, and filesystem boundaries | Your active Muse session |
+| **Both** | CodeQL rules and AI policy discovery, with independent selections and evidence | Your active Muse session for policy tasks |
+
+Docker must be running. First use prepares the selected image: Policy uses a lightweight Python runtime; SAST/Both download the pinned CodeQL toolchains. Later scans reuse the image. No host Python, host CodeQL, or separate plugin API key is required.
 
 From the CLI, after [installation](#standalone-cli):
 
 ```bash
 bypass init /path/to/app
-bypass discover --project /path/to/app
+bypass discover --detector sast --project /path/to/app
 ```
 
-Language detection covers C/C++, C#, Go, Java/Kotlin, JavaScript/TypeScript, Python, Ruby, Rust, and GitHub Actions. Tests, examples, fixtures, and generated/vendor copies are excluded by default.
+For CLI **Policy** or **Both**, first [configure an API profile](#model-configuration), then use `--detector policy` or `--detector both`. The CLI defaults to SAST when no detector is specified.
+
+CodeQL language detection covers C/C++, C#, Go, Java/Kotlin, JavaScript/TypeScript, Python, Ruby, Rust, and GitHub Actions. Tests, examples, fixtures, and generated/vendor copies are excluded by default.
 
 <details>
-<summary>Select rules, include test code, and inspect reports</summary>
+<summary>Select rules and policies, include test code, and inspect reports</summary>
 
 Run from your connected application, or add `--project /path/to/app`:
 
 ```bash
 bypass scanner doctor
-bypass scanner prepare                 # Optional: prepare the image in advance
+bypass scanner prepare --detector policy  # Optional: prepare the lightweight image
 bypass scanner rules --language javascript --query injection
-bypass discover --languages javascript --rule js/command-line-injection
+bypass scanner policies
+bypass discover --detector sast --languages javascript --rule js/command-line-injection
+bypass discover --detector both --languages javascript \
+  --rule js/command-line-injection --policy authz/object-access
 bypass discover --include-tests
 bypass discover signals <run-id> --limit 20
 bypass discover report <run-id> --format md
 bypass discover resume <run-id>
 ```
 
-Use exact CodeQL rule IDs from `scanner rules`. `--rule` replaces the default `security-extended` selection; `--exclude-rule` removes exact IDs. `--include-examples` and `--include-generated` are separate options. Reports and raw SARIF are saved under `.bypass/scanner/<run-id>/`.
+Use exact CodeQL IDs from `scanner rules` and policy IDs from `scanner policies`. `--rule` replaces the default CodeQL `security-extended` selection; `--policy` selects policies independently. `--exclude-rule` and `--exclude-policy` remove exact IDs from their respective detectors. `--include-examples` and `--include-generated` are separate options. Reports, policy evidence/coverage, and available CodeQL SARIF are saved under `.bypass/scanner/<run-id>/`.
 
 </details>
 
-**Read the result correctly:** CodeQL produces unevaluated signals with source locations, detector severity, and extraction diagnostics. These are not confirmed live vulnerabilities. The scanner's integrated AI evaluation, reproduction, and patching stages are not implemented. [Scanner usage and limits](scanner/README.md).
+**Read the result correctly:** both detectors produce **unevaluated signals**, not confirmed live vulnerabilities. Policy tasks map source surfaces, inspect code through recorded evidence, and retain assumptions, counterevidence, and deferred work. Muse continues the task queue until it finishes, reaches a limit, or is blocked. Formal evaluation, runtime reproduction, and patching remain unimplemented in this scanner. [Scanner usage](scanner/README.md) · [Policy workflow, custom policies, and limits](docs/POLICY_SIGNAL_DISCOVERY.md).
 
 ### Investigate source with Muse
 
@@ -131,7 +144,7 @@ With **Code only** selected, run:
 /bypass:review
 ```
 
-Muse reads bounded source and reports cited hypotheses and recommendations. This is a separate workflow from the CodeQL scanner. With **Code + running app**, it can also configure supported HTTP controls and save regressions after proof. Code-only review makes no live-app requests and cannot establish runtime exploitability.
+Muse reads bounded source and reports cited hypotheses and recommendations. This is a separate workflow from SAST/policy discovery. With **Code + running app**, it can also configure supported HTTP controls and save regressions after proof. Code-only review makes no live-app requests and cannot establish runtime exploitability.
 
 ## Black-box audit
 
@@ -218,14 +231,15 @@ Choose **Connect my application**, or **See the full local walkthrough**. Type `
 
 ### Model configuration
 
-CodeQL, reports, and saved regression replay need no model key. Standalone AI source review needs Docker and an explicit provider profile. Load the key privately, then configure its environment-variable **name**, never its value:
+SAST, reports, and saved regression replay need no model key. Standalone policy discovery and AI source review need Docker and an explicit provider profile. Load the key privately, then configure its environment-variable **name**, never its value:
 
 ```bash
 bypass model add review --provider meta --secret-env MODEL_API_KEY --project /path/to/app
 bypass model use review --project /path/to/app
-bypass engine use docker --project /path/to/app
-bypass scan --mode code --project /path/to/app
+bypass discover --detector policy --project /path/to/app
 ```
+
+For the separate guided source-review workflow, use `bypass engine use docker --project /path/to/app`, then `bypass scan --mode code --project /path/to/app`.
 
 Run `bypass init /path/to/app` first if the application is not connected. Presets include **Meta, OpenAI, Anthropic, Moonshot, DeepSeek, and custom**. For a local or self-hosted model, use `custom` with an explicit endpoint, model ID, API-key variable, and transport. Bypass does not switch providers or billing paths automatically. [Provider examples and migration](docs/AI_MODES.md).
 
@@ -304,7 +318,7 @@ Review and merge the updated files, then use **Run workflow → operation: smoke
 | In Muse | What it does |
 | --- | --- |
 | `/bypass:start` | Connect/select an app or repository and resume setup |
-| `/bypass:discover` | Run CodeQL and inspect unevaluated signals |
+| `/bypass:discover` | Choose SAST, AI policy discovery, or both; inspect source signals |
 | `/bypass:review` | Investigate source and supported configured HTTP checks |
 | `/bypass:blackbox` | Discover and test a running app |
 | `/bypass:status` | Show setup, progress, and evidence |
@@ -317,7 +331,8 @@ For CLI help, use `bypass --help` or `bypass <command> --help`. A local monitor 
 
 ## Documentation
 
-- [CodeQL scanner: languages, rules, scope, reports, and recovery](scanner/README.md)
+- [Source scanner: languages, rules, scope, reports, and recovery](scanner/README.md)
+- [AI policy discovery: policies, evidence, coverage, and custom context](docs/POLICY_SIGNAL_DISCOVERY.md)
 - [Black-box audit: supported checks and evidence limits](docs/BLACKBOX_AUDIT.md)
 - [Accounts: signup, private imports, and token refresh](docs/ACCOUNTS.md)
 - [AI modes: Muse, provider APIs, and local/self-hosted models](docs/AI_MODES.md)

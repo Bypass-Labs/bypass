@@ -1,5 +1,5 @@
 {
-  "protocolVersion": "bypass-scanner.v2",
+  "protocolVersion": "bypass-scanner.v3",
   "resourceDefaults": {
     "threads": 2,
     "ramMb": 4096,
@@ -100,26 +100,69 @@
           "additionalProperties": true
         },
         "origin": {
-          "type": "object",
-          "properties": {
-            "artifact": {
-              "type": "string"
+          "anyOf": [
+            {
+              "type": "object",
+              "properties": {
+                "artifact": {
+                  "type": "string"
+                },
+                "runIndex": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "resultIndex": {
+                  "type": "integer",
+                  "minimum": 0
+                }
+              },
+              "required": [
+                "artifact",
+                "runIndex",
+                "resultIndex"
+              ],
+              "additionalProperties": false
             },
-            "runIndex": {
-              "type": "integer",
-              "minimum": 0
-            },
-            "resultIndex": {
-              "type": "integer",
-              "minimum": 0
+            {
+              "type": "object",
+              "properties": {
+                "kind": {
+                  "type": "string",
+                  "enum": [
+                    "policy"
+                  ]
+                },
+                "artifact": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 2000
+                },
+                "taskId": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 160
+                },
+                "policyId": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 160
+                },
+                "policyVersion": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "maximum": 100000
+                }
+              },
+              "required": [
+                "kind",
+                "artifact",
+                "taskId",
+                "policyId",
+                "policyVersion"
+              ],
+              "additionalProperties": false
             }
-          },
-          "required": [
-            "artifact",
-            "runIndex",
-            "resultIndex"
-          ],
-          "additionalProperties": false
+          ]
         },
         "limitations": {
           "type": "array",
@@ -216,19 +259,41 @@
           "type": "object",
           "properties": {},
           "additionalProperties": true
+        },
+        "workUnitId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 160
+        },
+        "expiresAt": {
+          "type": "number"
+        },
+        "policyId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 160
+        },
+        "phase": {
+          "type": "string",
+          "enum": [
+            "mapping",
+            "policy"
+          ]
         }
       },
       "required": [
         "id",
         "runId",
-        "caseId",
         "sourceRevision",
         "kind",
         "purpose",
         "instructions",
         "inputEvidence",
         "allowedOperations",
-        "resultSchema"
+        "resultSchema",
+        "workUnitId",
+        "expiresAt",
+        "phase"
       ],
       "additionalProperties": false
     },
@@ -363,7 +428,7 @@
         "protocolVersion": {
           "type": "string",
           "enum": [
-            "bypass-scanner.v2"
+            "bypass-scanner.v3"
           ]
         },
         "status": {
@@ -487,7 +552,8 @@
             "incomplete",
             "cancelled",
             "failed",
-            "interrupted"
+            "interrupted",
+            "awaiting_reasoning"
           ]
         },
         "stage": {
@@ -514,10 +580,17 @@
           ]
         },
         "modelCalls": {
-          "type": "integer",
-          "enum": [
-            0
-          ]
+          "anyOf": [
+            {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 100000
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Total model count is unknown for host reasoning. Use reasoning.independentModelRequests for scanner API request attempts."
         },
         "signalCount": {
           "type": "integer",
@@ -568,6 +641,26 @@
           "additionalProperties": true
         },
         "scope": {
+          "type": "object",
+          "properties": {},
+          "additionalProperties": true
+        },
+        "reasoning": {
+          "$ref": "#/schemas/policyUsage"
+        },
+        "detectors": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "enum": [
+              "codeql",
+              "policy"
+            ]
+          },
+          "maxItems": 2,
+          "minItems": 0
+        },
+        "policy": {
           "type": "object",
           "properties": {},
           "additionalProperties": true
@@ -708,6 +801,62 @@
         "includeGenerated": {
           "type": "boolean",
           "default": false
+        },
+        "detectors": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "enum": [
+              "codeql",
+              "sast",
+              "policy"
+            ]
+          },
+          "maxItems": 2,
+          "minItems": 1
+        },
+        "includePolicies": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 160
+          },
+          "maxItems": 100,
+          "minItems": 0
+        },
+        "excludePolicies": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 160
+          },
+          "maxItems": 100,
+          "minItems": 0
+        },
+        "policyCatalogs": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 2000
+          },
+          "maxItems": 10,
+          "minItems": 0
+        },
+        "contextFiles": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 2000
+          },
+          "maxItems": 20,
+          "minItems": 0
+        },
+        "policyLimits": {
+          "$ref": "#/schemas/policyLimits"
         }
       },
       "required": [],
@@ -719,7 +868,7 @@
         "protocolVersion": {
           "type": "string",
           "enum": [
-            "bypass-scanner.v2"
+            "bypass-scanner.v3"
           ]
         },
         "operation": {
@@ -739,14 +888,22 @@
             "failed",
             "interrupted",
             "error",
-            "not_implemented"
+            "not_implemented",
+            "awaiting_reasoning"
           ]
         },
         "modelCalls": {
-          "type": "integer",
-          "enum": [
-            0
-          ]
+          "anyOf": [
+            {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 100000
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Total model count is unknown for host reasoning. Use reasoning.independentModelRequests for scanner API request attempts."
         },
         "message": {
           "type": "string",
@@ -816,6 +973,25 @@
         "nextOffset": {
           "type": "integer",
           "minimum": -1
+        },
+        "reasoning": {
+          "$ref": "#/schemas/policyUsage"
+        },
+        "task": {
+          "$ref": "#/schemas/task"
+        },
+        "evidence": {
+          "type": "object",
+          "properties": {},
+          "additionalProperties": true
+        },
+        "policies": {
+          "type": "array",
+          "items": {
+            "$ref": "#/schemas/policyDefinition"
+          },
+          "maxItems": 100,
+          "minItems": 0
         }
       },
       "required": [
@@ -899,6 +1075,457 @@
         "run"
       ],
       "additionalProperties": false
+    },
+    "policyLimits": {
+      "type": "object",
+      "properties": {
+        "maxTasks": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 256
+        },
+        "maxRequestsPerTask": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 128
+        },
+        "maxEvidenceBytesPerTask": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 524288
+        },
+        "maxEvidenceBytes": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 16777216
+        },
+        "taskTimeoutSeconds": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 1200
+        },
+        "timeoutSeconds": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 7200
+        },
+        "maxAttempts": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 8
+        },
+        "maxFollowUpDepth": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 4
+        },
+        "maxModelRequests": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 1024
+        }
+      },
+      "required": [],
+      "additionalProperties": false
+    },
+    "policyUsage": {
+      "type": "object",
+      "properties": {
+        "executor": {
+          "type": "string",
+          "enum": [
+            "muse-host",
+            "standalone-api"
+          ]
+        },
+        "independentModelRequests": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 100000
+        },
+        "hostReasoning": {
+          "type": "boolean"
+        },
+        "hostTokens": {
+          "type": "null"
+        },
+        "providerTokens": {
+          "type": "null"
+        }
+      },
+      "required": [
+        "executor",
+        "independentModelRequests",
+        "hostReasoning",
+        "hostTokens",
+        "providerTokens"
+      ],
+      "additionalProperties": false
+    },
+    "policyDefinition": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 160
+        },
+        "version": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 100000
+        },
+        "title": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200
+        },
+        "file": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200
+        }
+      },
+      "required": [
+        "id",
+        "version",
+        "title",
+        "file"
+      ],
+      "additionalProperties": false
+    },
+    "policyCatalog": {
+      "type": "object",
+      "properties": {
+        "version": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 1
+        },
+        "policies": {
+          "type": "array",
+          "items": {
+            "$ref": "#/schemas/policyDefinition"
+          },
+          "maxItems": 100,
+          "minItems": 1
+        }
+      },
+      "required": [
+        "version",
+        "policies"
+      ],
+      "additionalProperties": false
+    },
+    "mappingSurface": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 160
+        },
+        "title": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 300
+        },
+        "paths": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 2000
+          },
+          "maxItems": 12,
+          "minItems": 1
+        },
+        "evidence": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 160
+          },
+          "maxItems": 20,
+          "minItems": 1
+        },
+        "policies": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 160
+          },
+          "maxItems": 100,
+          "minItems": 1
+        }
+      },
+      "required": [
+        "id",
+        "title",
+        "paths",
+        "evidence",
+        "policies"
+      ],
+      "additionalProperties": false
+    },
+    "mappingResult": {
+      "type": "object",
+      "properties": {
+        "summary": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 8000
+        },
+        "assumptions": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 2000
+          },
+          "maxItems": 50,
+          "minItems": 0
+        },
+        "surfaces": {
+          "type": "array",
+          "items": {
+            "$ref": "#/schemas/mappingSurface"
+          },
+          "maxItems": 32,
+          "minItems": 0
+        },
+        "openQuestions": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 2000
+          },
+          "maxItems": 50,
+          "minItems": 0
+        },
+        "reviewedEvidence": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 160
+          },
+          "maxItems": 100,
+          "minItems": 1
+        }
+      },
+      "required": [
+        "summary",
+        "assumptions",
+        "surfaces",
+        "openQuestions",
+        "reviewedEvidence"
+      ],
+      "additionalProperties": false
+    },
+    "policyCandidate": {
+      "type": "object",
+      "properties": {
+        "title": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 300
+        },
+        "hypothesis": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 4000
+        },
+        "attackerInput": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 2000
+        },
+        "impact": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 2000
+        },
+        "evidence": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 160
+          },
+          "maxItems": 20,
+          "minItems": 1
+        },
+        "counterevidence": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 4000
+        },
+        "assumptions": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 2000
+          },
+          "maxItems": 50,
+          "minItems": 0
+        },
+        "openQuestions": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 2000
+          },
+          "maxItems": 50,
+          "minItems": 0
+        },
+        "trace": {
+          "type": "array",
+          "minItems": 2,
+          "maxItems": 20,
+          "items": {
+            "type": "object",
+            "properties": {
+              "evidenceId": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 160
+              },
+              "role": {
+                "type": "string",
+                "enum": [
+                  "entrypoint",
+                  "control",
+                  "sink",
+                  "implementation"
+                ]
+              }
+            },
+            "required": [
+              "evidenceId",
+              "role"
+            ],
+            "additionalProperties": false
+          }
+        }
+      },
+      "required": [
+        "title",
+        "hypothesis",
+        "attackerInput",
+        "impact",
+        "evidence",
+        "counterevidence",
+        "assumptions",
+        "openQuestions",
+        "trace"
+      ],
+      "additionalProperties": false
+    },
+    "policyFollowUp": {
+      "type": "object",
+      "properties": {
+        "paths": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 2000
+          },
+          "maxItems": 12,
+          "minItems": 1
+        },
+        "question": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 2000
+        },
+        "evidence": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 160
+          },
+          "maxItems": 20,
+          "minItems": 1
+        }
+      },
+      "required": [
+        "paths",
+        "question",
+        "evidence"
+      ],
+      "additionalProperties": false
+    },
+    "policyResult": {
+      "type": "object",
+      "properties": {
+        "outcome": {
+          "type": "string",
+          "enum": [
+            "candidates",
+            "no_candidate",
+            "not_applicable",
+            "needs_review"
+          ]
+        },
+        "candidates": {
+          "type": "array",
+          "items": {
+            "$ref": "#/schemas/policyCandidate"
+          },
+          "maxItems": 20,
+          "minItems": 0
+        },
+        "reviewedEvidence": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 160
+          },
+          "maxItems": 100,
+          "minItems": 1
+        },
+        "rationale": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 4000
+        },
+        "openQuestions": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 2000
+          },
+          "maxItems": 50,
+          "minItems": 0
+        },
+        "followUps": {
+          "type": "array",
+          "items": {
+            "$ref": "#/schemas/policyFollowUp"
+          },
+          "maxItems": 3,
+          "minItems": 0
+        }
+      },
+      "required": [
+        "outcome",
+        "candidates",
+        "reviewedEvidence",
+        "rationale",
+        "openQuestions",
+        "followUps"
+      ],
+      "additionalProperties": false
     }
   },
   "operations": {
@@ -952,14 +1579,19 @@
       "responseSchema": "response"
     },
     "start": {
-      "description": "Start for deterministic CodeQL discovery; zero model calls.",
+      "description": "Start SAST, policy, or combined discovery. Muse reasoning is host-owned.",
       "inputSchema": {
         "type": "object",
         "properties": {
           "detector": {
             "type": "string",
             "enum": [
-              "codeql"
+              "codeql",
+              "sast",
+              "policy",
+              "both",
+              "codeql,policy",
+              "sast,policy"
             ]
           },
           "config": {
@@ -1107,14 +1739,14 @@
       "responseSchema": "response"
     },
     "next_task": {
-      "description": "AI evaluation is not implemented.",
+      "description": "Lease the next durable policy discovery task.",
       "inputSchema": {
         "$ref": "#/schemas/runRequest"
       },
       "responseSchema": "response"
     },
     "evidence": {
-      "description": "AI evaluation is not implemented.",
+      "description": "Read bounded snapshot evidence for a leased discovery task.",
       "inputSchema": {
         "type": "object",
         "properties": {
@@ -1135,8 +1767,6 @@
               "read",
               "search",
               "navigate",
-              "artifact",
-              "check",
               "checkpoint"
             ]
           },
@@ -1156,7 +1786,7 @@
       "responseSchema": "response"
     },
     "submit": {
-      "description": "AI evaluation is not implemented.",
+      "description": "Submit cited discovery candidates; no vulnerability verdict is accepted.",
       "inputSchema": {
         "type": "object",
         "properties": {
@@ -1187,6 +1817,22 @@
           "sourceRevision",
           "result"
         ],
+        "additionalProperties": false
+      },
+      "responseSchema": "response"
+    },
+    "policies": {
+      "description": "Inspect bundled policy metadata without inference.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "query": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200
+          }
+        },
+        "required": [],
         "additionalProperties": false
       },
       "responseSchema": "response"
@@ -1284,5 +1930,39 @@
         ]
       }
     }
+  },
+  "policyLimits": {
+    "maxTasks": 64,
+    "maxRequestsPerTask": 32,
+    "maxEvidenceBytesPerTask": 131072,
+    "maxEvidenceBytes": 4194304,
+    "taskTimeoutSeconds": 300,
+    "timeoutSeconds": 1800,
+    "maxAttempts": 2,
+    "maxFollowUpDepth": 2,
+    "maxModelRequests": 256
+  },
+  "detectorAliases": {
+    "sast": [
+      "codeql"
+    ],
+    "codeql": [
+      "codeql"
+    ],
+    "policy": [
+      "policy"
+    ],
+    "both": [
+      "codeql",
+      "policy"
+    ],
+    "codeql,policy": [
+      "codeql",
+      "policy"
+    ],
+    "sast,policy": [
+      "codeql",
+      "policy"
+    ]
   }
 }

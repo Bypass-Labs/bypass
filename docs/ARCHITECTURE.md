@@ -3,17 +3,20 @@
 For the proposed discovery pipeline, see
 [Vulnerability discovery service](VULNERABILITY_DISCOVERY.md).
 
-The whitebox CodeQL scanner is in `scanner/` (Python core/protocol) and
-`src/scanner/` (Node Docker/MCP/API-driver boundaries). It has separate discover
-commands and Muse tools, with no integration into existing assessment findings.
-Python owns snapshots, language detection, exact rule selection, extraction,
-query execution, SARIF normalization, durable lifecycle, and discovery reports.
-Node prepares the bundled Docker recipe on first use, controls offline containers
-and explicitly network-enabled build helpers, and exposes the same operations to
-CLI and Muse. Deterministic discovery requires no API settings or model calls.
-AI discovery/evaluation remain unavailable. Future Muse reasoning uses the active
-session; the reserved standalone API driver requires explicit API settings. See the
-[scanner README](../scanner/README.md) for packaging and development instructions.
+The whitebox scanner lives in `scanner/` (Python core, policies, protocol) and
+`src/scanner/` (Node Docker/MCP/API-driver boundaries). Users choose SAST, policy,
+or both, with independent include/exclude filters. Python owns snapshots,
+CodeQL discovery, policy task preparation, source evidence, durable workflow,
+submission validation, and reports. Scanner state remains separate from existing
+assessment findings.
+
+SAST uses a pinned CodeQL image and requires no LLM settings. Policy-only uses a
+lightweight Python image and bounded source-only tasks. Muse requests, performs,
+and submits those tasks in its active session; Bypass never reads an API profile
+or calls a provider in that path. The standalone CLI uses its explicitly
+configured API profile through the same task/evidence protocol. Formal evaluation,
+reproduction and patching remain pending. See the [scanner README](../scanner/README.md)
+for configuration, evidence limits, provenance, and usage-accounting limitations.
 
 `src/` and `scanner/` are authoritative source trees. The plugin manifest,
 commands, skill, and entry points are authored under `plugin/`; its `runtime/`

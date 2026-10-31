@@ -48,7 +48,7 @@ readline.createInterface({input:process.stdin}).on('line',line=>{
 }
 
 test('scanner schemas and command family expose the agreed contract', () => {
-  assert.equal(protocolVersion, 'bypass-scanner.v2');
+  assert.equal(protocolVersion, 'bypass-scanner.v3');
   assert.deepEqual(defaultResources,manifest.resourceDefaults);
   assert.ok(defaultResources.timeoutSeconds>0);
   for(const name of ['capabilities','config','response','evaluation','evidence','run','signal','task'])assert.ok(manifest.schemas[name]);
@@ -65,7 +65,7 @@ test('scanner schemas and command family expose the agreed contract', () => {
 });
 
 test('scanner contract expands shared definitions into self-contained wire schemas',()=>{
-  const raw=JSON.parse(fs.readFileSync(path.join(scannerDirectory,'protocol/v2.json')));
+  const raw=JSON.parse(fs.readFileSync(path.join(scannerDirectory,'protocol/v3.json')));
   assert.deepEqual(raw.operations.start.inputSchema.properties.config,{$ref:'#/schemas/config'});
   assert.deepEqual(manifest.operations.start.inputSchema.properties.config,manifest.schemas.config);
   assert.deepEqual(manifest.schemas.response.properties.run,manifest.schemas.run);
@@ -90,7 +90,7 @@ test('Python MCP and Node read identical capabilities and operation schemas', { 
   assert.equal(listed.tools.length, Object.keys(manifest.operations).length);
   for (const tool of listed.tools) assert.deepEqual(tool.inputSchema, manifest.operations[tool.name.slice(8)].inputSchema);
   for (const [operation, args] of [['next_task',{run:'r'}], ['evidence',{run:'r',task:'t',operation:'read'}], ['submit',{run:'r',task:'t',sourceRevision:'s',result:{}}]]) {
-    assert.deepEqual(await client.call(operation,args),unavailable(operation));
+    assert.equal((await client.call(operation,args)).code,'scanner_error');
   }
   const error=await client.call('status',{run:'r'});
   assert.equal(error.code,'scanner_error');
@@ -138,7 +138,7 @@ test('default containers have no mounts/network and package only allowlisted fil
   assert.equal(helper[helper.indexOf('--network')+1],'bridge');
   assert.deepEqual(helper.slice(-4),['-m','bypass_scanner.worker','r','j']);
   const files = scannerPackageFiles();
-  assert.ok(files.includes('protocol/v2.json'));
+  assert.ok(files.includes('protocol/v3.json'));
   assert.equal(files.includes('protocol/v1.json'),false);
   assert.ok(files.includes('src/bypass_scanner/transports/mcp.py'));
   assert.ok(files.every(file => !file.includes('__pycache__') && !file.startsWith('tests/')));
@@ -243,13 +243,13 @@ test('analysis-scope flags override config identically in CLI and Muse modes',as
   }
 });
 
-test('reserved standalone AI driver validates an explicit profile then sends zero requests', async t => {
+test('standalone driver validates its API boundary and requires a scanner run before requests', async t => {
   assert.throws(()=>runAPIDriver({models:[]}),error=>error.details.reason==='model_configuration_required');
   const root=temp();await execute('init',[root]);await addTestModel(root);
   const state=JSON.parse(fs.readFileSync(path.join(root,'.bypass/state.json')));
   const OpenAI=(await import('openai')).default;
   const request=t.mock.method(OpenAI.prototype,'makeRequest',()=>{throw new Error('Unexpected model request');});
-  assert.equal(runAPIDriver(state).code,'not_implemented');
+  assert.throws(()=>runAPIDriver(state),/scanner client and run are required/);
   assert.equal(request.mock.callCount(),0);
   const result=await execute('discover',[],{project:root},{scannerConnect:async()=>deterministicClient(root,[])});
   assert.equal(result.modelCalls,0);assert.equal(request.mock.callCount(),0);
@@ -354,7 +354,7 @@ test('report continuation reads its artifact and finishes after the last page', 
   assert.equal(last.nextAction,undefined);
 });
 
-test('Muse can inspect capabilities and reserved AI interfaces without provider setup or source selection',async t=>{
+test('Muse can inspect capabilities without provider setup and rejects task calls for unknown runs',async t=>{
   const root=temp(),stateDir=temp(),client=await mcpClient(root,{stateDir});t.after(()=>client.close());
   fs.writeFileSync(path.join(root,'app.js'),'export const app = true;');
   const plan=await client.call('bypass_discover',{plan:true});
@@ -367,7 +367,7 @@ test('Muse can inspect capabilities and reserved AI interfaces without provider 
   const filename=path.join(root,'.bypass/state.json'), before=fs.readFileSync(filename,'utf8');
   for(const [tool,args] of [['bypass_discover_next_task',{run:'r'}],['bypass_discover_evidence',{run:'r',task:'t',operation:'read'}],['bypass_discover_submit',{run:'r',task:'t',sourceRevision:'s',result:{}}]]){
     const response=await client.raw(tool,args), result=JSON.parse(response.result.content[0].text);
-    assert.equal(result.code,'not_implemented');assert.equal(result.modelCalls,0);
+    assert.equal(response.result.isError,true);assert.match(result.error,/Invalid scanner run ID/);
   }
   assert.equal(fs.readFileSync(filename,'utf8'),before);
 });

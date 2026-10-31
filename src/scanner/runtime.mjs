@@ -11,7 +11,7 @@ export const defaultResources = {...manifest.resourceDefaults};
 export const imagePlatform = 'linux/amd64';
 
 export function scannerPackageFiles(root = scannerDirectory) {
-  const files = ['Dockerfile','.dockerignore','pyproject.toml','README.md','codeql-lock.json','protocol/v2.json'];
+  const files = ['Dockerfile','.dockerignore','pyproject.toml','README.md','codeql-lock.json','protocol/v3.json'];
   function visit(relative) {
     for (const entry of fs.readdirSync(path.join(root,relative),{withFileTypes:true}).sort((a,b)=>a.name.localeCompare(b.name))) {
       const name = `${relative}/${entry.name}`;
@@ -20,16 +20,18 @@ export function scannerPackageFiles(root = scannerDirectory) {
     }
   }
   visit('src');
+  for(const entry of fs.readdirSync(path.join(root,'policies'),{withFileTypes:true}).sort((a,b)=>a.name.localeCompare(b.name)))
+    if(entry.isFile()&&/\.(json|md)$/.test(entry.name))files.push('policies/'+entry.name);
   return files;
 }
 
-export function scannerTag() {
-  return `bypass-scanner:${hash(scannerPackageFiles().map(name=>[name,fs.readFileSync(path.join(scannerDirectory,name),'utf8')])).slice(0,16)}`;
+export function scannerTag(detector='codeql') {
+  return `bypass-scanner:${detector==='policy'?'policy-':''}${hash(scannerPackageFiles().map(name=>[name,fs.readFileSync(path.join(scannerDirectory,name),'utf8')])).slice(0,16)}`;
 }
 
-export async function scannerDoctor({signal,runner=execFile}={}) {
-  const tag=scannerTag(), lock=JSON.parse(fs.readFileSync(path.join(scannerDirectory,'codeql-lock.json')));
-  const base={image:{tag,available:false,platform:imagePlatform},codeql:{version:lock.version,bundleSha256:lock.bundleSha256},analysisImplemented:true,implementedStages:['discovery']};
+export async function scannerDoctor({signal,runner=execFile,detector='codeql'}={}) {
+  const tag=scannerTag(detector), lock=JSON.parse(fs.readFileSync(path.join(scannerDirectory,'codeql-lock.json')));
+  const base={image:{tag,available:false,platform:imagePlatform},runtime:detector,codeql:detector==='policy'?null:{version:lock.version,bundleSha256:lock.bundleSha256},analysisImplemented:true,implementedStages:['discovery']};
   let docker;
   try {docker=await runner('docker',['version','--format','{{.Server.Version}}'],{signal,timeout:10000});}
   catch(error){if(signal?.aborted)throw error;return {...base,docker:{available:false},status:'blocked',message:'Docker is unavailable. Install/start Docker Desktop or Colima; no repository clone or host CodeQL installation is required.'};}
@@ -37,21 +39,21 @@ export async function scannerDoctor({signal,runner=execFile}={}) {
   const inspected=await runner('docker',['image','inspect',tag,'--format','{{.Id}}'],{signal,timeout:10000});
   const id=inspected.code===0&&/^sha256:[a-f0-9]{64}$/.test(inspected.stdout)?inspected.stdout:null;
   return {...base,docker:{available:true,version:docker.stdout},image:{...base.image,available:!!id,id},status:id?'ready':'blocked',
-    message:id?'Pinned CodeQL discovery image is ready. AI evaluation is not implemented.':'The first CodeQL scan will prepare the bundled image automatically; scanner prepare can prewarm it.'};
+    message:id?`${detector} discovery image is ready. Formal AI evaluation is unavailable.`:`First ${detector} use prepares its bundled image; scanner prepare can prewarm it.`};
 }
 
 const preparations=new Map();
-export async function prepareScanner({signal,onProgress,runner=execFile}={}) {
-  const diagnostics=await scannerDoctor({signal,runner});
+export async function prepareScanner({signal,onProgress,runner=execFile,detector='codeql'}={}) {
+  const diagnostics=await scannerDoctor({signal,runner,detector});
   need(diagnostics.docker.available,diagnostics.message,3);
   if(diagnostics.image.available)return diagnostics;
   const tag=diagnostics.image.tag;
   if(preparations.has(tag))return preparations.get(tag);
   const promise=(async()=>{
-    onProgress?.({stage:'scanner-prepare',message:'Preparing pinned CodeQL and toolchains from the bundled recipe. First use downloads dependencies; no clone or API key is required.'});
+    onProgress?.({stage:'scanner-prepare',message:detector==='policy'?'Preparing the lightweight Python policy evidence runtime. No CodeQL bundle or LLM key is installed in this image.':'Preparing pinned CodeQL and toolchains from the bundled recipe. First use downloads dependencies; no clone or API key is required.'});
     const started=Date.now(), timer=setInterval(()=>onProgress?.({stage:'scanner-prepare',message:`Preparing CodeQL image · ${Math.round((Date.now()-started)/1000)}s elapsed. Scan-time network access remains off by default.`}),15000);
     try{
-      const result=await runner('docker',['build','--platform',imagePlatform,'--tag',tag,scannerDirectory],{signal,timeout:1800000,killGroup:true});
+      const result=await runner('docker',['build',...(detector==='policy'?['--target','policy']:[]),'--platform',imagePlatform,'--tag',tag,scannerDirectory],{signal,timeout:1800000,killGroup:true});
       need(result.code===0,'CodeQL image preparation failed. Check Docker networking, disk space, and the pinned toolchain downloads.',3);
       const inspected=await runner('docker',['image','inspect',tag,'--format','{{.Id}}'],{signal,timeout:10000});
       need(inspected.code===0&&/^sha256:[a-f0-9]{64}$/.test(inspected.stdout),'Cannot resolve the prepared CodeQL image.',3);
@@ -91,8 +93,8 @@ export function scannerContainerArgs(name,image,{root,output,sarif,resources={},
   return args;
 }
 
-export async function connectScanner({root,output,sarif,resources={},signal,onProgress,runner=execFile,timeoutMs,prepare=true}={}) {
-  const diagnostics=await (prepare?prepareScanner:scannerDoctor)({signal,onProgress,runner});
+export async function connectScanner({root,output,sarif,resources={},signal,onProgress,runner=execFile,timeoutMs,prepare=true,detector='codeql'}={}) {
+  const diagnostics=await (prepare?prepareScanner:scannerDoctor)({signal,onProgress,runner,detector});
   need(diagnostics.image.available,diagnostics.message,3);
   if(root){need(fs.statSync(root).isDirectory(),'Select an existing source directory.',2);output??=scannerOutput(root,true);}
   const name=`bypass-scanner-${randomUUID()}`, helpers=new Map();
