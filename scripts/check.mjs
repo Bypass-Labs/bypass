@@ -16,6 +16,15 @@ for(const [label,value] of [
   ['lockfile root package',metadata('package-lock.json').packages[''].version]
 ])assert.equal(value,version,`${label} must match package.json (${version}). Update release metadata and rebuild the plugin.`);
 console.log(`Release version ${version} matches CLI, plugin and lockfile metadata.`);
+// A local esbuild binary can hide an omitted platform package in the lockfile.
+// Check every advertised binary so Linux checks also protect clean Mac/Windows builds.
+const packages=metadata('package-lock.json').packages;
+for(const [name,expected] of Object.entries(packages['node_modules/esbuild'].optionalDependencies)){
+  const locked=packages['node_modules/'+name];
+  assert.ok(locked,`${name} is missing from package-lock.json; restore its pinned optional dependency entry.`);
+  assert.equal(locked.version,expected,`${name} must match the pinned esbuild version.`);
+  assert.match(locked.integrity,/^sha512-/,`${name} must have a locked integrity hash.`);
+}
 let count=0;
 function modules(directory){
   return fs.readdirSync(directory,{withFileTypes:true}).flatMap(entry=>{
