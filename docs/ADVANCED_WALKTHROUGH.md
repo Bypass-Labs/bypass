@@ -23,8 +23,8 @@ Use Bash for the copyable commands below. You need Node 22+, Git, and access to 
 Clone Bypass once. The helper keeps commands working when you later change directories:
 
 ```bash
-git clone https://github.com/Bypass-Labs/bypass-for-muse.git
-cd bypass-for-muse
+git clone https://github.com/Bypass-Labs/bypass.git
+cd bypass
 export BYPASS_ROOT="$PWD"
 bypass() { node "$BYPASS_ROOT/bin/bypass.mjs" "$@"; }
 bypass --help

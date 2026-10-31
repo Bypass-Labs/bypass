@@ -10,7 +10,7 @@ import path from 'node:path';
 import { execute } from './service.mjs';
 import { runtimeIdentity } from './runtime-identity.mjs';
 import { SCHEMA, VERSION, redact, need, outcome } from './util.mjs';
-import { workspaceInfo, isBypassSource, projectPath } from './project-selection.mjs';
+import { workspaceInfo, isBypassSource, isBypassRepositoryURL, projectPath } from './project-selection.mjs';
 import { pluginOnboarding } from './plugin-onboarding.mjs';
 import { savedSelection, rememberSelection } from './plugin-context.mjs';
 import { pluginHelp } from './plugin-parity.mjs';
@@ -248,7 +248,7 @@ export async function serveMCP(cwd=process.cwd(),io={input:process.stdin,output:
         const remote=/^(https:\/\/|ssh:\/\/|git@)/.test(args.repository);
         const location=remote?args.repository:projectPath(args.repository,cwd);
         need(!demoRoot||location===demoRoot,'Stop the active demo with bypass_demo_control before switching applications. Your prior application selection will be restored.');
-        need(!remote||!/[/ :]bypass-for-muse(?:\.git)?\/?$/i.test(location)||args.allowBypassSource,'This URL identifies Bypass tooling. Choose the application repository, or explicitly request reviewing Bypass itself.');
+        need(!remote||!isBypassRepositoryURL(location)||args.allowBypassSource,'This URL identifies Bypass tooling. Choose the application repository, or explicitly request reviewing Bypass itself.');
         need(remote||!isBypassSource(location)||args.allowBypassSource,'This is the Bypass tooling repository. Ask for the application repository; allowBypassSource requires an explicit request to review Bypass itself.');
         selecting=true;
         try{

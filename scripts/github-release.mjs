@@ -5,6 +5,7 @@ import {parseArgs} from 'node:util';
 import {releaseInventory,releasePattern,verifyBytes,readReleaseFile,verifyChecksums} from './release-files.mjs';
 
 export const downloadBase='https://bypasslabs.ai/downloads/bypass';
+export const releaseRepository=(env=process.env)=>env.GITHUB_REPOSITORY||'Bypass-Labs/bypass';
 const need=(ok,message)=>{if(!ok)throw new Error(message);};
 const pause=ms=>new Promise(resolve=>setTimeout(resolve,ms));
 
@@ -126,7 +127,7 @@ export async function mirrorRelease({source,repository,api,mode='archive',fetchI
 async function main(){
   const {values}=parseArgs({options:{'from-r2':{type:'string'},dist:{type:'string'},verify:{type:'boolean'},publish:{type:'boolean'}}});
   need(!(values.verify&&values.publish),'Choose verify or publish');
-  const repository=process.env.GITHUB_REPOSITORY||'Bypass-Labs/bypass-for-muse';
+  const repository=releaseRepository();
   if(process.env.GITHUB_ACTIONS==='true')need(process.env.GITHUB_REF==='refs/heads/main'&&process.env.GITHUB_SHA,'Release writes require the main workflow');
   const source=await loadRelease({dist:values.dist,releaseId:values['from-r2'],expectedCommit:process.env.GITHUB_SHA});
   const result=await mirrorRelease({source,repository,api:githubAPI(process.env.GH_TOKEN||process.env.GITHUB_TOKEN),mode:values.publish?'publish':values.verify?'verify':'archive'});

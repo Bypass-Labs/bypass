@@ -4,9 +4,9 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import {releaseInventory,releasePlatforms,installerFields,sha256,readReleaseFile} from '../scripts/release-files.mjs';
-import {loadRelease,mirrorRelease,githubAPI,downloadBase} from '../scripts/github-release.mjs';
+import {loadRelease,mirrorRelease,githubAPI,downloadBase,releaseRepository} from '../scripts/github-release.mjs';
 
-const repository='Bypass-Labs/bypass-for-muse',commit='a'.repeat(40),releaseId=`main-${commit}-1234-1`;
+const repository='Bypass-Labs/bypass',commit='a'.repeat(40),releaseId=`main-${commit}-1234-1`;
 function fixture(){
   const bytes=new Map(),manifest={schemaVersion:1,releaseId,commit,version:'0.7.7',assets:[]};
   const add=file=>{const body=Buffer.from(`fixture: ${file}`);bytes.set(file,body);return {file,size:body.length,sha256:sha256(body)};};
@@ -44,6 +44,17 @@ function github(){
 }
 const run=(source,api,options={})=>mirrorRelease({source,repository,api,log:()=>{},wait:async()=>{},...options});
 const channel=async()=>Response.json({releaseId,commit});
+
+test('local release recovery uses the canonical repository while CI retains its explicit repository',async()=>{
+  assert.equal(releaseRepository({}),'Bypass-Labs/bypass');
+  assert.equal(releaseRepository({GITHUB_REPOSITORY:'owner/explicit-repo'}),'owner/explicit-repo');
+  const metadata=JSON.parse(fs.readFileSync(new URL('../package.json',import.meta.url)));
+  assert.equal(metadata.repository.url,`https://github.com/${releaseRepository({})}.git`);
+  const {source}=fixture(),{state,api}=github();
+  await run(source,api,{repository:releaseRepository({})});
+  assert.ok(state.calls.every(c=>c.route.startsWith('/repos/Bypass-Labs/bypass/')));
+  assert.equal(state.assets.length,13);
+});
 
 test('GitHub archives the exact complete R2 inventory; drafts are reusable without duplicate uploads',async()=>{
   const {source,bytes}=fixture(),{state,api}=github();

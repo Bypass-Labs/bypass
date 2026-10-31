@@ -86,7 +86,7 @@ test('a successful preview never hides failed saved-check results',t=>{
 });
 
 test('opening the tooling checkout asks for the application before any review',async t=>{
-  const root=temp();fs.writeFileSync(path.join(root,'package.json'),JSON.stringify({name:'@bypass-labs/cli-skeleton'}));
+  const root=temp();fs.writeFileSync(path.join(root,'package.json'),JSON.stringify({name:'@bypass-labs/bypass'}));
   await execute('init',[root]);const before=fs.readFileSync(path.join(root,'.bypass/state.json'),'utf8'),output=[],prompts=[];
   t.mock.method(console,'log',text=>output.push(text));
   await terminal({project:root},{ask:async label=>{prompts.push(label);return '0';}});

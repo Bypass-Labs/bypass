@@ -348,7 +348,7 @@ For CLI help, use `bypass --help` or `bypass <command> --help`. A local monitor 
 
 ## Downloads and releases
 
-Use the installers above for the latest tested build. [GitHub Releases](https://github.com/Bypass-Labs/bypass-for-muse/releases) preserves the same six platform archives, installers, `release.json`, and `SHASUMS256.txt` published to R2. Each main build has a unique commit/run tag; it is published as a prerelease after installation checks and R2 promotion pass. [Release process and pinned installs](docs/RELEASES.md).
+Use the installers above for the latest tested build. [GitHub Releases](https://github.com/Bypass-Labs/bypass/releases) preserves the same six platform archives, installers, `release.json`, and `SHASUMS256.txt` published to R2. Each main build has a unique commit/run tag; it is published as a prerelease after installation checks and R2 promotion pass. [Release process and pinned installs](docs/RELEASES.md).
 
 ## License
 

@@ -11,7 +11,7 @@
   ],
   "r2_buckets": [{"binding": "RELEASES", "bucket_name": "bypass-releases"}],
   "vars": {
-    "GITHUB_REPOSITORY": "Bypass-Labs/bypass-for-muse",
+    "GITHUB_REPOSITORY": "Bypass-Labs/bypass",
     "GITHUB_REPOSITORY_ID": "1434899468",
     "GITHUB_OWNER_ID": "348399906",
     "PUBLISH_AUDIENCE": "https://bypasslabs.ai/downloads/bypass"

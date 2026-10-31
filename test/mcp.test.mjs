@@ -41,7 +41,7 @@ test('MCP negotiates, validates typed tools, shares CLI state, and closes cleanl
 
 test('plugin selects the application explicitly, keeps host state untouched, and scopes preview to the selected source',async t=>{
   const host=temp(),app=temp();
-  fs.writeFileSync(path.join(host,'package.json'),JSON.stringify({name:'@bypass-labs/cli-skeleton'}));
+  fs.writeFileSync(path.join(host,'package.json'),JSON.stringify({name:'@bypass-labs/bypass'}));
   fs.writeFileSync(path.join(host,'wrong-source.js'),'throw new Error("Must not inventory the tooling app")');
   fs.writeFileSync(path.join(app,'job-search.js'),'throw new Error("Must not execute customer code")');
   await execute('init',[host]);const before=fs.readFileSync(path.join(host,'.bypass/state.json'),'utf8');
@@ -84,7 +84,7 @@ test('plugin selects the application explicitly, keeps host state untouched, and
 test('plugin setup resumes across real MCP processes without copying permissions from the host',async t=>{
   const host=temp(),app=temp(),pluginState=temp();
   fs.writeFileSync(path.join(app,'auth.mjs'),'export const requireUser = true;\n');
-  fs.writeFileSync(path.join(host,'package.json'),JSON.stringify({name:'@bypass-labs/cli-skeleton'}));
+  fs.writeFileSync(path.join(host,'package.json'),JSON.stringify({name:'@bypass-labs/bypass'}));
   await execute('init',[host]);const hostBefore=fs.readFileSync(path.join(host,'.bypass/state.json'),'utf8');
   function client(){
     const child=spawn(process.execPath,[CLI,'mcp','serve','--project',host],{stdio:['pipe','pipe','pipe'],env:{...process.env,BYPASS_PLUGIN_STATE_DIR:pluginState,BYPASS_MCP_OWNER_TOKEN:'owner-test-only',BYPASS_MCP_OTHER_TOKEN:'other-test-only'}});

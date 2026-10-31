@@ -23,6 +23,9 @@ test('a source-only checkout builds a self-contained plugin and removes stale ou
   const checked=await execFile(process.platform==='win32'?'npm.cmd':'npm',['run','check'],{cwd:root,timeout:90000});
   assert.equal(checked.code,0,checked.stderr||checked.stdout);
   assert.equal(fs.existsSync(path.join(runtime,'stale-file')),false);
+  const packagedMetadata=JSON.parse(fs.readFileSync(path.join(runtime,'package.json')));
+  assert.equal(packagedMetadata.name,'@bypass-labs/bypass');
+  assert.equal(packagedMetadata.repository.url,'https://github.com/Bypass-Labs/bypass.git');
   for(const name of ['LICENSE','NOTICE','THIRD_PARTY_NOTICES.md'])
     assert.deepEqual(fs.readFileSync(path.join(source,name)),fs.readFileSync(path.join(runtime,name)));
   for(const name of ['src/internal/qs/LICENSE.md','src/_vendor/partial-json-parser/LICENSE','src/_vendor/zod-to-json-schema/LICENSE'])
