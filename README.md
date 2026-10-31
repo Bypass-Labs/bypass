@@ -1,6 +1,6 @@
 # Bypass for Muse Code
 
-**A security-testing plugin for Muse Code. Review your code, test your running app, and keep the evidence and regression checks.**
+**Bypass helps teams building with coding agents find real vulnerabilities, verify their fixes, and turn those findings into reusable security tests. As the application grows, its security checks grow with it. The initial experience lives inside Muse, with a standalone CLI and MCP interface. Bypass reviews code changes, tests suspected vulnerabilities against the running application, and brings verified findings back into the developer’s workflow.**
 
 [Quick start](#start-in-muse-code) · [White-box](#white-box-source-review) · [Black-box](#black-box-audit) · [CLI](#standalone-cli) · [GitHub agent](#github-security-agent) · [Docs](#documentation)
 
