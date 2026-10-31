@@ -277,6 +277,35 @@ test('local and deployed setup retain explicit exclusions without adding hidden 
   assert.deepEqual(JSON.parse(fs.readFileSync(deployed.data.scopeFile, 'utf8')).never, []);
 });
 
+test('deployed setup and authorization accept an operator-selected rate up to 32 RPS', async t => {
+  const root = temp();
+  t.after(() => fs.rmSync(root, {recursive: true, force: true}));
+  const origin = 'https://app.example.test';
+  const first = await cli(root, 'blackbox', 'setup', origin, '--rps', '12');
+  assert.equal(first.code, 0, JSON.stringify(first.data));
+  assert.equal(JSON.parse(fs.readFileSync(first.data.scopeFile, 'utf8')).limits.rps, 12);
+  const raised = await cli(root, 'blackbox', 'setup', origin, '--rps', '32');
+  assert.equal(raised.code, 0, JSON.stringify(raised.data));
+  assert.equal(JSON.parse(fs.readFileSync(raised.data.scopeFile, 'utf8')).limits.rps, 32);
+  const step = raised.data.steps.find(item => item.kind === 'authorization');
+  assert.equal(JSON.parse(fs.readFileSync(step.file, 'utf8')).maxRequestsPerSecond, 32);
+  const expiry = new Date(Date.now() + 86400000).toISOString();
+  await change(root, state => {
+    state.targets[0].ownership = {status: 'verified', method: 'dns', expiresAt: expiry,
+      origin};
+  });
+  const approved = await cli(root, 'target', 'authorize', step.target, '--scope-file', step.file);
+  assert.equal(approved.code, 0, JSON.stringify(approved.data));
+  assert.equal(approved.data.authorization.maxRequestsPerSecond, 32);
+  const ready = await cli(root, 'blackbox', 'setup', origin, '--rps', '32');
+  assert.equal(ready.code, 0, JSON.stringify(ready.data));
+  assert.equal(ready.data.ready, true);
+  const tooFast = await cli(root, 'blackbox', 'setup', origin, '--rps', '33');
+  assert.notEqual(tooFast.code, 0);
+  assert.match(tooFast.data.error, /at most 32/);
+  assert.equal(JSON.parse(fs.readFileSync(raised.data.scopeFile, 'utf8')).limits.rps, 32);
+});
+
 test('deployed blackbox setup prepares separate app and apex challenges without authorizing them', async t => {
   const root = temp();
   t.after(() => fs.rmSync(root, {recursive: true, force: true}));
@@ -300,7 +329,7 @@ test('deployed blackbox setup prepares separate app and apex challenges without 
   for (const step of first.data.steps.filter(item => item.kind === 'authorization')) {
     const allowed = JSON.parse(fs.readFileSync(step.file, 'utf8'));
     assert.deepEqual(allowed.paths, ['/api']);
-    assert.deepEqual(allowed.methods, ['GET', 'HEAD', 'POST']);
+    assert.deepEqual(allowed.methods, ['GET', 'HEAD', 'POST', 'PATCH', 'DELETE']);
     assert.equal(allowed.productionAcknowledged, false);
   }
   const blocked = await cli(root, 'blackbox', origin, '--scope', first.data.scopeFile, '--no-model');
@@ -330,16 +359,8 @@ test('deployed blackbox setup prepares separate app and apex challenges without 
   fs.writeFileSync(first.data.scopeFile, JSON.stringify(reviewed));
   const expanded = await cli(root, ...args);
   assert.equal(expanded.code, 0);
-  assert.equal(expanded.data.ready, false);
-  const xmlStep = expanded.data.steps.find(step => step.kind === 'authorization' && step.target === app.name);
-  assert.ok(xmlStep);
-  assert.deepEqual(JSON.parse(fs.readFileSync(xmlStep.file, 'utf8')).xmlPostPaths,
-    ['/api/xml/import']);
-  const xmlAuthorized = await cli(root, 'target', 'authorize', xmlStep.target, '--scope-file', xmlStep.file);
-  assert.equal(xmlAuthorized.code, 0, JSON.stringify(xmlAuthorized.data));
-  const xmlReady = await cli(root, ...args);
-  assert.equal(xmlReady.code, 0);
-  assert.equal(xmlReady.data.ready, true);
+  assert.equal(expanded.data.ready, true,
+    'an already authorized POST method does not need another route authorization');
 });
 
 test('setup prepares an extra credential origin with its own ownership and authorization steps', async t => {
@@ -410,17 +431,41 @@ test('scope command writes explicit credential origins without contacting or reg
   assert.ok(!fs.existsSync(path.join(root, '.bypass/state.json')));
 });
 
-test('production blackbox setup leaves the authorization acknowledgment for review', async t => {
+test('production blackbox setup carries explicit acknowledgment into its reviewed scope authorization', async t => {
   const root = temp();
   t.after(() => fs.rmSync(root, {recursive: true, force: true}));
   const prepared = await cli(root, 'blackbox', 'setup', 'https://prod.example.test',
-    '--environment', 'production', '--include', '/api');
+    '--environment', 'production', '--include', '/api', '--rps', '12',
+    '--methods', 'GET,HEAD,POST,PATCH,DELETE');
   assert.equal(prepared.code, 0, JSON.stringify(prepared.data));
   const scope = JSON.parse(fs.readFileSync(prepared.data.scopeFile, 'utf8'));
   assert.equal(scope.target.environment, 'production');
   const step = prepared.data.steps.find(item => item.kind === 'authorization');
   assert.equal(step.production, true);
   assert.equal(JSON.parse(fs.readFileSync(step.file, 'utf8')).productionAcknowledged, false);
+  await change(root, state => {
+    state.targets[0].ownership = {status: 'verified', method: 'dns',
+      expiresAt: new Date(Date.now() + 86400000).toISOString(),
+      origin: state.targets[0].url};
+    return null;
+  });
+  const withoutAcknowledgment = await cli(root, 'target', 'authorize', step.target,
+    '--scope-file', step.file, '--accept');
+  assert.notEqual(withoutAcknowledgment.code, 0);
+  assert.match(withoutAcknowledgment.data.error, /productionAcknowledged/);
+  const approved = await cli(root, 'target', 'authorize', step.target,
+    '--scope-file', step.file, '--accept', '--production');
+  assert.equal(approved.code, 0, JSON.stringify(approved.data));
+  assert.deepEqual(approved.data.authorization.methods,
+    ['GET', 'HEAD', 'POST', 'PATCH', 'DELETE']);
+  assert.equal(approved.data.authorization.maxRequestsPerSecond, 12);
+  assert.equal(approved.data.authorization.productionAcknowledged, true);
+  assert.equal(JSON.parse(fs.readFileSync(step.file, 'utf8')).productionAcknowledged,
+    false, 'the reviewed template stays unchanged');
+  const ready = await cli(root, 'blackbox', 'setup', 'https://prod.example.test',
+    '--environment', 'production', '--include', '/api', '--rps', '12',
+    '--methods', 'GET,HEAD,POST,PATCH,DELETE');
+  assert.equal(ready.data.ready, true, JSON.stringify(ready.data));
 });
 
 test('blackbox setup rejects malformed scope before registering a target', async t => {

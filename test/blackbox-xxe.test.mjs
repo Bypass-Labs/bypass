@@ -116,7 +116,7 @@ test('real CLI proves XML external-entity file disclosure and its regression cle
   assert.ok(!requested.includes('/api/delete'));
 });
 
-test('real CLI proves an explicitly reviewed XML POST route and never sends a body to another route', async t => {
+test('real CLI proves a documented XML POST route and never sends a body outside scope', async t => {
   if (spawnSync('python3', ['--version']).status !== 0) {
     t.skip('Python XML SAX is needed for the parser fixture'); return;
   }
@@ -124,7 +124,7 @@ test('real CLI proves an explicitly reviewed XML POST route and never sends a bo
   t.after(() => fs.rmSync(root, {recursive: true, force: true}));
   const suffix = randomBytes(5).toString('hex');
   const route = `/api/${suffix}/xml/import`;
-  const decoy = `/api/${suffix}/xml/other`;
+  const decoy = `/outside/${suffix}/xml/other`;
   const requested = [];
   let vulnerable = true, rejectDtd = false;
   const server = http.createServer(async (request, response) => {
@@ -139,7 +139,7 @@ test('real CLI proves an explicitly reviewed XML POST route and never sends a bo
       return response.end(JSON.stringify({openapi: '3.0.0', paths: {
         [route]: {post: {requestBody: {content: {'application/xml': {schema: {type: 'string'}}}}}},
         [decoy]: {post: {requestBody: {content: {'application/xml': {schema: {type: 'string'}}}}}},
-        '/api/delete': {post: {requestBody: {content: {'application/xml': {schema: {type: 'string'}}}}}},
+        '/outside/delete': {post: {requestBody: {content: {'application/xml': {schema: {type: 'string'}}}}}},
       }}));
     }
     if (url.pathname === route && request.method === 'POST') {
@@ -183,12 +183,12 @@ test('real CLI proves an explicitly reviewed XML POST route and never sends a bo
   assert.ok(surface.xmlBodyOperations.some(item => item.path === route && item.method === 'POST'));
   const web = JSON.parse(fs.readFileSync(path.join(audit.data.runDir, 'web-probes.json'), 'utf8'));
   assert.ok(web.plan.some(item => item.kind === 'xxe-body-hosts' && item.path === route));
-  assert.ok(!web.plan.some(item => item.path === decoy));
+  assert.ok(!web.plan.some(item => item.kind === 'xxe-body-hosts' && item.path === decoy));
   const ledger = fs.readFileSync(path.join(audit.data.runDir, 'evidence.jsonl'), 'utf8');
   assert.ok(!ledger.includes('<!DOCTYPE') && !ledger.includes('file:///etc/hosts'),
     'XML request bodies stay out of the evidence ledger');
   assert.ok(requested.some(item => item === `POST ${route}`));
-  assert.ok(!requested.some(item => item === `POST ${decoy}` || item === 'POST /api/delete'));
+  assert.ok(!requested.some(item => item === `POST ${decoy}` || item === 'POST /outside/delete'));
   assert.equal((await cli('verify', audit.data.run)).code, 1);
   const exported = await cli('export', audit.data.run, '--out', path.join(root, 'regressions'));
   assert.equal(exported.code, 0);

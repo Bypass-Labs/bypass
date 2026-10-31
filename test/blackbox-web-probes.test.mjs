@@ -495,7 +495,7 @@ test('auth planning rotates observed reads after an empty first model page', asy
   assert.equal(second.leads[0]?.privatePath, late);
 });
 
-test('Muse auth planning admits only synthetic address syntax and reports safe rejection shapes', async () => {
+test('Muse auth planning preserves requested payload syntax without saving values in decisions', async () => {
   const {scope: loaded} = loadScope({origin: 'http://127.0.0.1:4329',
     overrides: {acceptLocal: true}});
   const scope = structuredClone(loaded);
@@ -508,22 +508,22 @@ test('Muse auth planning admits only synthetic address syntax and reports safe r
   const synthetic = "bx-probe@example.invalid' OR 1=1--";
   const realAddress = "person@somewhere.com' OR 1=1--";
   assert.equal(safeAuthUserPayload(synthetic), true);
-  assert.equal(safeAuthUserPayload(realAddress), false);
+  assert.equal(safeAuthUserPayload(realAddress), true);
   const proposal = userPayloads => ({loginPath: '/api/session', userField: 'email',
     passwordField: 'password', userPayloads, proofMode: 'protected-status',
     tokenPointer: '/token', privatePath: '/api/identity', why: 'Observed denied identity route'});
   const planned = await planAuthLogins(surface, scope, {model: {model: 'fixture'},
     budget: 3, modelCallsAvailable: 1, retryEmpty: {rejectedReasons: ['auth-probe-non-synthetic-address']},
     infer: async (_model, messages) => {
-      assert.match(messages[0].content, /example\.invalid/);
+      assert.match(messages[0].content, /observed contract and prior response feedback/);
       assert.equal(JSON.parse(messages[1].content).reconsideration.deniedReadIds[0], 'read-1');
       return {checks: [proposal([realAddress]), proposal([synthetic]),
         proposal(["' OR 1=1; DROP TABLE users"])]};
     }});
-  assert.equal(planned.leads.length, 1);
-  assert.equal(planned.leads[0].userPayloads[0], synthetic);
-  assert.deepEqual(planned.decisions.map(item => item.reason),
-    ['auth-probe-non-synthetic-address', undefined, 'auth-probe-unsafe-content']);
+  assert.equal(planned.leads.length, 3);
+  assert.deepEqual(planned.leads.map(item => item.userPayloads[0]),
+    [realAddress, synthetic, "' OR 1=1; DROP TABLE users"]);
+  assert.ok(planned.decisions.every(item => item.accepted));
   assert.deepEqual(planned.decisions[0].probeShape,
     {count: 1, lengths: [realAddress.length], addressShaped: [true]});
   assert.equal(JSON.stringify(planned.decisions).includes(realAddress), false);
@@ -1172,15 +1172,15 @@ test('Muse can propose a new read-only experiment without a family allowlist', a
         {...valid, firstValue: 'process.exit()'}]};
     }});
   const experiments = planned.selected.filter(item => item.kind === 'model-differential');
-  assert.deepEqual(experiments.map(item => [item.path, item.parameter, item.basis]),
-    [['/api/processor', 'expression', 'model-experiment'],
-      ['/api/processor', 'expression', 'model-experiment']]);
+  assert.equal(experiments.length, 4);
+  assert.ok(experiments.every(item => item.path === '/api/processor' &&
+    item.parameter === 'expression' && item.basis === 'model-experiment'));
   const decisions = planned.strategyDecisions.filter(item => item.mode === 'experiment');
-  assert.equal(decisions.filter(item => item.accepted).length, 2);
+  assert.equal(decisions.filter(item => item.accepted).length, 4);
   assert.deepEqual(decisions.filter(item => !item.accepted).map(item => item.reason),
-    ['unobserved-pair-or-unread-page', 'duplicate', 'invalid-controls', 'invalid-controls']);
-  assert.deepEqual(decisions.filter(item => item.reason === 'invalid-controls')
-    .map(item => item.controlReason), ['credential-shape', 'unsafe-operation']);
+    ['unobserved-pair-or-unread-page', 'duplicate']);
+  assert.ok(planned.leads.some(item => item.lead?.firstValue === 'token=secret'));
+  assert.ok(planned.leads.some(item => item.lead?.firstValue === 'process.exit()'));
   assert.equal(decisions.filter(item => item.accepted &&
     item.translatedTo === 'model-observation').length, 1);
 });
@@ -1272,17 +1272,12 @@ test('a local scoped GET with punctuation executes as an observation without rep
       if (messages[0].content.startsWith('Rank only the supplied observed read-only web-test candidates'))
         return {priorities: [], strategies: [], experiments: [{family: 'unlisted-template',
           path: '/render', parameter: 'template', controlValue: 'plain',
-          firstValue: ';unsafe', secondValue: 'second', marker: context.canary,
+          firstValue: ';unsafe', secondValue: 'second', oracle: 'observation', marker: context.canary,
           secondMarker: context.secondCanary, prelude: [], headers: [],
           priority: 10, why: 'Observed template input'}]};
       if (messages[0].content.startsWith('Repair the supplied observed GET experiments')) {
         repairs++;
-        assert.equal(context.rejected[0].controlReason, 'unsafe-syntax');
-        return {experiments: [{family: 'unlisted-template', path: '/render',
-          parameter: 'template', oracle: 'observation', controlValue: 'plain',
-          firstValue: '{{7*7}}', secondValue: '{{8*8}}',
-          marker: context.marker, secondMarker: context.secondMarker,
-          prelude: [], headers: [], priority: 10, why: 'Compare two benign expressions'}]};
+        throw Error('A scoped printable request must not need repair.');
       }
       return {experiments: []};
     }});
@@ -1298,7 +1293,7 @@ test('GET repair keeps refining changed candidates and stops when Muse repeats o
   const surface = {patterns: [{pattern: '/render', methods: ['GET'],
     params: {template: []}, source: ['public-openapi']}]};
   const first = {family: 'unlisted-template', path: '/render', parameter: 'template',
-    controlValue: 'plain', firstValue: 'https://outside.example/first', secondValue: 'second',
+    controlValue: 'plain', firstValue: 'plain', secondValue: 'second',
     prelude: [], headers: [], priority: 10, why: 'Observed template input'};
   let repairs = 0;
   const planned = await planWebLeads(surface, scope, {budget: 100, maxModelPages: 5,
@@ -1308,7 +1303,7 @@ test('GET repair keeps refining changed candidates and stops when Muse repeats o
         return {priorities: [], strategies: [], experiments: [{...first,
           marker: context.canary, secondMarker: context.secondCanary}]};
       repairs++;
-      return {experiments: [{...first, firstValue: 'https://outside.example/second',
+      return {experiments: [{...first, secondValue: 'third',
         marker: context.marker, secondMarker: context.secondMarker}]};
     }});
   assert.equal(repairs, 2);
@@ -1322,7 +1317,7 @@ test('GET repair can succeed after several changed proposals within the model bu
   const surface = {patterns: [{pattern: '/render', methods: ['GET'],
     params: {template: []}, source: ['public-openapi']}]};
   const first = {family: 'unlisted-template', path: '/render', parameter: 'template',
-    controlValue: 'plain', firstValue: 'https://outside.example/first', secondValue: 'second',
+    controlValue: 'plain', firstValue: 'plain', secondValue: 'second',
     prelude: [], headers: [], priority: 10, why: 'Observed template input'};
   let repairs = 0;
   const planned = await planWebLeads(surface, scope, {budget: 100, maxModelPages: 5,
@@ -1333,8 +1328,8 @@ test('GET repair can succeed after several changed proposals within the model bu
           marker: context.canary, secondMarker: context.secondCanary}]};
       repairs++;
       return {experiments: [{...first,
-        firstValue: repairs === 1 ? 'https://outside.example/second' : '{{7*7}}',
-        secondValue: repairs === 1 ? 'second' : '{{8*8}}',
+        firstValue: repairs === 1 ? 'plain' : '{{7*7}}',
+        secondValue: repairs === 1 ? 'third' : '{{8*8}}',
         oracle: 'observation', marker: context.marker,
         secondMarker: context.secondMarker}]};
     }});
@@ -1345,25 +1340,25 @@ test('GET repair can succeed after several changed proposals within the model bu
     item.lead.oracle === 'observation'));
 });
 
-test('local template canaries admit bounded string construction but retain command and remote syntax limits', () => {
+test('model values preserve printable syntax while literal proof markers remain observations', () => {
   const firstMarker = 'bx123456789abc', secondMarker = 'bxabcdef123456';
   const template = marker => `\${String.fromCharCode(${[...marker].map(char => char.charCodeAt(0)).join(',')})}`;
   const values = {parameter: 'expression', marker: firstMarker, secondMarker,
     controlValue: '7', firstValue: template(firstMarker), secondValue: template(secondMarker),
     headers: []};
   assert.equal(validModelExperiment({...values, origin: 'http://127.0.0.1:4329'}), true);
-  assert.equal(modelExperimentReason({...values, origin: 'https://example.test'}), 'unsafe-syntax');
+  assert.equal(modelExperimentReason({...values, origin: 'https://example.test'}), null);
   assert.equal(modelExperimentReason({...values, origin: 'http://127.0.0.1:4329',
-    firstValue: ';rm -rf /'}), 'unsafe-syntax');
+    firstValue: ';rm -rf /'}), null);
   const encoded = marker => `<b>${[...marker].map(char => `&#${char.charCodeAt(0)};`).join('')}</b>`;
   assert.equal(validModelExperiment({...values, origin: 'http://127.0.0.1:4329',
     firstValue: encoded(firstMarker), secondValue: encoded(secondMarker)}), true);
   assert.equal(modelExperimentReason({...values, origin: 'http://127.0.0.1:4329',
     firstValue: `<b>${firstMarker}</b>`}), 'literal-marker');
   assert.equal(modelExperimentReason({...values, origin: 'http://127.0.0.1:4329',
-    firstValue: '<img src=x onerror=alert(1)>'}), 'unsafe-syntax');
+    firstValue: '<img src=x onerror=alert(1)>'}), null);
   assert.equal(modelExperimentReason({...values, origin: 'http://127.0.0.1:4329',
-    firstValue: '<b>&#59;</b>'}), 'unsafe-syntax');
+    firstValue: '<b>&#59;</b>'}), null);
 });
 
 test('an unlisted Muse strategy gets executable details and uses the generic independent oracle', async () => {

@@ -10,12 +10,686 @@ import {proveFindings} from '../src/blackbox/poc.mjs';
 import {createRequester, loadScope, validateUrl} from '../src/blackbox/scope.mjs';
 import {mineOrigin} from '../src/blackbox/assets.mjs';
 import {anonymousSurface, deriveLocalPostScope} from '../src/blackbox/anonymous.mjs';
+import {reconConfirmedAccess} from '../src/blackbox/derived-session-recon.mjs';
 import {executeResearchFlow, planResearchFlows, protectedReadBoundaryFacts,
   researchFlowInventory, runResearchFlows,
   validateResearchFlow} from '../src/blackbox/research-flow.mjs';
 import {execFile} from '../src/util.mjs';
 
+test('a proved request context remaps new scripts and lets Muse prove a second boundary', async t => {
+  const gatePath = randomPath('entry');
+  const newPage = randomPath('workspace');
+  const scriptPath = `${randomPath('bundle')}.js`;
+  const apiPath = randomPath('operation');
+  const adminPath = randomPath('admin');
+  const headerName = `x-entry-${randomBytes(3).toString('hex')}`;
+  const accepted = `value_${randomBytes(6).toString('hex')}`;
+  const sessionName = `session_${randomBytes(4).toString('hex')}`;
+  const sessionValue = `issued_${randomBytes(6).toString('hex')}`;
+  let vulnerable = true;
+  const hits = [];
+  const server = http.createServer((request, response) => {
+    const url = new URL(request.url, 'http://fixture.invalid');
+    const gateAccepted = request.headers[headerName] === accepted;
+    const opened = gateAccepted && String(request.headers.cookie ?? '')
+      .split(';').some(part => part.trim() === `${sessionName}=${sessionValue}`);
+    if (url.pathname === gatePath && gateAccepted)
+      response.setHeader('set-cookie', `${sessionName}=${sessionValue}; Path=/; HttpOnly`);
+    hits.push({path: url.pathname, opened});
+    response.setHeader('cache-control', 'no-store');
+    if (url.pathname === scriptPath && opened) {
+      response.setHeader('content-type', 'application/javascript');
+      return response.end(`fetch('${apiPath}', {method:'POST', headers:{'content-type':'application/json'}, body:JSON.stringify({name:'demo'})}); fetch('${adminPath}?role=0')`);
+    }
+    if (url.pathname === apiPath) {
+      response.setHeader('content-type', 'application/json');
+      return response.end(JSON.stringify({ok: opened}));
+    }
+    response.setHeader('content-type', 'text/html');
+    if (url.pathname === adminPath) return response.end(opened && vulnerable &&
+      url.searchParams.get('role') === '1' ? '<main>Admin records</main>' :
+      '<main>Denied</main>');
+    if (url.pathname === gatePath || url.pathname === newPage || url.pathname === '/')
+      return response.end((url.pathname === gatePath ? gateAccepted : opened) ?
+        `<main>Application</main><script src="${scriptPath}"></script><a href="${newPage}">Workspace</a>` :
+        '<main>Private gate</main>');
+    response.statusCode = 404;
+    response.end('missing');
+  });
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+  t.after(() => new Promise(resolve => server.close(resolve)));
+  const origin = `http://127.0.0.1:${server.address().port}`;
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'bypass-proved-access-'));
+  t.after(() => fs.rmSync(dir, {recursive: true, force: true}));
+  const scope = loadScope({origin, overrides: {acceptLocal: true}}).scope;
+  const surface = {patterns: [{pattern: gatePath, methods: ['GET'], params: {},
+    responseFacts: {status: 200}}]};
+  const raw = (path, headers = []) => ({method: 'GET', path, headers, body: ''});
+  const accessHeader = [{name: headerName, value: accepted}];
+  const entry = {family: 'access boundary', why: 'Observed gate may trust one request value',
+    priority: 9, as: 'anonymous', oracle: 'raw-proof',
+    rawRequests: [raw(gatePath, accessHeader)],
+    rawProof: {baseline: [raw(gatePath)],
+      negative: [raw(gatePath, [{name: headerName, value: 'wrong'}])],
+      closedText: 'Private gate', openText: 'Application'}};
+  const firstPlan = await planResearchFlows(surface, scope, {model: 'fixture',
+    budget: 1, modelCallsAvailable: 1,
+    infer: async () => ({flows: [entry]})});
+  const ledger = createLedger(dir);
+  t.after(() => ledger.close());
+  const requester = createRequester(scope, {ledger, allowLocal: true});
+  const contexts = [];
+  const first = await runResearchFlows(firstPlan.leads, scope, {surface, ledger,
+    requester, modelCallsAvailable: 0,
+    onConfirmedAccess: item => contexts.push(item)});
+  assert.equal(first.findings[0]?.verdict, 'confirmed');
+  assert.equal(contexts.length, 1);
+  const {mapped, nextSurface} = await reconConfirmedAccess(scope, {
+    context: contexts[0].context, requester, observedRoutes: [gatePath, '/'],
+    publicSurface: surface});
+  assert.ok(hits.some(hit => hit.path === scriptPath && hit.opened));
+  assert.ok(hits.some(hit => hit.path === newPage && hit.opened));
+  assert.ok(mapped.assets.some(item => item.path === scriptPath && item.kind === 'script'));
+  assert.ok(mapped.contracts.some(item => item.path === apiPath && item.method === 'POST'));
+  assert.ok(nextSurface.patterns.some(item => item.pattern === newPage));
+  assert.ok(!JSON.stringify(mapped).includes(accepted));
+  assert.ok(!JSON.stringify(mapped).includes(sessionValue));
+  assert.ok(!JSON.stringify(nextSurface).includes(accepted));
+  assert.ok(nextSurface.provedAccess.requests.at(-1).headers.some(item =>
+    item.name === 'cookie' && item.value === `${sessionName}=${sessionValue}`));
+  const followupHeaders = nextSurface.provedAccess.requests.at(-1).headers;
+  const followup = {family: 'second access boundary', why: 'Test the newly exposed admin read',
+    priority: 9, as: 'anonymous', oracle: 'raw-proof',
+    rawRequests: [raw(`${adminPath}?role=1`, followupHeaders)],
+    rawProof: {baseline: [raw(adminPath, followupHeaders)],
+      negative: [raw(`${adminPath}?role=0`, followupHeaders)],
+      closedText: 'Denied', openText: 'Admin records'}};
+  let sawNewSurface = false;
+  const secondPlan = await planResearchFlows(nextSurface, scope, {model: 'fixture',
+    budget: 1, modelCallsAvailable: 1, infer: async (_model, messages) => {
+      const context = JSON.parse(messages[1].content);
+      sawNewSurface = context.provedAccess.requests.at(-1).headers.some(item =>
+        item.name === headerName && item.value === accepted) &&
+        context.routes.some(item => item.path === apiPath && item.methods.includes('POST'));
+      return {flows: [followup]};
+    }});
+  assert.equal(sawNewSurface, true);
+  assert.equal(secondPlan.leads.length, 1, JSON.stringify(secondPlan.decisions));
+  const second = await runResearchFlows(secondPlan.leads, scope, {surface: nextSurface,
+    ledger, requester, modelCallsAvailable: 0});
+  assert.equal(second.findings[0]?.verdict, 'confirmed');
+  const proved = await proveFindings([{...second.findings[0], id: 'f-002'}], [],
+    {runDir: dir, surface: nextSurface, scope, env: {}, ledger, web: second});
+  assert.equal(proved.length, 1);
+  vulnerable = false;
+  const fixed = await execFile(process.execPath, [proved[0].proof, '--expect-fixed'],
+    {env: process.env, timeout: 20000});
+  assert.equal(fixed.code, 0, fixed.stdout);
+});
+
+test('separate Muse planning calls execute distinct accepted HTTP leads', async t => {
+  const routes = [randomPath('first'), randomPath('second')];
+  const hits = [];
+  const server = http.createServer((request, response) => {
+    hits.push(request.url);
+    response.writeHead(200, {'content-type': 'application/json',
+      'cache-control': 'no-store'});
+    response.end(JSON.stringify({path: request.url}));
+  });
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+  t.after(() => new Promise(resolve => server.close(resolve)));
+  const origin = `http://127.0.0.1:${server.address().port}`;
+  const scope = loadScope({origin, overrides: {acceptLocal: true}}).scope;
+  const surface = {patterns: routes.map(pattern =>
+    ({pattern, methods: ['GET'], params: {}}))};
+  const plans = await Promise.all(routes.map(route => planResearchFlows(surface,
+    scope, {model: 'fixture', budget: 1, modelCallsAvailable: 1,
+      infer: async () => ({flows: [{family: 'route investigation',
+        why: 'Read the observed route', priority: 8, as: 'anonymous',
+        oracle: 'raw-observation', rawRequests: [{method: 'GET', path: route}]}]})})));
+  assert.ok(plans.every(plan => plan.leads.length === 1),
+    JSON.stringify(plans.map(plan => plan.decisions)));
+  assert.notEqual(plans[0].leads[0].proposalId, plans[1].leads[0].proposalId,
+    'an accepted lead on a later planning page must not inherit an earlier ID');
+  const repeated = await planResearchFlows(surface, scope, {model: 'fixture',
+    budget: 1, modelCallsAvailable: 1,
+    infer: async () => ({flows: [{family: 'route investigation',
+      why: 'New evidence warrants another read', priority: 8, as: 'anonymous',
+      oracle: 'raw-observation', rawRequests: [{method: 'GET', path: routes[0]}]}]})});
+  assert.notEqual(plans[0].leads[0].proposalId, repeated.leads[0].proposalId,
+    'a later Muse investigation keeps its own identity even on the same route');
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'bypass-research-ids-'));
+  t.after(() => fs.rmSync(dir, {recursive: true, force: true}));
+  const ledger = createLedger(dir);
+  t.after(() => ledger.close());
+  const run = await runResearchFlows(plans.flatMap(plan => plan.leads), scope,
+    {surface, ledger, requester: createRequester(scope,
+      {ledger, allowLocal: true}), modelCallsAvailable: 0});
+  assert.deepEqual(hits.toSorted(), routes.toSorted());
+  assert.equal(run.results.length, 2);
+});
+
+test('Muse-selected exact cookie request proves access and clears after a fix', async t => {
+  const route = randomPath('workspace');
+  const cookieName = `gate_${randomBytes(5).toString('hex')}`;
+  const secretValue = `signed_${randomBytes(8).toString('hex')}`;
+  let vulnerable = true;
+  const requests = [];
+  const server = http.createServer((request, response) => {
+    requests.push({method: request.method, path: request.url,
+      hasCookie: Boolean(request.headers.cookie)});
+    const cookie = request.headers.cookie ?? '';
+    const named = cookie.split(';').some(part => part.trim().startsWith(`${cookieName}=`));
+    const authorized = named && (vulnerable || cookie.includes(`${cookieName}=${secretValue}`));
+    response.writeHead(request.url === route ? 200 : 404,
+      {'content-type': 'text/html', 'cache-control': 'no-store'});
+    response.end(request.url !== route ? 'missing' : authorized ?
+      '<main>private workspace</main>' : '<main>access code required</main>');
+  });
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+  t.after(() => new Promise(resolve => server.close(resolve)));
+  const origin = `http://127.0.0.1:${server.address().port}`;
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'bypass-cookie-access-'));
+  t.after(() => fs.rmSync(dir, {recursive: true, force: true}));
+  const scope = loadScope({origin, overrides: {acceptLocal: true}}).scope;
+  const surface = {patterns: [{pattern: route, methods: ['GET'], params: {},
+    responseFacts: {status: 200}}],
+  assetSignals: [{file: `${origin}/client.js`, evidenceId: 'ev-script',
+    authFlow: `After the access flow, the server sets cookie ${cookieName} and reloads ${route}.`}]};
+  const candidateValue = `candidate_${randomBytes(5).toString('hex')}`;
+  const rawRequest = (name, value) => ({method: 'GET', path: route,
+    headers: name ? [{name: 'Cookie', value: `${name}=${value}`}] : [], body: ''});
+  const proposal = {family: 'cookie-gate', why: 'Client source names the access cookie',
+    priority: 9, as: 'anonymous', oracle: 'raw-proof',
+    rawRequests: [rawRequest(cookieName, candidateValue)],
+    rawProof: {baseline: [rawRequest(null)],
+      negative: [rawRequest('other_gate', candidateValue)],
+      closedText: '<main>access code required</main>',
+      openText: '<main>private workspace</main>'}};
+  let sawCookieClue = false;
+  const planned = await planResearchFlows(surface, scope, {model: 'fixture',
+    budget: 1, modelCallsAvailable: 1, infer: async (_model, messages) => {
+      const context = JSON.parse(messages[1].content);
+      sawCookieClue = context.assetSignals.some(item =>
+        item.authFlow.includes(cookieName));
+      return {flows: [proposal]};
+    }});
+  assert.equal(sawCookieClue, true);
+  assert.equal(planned.leads.length, 1, JSON.stringify(planned.decisions));
+  const ledger = createLedger(dir);
+  t.after(() => ledger.close());
+  const run = await runResearchFlows(planned.leads, scope, {surface, ledger,
+    requester: createRequester(scope, {ledger, allowLocal: true}),
+    modelCallsAvailable: 0});
+  assert.equal(run.results[0].verdict, 'confirmed', JSON.stringify(run.results[0]));
+  assert.equal(run.findings[0]?.kind, 'model-raw-boundary');
+  assert.equal(requests.length, 6);
+  const proved = await proveFindings([{...run.findings[0], id: 'f-001'}], [],
+    {runDir: dir, surface, scope, env: {}, ledger, web: run});
+  assert.equal(proved.length, 1);
+  assert.equal(requests.length, 12);
+  assert.ok(!fs.readFileSync(path.join(dir, 'poc/f-001/spec.json'), 'utf8')
+    .includes(secretValue));
+  vulnerable = false;
+  const fixed = await execFile(process.execPath, [proved[0].proof, '--expect-fixed'],
+    {env: process.env, timeout: 20000});
+  assert.equal(fixed.code, 0, fixed.stdout);
+});
+
+test('Muse can execute a scoped mixed-method request sequence without placement templates', async t => {
+  const route = randomPath('operation');
+  const cookieName = `session_${randomBytes(4).toString('hex')}`;
+  const cookieValue = `bx${randomBytes(9).toString('hex')}`;
+  const bodyValue = `opaque:${randomBytes(6).toString('hex')}`;
+  const operatorToken = `operator_${randomBytes(10).toString('hex')}`;
+  const env = {OWNER_TOKEN: operatorToken};
+  const received = [];
+  const server = http.createServer(async (request, response) => {
+    const chunks = [];
+    for await (const chunk of request) chunks.push(chunk);
+    received.push({method: request.method, url: request.url,
+      cookie: request.headers.cookie, contentType: request.headers['content-type'],
+      authorization: request.headers.authorization,
+      custom: request.headers['x-workflow-input'],
+      body: Buffer.concat(chunks).toString()});
+    response.writeHead(200, {'content-type': 'application/json',
+      'cache-control': 'no-store'});
+    response.end(JSON.stringify({method: request.method,
+      accepted: request.headers.cookie === `${cookieName}=${cookieValue}` &&
+        Buffer.concat(chunks).toString() === bodyValue}));
+  });
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+  t.after(() => new Promise(resolve => server.close(resolve)));
+  const origin = `http://127.0.0.1:${server.address().port}`;
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'bypass-raw-flow-'));
+  t.after(() => fs.rmSync(dir, {recursive: true, force: true}));
+  const scope = loadScope({origin, overrides: {acceptLocal: true}}).scope;
+  const surface = {patterns: [{pattern: route, methods: ['GET'], params: {}}]};
+  const proposal = {family: 'opaque-workflow', why: 'Review response to a scoped method sequence',
+    priority: 6, as: 'anonymous', oracle: 'raw-observation',
+    rawRequests: [
+      {method: 'GET', path: route},
+      {method: 'PATCH', path: route, headers: [
+        {name: 'Cookie', value: `${cookieName}=${cookieValue}`},
+        {name: 'Authorization', value: `Bearer ${operatorToken}`},
+        {name: 'Content-Type', value: 'application/octet-stream'},
+        {name: 'X-Workflow-Input', value: 'custom'}], body: bodyValue},
+      {method: 'GET', path: route}]};
+  const planned = await planResearchFlows(surface, scope, {model: 'fixture',
+    budget: 1, modelCallsAvailable: 1, env,
+    infer: async (_model, messages, options) => {
+      assert.match(messages[0].content, /exact values you choose/);
+      assert.ok(!options.schema.properties.flows.items.required.includes('subject'));
+      return {flows: [proposal]};
+    }});
+  assert.equal(planned.leads.length, 1, JSON.stringify(planned.decisions));
+  assert.ok(!JSON.stringify(planned.leads).includes(operatorToken));
+  const ledger = createLedger(dir);
+  t.after(() => ledger.close());
+  const requester = createRequester(scope, {ledger, allowLocal: true});
+  const run = await runResearchFlows(planned.leads, scope, {surface, ledger,
+    requester, model: 'fixture', modelCallsAvailable: 1, env,
+    infer: async () => ({flows: []})});
+  assert.equal(run.results[0].verdict, 'observed', JSON.stringify(run.results[0]));
+  assert.equal(run.findings.length, 0);
+  assert.deepEqual(received.map(item => item.method), ['GET', 'PATCH', 'GET']);
+  assert.equal(received[1].cookie, `${cookieName}=${cookieValue}`);
+  assert.equal(received[1].authorization, `Bearer ${operatorToken}`);
+  assert.equal(received[1].contentType, 'application/octet-stream');
+  assert.equal(received[1].custom, 'custom');
+  assert.equal(received[1].body, bodyValue);
+  const evidence = fs.readFileSync(ledger.file, 'utf8');
+  assert.ok(!evidence.includes(cookieValue));
+  assert.ok(!evidence.includes(bodyValue));
+  assert.ok(!evidence.includes(operatorToken));
+});
+
+test('a minimal Muse request plan preserves exact values across scoped HTTP shapes', async t => {
+  const route = randomPath('contract');
+  const received = [];
+  const server = http.createServer(async (request, response) => {
+    const chunks = [];
+    for await (const chunk of request) chunks.push(chunk);
+    received.push({method: request.method, url: request.url,
+      cookie: request.headers.cookie ?? '', custom: request.headers['x-contract'] ?? '',
+      contentType: request.headers['content-type'] ?? '',
+      body: Buffer.concat(chunks).toString()});
+    response.writeHead(200, {'content-type': 'text/plain',
+      'cache-control': 'no-store'});
+    response.end('observed');
+  });
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+  t.after(() => new Promise(resolve => server.close(resolve)));
+  const origin = `http://127.0.0.1:${server.address().port}`;
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'bypass-raw-shapes-'));
+  t.after(() => fs.rmSync(dir, {recursive: true, force: true}));
+  const scope = loadScope({origin, overrides: {acceptLocal: true}}).scope;
+  const surface = {patterns: [{pattern: route,
+    methods: ['GET', 'HEAD', 'POST', 'PATCH', 'DELETE'], params: {code: []}}]};
+  const requests = [
+    {method: 'GET', path: `${route}?code=1%2B2`,
+      headers: [{name: 'Cookie', value: 'gate=1'}]},
+    {method: 'POST', path: route, headers: [
+      {name: 'Content-Type', value: 'application/x-www-form-urlencoded'}],
+    body: 'code=1%2B2&next=%2F'},
+    {method: 'PATCH', path: route, headers: [
+      {name: 'Content-Type', value: 'application/xml'}],
+    body: '<request><code>1+2</code></request>'},
+    {method: 'DELETE', path: route, headers: [
+      {name: 'Content-Type', value: 'application/json'}],
+    body: '{"code":"1;2"}'},
+    {method: 'HEAD', path: route, headers: [
+      {name: 'X-Contract', value: '1;2'}]},
+  ];
+  const proposal = {family: 'contract investigation',
+    why: 'Compare exact requests across observed methods', priority: 6,
+    as: 'anonymous', rawRequests: requests};
+  const planned = await planResearchFlows(surface, scope, {
+    model: 'fixture', budget: 1, modelCallsAvailable: 1,
+    infer: async () => ({flows: [proposal]})});
+  assert.equal(planned.leads.length, 1, JSON.stringify(planned.decisions));
+  assert.equal(planned.leads[0].oracle, 'raw-observation');
+  const ledger = createLedger(dir);
+  t.after(() => ledger.close());
+  const run = await runResearchFlows(planned.leads, scope, {surface,
+    ledger, requester: createRequester(scope, {ledger, allowLocal: true}),
+    modelCallsAvailable: 0});
+  assert.equal(run.results[0].verdict, 'observed', JSON.stringify(run.results[0]));
+  assert.deepEqual(received.map(item => item.method),
+    ['GET', 'POST', 'PATCH', 'DELETE', 'HEAD']);
+  assert.equal(received[0].url, `${route}?code=1%2B2`);
+  assert.equal(received[0].cookie, 'gate=1');
+  assert.equal(received[1].body, requests[1].body);
+  assert.equal(received[2].body, requests[2].body);
+  assert.equal(received[3].body, requests[3].body);
+  assert.equal(received[4].custom, '1;2');
+});
+
+test('Muse refines an exact cookie request into a generic replayed access proof', async t => {
+  const route = `/workspace-${randomBytes(4).toString('hex')}`;
+  const cookieName = `entry_${randomBytes(5).toString('hex')}`;
+  let vulnerable = true;
+  const received = [];
+  const server = http.createServer((request, response) => {
+    received.push({path: request.url, cookie: request.headers.cookie ?? ''});
+    const open = vulnerable && request.headers.cookie === `${cookieName}=1`;
+    response.writeHead(200, {'content-type': 'text/html', 'cache-control': 'no-store'});
+    response.end(open ? '<title>Workspace</title><main>Private workspace</main>' :
+      '<title>Private Beta</title><main>Access code required</main>');
+  });
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+  t.after(() => new Promise(resolve => server.close(resolve)));
+  const origin = `http://127.0.0.1:${server.address().port}`;
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'bypass-raw-proof-'));
+  t.after(() => fs.rmSync(dir, {recursive: true, force: true}));
+  const scope = loadScope({origin, overrides: {acceptLocal: true}}).scope;
+  const surface = {patterns: [{pattern: route, methods: ['GET'], params: {},
+    responseFacts: {status: 200}}], assetSignals: [{file: `${origin}/client.js`,
+      authFlow: `Successful access sets cookie ${cookieName} before loading ${route}.`}]};
+  const request = value => ({method: 'GET', path: route,
+    headers: value === null ? [] : [{name: 'Cookie', value: `${cookieName}=${value}`}],
+    body: ''});
+  const cookiePlan = {family: 'gated workspace', why: 'Client names the cookie',
+    priority: 9, as: 'anonymous', oracle: 'cookie-access', prelude: [], observe: [],
+    subject: {method: 'GET', path: route, placement: 'cookie', key: cookieName,
+      fixedFields: [], bodyTemplate: '', headers: []}, controlValue: '0',
+    firstValue: '1', secondValue: '', marker: '<title>Private Beta</title>',
+    secondMarker: '<title>Workspace</title>',
+    assertion: {step: 'subject', index: 0, location: 'body', name: ''}};
+  const reviewedCookie = validateResearchFlow(cookiePlan, surface, scope);
+  assert.equal(reviewedCookie.ok, true);
+  assert.equal(reviewedCookie.lead.oracle, 'raw-proof');
+  assert.equal(reviewedCookie.lead.rawRequests[0].headers.at(-1).value,
+    `${cookieName}=1`);
+  const flow = (oracle, value, proof = null) => ({family: 'gated workspace',
+    why: 'Compare access with a model-chosen request value', priority: 9,
+    as: 'anonymous', oracle, rawRequests: [request(value)],
+    ...(proof ? {rawProof: proof} : {}), prelude: [], observe: [],
+    subject: {method: 'GET', path: route, placement: 'request', key: 'request',
+      fixedFields: [], bodyTemplate: '', headers: []}, controlValue: '',
+    firstValue: '', secondValue: '', marker: '', secondMarker: '',
+    assertion: {step: 'subject', index: 0, location: 'body', name: ''}});
+  const planned = await planResearchFlows(surface, scope, {model: 'fixture',
+    budget: 1, modelCallsAvailable: 1,
+    infer: async () => ({flows: [flow('raw-observation', 'wrong')]})});
+  assert.equal(planned.leads.length, 1, JSON.stringify(planned.decisions));
+  const ledger = createLedger(dir);
+  t.after(() => ledger.close());
+  let modelCalls = 0;
+  const run = await runResearchFlows(planned.leads, scope, {surface, ledger,
+    requester: createRequester(scope, {ledger, allowLocal: true}), model: 'fixture',
+    modelCallsAvailable: 2, infer: async (_model, messages) => {
+      const context = JSON.parse(messages[1].content);
+      modelCalls++;
+      if (modelCalls === 1) {
+        assert.ok(JSON.stringify(context).includes('Private Beta'));
+        return {flows: [flow('raw-observation', '1')]};
+      }
+      assert.ok(JSON.stringify(context).includes('Workspace'));
+      return {flows: [flow('raw-proof', '1', {baseline: [request(null)],
+        negative: [request('0')], closedText: '<title>Private Beta</title>',
+        openText: '<title>Workspace</title>'})]};
+    }});
+  assert.equal(modelCalls, 2);
+  assert.equal(run.results[0].verdict, 'confirmed', JSON.stringify(run.results[0]));
+  assert.equal(run.findings[0]?.kind, 'model-raw-boundary');
+  assert.ok(received.some(item => item.cookie === `${cookieName}=1`));
+  assert.ok(received.some(item => item.cookie === `${cookieName}=0`));
+  const proved = await proveFindings([{...run.findings[0], id: 'f-001'}], [],
+    {runDir: dir, surface, scope, env: {}, ledger, web: run});
+  assert.equal(proved.length, 1);
+  assert.ok(!fs.readFileSync(ledger.file, 'utf8').includes(`${cookieName}=1`));
+  vulnerable = false;
+  const fixed = await execFile(process.execPath, [proved[0].proof, '--expect-fixed'],
+    {env: process.env, timeout: 20000});
+  assert.equal(fixed.code, 0, fixed.stdout);
+});
+
+test('Muse can reconsider an uninformative raw request stop and prove a changed candidate', async t => {
+  const route = randomPath('access-review');
+  const cookieName = `access_${randomBytes(5).toString('hex')}`;
+  const acceptedValue = randomBytes(5).toString('hex');
+  const wrongValue = randomBytes(5).toString('hex');
+  const received = [];
+  const server = http.createServer((request, response) => {
+    received.push(request.headers.cookie ?? '');
+    const open = request.headers.cookie === `${cookieName}=${acceptedValue}`;
+    response.writeHead(200, {'content-type': 'text/html', 'cache-control': 'no-store'});
+    response.end(open ? '<title>Workspace</title><main>Private workspace</main>' :
+      '<title>Access gate</title><main>Access code required</main>');
+  });
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+  t.after(() => new Promise(resolve => server.close(resolve)));
+  const origin = `http://127.0.0.1:${server.address().port}`;
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'bypass-stop-review-'));
+  t.after(() => fs.rmSync(dir, {recursive: true, force: true}));
+  const scope = loadScope({origin, overrides: {acceptLocal: true}}).scope;
+  const surface = {patterns: [{pattern: route, methods: ['GET'], params: {}}]};
+  const raw = value => ({method: 'GET', path: route,
+    headers: value === null ? [] : [{name: 'Cookie', value: `${cookieName}=${value}`}],
+    body: ''});
+  const flow = (oracle, value, rawProof) => ({family: 'access gate',
+    why: 'Client source names an access cookie', priority: 8, as: 'anonymous',
+    oracle, rawRequests: [raw(value)], ...(rawProof ? {rawProof} : {})});
+  const ledger = createLedger(dir);
+  t.after(() => ledger.close());
+  let calls = 0;
+  const initial = validateResearchFlow(flow('raw-observation', wrongValue), surface, scope);
+  assert.equal(initial.ok, true);
+  const run = await runResearchFlows([initial.lead], scope,
+    {surface, ledger, requester: createRequester(scope, {ledger, allowLocal: true}),
+      model: 'fixture', modelCallsAvailable: 4, infer: async (_model, messages) => {
+        const context = JSON.parse(messages[1].content);
+        calls++;
+        if (calls === 1) {
+          assert.equal(context.recentAttempts.length, 1);
+          return {flows: []};
+        }
+        if (calls === 2) {
+          assert.equal(context.stopReview, true);
+          assert.equal(context.recentAttempts[0].requests[0].status, 200);
+          return {flows: [flow('raw-observation', acceptedValue)]};
+        }
+        return {flows: [flow('raw-proof', acceptedValue, {
+          baseline: [raw(null)], negative: [raw(wrongValue)],
+          closedText: '<title>Access gate</title>',
+          openText: '<title>Workspace</title>'})]};
+      }});
+  assert.equal(calls, 3);
+  assert.equal(run.results[0].verdict, 'confirmed', JSON.stringify(run.results[0]));
+  assert.ok(received.includes(`${cookieName}=${acceptedValue}`));
+  assert.ok(received.includes(`${cookieName}=${wrongValue}`));
+  assert.equal(run.findings[0]?.kind, 'model-raw-boundary');
+  const proved = await proveFindings([{...run.findings[0], id: 'f-001'}], [],
+    {runDir: dir, surface, scope, env: {}, ledger, web: run});
+  assert.equal(proved.length, 1);
+});
+
+test('Muse may stop a raw request after reviewing one negative candidate', async () => {
+  const origin = 'http://127.0.0.1:4329';
+  const route = randomPath('stop-review');
+  const scope = loadScope({origin, overrides: {acceptLocal: true}}).scope;
+  const surface = {patterns: [{pattern: route, methods: ['GET'], params: {}}]};
+  const plan = validateResearchFlow({family: 'observed route', why: 'Review one route',
+    priority: 5, as: 'anonymous', oracle: 'raw-observation',
+    rawRequests: [{method: 'GET', path: route}]}, surface, scope);
+  assert.equal(plan.ok, true);
+  let calls = 0, requests = 0;
+  const run = await runResearchFlows([plan.lead], scope, {surface, model: 'fixture',
+    modelCallsAvailable: 20,
+    requester: async () => ({status: 200, type: 'text/html',
+      body: '<title>Ordinary page</title>', headers: {'cache-control': 'no-store'},
+      evidenceId: `ev-${++requests}`}),
+    infer: async (_model, messages) => {
+      calls++;
+      if (calls === 2) assert.equal(JSON.parse(messages[1].content).stopReview, true);
+      return {flows: []};
+    }});
+  assert.equal(calls, 2);
+  assert.equal(requests, 1);
+  assert.equal(run.investigations[0].attempts.length, 1);
+  assert.equal(run.investigations[0].stopReason, 'model-stopped');
+  assert.equal(run.decisions[0].stopReviewRequested, true);
+  assert.equal(run.decisions[1].stopReview, true);
+});
+
+test('generic raw proof preserves a model-authored POST body and header through replay', async t => {
+  const route = randomPath('opaque');
+  const headerName = `X-Probe-${randomBytes(3).toString('hex')}`;
+  const bodyValue = `opaque:${randomBytes(7).toString('hex')}`;
+  let vulnerable = true;
+  const received = [];
+  const server = http.createServer(async (request, response) => {
+    const chunks = [];
+    for await (const chunk of request) chunks.push(chunk);
+    const body = Buffer.concat(chunks).toString();
+    received.push({method: request.method, body,
+      header: request.headers[headerName.toLowerCase()]});
+    const allowed = vulnerable && request.method === 'POST' &&
+      request.headers[headerName.toLowerCase()] === 'allow' && body === bodyValue;
+    response.writeHead(allowed ? 200 : 403,
+      {'content-type': 'application/json', 'cache-control': 'no-store'});
+    response.end(allowed ? '{"resource":"private"}' : '{"error":"denied"}');
+  });
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+  t.after(() => new Promise(resolve => server.close(resolve)));
+  const origin = `http://127.0.0.1:${server.address().port}`;
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'bypass-raw-post-proof-'));
+  t.after(() => fs.rmSync(dir, {recursive: true, force: true}));
+  const scope = loadScope({origin, overrides: {acceptLocal: true}}).scope;
+  const surface = {patterns: [{pattern: route, methods: ['POST'], params: {}}],
+    methodOperations: [{path: route, method: 'POST', placement: 'raw',
+      fields: [], contentType: 'application/octet-stream'}]};
+  const request = value => ({method: 'POST', path: route,
+    headers: [{name: 'Content-Type', value: 'application/octet-stream'},
+      {name: headerName, value}], body: bodyValue});
+  const proposal = {family: 'protected operation', why: 'Compare exact scoped POSTs',
+    priority: 8, as: 'anonymous', oracle: 'raw-proof',
+    rawRequests: [request('allow')], rawProof: {baseline: [request('plain')],
+      negative: [request('deny')], closedText: '', openText: ''},
+    prelude: [], subject: {method: 'POST', path: route, placement: 'request',
+      key: 'request', fixedFields: [], bodyTemplate: '', headers: []}, observe: [],
+    controlValue: '', firstValue: '', secondValue: '', marker: '', secondMarker: '',
+    assertion: {step: 'subject', index: 0, location: 'body', name: ''}};
+  const planned = await planResearchFlows(surface, scope, {model: 'fixture',
+    budget: 1, modelCallsAvailable: 1, infer: async () => ({flows: [proposal]})});
+  assert.equal(planned.leads.length, 1, JSON.stringify(planned.decisions));
+  const ledger = createLedger(dir);
+  t.after(() => ledger.close());
+  const run = await runResearchFlows(planned.leads, scope, {surface, ledger,
+    requester: createRequester(scope, {ledger, allowLocal: true}),
+    modelCallsAvailable: 0});
+  assert.equal(run.results[0].verdict, 'confirmed', JSON.stringify(run.results[0]));
+  assert.equal(run.findings[0]?.kind, 'model-raw-boundary');
+  const proved = await proveFindings([{...run.findings[0], id: 'f-001'}], [],
+    {runDir: dir, surface, scope, env: {}, ledger, web: run});
+  assert.equal(proved.length, 1);
+  assert.equal(received.length, 12);
+  assert.ok(received.every(item => item.method === 'POST' && item.body === bodyValue));
+  assert.ok(received.some(item => item.header === 'allow'));
+  vulnerable = false;
+  const fixed = await execFile(process.execPath, [proved[0].proof, '--expect-fixed'],
+    {env: process.env, timeout: 20000});
+  assert.equal(fixed.code, 0, fixed.stdout);
+});
+
 const randomPath = suffix => `/api/${suffix}-${randomBytes(4).toString('hex')}`;
+
+test('credential-shaped input names remain available to Muse as observed query and JSON fields', () => {
+  const origin = 'http://127.0.0.1:4337';
+  const readPath = randomPath('read');
+  const writePath = randomPath('write');
+  const writeKey = `json ${writePath}`;
+  const scope = structuredClone(loadScope({origin, overrides: {acceptLocal: true}}).scope);
+  scope.localAutoPostContracts = {[writeKey]:
+    {contentType: 'application/json', fields: ['code']}};
+  const surface = {patterns: [{pattern: readPath, methods: ['GET'], params: {code: []}}],
+    jsonBodyOperations: [{path: writePath, method: 'POST',
+      contentType: 'application/json', fields: ['code'], requiredFields: ['code']}],
+    methodOperations: [{path: writePath, method: 'POST', placement: 'json',
+      contentType: 'application/json', fields: ['code'], requiredFields: ['code']}]};
+  const inventory = researchFlowInventory(surface, scope);
+  assert.equal(inventory.reads.get(readPath)?.fields.has('code'), true);
+  assert.deepEqual(inventory.posts.get(writeKey)?.fields, ['code']);
+  assert.deepEqual(inventory.writeOperations.get(`POST ${writeKey}`)?.fields,
+    ['code']);
+  const base = {family: 'observed-code-field', why: 'Compare an observed input',
+    priority: 5, as: 'anonymous', oracle: 'observation', prelude: [], observe: [],
+    controlValue: 'audit-one', firstValue: 'audit-two', secondValue: 'audit-three',
+    marker: '', secondMarker: '',
+    assertion: {step: 'subject', index: 0, location: 'body', name: ''}};
+  for (const subject of [
+    {method: 'GET', path: readPath, placement: 'query', key: 'code',
+      fixedFields: [], bodyTemplate: '', headers: []},
+    {method: 'POST', path: writePath, placement: 'json', key: 'code',
+      fixedFields: [], bodyTemplate: '', headers: []},
+  ]) assert.equal(validateResearchFlow({...base, subject}, surface, scope).ok, true);
+});
+
+test('Muse research planning receives client-script state observations', async () => {
+  const origin = 'http://127.0.0.1:4338';
+  const cookieName = `gate_${randomBytes(5).toString('hex')}`;
+  const scope = loadScope({origin, overrides: {acceptLocal: true}}).scope;
+  const surface = {patterns: [{pattern: '/workspace', methods: ['GET'], params: {}}],
+    assetSignals: [{file: `${origin}/client.js`,
+      authFlow: `Client text names the ${cookieName} cookie after unlock`, evidenceId: 'ev-script'}]};
+  let received = false;
+  await planResearchFlows(surface, scope, {model: 'fixture', budget: 1,
+    modelCallsAvailable: 1, infer: async (_model, messages) => {
+      const context = JSON.parse(messages[1].content);
+      received = context.assetSignals?.some(signal =>
+        signal.authFlow.includes(cookieName) && signal.evidenceId === 'ev-script');
+      return {flows: []};
+    }});
+  assert.equal(received, true);
+});
+
+test('a public HTML form becomes a reviewed Muse POST contract without OpenAPI or JavaScript',
+  async t => {
+    const route = randomPath('form-preview');
+    const server = http.createServer((request, response) => {
+      response.writeHead(request.url === '/' ? 200 : 404,
+        {'content-type': 'text/html'});
+      response.end(request.url === '/' ? `<form method="post" action="${route}">
+        <input name="expression" required><input type="hidden" name="csrf"
+          value="private-fixture-token-123"></form>` : 'missing');
+    });
+    await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+    t.after(() => new Promise(resolve => server.close(resolve)));
+    const origin = `http://127.0.0.1:${server.address().port}`;
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'bypass-html-form-'));
+    t.after(() => fs.rmSync(dir, {recursive: true, force: true}));
+    const scopePath = path.join(dir, 'scope.json');
+    fs.writeFileSync(scopePath, JSON.stringify({schemaVersion: 1, target: {origin},
+      include: ['/'], limits: {rps: 50}}));
+    const scope = loadScope({file: scopePath, origin}).scope;
+    const requester = async ({url}) => {
+      const response = await fetch(new URL(url, origin));
+      return {status: response.status, type: response.headers.get('content-type'),
+        body: await response.text(), evidenceId: 'fixture'};
+    };
+    const mined = await mineOrigin(origin, {requester});
+    assert.ok(!JSON.stringify(mined).includes('private-fixture-token-123'));
+    const prepared = await deriveLocalPostScope(scope, mined, requester);
+    assert.deepEqual(prepared.admitted.map(item => item.path), [route]);
+    const surface = await anonymousSurface(prepared.scope, requester, mined);
+    const form = surface.formBodyOperations.find(item => item.path === route);
+    assert.deepEqual([form.source, form.fields, form.requiredFields],
+      ['public-html', ['expression', 'csrf'], ['expression']]);
+    assert.deepEqual(researchFlowInventory(surface, prepared.scope).posts
+      .get(`form ${route}`).fields, ['expression', 'csrf']);
+    let presented = false;
+    const planned = await planResearchFlows(surface, prepared.scope, {model: 'fixture',
+      budget: 1, modelCallsAvailable: 1,
+      infer: async (_model, messages) => {
+        const context = JSON.parse(messages[1].content);
+        presented = context.routes.some(item => item.path === route &&
+          item.kind === 'form' && item.fields.includes('expression'));
+        return {flows: []};
+      }});
+    assert.equal(presented, true);
+    assert.equal(planned.leads.length, 0);
+  });
 
 test('reviewed operation purpose survives a shorter model note in planning and revision context',
   async t => {
@@ -351,7 +1025,11 @@ test('authorized deployed scope admits an observed POST body, while GET-only aut
     {method: 'POST', purpose: 'json-body', identity: 'anonymous'}).ok, true);
   const surface = await anonymousSurface(prepared.scope, requester, mined);
   assert.deepEqual(surface.jsonBodyOperations.map(item => item.path), [route]);
-  const readOnly = loadScope({file, origin, targets: [readOnlyTarget]}).scope;
+  const readOnlyFile = path.join(dir, 'read-only-scope.json');
+  fs.writeFileSync(readOnlyFile, JSON.stringify({schemaVersion: 1, target: {origin},
+    include: ['/api'], methods: ['GET', 'HEAD'], limits: {rps: 2}}));
+  const readOnly = loadScope({file: readOnlyFile, origin,
+    targets: [readOnlyTarget]}).scope;
   const refused = await deriveLocalPostScope(readOnly, mined, requester);
   assert.equal(refused.admitted.length, 0);
   assert.ok(refused.skipped.some(item => item.path === route &&
@@ -396,20 +1074,16 @@ test('an observed reset-password path is visible and a bounded POST honors an ex
     item.reason === 'outside-scope-or-never'));
 });
 
-test('an observed destructive POST requires an exact reviewed contract', async () => {
+test('an observed POST uses selected method scope without an extra path review', async () => {
   const origin = 'http://127.0.0.1:4329';
   const route = `${randomPath('delete')}/delete`;
   const scope = loadScope({origin, overrides: {acceptLocal: true}}).scope;
   const mined = {endpoints: [{method: 'POST', path: route, bodyEncoding: 'json',
     bodyFields: ['recordId']}]};
   const requester = async () => ({status: 404, body: ''});
-  const unreviewed = await deriveLocalPostScope(scope, mined, requester);
-  assert.equal(unreviewed.admitted.length, 0);
-  assert.ok(unreviewed.skipped.some(item => item.path === route &&
-    item.reason === 'mutating-post-needs-review'));
-  const reviewed = structuredClone(scope);
-  reviewed.probes.jsonPostPaths.push(route);
-  assert.equal(validateUrl(reviewed, route,
+  const prepared = await deriveLocalPostScope(scope, mined, requester);
+  assert.deepEqual(prepared.admitted.map(item => item.path), [route]);
+  assert.equal(validateUrl(prepared.scope, route,
     {method: 'POST', purpose: 'json-body'}).ok, true);
 });
 
@@ -470,9 +1144,9 @@ test('observed local JS JSON POST runs with known fields while an excluded decoy
   const unobservedBody = await guarded({url: reviewed, method: 'POST', purpose: 'json-body',
     identity: 'anonymous', step: 'task', noCache: true,
     headers: {'content-type': 'application/json'}, body: JSON.stringify({unseen: 'sample'})});
-  assert.equal(unobservedBody.refused, true);
-  assert.equal(unobservedBody.reason, 'local-auto-post-contract');
-  assert.deepEqual(hits.filter(item => item.startsWith('POST ')), [`POST ${reviewed}`]);
+  assert.equal(unobservedBody.status, 404);
+  assert.deepEqual(hits.filter(item => item.startsWith('POST ')),
+    [`POST ${reviewed}`, `POST ${reviewed}`]);
 });
 
 test('local auth-body uses an inferred credential contract and keeps returned token out of evidence', async t => {
@@ -742,7 +1416,7 @@ test('Muse repairs a rejected revision and executes the corrected sequence', asy
   assert.equal(run.investigations[0].stopReason, 'model-stopped');
 });
 
-test('Muse receives safe value-shape diagnostics and repairs an unexecutable revision',
+test('Muse can execute a model-authored query value without a syntax veto',
   async () => {
     const origin = 'http://127.0.0.1:4329';
     const scope = loadScope({origin, overrides: {acceptLocal: true}}).scope;
@@ -767,21 +1441,13 @@ test('Muse receives safe value-shape diagnostics and repairs an unexecutable rev
         if (calls === 1) return {flows: [{...lead, oracle: 'marker',
           firstValue: 'bad\nvalue', secondValue: 'other',
           marker: context.marker, secondMarker: context.secondMarker}]};
-        if (calls === 2) {
-          assert.equal(context.rejected.reason, 'subject-or-controls');
-          assert.equal(context.rejected.shape.component, 'control-values');
-          assert.equal(context.rejected.shape.valueReason, 'value-shape');
-          assert.equal(context.rejected.observationFallback.valueReason,
-            'observation-value-shape');
-          assert.doesNotMatch(JSON.stringify(context.rejected), /bad\\nvalue/);
-          return {flows: [{...lead, firstValue: 'gamma', secondValue: 'delta'}]};
-        }
+        if (calls === 2) assert.equal(context.rejected, undefined);
         return {flows: []};
       }});
-    assert.equal(calls, 3);
-    assert.equal(sent, 12);
+    assert.equal(calls, 2);
+    assert.equal(sent, 9);
     assert.deepEqual(run.decisions.map(item => [item.accepted, item.reason]), [
-      [false, 'subject-or-controls'], [true, undefined], [false, 'model-stopped']]);
+      [true, undefined], [false, 'model-stopped']]);
     assert.doesNotMatch(JSON.stringify(run.decisions), /bad\\nvalue/);
   });
 
@@ -932,6 +1598,7 @@ test('reviewed POST and PATCH reach the first Muse route page when one model cal
 test('observed API methods preserve exact method, placement and content type in research execution', async () => {
   const origin = 'http://127.0.0.1:4329';
   const scope = structuredClone(loadScope({origin, overrides: {acceptLocal: true}}).scope);
+  scope.methods.push('PUT');
   const operations = [
     {method: 'PUT', path: '/api/update', placement: 'json', contentType: 'application/json',
       fields: ['expression'], requiredFields: []},
@@ -977,6 +1644,29 @@ test('observed API methods preserve exact method, placement and content type in 
     else assert.ok(requests.every(request => request.headers['content-type'] ===
       operation.contentType && request.body));
   }
+  const sequence = {family: 'method-workflow-observation', why: 'Observed method workflow',
+    priority: 8, as: 'anonymous', oracle: 'observation',
+    prelude: [{method: 'DELETE', path: '/api/delete', placement: 'query',
+      key: 'id', value: 'plain', fixedFields: [], bodyTemplate: '', headers: []}],
+    subject: {method: 'PUT', path: '/api/update', placement: 'json',
+      key: 'expression', fixedFields: [], bodyTemplate: '', headers: []},
+    observe: [{method: 'PATCH', path: '/api/patch', placement: 'form',
+      key: 'name', value: 'plain', fixedFields: [], bodyTemplate: '', headers: []}],
+    controlValue: 'plain', firstValue: 'first', secondValue: 'second',
+    marker: '', secondMarker: '',
+    assertion: {step: 'subject', index: 0, location: 'body', name: ''}};
+  const checked = validateResearchFlow(sequence, surface, scope, {inventory});
+  assert.equal(checked.ok, true, checked.reason);
+  const requests = [];
+  await executeResearchFlow(checked.lead, async request => {
+    requests.push(request);
+    return {status: 200, type: 'application/json', body: '{"ok":true}',
+      headers: {}, cached: false, evidenceId: `ev-${requests.length}`};
+  });
+  assert.ok(requests.length >= 9);
+  for (let index = 0; index < requests.length; index += 3)
+    assert.deepEqual(requests.slice(index, index + 3).map(request => request.method),
+      ['DELETE', 'PUT', 'PATCH']);
 });
 
 test('Muse GET plans keep observed companion query inputs through execution', async () => {
@@ -1176,7 +1866,7 @@ test('local POST refusal subtype reaches Muse and can prompt a reviewed route pi
   assert.equal('refusal' in unsafeDetail.facts[0].subject, false);
 });
 
-test('blank bindings normalize and non-canary controls become observations', async () => {
+test('blank bindings normalize and model-authored syntax remains executable', async () => {
   const origin = 'http://127.0.0.1:4329';
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'bypass-flow-binding-shape-'));
   try {
@@ -1222,8 +1912,8 @@ test('blank bindings normalize and non-canary controls become observations', asy
       }});
     assert.deepEqual(planned.decisions.map(item => item.reason),
       [undefined, 'binding-shape', undefined]);
-    assert.equal(planned.decisions[0].translatedTo, 'observation');
-    assert.equal(planned.leads[0].oracle, 'observation');
+    assert.equal(planned.decisions[0].translatedTo, undefined);
+    assert.equal(planned.leads[0].oracle, 'marker');
     assert.equal(planned.decisions[1].shape.component, 'binding-shape');
     assert.equal(planned.decisions[2].normalizedBinding, true);
     assert.equal(JSON.stringify(planned.decisions).includes('<script>'), false);
@@ -1763,10 +2453,10 @@ test('HTTP sequence validation keeps routes, fields, headers and XML envelopes o
     assert.equal(validateResearchFlow({...base, subject: {...base.subject,
       path: '/api/missing'}}, surface, scope).reason, 'unreviewed-post');
     assert.equal(validateResearchFlow({...base, subject: {...base.subject,
-      key: 'password'}}, surface, scope).reason, 'subject-or-controls');
+      key: 'password'}}, surface, scope).reason, 'unobserved-post-field');
     assert.equal(validateResearchFlow({...base, subject: {...base.subject,
       headers: [{name: 'x-auth-token', value: 'demo'}]}}, surface, scope).reason,
-    'subject-or-controls');
+    'post-shape');
     const xml = {...base, subject: {method: 'POST', path: '/api/xml',
       placement: 'xml', key: 'payload', fixedFields: [], headers: [],
       bodyTemplate: '<request><payload>{{input}}</payload></request>'}};
@@ -1898,6 +2588,7 @@ test('a sequence with no HTTP attempt remains deferred after its cursor advances
   const value = normalized.lead;
   const signature = JSON.stringify([value.oracle, value.protectedPath ?? null,
     value.as, value.prelude, value.subject, value.observe,
+    value.rawRequests ?? null, value.rawProof ?? null,
     value.bindings ?? value.binding ?? null,
     value.controlValue, value.firstValue, value.secondValue,
     value.assertion]);

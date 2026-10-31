@@ -1,7 +1,7 @@
 // Read-only web probes with independent, deterministic confirmation. Redirect canaries are never fetched.
 import {createHash, randomBytes} from 'node:crypto';
 import http from 'node:http';
-import {validateUrl, credentialQueryKey} from './scope.mjs';
+import {validateUrl} from './scope.mjs';
 import {extractFromHtml, maskSecrets} from './assets.mjs';
 import {responseRouteHints} from './recon.mjs';
 import {extractToken} from './auth.mjs';
@@ -18,7 +18,7 @@ import {HOST_HEADER_CANARIES, commandOutputCanary, commandOutputOracle, crlfCana
   hostsTraversalCanary, hostsTraversalOracle, renderCapturedHtml, responseCached,
   xxeHostsCanaries, xxeHostsOracle, xxeLiteralControl,
   hostHeaderRedirectMatch, hostHeaderRedirectOracle, jwtUnsignedCanaries, jwtUnsignedOracle,
-  modelAuthBearer, modelAuthLoginRejection, safeAuthUserPayload,
+  modelAuthBearer, modelAuthLoginRejection,
   validModelJsonPointer,
   nosqlEqUrl, nosqlOperatorOracle, redirectPollutionUrl, redirectPollutionOracle,
   sqlBooleanCanary, sqlBooleanOracle, sstiCanary, modelExperimentReason,
@@ -187,12 +187,12 @@ const MODEL_EXPERIMENT_ITEM = {type: 'object', properties: {
   family: {type: 'string', maxLength: 60}, path: {type: 'string'}, parameter: {type: 'string'},
   oracle: {type: 'string', enum: ['marker', 'observation']},
   profile: {type: 'string', enum: Object.keys(MODEL_STRATEGY_PROFILES)},
-  controlValue: {type: 'string', maxLength: 256}, firstValue: {type: 'string', maxLength: 256},
-  secondValue: {type: 'string', maxLength: 256}, marker: {type: 'string'},
+  controlValue: {type: 'string'}, firstValue: {type: 'string'},
+  secondValue: {type: 'string'}, marker: {type: 'string'},
   secondMarker: {type: 'string'},
   prelude: {type: 'array', items: {type: 'string', maxLength: 300}},
-  headers: {type: 'array', maxItems: 4, items: {type: 'object',
-    properties: {name: {type: 'string'}, value: {type: 'string', maxLength: 128}},
+  headers: {type: 'array', items: {type: 'object',
+    properties: {name: {type: 'string'}, value: {type: 'string'}},
     required: ['name', 'value'], additionalProperties: false}},
   priority: {type: 'integer'}, why: {type: 'string', maxLength: 300}},
   required: ['family', 'path', 'parameter', 'controlValue', 'firstValue', 'secondValue',
@@ -298,7 +298,7 @@ export function redirectLeads(surface, scope, {budget = 20} = {}) {
       Number.isInteger(record.fingerprint?.owner?.status) &&
       ![401, 403, 404].includes(record.fingerprint.owner.status) ? 'owner' : 'anonymous';
     for (const parameter of Object.keys(record.params ?? {})) {
-      if (!validQueryParameter(parameter) || credentialQueryKey(parameter)) continue;
+      if (!validQueryParameter(parameter)) continue;
       const named = REDIRECT_PARAM.test(parameter);
       if (!named && !interpretedRedirect(surface, record.pattern, parameter) &&
           !interpretedRedirect(surface, pathname, parameter)) continue;
@@ -472,7 +472,7 @@ function ssrfLeads(surface, scope, budget) {
     const pathname = concretePath(record);
     if (!pathname) continue;
     for (const parameter of Object.keys(record.params ?? {})) {
-      if (!validQueryParameter(parameter) || credentialQueryKey(parameter)) continue;
+      if (!validQueryParameter(parameter)) continue;
       const named = SSRF_PARAM.test(parameter);
       if (!named && !interpretedFetchUrl(surface, record.pattern, parameter) &&
           !interpretedFetchUrl(surface, pathname, parameter)) continue;
@@ -546,7 +546,7 @@ function xssLeads(surface, scope, budget) {
       [401, 403].includes(record.fingerprint?.anonymous?.status) &&
       record.fingerprint?.owner?.status === 200 ? 'owner' : 'anonymous';
     for (const parameter of Object.keys(record.params ?? {})) {
-      if (credentialQueryKey(parameter) || !SAFE_PROBE_PARAM.test(parameter) ||
+      if (!SAFE_PROBE_PARAM.test(parameter) ||
           !validateUrl(scope, pathname, {identity: as === 'derived' ? 'anonymous' : as}).ok) continue;
       leads.push({path: pathname, pattern: record.pattern, parameter, as, source: record.source ?? []});
     }
@@ -563,7 +563,7 @@ function sqlLeads(surface, scope, budget) {
       [401, 403].includes(record.fingerprint?.anonymous?.status) &&
       record.fingerprint?.owner?.status === 200 ? 'owner' : 'anonymous';
     for (const [parameter, examples] of Object.entries(record.params ?? {})) {
-      if (credentialQueryKey(parameter) || !SAFE_PROBE_PARAM.test(parameter) ||
+      if (!SAFE_PROBE_PARAM.test(parameter) ||
           !validateUrl(scope, pathname, {identity: as === 'derived' ? 'anonymous' : as}).ok) continue;
       const documentedBases = [...new Set((Array.isArray(examples) ? examples : []).filter(value =>
         typeof value === 'string' && /^[A-Za-z0-9_.@-]{1,64}$/.test(value)))].slice(0, 3);
@@ -592,7 +592,7 @@ function nosqlLeads(surface, scope, budget) {
     if (!pathname || !validateUrl(scope, pathname, {identity: 'owner'}).ok ||
         !validateUrl(scope, pathname, {identity: 'outsider'}).ok) continue;
     for (const [parameter, examples] of Object.entries(record.params ?? {})) {
-      if (!NOSQL_PARAM.test(parameter) || credentialQueryKey(parameter)) continue;
+      if (!NOSQL_PARAM.test(parameter)) continue;
       const base = (Array.isArray(examples) ? examples : []).find(value =>
         typeof value === 'string' && /^[A-Za-z0-9_.@-]{1,64}$/.test(value));
       if (base) leads.push({path: pathname, pattern: record.pattern, parameter, base,
@@ -1101,20 +1101,7 @@ function reserveWebReviewPages(schedule, pages) {
 
 const authPayloadReason = value => {
   if (typeof value !== 'string') return 'not-string';
-  if (value.length < 3 || value.length > 128) return 'length';
-  if (!/^[\x20-\x7e]+$/.test(value)) return 'non-printable';
-  if (!/['"()=]/.test(value)) return 'missing-syntax';
-  if (/[;`$<>|&\\]|(?:https?:|file:|ftp:|gopher:|data:)/i.test(value)) return 'unsafe-content';
-  // A login field named "email" may need an address-shaped synthetic value. Only
-  // reserved example domains are admitted; arbitrary real addresses remain out.
-  for (const match of value.matchAll(/@/g)) {
-    if (!/^@(?:invalid|example\.(?:invalid|test|com|net|org)|invalid\.test)(?=$|[^a-z0-9.-])/i
-      .test(value.slice(match.index))) return 'non-synthetic-address';
-  }
-  if (/\b(?:delete|drop|truncate|alter|update|insert|exec|execute|sleep|benchmark|shutdown|process|require|import|fetch)\b/i.test(value))
-    return 'unsafe-keyword';
-  if (maskSecrets(value) !== value) return 'secret-like';
-  if (!safeAuthUserPayload(value)) return 'proof-unsafe';
+  if (/[\r\n\x00]/.test(value)) return 'header-shape';
   return null;
 };
 const authProbeShape = values => ({count: Array.isArray(values) ? values.length : null,
@@ -1250,7 +1237,7 @@ export async function planAuthLogins(surface, scope, {infer = null, model = null
   try {
     result.modelCalls++;
     const reply = await infer(model, [{role: 'system', content:
-      'From only the observed authorized JSON login operations and GET routes, propose up to three distinct anonymous authentication-bypass experiments in priority order. Choose observed username and password fields, login path and identity GET path. Supply one or two non-credential username syntax probes; the harness generates fresh random invalid passwords and invalid-user controls. Do not guess a real username, email, password, token or account. Choose proofMode principal when a stable principal scalar can be checked, or protected-status when the observed identity GET denies anonymous callers and a fresh session can change it to 2xx even if its body is empty. For protected-status, principalPointer is unnecessary; the harness requires anonymous and invalid-session denials, then repeats one successful synthetic username with two independently random invalid passwords. For bearer sessions use slash JSON Pointer syntax for tokenPointer, such as /token or /authentication/token. For cookie sessions set tokenPointer to an empty string; the harness extracts a live session Set-Cookie transiently. In protected-status mode the bearer pointer is advisory, and both session kinds require protected GET controls. The bearer tokenPointer and principalPointer are testable hypotheses, not facts requiring an already successful login: anonymous recon cannot show the authenticated response shape. Infer plausible token pointers from route purpose, asset facts and common API structure; vary pointer or observed identity GET route across hypotheses. Code rejects wrong hypotheses under fresh controls. When reconsideration is supplied, the prior answer produced no executable plan despite the exact observed POST contract and listed anonymous-denied GET route IDs; make one fresh evidence-grounded proposal instead of requiring a successful-login response shape. Use exactly one username probe for protected-status or two different probes for principal. Safe synthetic syntax examples are a quote followed by OR 1=1, or an email-shaped value at the reserved example.invalid domain followed by a quote and OR 1=1; never use a real address. Avoid semicolons, command characters, URL schemes, and destructive words. When priorAttempts are supplied, use their statuses, response shapes and session presence to change the input structure, syntax termination or token pointer where justified. Do not merely rename an unsuccessful input or repeat an identical experiment. Keep the same observed exact POST contract and an observed GET route. The tested strings are synthetic inputs, not credentials. Do not return empty solely because a session cookie, bearer token or principal field has not yet been observed. Return empty when no observed login body contract or plausible identity GET route exists, or the evidence no longer supports a novel safe test. No writes, external callbacks, destructive syntax or unobserved paths.'},
+      'From only the observed authorized JSON login operations and GET routes, propose up to three distinct anonymous authentication-bypass experiments in priority order. Choose observed username and password fields, login path and identity GET path. Supply one or two non-credential username syntax probes; the harness generates fresh random invalid passwords and invalid-user controls. Do not guess a real username, email, password, token or account. Choose proofMode principal when a stable principal scalar can be checked, or protected-status when the observed identity GET denies anonymous callers and a fresh session can change it to 2xx even if its body is empty. For protected-status, principalPointer is unnecessary; the harness requires anonymous and invalid-session denials, then repeats one successful synthetic username with two independently random invalid passwords. For bearer sessions use slash JSON Pointer syntax for tokenPointer, such as /token or /authentication/token. For cookie sessions set tokenPointer to an empty string; the harness extracts a live session Set-Cookie transiently. In protected-status mode the bearer pointer is advisory, and both session kinds require protected GET controls. The bearer tokenPointer and principalPointer are testable hypotheses, not facts requiring an already successful login: anonymous recon cannot show the authenticated response shape. Infer plausible token pointers from route purpose, asset facts and common API structure; vary pointer or observed identity GET route across hypotheses. Code rejects wrong hypotheses under fresh controls. When reconsideration is supplied, the prior answer produced no executable plan despite the exact observed POST contract and listed anonymous-denied GET route IDs; make one fresh evidence-grounded proposal instead of requiring a successful-login response shape. Use exactly one username probe for protected-status or two different probes for principal. Choose candidate values from the observed contract and prior response feedback; use test data and do not reuse observed private credentials. When priorAttempts are supplied, use their statuses, response shapes and session presence to change the input structure, syntax termination or token pointer where justified. Do not merely rename an unsuccessful input or repeat an identical experiment. Keep the same observed exact POST contract and an observed GET route. The tested strings are synthetic inputs, not credentials. Do not return empty solely because a session cookie, bearer token or principal field has not yet been observed. Return empty when no observed login body contract or plausible identity GET route exists, or the evidence no longer supports a novel safe test. Keep each proposed request within the selected target scope.'},
     {role: 'user', content: JSON.stringify(context)}], {schema: {type: 'object',
       properties: {checks: {type: 'array', maxItems: 3, items: {type: 'object', properties: {
         loginPath: {type: 'string'}, userField: {type: 'string'}, passwordField: {type: 'string'},
@@ -1565,10 +1552,11 @@ export async function runAuthLogins(leads, scope, {requester, onConfirmedSession
         ...(session.kind === 'cookie' ? {derivedCookie: session.value} :
           {derivedBearer: session.value}),
         requestAuthenticated: ({url, method = 'GET', body, maxBytes, headers = {},
-          step = 'control', purpose = 'task', auditCallback = null}) => requester({url, identity: 'anonymous',
+          step = 'control', purpose = 'task', auditCallback = null,
+          rawModelRequest = false}) => requester({url, identity: 'anonymous',
           method, body, step, task: 'derived-session-recon', agent: 'derived-session-authenticated',
           purpose, noCache: true, omitExcerpt: true,
-          maxBytes, headers, auditCallback, ...(session.kind === 'cookie' ?
+          maxBytes, headers, auditCallback, rawModelRequest, ...(session.kind === 'cookie' ?
             {derivedCookie: session.value} : {derivedBearer: session.value})})});
     }
     const url = new URL(lead.loginPath, scope.target.origin);
@@ -1967,8 +1955,8 @@ export async function planWebLeads(surface, scope, {budget = 20, infer = null, m
           const markerMismatch = proposal.marker !== context.canary ||
             proposal.secondMarker !== context.secondCanary;
           const observation = {...experiment, oracle: 'observation'};
-          const observeOnly = proposal.oracle === 'observation' ||
-            (markerMismatch || !validModelExperiment(experiment)) &&
+          const observeOnly = proposal.oracle === 'observation' || markerMismatch ||
+            !validModelExperiment(experiment) &&
               validModelExperiment(observation);
           const executable = observeOnly ? observation : experiment;
           const prelude = proposal?.prelude ?? [];
@@ -2003,7 +1991,6 @@ export async function planWebLeads(surface, scope, {budget = 20, infer = null, m
               prelude.some(path => !preludeRoutes.includes(path) ||
                 !validateUrl(scope, path, {identity: observed.as}).ok))
             decision.reason = 'unobserved-or-out-of-scope-prelude';
-          else if (markerMismatch && !observeOnly) decision.reason = 'marker-mismatch';
           else if (!validModelExperiment(executable)) {
             decision.reason = 'invalid-controls';
             decision.controlReason = modelExperimentReason(executable);
@@ -2053,7 +2040,7 @@ export async function planWebLeads(surface, scope, {budget = 20, infer = null, m
           strategyDecisions.push(decision);
           if (decision.accepted && proposalIndex > initialExperiments)
             modelCoverage.repairAccepted = (modelCoverage.repairAccepted ?? 0) + 1;
-          if (observed && ['invalid-controls', 'marker-mismatch'].includes(decision.reason))
+          if (observed && decision.reason === 'invalid-controls')
             repairableExperiments.push({family: decision.family, path: decision.path,
               parameter: decision.parameter, priority: proposal.priority,
               why: decision.hypothesis, reason: decision.reason,
@@ -4960,12 +4947,12 @@ export async function runWebProbes(surface, scope, {requester, ledger = null, bu
           properties: {experiments: {type: 'array', maxItems: 4, items: {type: 'object',
             properties: {family: {type: 'string'}, path: {type: 'string'}, parameter: {type: 'string'},
               oracle: MODEL_EXPERIMENT_ITEM.properties.oracle,
-              controlValue: {type: 'string', maxLength: 256}, firstValue: {type: 'string', maxLength: 256},
-              secondValue: {type: 'string', maxLength: 256}, marker: {type: 'string'},
+              controlValue: {type: 'string'}, firstValue: {type: 'string'},
+              secondValue: {type: 'string'}, marker: {type: 'string'},
               secondMarker: {type: 'string'}, prelude: {type: 'array',
                 items: {type: 'string', maxLength: 300}},
-              headers: {type: 'array', maxItems: 4, items: {type: 'object',
-                properties: {name: {type: 'string'}, value: {type: 'string', maxLength: 128}},
+              headers: {type: 'array', items: {type: 'object',
+                properties: {name: {type: 'string'}, value: {type: 'string'}},
                 required: ['name', 'value'], additionalProperties: false}},
               why: {type: 'string', maxLength: 300}},
             required: ['family', 'path', 'parameter', 'controlValue', 'firstValue', 'secondValue',
@@ -4984,18 +4971,16 @@ export async function runWebProbes(surface, scope, {requester, ledger = null, bu
           const markerMismatch = proposal.marker !== canary ||
             proposal.secondMarker !== secondCanary;
           const observation = {...experiment, oracle: 'observation'};
-          const observeOnly = proposal.oracle === 'observation' ||
-            (markerMismatch || !validModelExperiment(experiment)) &&
+          const observeOnly = proposal.oracle === 'observation' || markerMismatch ||
+            !validModelExperiment(experiment) &&
               validModelExperiment(observation);
           const executable = observeOnly ? observation : experiment;
           if (!observed) {decision.reason = 'unobserved-input'; continue;}
           const family = modelFamily(proposal.family);
-          if (markerMismatch && !observeOnly || !family ||
-              !validModelExperiment(executable)) {
+          if (!family || !validModelExperiment(executable)) {
             decision.reason = 'invalid-experiment';
             decision.controlReason = !family ? 'family-metadata' :
-              markerMismatch && !observeOnly ? 'markers' :
-                modelExperimentReason(executable);
+              modelExperimentReason(executable);
             continue;
           }
           if (!Array.isArray(prelude) ||

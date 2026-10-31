@@ -84,7 +84,7 @@ test('a generated HTTP sequence proof replays a reviewed POST and becomes a pass
     if (url.pathname === '/api/process' && request.method === 'POST') {
       const chunks = [];
       for await (const chunk of request) chunks.push(chunk);
-      const value = JSON.parse(Buffer.concat(chunks).toString()).expression;
+      const value = JSON.parse(Buffer.concat(chunks).toString()).code;
       last = transformed && value.startsWith('hex:') ?
         Buffer.from(value.slice(4), 'hex').toString('utf8') : value;
       return json(200, {accepted: true});
@@ -102,7 +102,7 @@ test('a generated HTTP sequence proof replays a reviewed POST and becomes a pass
   scope.probes.jsonPostPaths = ['/api/process'];
   const webProof = {kind: 'model-http-sequence', as: 'anonymous',
     prelude: [{method: 'GET', path: '/api/prepare', headers: []}],
-    subject: {method: 'POST', path: '/api/process', placement: 'json', key: 'expression',
+    subject: {method: 'POST', path: '/api/process', placement: 'json', key: 'code',
       fixedFields: [], bodyTemplate: '', headers: []},
     observe: [{method: 'GET', path: '/api/state', headers: []}],
     controlValue: 'plain', firstValue: encoded(firstMarker),
@@ -680,6 +680,17 @@ test('reviewed PUT, PATCH, DELETE and OPTIONS sequences preserve exact method an
     'inconclusive');
     assert.equal(seen.length, before, 'an unreviewed method must not reach the server');
   }
+  const multiMethod = {...specForOperation(operations[1]),
+    reviewedOperations: [operations[1], operations[2], operations[0]],
+    prelude: [{method: 'DELETE', path: '/api/remove', placement: 'query',
+      key: 'expression', value: 'plain', fixedFields: [], bodyTemplate: '', headers: []}],
+    observe: [{method: 'PUT', path: '/api/replace', placement: 'json',
+      key: 'expression', value: 'plain', fixedFields: [], bodyTemplate: '', headers: []}]};
+  const beforeMultiMethod = seen.length;
+  assert.equal(validModelHttpSequence(multiMethod), true);
+  assert.equal((await check(multiMethod)).verdict, 'observed');
+  assert.deepEqual(seen.slice(beforeMultiMethod).map(item => item.method),
+    ['DELETE', 'PATCH', 'PUT', 'DELETE', 'PATCH', 'PUT', 'DELETE', 'PATCH', 'PUT']);
   const options = specForOperation(operations[3]);
   assert.equal(validModelHttpSequence({...options,
     subject: {...options.subject, placement: 'json'},

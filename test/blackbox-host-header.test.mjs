@@ -22,20 +22,25 @@ test('Host redirect oracle requires two exact destinations and rejects cached co
   assert.equal(hostHeaderRedirectOracle({...control, headers: {location: '/elsewhere'}}, first, second, origin), false);
 });
 
-test('guarded requester accepts only fixed enabled Host canaries', async t => {
+test('scoped requester sends valid model-chosen Host headers', async t => {
   const root = temp();
   t.after(() => fs.rmSync(root, {recursive: true, force: true}));
-  const {scope} = loadScope({origin: 'http://127.0.0.1:4329', overrides: {acceptLocal: true}});
+  const seen = [];
+  const server = http.createServer((request, response) => {
+    seen.push(request.headers.host);
+    response.writeHead(204);
+    response.end();
+  });
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+  t.after(() => new Promise(resolve => server.close(resolve)));
+  const origin = `http://127.0.0.1:${server.address().port}`;
+  const {scope} = loadScope({origin, overrides: {acceptLocal: true}});
   const requester = createRequester(scope, {ledger: createLedger(root), allowLocal: true});
   const call = host => requester({url: '/api/go', step: 'task', method: 'GET', noCache: true,
     headers: {host}});
-  await assert.rejects(call('example.com'), /fixed audit canary/);
-  await assert.rejects(requester({url: '/api/go', step: 'task', method: 'GET',
-    headers: {host: HOST_HEADER_CANARIES[0]}}), /anonymous uncached GET/);
-  const disabled = createRequester({...scope, probes: {...scope.probes, hostHeaderRedirect: false}},
-    {ledger: createLedger(root), allowLocal: true});
-  await assert.rejects(disabled({url: '/api/go', step: 'task', method: 'GET', noCache: true,
-    headers: {host: HOST_HEADER_CANARIES[0]}}), /fixed audit canary/);
+  assert.equal((await call('example.invalid')).status, 204);
+  assert.deepEqual(seen, ['example.invalid']);
+  await assert.rejects(call('bad\r\nHost: injected.invalid'), /HTTP header/);
 });
 
 test('real blackbox CLI proves Host redirect poisoning and its exported regression turns green after a fix', async t => {

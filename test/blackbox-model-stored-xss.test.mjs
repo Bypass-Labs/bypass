@@ -11,7 +11,7 @@ import {CLI} from '../src/demo.mjs';
 import {loadScope} from '../src/blackbox/scope.mjs';
 import {planStoredXss} from '../src/blackbox/stored-xss.mjs';
 
-test('stored-XSS model plans cannot add unobserved POSTs, views or body fields', async t => {
+test('stored-XSS plans keep observed routes and complete required body fields', async t => {
   const root = temp();
   t.after(() => fs.rmSync(root, {recursive: true, force: true}));
   const origin = 'http://127.0.0.1:3000';
@@ -34,7 +34,7 @@ test('stored-XSS model plans cannot add unobserved POSTs, views or body fields',
     budget: 4, modelCallsAvailable: 1});
   assert.deepEqual(plan.decisions.map(item => [item.accepted, item.reason]),
     [[false, 'unobserved-route-or-field'], [false, 'unobserved-route-or-field'],
-      [false, 'unobserved-route-or-field'], [true, undefined]]);
+      [false, 'invalid-input'], [true, undefined]]);
   assert.deepEqual(plan.leads.map(item => [item.path, item.viewPath, item.parameter]),
     [['/api/comment', '/comments', 'message']]);
 });

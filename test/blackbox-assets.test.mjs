@@ -4,7 +4,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import http from 'node:http';
-import { createHash } from 'node:crypto';
+import { createHash, randomBytes } from 'node:crypto';
 import { SECRET_PATTERNS, maskSecrets, normalizeScript, extractFromScript, extractFromHtml, libraryAdvisoryKey, mineOrigin } from '../src/blackbox/assets.mjs';
 import {interpretAssets} from '../src/blackbox/asset-interpret.mjs';
 import { safeRequest } from '../src/network.mjs';
@@ -53,6 +53,33 @@ const SUFFIX = {'basic-auth-url': '/acme.git'}; // the credential is scheme://us
 const FIREBASE_KEY = fake('AI', 'za', 'Sy', 'FIREBASE'.padEnd(33, '0'));
 const GENERIC_VALUE = 'tok-1234abcd5678';
 const PUBLIC = ['stripe-publishable-key', 'mapbox-public-token', 'firebase-config'];
+
+test('a generated client method/path pair reaches Muse without becoming a local GET', async () => {
+  const suffix = randomBytes(4).toString('hex');
+  const route = `/v7/${suffix}/enroll`;
+  const script = `const config={apiHost:"accounts-${suffix}.example.test"};` +
+    `async function enroll(client,email){return send(client,"POST","${route}",{email})}`;
+  const facts = extractFromScript(script, {url: `${ORIGIN}/client.js`, origin: ORIGIN});
+  assert.ok(!facts.endpoints.some(item => item.path === route));
+  assert.ok(facts.routeHints.some(item => item.kind === 'generated-client' &&
+    item.method === 'POST' && item.literals.includes(route) &&
+    item.excerpt.includes(`accounts-${suffix}.example.test`) &&
+    item.excerpt.includes('email')));
+  let presented = false;
+  await interpretAssets({files: [{...facts, url: `${ORIGIN}/client.js`,
+    hash: sha256(script), evidenceId: 'ev-client'}], endpoints: facts.endpoints}, {
+    model: {name: 'fixture'}, maxPages: 2,
+    infer: async (_model, messages) => {
+      const context = JSON.parse(messages[1].content);
+      presented ||= context.files.some(file => file.hints.some(hint =>
+        hint.kind === 'generated-client' && hint.method === 'POST' &&
+        hint.literals.includes(route) && hint.excerpt.includes(`accounts-${suffix}.example.test`)));
+      return {files: context.files.map(file => ({id: file.id, role: 'api', why: '',
+        authFlow: '', routes: [], proposals: []}))};
+    },
+  });
+  assert.ok(presented, 'Muse receives the method, path, host clue and source evidence');
+});
 
 test('SECRET_PATTERNS is a frozen list with a confidence per pattern and publishable keys marked public', () => {
   assert.ok(Object.isFrozen(SECRET_PATTERNS));
@@ -261,7 +288,7 @@ test('asset mining attributes same-named service method bodies by their injected
   assert.equal(at('/api/Beta').bodyEvidence, 'same-file-receiver-object');
 });
 
-test('asset mining records a query key constructed in a local suffix without retaining credential keys', () => {
+test('asset mining retains credential-shaped query names constructed in a local suffix', () => {
   const source = [
     "class Profile {hostServer=config.hostServer;read(fields){let suffix=fields.length?`?view=${fields.join(',')}`:``;return this.http.get(this.hostServer+`/api/profile`+suffix)}",
     "private(token){let query=token?`?auth.token=${token}`:``;return this.http.get(this.hostServer+`/api/check`+query)}}",
@@ -269,7 +296,7 @@ test('asset mining records a query key constructed in a local suffix without ret
   const found = extractFromScript(source, {url: `${ORIGIN}/app.js`, origin: ORIGIN});
   const endpoint = path => found.endpoints.find(item => item.method === 'GET' && item.path === path);
   assert.deepEqual(endpoint('/api/profile')?.params, ['view']);
-  assert.deepEqual(endpoint('/api/check')?.params, []);
+  assert.deepEqual(endpoint('/api/check')?.params, ['auth.token']);
 });
 
 test('asset mining reports inferred route and class cuts instead of silently dropping candidates', () => {
@@ -405,6 +432,25 @@ test('extractFromHtml returns absolute scripts, preloads, links, inline scripts 
   assert.equal(out.inline.length, 1);
   assert.match(out.inline[0], /fetch\("\/api\/inline\/ping"\)/);
   assert.deepEqual(out.json, [{page: '/dashboard', props: {apiUrl: '/api/v1/session'}}, {user: null, links: ['/api/announcements']}]);
+});
+
+test('HTML forms expose their observed action, method and field contract without saving field values', () => {
+  const html = `<form method="post" action="../api/preview?mode=quick">
+    <input name="expression" required value="2+3">
+    <input type="hidden" name="csrf" value="private-fixture-token-123">
+    <textarea name="comment"></textarea><select name="format"><option value="json">JSON</option></select>
+    <input disabled name="disabled"><button name="submit" type="submit">Go</button>
+  </form><form action="/search"><input name="q" required></form>`;
+  const out = extractFromHtml(html, {url: 'http://127.0.0.1:9/app/index.html'});
+  assert.deepEqual(out.forms.map(form => [form.method, form.action, form.fields,
+    form.requiredFields, form.contentType]), [
+    ['POST', 'http://127.0.0.1:9/api/preview?mode=quick',
+      ['expression', 'csrf', 'comment', 'format'], ['expression'],
+      'application/x-www-form-urlencoded'],
+    ['GET', 'http://127.0.0.1:9/search', ['q'], ['q'],
+      'application/x-www-form-urlencoded'],
+  ]);
+  assert.ok(!JSON.stringify(out).includes('private-fixture-token-123'));
 });
 
 test('libraryAdvisoryKey maps a detected library to an npm advisory query', () => {
@@ -828,6 +874,44 @@ test('a 1933-name map still mines and sends its last embedded app source to Muse
   assert.ok(interpreted.notes.some(note => note.path === '/api/late-map-original'));
 });
 
+test('Muse receives every client-script chunk with late source text redacted', async () => {
+  const origin = 'http://127.0.0.1:9132';
+  const cookieName = `gate_${randomBytes(5).toString('hex')}`;
+  const secret = `sk_live_${randomBytes(18).toString('hex')}`;
+  const script = `${'/* ordinary client code */\n'.repeat(700)}` +
+    `const apiKey = '${secret}';\n` +
+    `// A successful unlock sets the ${cookieName} cookie before loading the app.\n` +
+    `fetch('/api/unlock', {method:'POST', body:JSON.stringify({code: input.value})});`;
+  const pages = {'/': ['text/html', '<script src="/client.js"></script>'],
+    '/client.js': ['application/javascript', script]};
+  const summary = await mineOrigin(origin, {requester: async ({url}) => {
+    const [type, body] = pages[new URL(url).pathname] ?? ['text/plain', 'missing'];
+    return {status: body === 'missing' ? 404 : 200, type, body, evidenceId: 'ev-client'};
+  }});
+  let sawCookie = false, sawLateSource = false, sawSecret = false;
+  const interpreted = await interpretAssets(summary, {model: 'fixture', maxPages: 20,
+    infer: async (_model, messages) => {
+      const input = messages.at(-1).content;
+      const page = JSON.parse(input);
+      sawCookie ||= page.files.some(file => file.sourceText?.includes(cookieName));
+      sawLateSource ||= page.files.some(file => file.sourceText?.includes("fetch('/api/unlock'"));
+      sawSecret ||= input.includes(secret);
+      return {files: page.files.map(file => ({id: file.id, role: 'app', why: '',
+        authFlow: file.sourceText?.includes(cookieName) ?
+          `The ${cookieName} cookie is set after unlock` : '',
+        routes: file.routes.map(route => ({path: route.path, method: route.method,
+          purpose: 'Observed client call', parameters: []})), proposals: []}))};
+    }});
+  assert.equal(sawCookie, true);
+  assert.equal(sawLateSource, true);
+  assert.equal(sawSecret, false);
+  assert.ok(interpreted.coverage.sourceChunksSent >= 2);
+  assert.ok(summary.files.some(file => file.analysis?.authFlow?.includes(cookieName)));
+  assert.ok(!JSON.stringify(summary).includes(secret));
+  assert.ok(!JSON.stringify(interpreted).includes(secret));
+  assert.ok(!JSON.stringify(summary).includes('sourceText'));
+});
+
 test('namespace-only maps without embedded source report unavailable originals, not missed app code', async () => {
   const origin = 'http://127.0.0.1:9131';
   const sources = ['webpack://DocsBundle/./node_modules/ui/index.js',
@@ -966,7 +1050,8 @@ test('source-map mining and Muse input retain indirect hints from later applicat
             path: '/api/indirect-39'}] : []}))};
     }});
   assert.equal(interpreted.coverage.hintsAvailable, 40);
-  assert.equal(interpreted.coverage.pagesAvailable, 3);
+  assert.ok(interpreted.coverage.pagesAvailable > 3,
+    'the three fact pages precede additional client-source pages');
   assert.equal(interpreted.coverage.hintsSent, 40);
   assert.ok(modelPages.flatMap(page => page.files).flatMap(unit => unit.hints)
     .some(hint => hint.literals.includes('/api/indirect-39')));

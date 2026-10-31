@@ -67,6 +67,7 @@ test('an empty companion field is removed from a reviewed JSON method contract',
   const origin = 'http://127.0.0.1:43292';
   const scope = structuredClone(loadScope({origin,
     overrides: {acceptLocal: true}}).scope);
+  scope.methods.push('PUT');
   const path = '/api/wallet-preview';
   scope.probes.writeOperations.push({method: 'PUT', path, placement: 'json'});
   const surface = {patterns: [], methodOperations: [{path, method: 'PUT',

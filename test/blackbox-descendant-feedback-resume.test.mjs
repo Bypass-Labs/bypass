@@ -21,7 +21,7 @@ test('an interrupted descendant hint resumes only on its rediscovered authorized
   {timeout: 60000}, async t => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'bypass-descendant-feedback-'));
     t.after(() => fs.rmSync(dir, {recursive: true, force: true}));
-    const origin = 'https://app.example.test:8443';
+    const origin = 'https://app.example.test';
     const run = 'bx-20261029-abc12345';
     const checkpointFile = path.join(dir, 'descendant-test-feedback-checkpoint.json');
     const stateFile = path.join(dir, 'reveal');
@@ -46,10 +46,15 @@ test('an interrupted descendant hint resumes only on its rediscovered authorized
       scope.domains=['example.test'];
       scope.discovery.auditDomains=['example.test'];
       scope.include=['/api'];
+      const expiresAt=new Date(Date.now()+60000).toISOString();
+      scope.authorizedDomains={'example.test':{
+        url:'https://example.test',ownership:{status:'verified',expiresAt},
+        authorization:{origin:'https://example.test',paths:['/api'],
+          methods:scope.methods,expiresAt}}};
       const discovery={hosts:[{host:'app.example.test',origin,
         operations:[{method:'GET',path:'/api/seed',
           params:[{name:'q',in:'query',example:'plain'}],source:['document:/openapi.json']}],
-        assets:null},{host:'other.example.test',origin:'https://other.example.test:8443',
+        assets:null},{host:'other.example.test',origin:'https://other.example.test',
         operations:[{method:'GET',path:'/api/seed',
           params:[{name:'q',in:'query',example:'plain'}],source:['document:/openapi.json']}],
         assets:null}]};
@@ -121,7 +126,7 @@ test('an interrupted descendant hint resumes only on its rediscovered authorized
     assert.ok(requests.filter(item => item.phase === 'resume' && item.path === '/api/hidden')
       .some(item => item.origin === origin), 'the saved route must be revisited after the hint disappears');
     assert.ok(!requests.some(item => item.phase === 'resume' && item.path === '/api/hidden' &&
-      item.origin === 'https://other.example.test:8443'),
+      item.origin === 'https://other.example.test'),
     'a saved route must not be sent to another authorized host');
     assert.deepEqual(JSON.parse(fs.readFileSync(checkpointFile, 'utf8')).pending, []);
     assert.deepEqual(JSON.parse(fs.readFileSync(path.join(dir, 'finished.json'), 'utf8')).remaining, []);

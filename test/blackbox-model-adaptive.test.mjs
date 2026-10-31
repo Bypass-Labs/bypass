@@ -11,7 +11,7 @@ import {CLI} from '../src/demo.mjs';
 import {validModelExperiment, validModelHeaders} from '../src/blackbox/poc-runtime.mjs';
 import {researchCatalogIndex, researchCatalogHint} from '../src/blackbox/research-catalog.mjs';
 
-test('model syntax is accepted for local experiments and constrained elsewhere', () => {
+test('scoped model requests preserve printable values and syntactically valid headers', () => {
   assert.equal(researchCatalogIndex().length, 35);
   assert.equal(researchCatalogIndex().find(item => item.name === 'Remote File Inclusion (RFI)')?.tier, 2);
   assert.match(researchCatalogHint('Remote File Inclusion (RFI)')?.verification ?? '',
@@ -20,11 +20,11 @@ test('model syntax is accepted for local experiments and constrained elsewhere',
     firstValue: "{{'b'+'x'}}", secondValue: "{{'b'+'y'}}",
     marker: 'bx123456789abc', secondMarker: 'bxabcdef123456'};
   assert.equal(validModelExperiment({...spec, origin: 'http://127.0.0.1:3000'}), true);
-  assert.equal(validModelExperiment({...spec, origin: 'https://example.test'}), false);
+  assert.equal(validModelExperiment({...spec, origin: 'https://example.test'}), true);
   assert.equal(validModelExperiment({...spec, origin: 'http://127.0.0.1:3000',
-    firstValue: "{{'b';'x'}}"}), false);
+    firstValue: "{{'b';'x'}}"}), true);
   assert.equal(validModelHeaders([{name: 'X-Mode', value: 'expression'}]), true);
-  assert.equal(validModelHeaders([{name: 'Authorization', value: 'Bearer test'}]), false);
+  assert.equal(validModelHeaders([{name: 'Authorization', value: 'Bearer test'}]), true);
   assert.equal(validModelHeaders([{name: 'X-Mode', value: 'bad\r\nHeader: injected'}]), false);
 });
 

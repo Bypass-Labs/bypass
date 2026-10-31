@@ -72,7 +72,8 @@ export function coverageFor({results = [], surface = null, web = null, ownerRead
   const decisive = new Set(['confirmed', 'not_reproduced', 'public', 'shared']);
   const webResults = web?.results ?? [];
   const confirmedSequenceResults = webResults.filter(item =>
-    ['model-http-sequence', 'model-state-change', 'model-access-boundary']
+    ['model-http-sequence', 'model-cookie-access', 'model-raw-boundary',
+      'model-state-change', 'model-access-boundary']
       .includes(item.kind) && item.verdict === 'confirmed').length;
   // A model sequence is stored under its generic runner kind. Its impact
   // oracle emits a separate finding kind, so count that exercised class too.
@@ -112,13 +113,16 @@ export function coverageFor({results = [], surface = null, web = null, ownerRead
   const xxe = webResults.filter(item => ['xxe-hosts', 'xxe-body-hosts'].includes(item.kind)).length;
   const ssti = webResults.filter(item => item.kind === 'ssti-arithmetic').length;
   const modelKinds = ['model-differential', 'model-json-differential',
-    'model-http-sequence', 'model-browser-execution',
-    'model-json-observation', 'model-http-observation'];
+    'model-http-sequence', 'model-cookie-access', 'model-raw-boundary',
+    'model-browser-execution',
+    'model-json-observation', 'model-http-observation', 'model-raw-observation'];
   // Queued or refused proposals are coverage cuts, not executed experiments.
   const modelDirected = webResults.filter(item => modelKinds.includes(item.kind) &&
     !['untested', 'blocked'].includes(item.verdict)).length;
   const publicSession = webResults.filter(item => item.kind === 'public-session-token').length;
   const authLogin = webResults.filter(item => item.kind === 'model-auth-login').length;
+  const cookieAccess = webResults.filter(item => item.kind === 'model-cookie-access').length;
+  const rawBoundary = webResults.filter(item => item.kind === 'model-raw-boundary').length;
   const assetFiles = (surface?.mined?.files?.length ?? 0) +
     (discovery?.hosts ?? []).reduce((count, host) => count + (host.assets?.files?.length ?? 0), 0) +
     applications.reduce((count, app) => count + (app.mined?.files?.length ?? 0), 0);
@@ -127,7 +131,8 @@ export function coverageFor({results = [], surface = null, web = null, ownerRead
     applications.reduce((count, app) => count + (app.exposureStats?.answered ?? 0), 0);
   const exposureTotal = (surface?.exposureStats?.total ?? 0) +
     applications.reduce((count, app) => count + (app.exposureStats?.total ?? 0), 0);
-  const attempts = {'access-control': access + nosql + derivedPrivate + authLogin + modelAccess + modelState,
+  const attempts = {'access-control': access + nosql + derivedPrivate + authLogin +
+    cookieAccess + rawBoundary + modelAccess + modelState,
     'exposed-paths': exposed,
     'open-redirect': redirect, 'host-header-redirect': hostHeader, 'jwt-auth': jwt,
     'parameter-pollution': pollution,
@@ -136,11 +141,12 @@ export function coverageFor({results = [], surface = null, web = null, ownerRead
     cors, ssrf, xxe, xss: xss + htmlInjection, ssti, 'secret-exposure': privateKeys + publicCredentials,
     'anonymous-credential-data': anonymousCredentials,
     dependency: advisories?.records?.length ?? 0, 'model-directed': modelDirected,
-    'session-account': publicSession + authLogin};
+    'session-account': publicSession + authLogin + cookieAccess};
   const nosqlDone = webResults.filter(item => item.kind === 'nosql-operator-bypass' && decisive.has(item.verdict)).length;
   const completed = {'access-control': results.filter(item => decisive.has(item.verdict)).length + nosqlDone +
     modelAccess + modelState +
-    webResults.filter(item => ['derived-private-read', 'model-auth-login'].includes(item.kind) &&
+    webResults.filter(item => ['derived-private-read', 'model-auth-login',
+      'model-cookie-access'].includes(item.kind) &&
       decisive.has(item.verdict)).length,
     'exposed-paths': exposed,
     'open-redirect': webResults.filter(item => item.kind === 'open-redirect' && decisive.has(item.verdict)).length,
@@ -171,7 +177,8 @@ export function coverageFor({results = [], surface = null, web = null, ownerRead
     'model-directed': webResults.filter(item =>
       modelKinds.includes(item.kind) &&
       (decisive.has(item.verdict) || item.verdict === 'observed')).length,
-    'session-account': webResults.filter(item => ['public-session-token', 'model-auth-login'].includes(item.kind) &&
+    'session-account': webResults.filter(item => ['public-session-token',
+      'model-auth-login', 'model-cookie-access', 'model-raw-boundary'].includes(item.kind) &&
       decisive.has(item.verdict)).length};
   const rows = FAMILIES.map(([family, description]) => {
     const observed = attempts[family] ?? 0;
@@ -204,15 +211,15 @@ export function coverageFor({results = [], surface = null, web = null, ownerRead
         'Only public session-token replay or a Muse-proposed synthetic invalid-password login against a protected GET was checked; password-reset, MFA and other account flows were not tested.' :
       family === 'open-redirect' && !redirect ? 'No observed redirect parameter was reachable within the budget.' :
       family === 'host-header-redirect' && !scope?.probes?.hostHeaderRedirect ?
-        'Disabled in this scope; deployed targets require probes.hostHeaderRedirect=true in the reviewed scope file.' :
+        'Disabled by the reviewed scope (probes.hostHeaderRedirect=false).' :
       family === 'host-header-redirect' && observed > 0 ?
         'Only anonymous GET redirects on observed redirect-parameter routes were checked with two fixed Host values; password-reset links and other Host uses were not tested.' :
       family === 'jwt-auth' && !scope?.probes?.jwtUnsigned ?
-        'Disabled in this scope; deployed targets require probes.jwtUnsigned=true in the reviewed scope file.' :
+        'Disabled by the reviewed scope (probes.jwtUnsigned=false).' :
       family === 'jwt-auth' && observed > 0 ?
         'Only two alg:none encodings of an operator-supplied owner JWT were checked on observed private JSON GET routes after an invalid-signature denial.' :
       family === 'response-header-injection' && !scope?.probes?.crlfResponseHeader ?
-        'Disabled in this scope; deployed targets require probes.crlfResponseHeader=true in the reviewed scope file.' :
+        'Disabled by the reviewed scope (probes.crlfResponseHeader=false).' :
       family === 'response-header-injection' && observed > 0 ?
         'Only a harmless injected X-Bypass-Audit response header was checked; cache and downstream behavior were not tested.' :
       family === 'ssrf' && observed > 0 ?
@@ -228,15 +235,15 @@ export function coverageFor({results = [], surface = null, web = null, ownerRead
       family === 'sql-nosql-injection' && observed > 0 ? 'Only read-only SQL boolean pairs and bracketed equality-operator cross-account lookups on documented GET parameters were checked; other SQL and NoSQL techniques were not tested.' :
       family === 'command-injection' && observed > 0 ? 'Only two harmless printf output canaries on documented GET parameters were checked; blind, delayed and write-side command execution were not tested.' :
       family === 'command-injection' && !scope?.probes?.commandExecution ?
-        'Disabled in this scope; deployed targets require probes.commandExecution=true in the reviewed scope file.' :
+        'Disabled by the reviewed scope (probes.commandExecution=false).' :
       family === 'path-file' && observed > 0 ?
         'Only two relative paths to /etc/hosts on documented GET file parameters were checked; other files and inclusion variants were not tested.' :
       family === 'path-file' && !scope?.probes?.pathTraversal ?
-        'Disabled in this scope; deployed targets require probes.pathTraversal=true in the reviewed scope file.' :
+        'Disabled by the reviewed scope (probes.pathTraversal=false).' :
       family === 'xxe' && observed > 0 ?
         'Only a benign /etc/hosts external entity on a documented GET XML parameter or an exact reviewed XML POST path was checked; other entity behaviors were not tested.' :
       family === 'xxe' && !scope?.probes?.xmlExternalEntity ?
-        'Disabled in this scope; deployed targets require probes.xmlExternalEntity=true in the reviewed scope file.' :
+        'Disabled by the reviewed scope (probes.xmlExternalEntity=false).' :
       family === 'ssti' && observed > 0 ? 'Only harmless arithmetic expressions on documented GET parameters were checked; code execution was not tested.' :
       family === 'exposed-paths' && !scope?.discovery?.sensitivePaths ? 'Disabled by scope.' :
       status === 'not tested' ? 'No authorized probe and independent oracle ran for this family.' : null;
@@ -266,14 +273,18 @@ export function coverageFor({results = [], surface = null, web = null, ownerRead
   const modelStateClass = {attempts: modelState, completed: modelState,
     reason: 'Only an anonymous change to an owner-only disposable record, followed by an owner read and restoration, was checked.'};
   const authLoginClass = webClass('model-auth-login');
+  const cookieAccessClass = webClass('model-cookie-access');
+  const rawBoundaryClass = webClass('model-raw-boundary');
   const derivedPrivateClass = {...webClass('derived-private-read'),
     reason: 'Only newly mapped GET routes whose JSON explicitly declares private account data were checked with a fresh authenticated response and two exact anonymous reads; other access controls remain untested.'};
   const allAccess = {attempts: results.length + operatorClass.attempts + modelAccessClass.attempts +
       modelStateClass.attempts +
-      derivedPrivateClass.attempts + authLoginClass.attempts,
+      derivedPrivateClass.attempts + authLoginClass.attempts + cookieAccessClass.attempts +
+      rawBoundaryClass.attempts,
     completed: results.filter(item => decisive.has(item.verdict)).length +
       operatorClass.completed + modelAccessClass.completed + modelStateClass.completed +
-      derivedPrivateClass.completed + authLoginClass.completed};
+      derivedPrivateClass.completed + authLoginClass.completed + cookieAccessClass.completed +
+      rawBoundaryClass.completed};
   const idorClass = taskClass(['idor', 'nested-idor', 'graphql-bola']);
   const bolaClass = {attempts: idorClass.attempts + operatorClass.attempts +
       modelAccessClass.attempts + modelOutsiderState,
@@ -282,8 +293,8 @@ export function coverageFor({results = [], surface = null, web = null, ownerRead
   const missingAuthClass = taskClass(['missing-auth']);
   const jwtClass = {...webClass('jwt-unsigned'),
     reason: 'Only alg:none acceptance of an operator-supplied JWT on observed private JSON GET routes was checked; other JWT flaws remain untested.'};
-  const authBypassClass = {attempts: missingAuthClass.attempts + jwtClass.attempts + derivedPrivateClass.attempts + authLoginClass.attempts,
-    completed: missingAuthClass.completed + jwtClass.completed + derivedPrivateClass.completed + authLoginClass.completed,
+  const authBypassClass = {attempts: missingAuthClass.attempts + jwtClass.attempts + derivedPrivateClass.attempts + authLoginClass.attempts + cookieAccessClass.attempts + rawBoundaryClass.attempts,
+    completed: missingAuthClass.completed + jwtClass.completed + derivedPrivateClass.completed + authLoginClass.completed + cookieAccessClass.completed + rawBoundaryClass.completed,
     reason: 'Only missing authentication on observed or configured private reads, alg:none acceptance on an observed private JSON GET, or a Muse-proposed synthetic invalid-password login with a protected GET control was checked.'};
   const keyScan = {attempts: assetFiles, completed: 0,
     reason: 'Downloaded client assets were scanned for key-shaped strings, but API key validity and privileges were not checked.'};

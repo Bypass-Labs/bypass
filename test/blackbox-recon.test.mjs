@@ -156,7 +156,7 @@ test('OpenAPI carries bounded nested JSON shape and public examples without secr
     content: {'application/json': media}}}}}};
   const operation = parseOpenApi(doc, 'http://127.0.0.1:9').operations[0];
   assert.deepEqual(operation.fieldShapes.selector.properties,
-    {match: {type: 'string'}, variant: {type: 'integer'}});
+    {match: {type: 'string'}, variant: {type: 'integer'}, token: {type: 'string'}});
   assert.deepEqual(operation.fieldValueExamples.selector,
     ['{"match":"public","variant":0}']);
   assert.equal(operation.fieldValueExamples.metadata, undefined);

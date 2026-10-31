@@ -10,7 +10,7 @@ test('source-assisted review extracts routes and sends only redacted excerpts to
   const root = temp();
   t.after(() => fs.rmSync(root, {recursive: true, force: true}));
   const secret = 'sk_live_abcdefghijklmnopqrstuvwxyz012345';
-  fs.writeFileSync(path.join(root, 'app.js'), `app.get('/api/accounts/:id', (req, res) => {\n  const limit = req.query.limit;\n  const key = '${secret}';\n  const privatePath = '/api/lookup?auth.token=shortsecret';\n  return res.json({id:req.params.id, limit});\n});\napp.get('/api/${secret}', (_req, res) => res.end());\n`);
+  fs.writeFileSync(path.join(root, 'app.js'), `app.get('/api/accounts/:id', (req, res) => {\n  const limit = req.query.limit;\n  const key = '${secret}';\n  const privatePath = '/api/lookup?auth.token=shortsecret';\n  return res.json({id:req.params.id, limit});\n});\napp.get('/api/unlock?code=shortsecret', (_req, res) => res.end());\napp.get('/api/${secret}', (_req, res) => res.end());\n`);
   fs.writeFileSync(path.join(root, '.env'), `TOKEN=${secret}\n`);
   const prompts = [];
   const infer = async (_model, messages) => {
@@ -21,6 +21,7 @@ test('source-assisted review extracts routes and sends only redacted excerpts to
   const result = await reviewSource(root, {infer, model: {provider: 'test'}});
   assert.ok(result.endpoints.some(item => item.path === '/api/accounts/:id' && item.method === 'GET'));
   assert.ok(result.endpoints.some(item => item.params.includes('limit')));
+  assert.ok(result.endpoints.some(item => item.path === '/api/unlock?code='));
   assert.ok(!result.endpoints.some(item => item.path.includes(secret)));
   assert.equal(result.files.length, 1, '.env is never read as source');
   assert.deepEqual(result.secretLeads.map(({file, line, name, confidence}) =>
@@ -44,6 +45,17 @@ test('source credential leads are bounded and contain neither values nor reversi
   assert.ok(result.secretLeads.every(lead =>
     Object.keys(lead).sort().join(',') === 'column,confidence,file,line,name'));
   for (const value of values) assert.ok(!JSON.stringify(result).includes(value));
+});
+
+test('source routes retain a credential-shaped field when its literal value looks secret', async t => {
+  const root = temp();
+  t.after(() => fs.rmSync(root, {recursive: true, force: true}));
+  const value = 'sk_live_abcdefghijklmnopqrstuvwxyz012345';
+  fs.writeFileSync(path.join(root, 'app.js'),
+    `app.get('/api/unlock?code=${value}', (_req, res) => res.end());\n`);
+  const result = await reviewSource(root);
+  assert.ok(result.endpoints.some(item => item.path === '/api/unlock?code='));
+  assert.ok(!JSON.stringify(result).includes(value));
 });
 
 test('source-assisted review inspects routes in files larger than the old 128 KiB cap', async t => {
@@ -262,7 +274,7 @@ test('Muse receives bounded redacted excerpts for source routes with dynamic pat
   assert.equal(result.stats.unresolvedRoutes, 2);
   assert.equal(result.stats.unresolvedRoutesCut, 0);
   assert.equal(result.endpoints.length, 0);
-  assert.deepEqual(result.proposals, ['/api/dynamic-jump?next=/safe']);
+  assert.deepEqual(result.proposals, ['/api/dynamic-jump?next=/safe', '/api/secret?token=']);
   assert.equal(result.modelCoverage.snippetsAvailable, 2);
   assert.equal(result.modelCoverage.snippetsSent, 2);
   assert.ok(!prompts.join('\n').includes(secret));

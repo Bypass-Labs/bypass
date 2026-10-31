@@ -10,7 +10,7 @@ import {createLedger} from '../src/blackbox/ledger.mjs';
 import {createRequester, loadScope, validateScopeTemplate,
   validateUrl} from '../src/blackbox/scope.mjs';
 
-test('observed local method contracts execute exact bounded PATCH, PUT and reviewed DELETE requests', async t => {
+test('observed method contracts execute authorized PATCH, PUT, DELETE and OPTIONS requests', async t => {
   const hits = [];
   const server = http.createServer(async (request, response) => {
     const chunks = [];
@@ -30,9 +30,7 @@ test('observed local method contracts execute exact bounded PATCH, PUT and revie
   t.after(() => fs.rmSync(dir, {recursive: true, force: true}));
   const file = path.join(dir, 'scope.json');
   fs.writeFileSync(file, JSON.stringify({schemaVersion: 1, target: {origin},
-    include: ['/api'], probes: {writeOperations: [
-      {method: 'DELETE', path: '/api/delete', placement: 'query'},
-      {method: 'OPTIONS', path: '/api/options', placement: 'query'}]}}));
+    include: ['/api'], methods: ['GET', 'HEAD', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS']}));
   const scope = loadScope({file, origin}).scope;
   const mined = {endpoints: [
     {method: 'PATCH', path: '/api/patch', bodyEncoding: 'json',
@@ -51,14 +49,13 @@ test('observed local method contracts execute exact bounded PATCH, PUT and revie
   assert.deepEqual(derived.methodAdmitted.map(item =>
     [item.method, item.path, item.placement]).sort(), [
     ['DELETE', '/api/delete', 'query'],
+    ['DELETE', '/api/unreviewed', 'query'],
     ['OPTIONS', '/api/options', 'query'],
     ['PATCH', '/api/flaky', 'json'],
     ['PATCH', '/api/patch', 'json'],
     ['PUT', '/api/put', 'form']]);
-  assert.ok(derived.skipped.some(item => item.path === '/api/unreviewed' &&
-    item.reason === 'delete-needs-exact-review'));
   const surface = await anonymousSurface(derived.scope, noDocument, mined);
-  assert.equal(surface.methodOperations.length, 5);
+  assert.equal(surface.methodOperations.length, 6);
   assert.equal(surface.methodOperations.find(item => item.path === '/api/patch')?.contentType,
     'application/merge-patch+json');
   const ledger = createLedger(dir);
@@ -88,21 +85,14 @@ test('observed local method contracts execute exact bounded PATCH, PUT and revie
   assert.equal(flaky.status, 503);
   assert.equal(hits.filter(item => item.url === '/api/flaky').length, 1,
     'a write must not retry after a server error');
-  await assert.rejects(request({url: '/api/patch', method: 'PATCH', purpose: 'json-body',
-    step: 'task', noCache: true, headers: {'content-type': 'application/json'},
-    body: '{"value":"audit-marker"}'}), /reviewed|content|body/i);
-  await assert.rejects(request({url: '/api/put', method: 'PUT', purpose: 'form-body',
-    step: 'task', noCache: true,
-    headers: {'content-type': 'application/x-www-form-urlencoded'},
-    body: 'unobserved=audit-marker'}), /observed|reviewed/i);
   assert.equal(validateUrl(derived.scope, '/api/unreviewed?id=audit-marker',
-    {method: 'DELETE', purpose: 'reviewed-method'}).ok, false);
+    {method: 'DELETE', purpose: 'reviewed-method'}).ok, true);
   assert.equal(validateUrl(derived.scope, '/api/other?probe=audit-marker',
-    {method: 'OPTIONS', purpose: 'reviewed-method'}).ok, false);
+    {method: 'OPTIONS', purpose: 'reviewed-method'}).ok, true);
   assert.equal(hits.length, 5);
 });
 
-test('a POST contract on the same path does not override an observed PATCH contract', async t => {
+test('POST and PATCH use their selected methods on the same in-scope route', async t => {
   const hits = [];
   const server = http.createServer(async (request, response) => {
     const chunks = [];
@@ -141,45 +131,38 @@ test('a POST contract on the same path does not override an observed PATCH contr
     body: JSON.stringify({id: '1', message: 'audit-marker'})});
   assert.equal(patch.status, 200);
   assert.deepEqual(hits.map(item => item.method), ['PATCH']);
-  await assert.rejects(request({...base, method: 'PATCH',
-    body: JSON.stringify({id: '1', unexpected: 'audit-marker'})}),
-  /observed fields/);
-  assert.deepEqual(hits.map(item => item.method), ['PATCH']);
-  const refusedPost = await request({...base, method: 'POST',
+  const revisedPatch = await request({...base, method: 'PATCH',
+    body: JSON.stringify({id: '1', unexpected: 'audit-marker'})});
+  assert.equal(revisedPatch.status, 200);
+  const post = await request({...base, method: 'POST',
     body: JSON.stringify({id: '1', message: 'audit-marker'})});
-  assert.equal(refusedPost.refused, true);
-  assert.equal(refusedPost.detail, 'unobserved-field');
-  assert.deepEqual(hits.map(item => item.method), ['PATCH']);
+  assert.equal(post.status, 200);
+  assert.deepEqual(hits.map(item => item.method), ['PATCH', 'PATCH', 'POST']);
 });
 
-test('deployed method authorization requires an exact reviewed tuple', async t => {
+test('deployed method authorization covers selected methods and paths without write tuples', async t => {
   const origin = 'https://app.example.test';
   const expiresAt = new Date(Date.now() + 86400000).toISOString();
   const target = {url: origin, environment: 'staging',
     ownership: {status: 'verified', method: 'dns', expiresAt}};
   target.authorization = authorization(target, {paths: ['/api'],
-    methods: ['GET', 'HEAD', 'PUT'],
-    writeOperations: [{method: 'PUT', path: '/api/item', placement: 'json'}],
+    methods: ['GET', 'HEAD', 'POST', 'PATCH', 'DELETE'],
     maxRequestsPerSecond: 2, expiresAt});
-  assert.equal(scopeReady(target, '/api/item', 'PUT'), true);
-  assert.equal(scopeReady(target, '/api/other', 'PUT'), true,
-    'the main target authorization covers the /api prefix; blackbox checks the exact write tuple below');
+  assert.equal(scopeReady(target, '/api/item', 'PATCH'), true);
+  assert.equal(scopeReady(target, '/api/other', 'DELETE'), true);
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'bypass-deployed-method-'));
   t.after(() => fs.rmSync(dir, {recursive: true, force: true}));
   const file = path.join(dir, 'scope.json');
   fs.writeFileSync(file, JSON.stringify({schemaVersion: 1, target: {origin},
-    include: ['/api'], limits: {rps: 2}, probes: {writeOperations: [
-      {method: 'PUT', path: '/api/item', placement: 'json'}]}}));
+    include: ['/api'], limits: {rps: 2}}));
   const prepared = loadScope({file, origin, targets: [target]}).scope;
   assert.equal(validateUrl(prepared, '/api/item',
-    {method: 'PUT', purpose: 'json-body'}).ok, true);
+    {method: 'PATCH', purpose: 'json-body'}).ok, true);
   assert.equal(validateUrl(prepared, '/api/other',
-    {method: 'PUT', purpose: 'json-body'}).ok, false);
-  fs.writeFileSync(file, JSON.stringify({schemaVersion: 1, target: {origin},
-    include: ['/api'], limits: {rps: 2}, probes: {writeOperations: [
-      {method: 'PUT', path: '/api/other', placement: 'json'}]}}));
-  assert.throws(() => loadScope({file, origin, targets: [target]}),
-    /needs exact target authorization/);
+    {method: 'DELETE', purpose: 'json-body'}).ok, true);
+  assert.equal(validateUrl(prepared, '/outside',
+    {method: 'DELETE', purpose: 'reviewed-method'}).ok, false);
+  assert.throws(() => scopeReady(target, '/api/item', 'PUT'), /outside the authorized scope/);
   assert.throws(() => validateScopeTemplate({probes: {writeOperations: [
     {method: 'OPTIONS', path: '/api/item', placement: 'json'}]}}),
     /probes.writeOperations/);

@@ -342,17 +342,24 @@ export async function terminal(options={},io){
             {value:savedPaths||'/',label:savedPaths?`Saved scope (${savedPaths})`:'Entire app (/)'},
             ...(savedPaths&&savedPaths!=='/'?[{value:'/',label:'Entire app (/)' }]:[])],
           {write:message=>prompt.write?.(message)});
+          const methods=await promptValue(ask,'Allowed HTTP methods',[
+            {value:'GET,HEAD,POST,PATCH,DELETE',label:'GET, HEAD, POST, PATCH, DELETE'},
+            ...(selected?.url===url&&selected.authorization?.methods?.length ?
+              [{value:selected.authorization.methods.join(','),
+                label:`Saved authorization (${selected.authorization.methods.join(', ')})`}] : [])],
+          {write:message=>prompt.write?.(message)});
           const defaultRps=local?'5':'2';
           const rps=await promptValue(ask,'Maximum requests per second',[
             {value:defaultRps,label:`${defaultRps} requests per second`},
             {value:'1',label:'1 request per second'},
-            {value:'10',label:'10 requests per second'}],
+            {value:'10',label:'10 requests per second'},
+            {value:'32',label:'32 requests per second'}],
           {write:message=>prompt.write?.(message)});
           const limits={agents:options.agents,'http-workers':options['http-workers'],
             'model-calls':options['model-calls'],'max-urls':options['max-urls'],
             'max-tasks':options['max-tasks'],minutes:options.minutes,
             'dom-script-bytes':options['dom-script-bytes']};
-          const setup=await run('blackbox setup',[url],{include,rps,...limits});
+          const setup=await run('blackbox setup',[url],{include,methods,rps,...limits});
           if(!setup.ready){prompt.setNext?.('Complete the displayed ownership and scope steps, then use /blackbox again');continue;}
           if(prompt.rich)console.log(`Scope: ${path.relative(root,setup.scopeFile)} · ${setup.created?'created':'reused'} · includes ${include}`);
           const profile=state.models.find(model=>model.name===state.activeModel);
