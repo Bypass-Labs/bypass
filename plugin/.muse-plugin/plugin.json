@@ -1,9 +1,9 @@
 {
   "schemaVersion": 1,
   "name": "bypass",
-  "displayName": "Bypass",
+  "displayName": "Bypass for Muse Code",
   "version": "0.7.7",
-  "description": "Give coding agents evidence-backed security context for new features; prove fixes and keep regression tests.",
+  "description": "Security-testing plugin for Muse Code: review source, test authorized running apps, save regression checks, and reuse security context while building.",
   "compat": {
     "source": "native",
     "manifestDir": ".muse-plugin"

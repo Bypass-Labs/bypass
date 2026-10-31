@@ -31,7 +31,7 @@ export async function finishMuseSetup({cwd,signal,inspect=()=>inspectMuse(cwd,{s
     if(signal?.aborted)throw abortFault(signal);
     return result;
   });
-  write('\n03 / START   Set up Bypass in Muse');
+  write('\n03 / START   Set up Bypass in Muse Code');
   const initial=await step('Check Bypass permissions',inspect),state=museInstallState(initial);
   const rows=initial.runtime_capabilities||[];
   const recognized=rows.length===2&&required.every(id=>rows.some(row=>row.candidate?.stable_id===id));

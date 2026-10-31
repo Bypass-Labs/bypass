@@ -5,6 +5,11 @@ snapshot → per-language extraction → pinned queries → unevaluated signals 
 reports. Policy discovery adds a source-only reasoning task loop. Formal evaluation,
 runtime reproduction, and patching remain unavailable.
 
+The Bypass scanner source is licensed under [Apache-2.0](../LICENSE). The
+CodeQL CLI is downloaded separately under [GitHub's usage terms](https://github.com/github/codeql-cli-binaries/blob/main/LICENSE.md).
+Bypass's license does not grant CodeQL rights for private or commercial code.
+Policy-only mode does not use CodeQL. [Dependency notices](../THIRD_PARTY_NOTICES.md).
+
 ## Select detectors and rules
 
 `--detector sast` is the default; `codeql` remains an alias. Select `policy` for

@@ -49,6 +49,8 @@ for(const platform of selected){
     fs.copyFileSync(path.join(root,'scripts/configure-path.mjs'),path.join(bundle,'configure-path.mjs'));
     if(windows)fs.copyFileSync(path.join(root,'scripts/windows-launcher.ps1'),path.join(bundle,'windows-launcher.ps1'));
     fs.copyFileSync(path.join(root,'README.md'),path.join(bundle,'README.md'));
+    for(const name of ['LICENSE','NOTICE','THIRD_PARTY_NOTICES.md'])
+      fs.copyFileSync(path.join(root,name),path.join(bundle,name));
     fs.writeFileSync(path.join(bundle,'release.json'),JSON.stringify({releaseId,commit,version,platform,node:runtime.version},null,2)+'\n');
     const file=`bypass-${platform}`+(windows?'.zip':'.tar.gz');
     if(windows){fs.rmSync(path.join(dist,file),{force:true});execFileSync('zip',['-qr',path.join(dist,file),'bypass'],{cwd:work});}

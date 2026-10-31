@@ -18,7 +18,7 @@ bypass_install() {
     command -v muse >/dev/null 2>&1 || fail 'Muse Code was not found on PATH. Install Muse from https://dev.meta.ai, open it and sign in, then retry this same installer. No Bypass files were changed.'
   fi
   printf '\n%s▰╲▰  BYPASS LABS%s\n' "$bypass_accent" "$bypass_reset"
-  if [ "$integration" = muse ]; then printf '%sInstalling Bypass for Muse%s\n' "$bypass_dim" "$bypass_reset"
+  if [ "$integration" = muse ]; then printf '%sInstalling Bypass for Muse Code%s\n' "$bypass_dim" "$bypass_reset"
   else printf '%sSecurity that stays with your code.%s\n' "$bypass_dim" "$bypass_reset"; fi
   case "$(uname -s)" in Darwin) platform=darwin ;; Linux) platform=linux ;; *) fail 'Supported platforms: macOS and glibc Linux (x64 or arm64).' ;; esac
   case "$(uname -m)" in x86_64|amd64) arch=x64 ;; arm64|aarch64) arch=arm64 ;; *) fail 'Supported CPUs: x64 and arm64.' ;; esac

@@ -1,16 +1,18 @@
-# Bypass for Muse
+# Bypass for Muse Code
 
-**Security testing for your code and running app. Evidence for the finding. A regression test for the fix. Security context for the next feature.**
+**A security-testing plugin for Muse Code. Review your code, test your running app, and keep the evidence and regression checks.**
 
-[Quick start](#start-in-muse) · [White-box](#white-box-source-review) · [Black-box](#black-box-audit) · [CLI](#standalone-cli) · [GitHub agent](#github-security-agent) · [Docs](#documentation)
+[Quick start](#start-in-muse-code) · [White-box](#white-box-source-review) · [Black-box](#black-box-audit) · [CLI](#standalone-cli) · [GitHub agent](#github-security-agent) · [Docs](#documentation)
 
 ## Overview
 
-Bypass brings source scanning, live application testing, and reusable security checks into **Muse Code** and a standalone CLI. Muse investigates and explains; Bypass runs scoped operations and keeps the evidence. Reviews produce findings, fix recommendations, and supported regression tests. Changing your application requires a separate request.
+Bypass is a native plugin for **[Muse Code](https://dev.meta.ai/docs/muse-code)**, Meta's coding agent. It adds security skills, slash commands, MCP tools, and saved security context to your existing coding session. Muse Code investigates and explains; Bypass runs scoped operations and keeps the evidence.
+
+Start with the Muse Code plugin. A **standalone CLI** is also available for terminal workflows, and the GitHub integration brings reviews and saved checks into CI. Assessments report findings, recommend fixes, and create supported regression tests; editing application code requires a separate request.
 
 ### Key benefits
 
-- **Work inside Muse.** Use your active Muse account and model, with no separate API key for plugin reasoning.
+- **Work inside Muse Code.** Use your active Muse Code account and model, with no separate API key for plugin reasoning.
 - **Inspect code and test behavior.** Choose CodeQL SAST, AI policy discovery, or both; investigate source evidence and use black-box testing to validate supported vulnerabilities against a running app.
 - **Keep the test.** Replay saved HTTP proofs after a fix and export supported checks to Node tests. Regression replay needs no model calls.
 - **Carry security context into feature work.** Retrieve past findings, source citations, and saved behavior requirements with `/bypass:build`. Changed source marks knowledge stale.
@@ -23,7 +25,9 @@ Bypass brings source scanning, live application testing, and reusable security c
 - **Against a running app:** discover exposed routes and test supported vulnerability classes within an approved scope.
 - **After a fix or deployment:** replay the same security behavior and retain the result for future development.
 
-## Start in Muse
+<a id="start-in-muse"></a>
+
+## Start in Muse Code
 
 **Requires Muse Code installed and signed in.** You can select your application during setup; you do not need to start in its folder.
 
@@ -41,11 +45,11 @@ Windows PowerShell:
 irm https://bypasslabs.ai/install/muse.ps1 | iex
 ```
 
-**2. Choose “Enable these permissions and open Muse” (`1` or `y`).**
+**2. Choose the option to enable Bypass's permissions and open Muse Code (`1` or `y`).**
 
-The installer explains the security-tools and security-memory permissions, registers the plugin, and opens Muse with setup started. It includes the runtime and CLI; no GitHub clone, npm, or separate model key is needed. Docker is needed for SAST/policy discovery and standalone Docker review.
+The installer explains the security-tools and security-memory permissions, registers the plugin, and opens Muse Code with setup started. It includes the runtime and CLI; no GitHub clone, npm, or separate model key is needed. Docker is needed for SAST/policy discovery and standalone Docker review.
 
-**3. Tell Muse what to review.** For example:
+**3. Tell Muse Code what to review.** For example:
 
 ```text
 Review the source at https://github.com/YOUR-ORG/YOUR-APP.
@@ -57,28 +61,28 @@ Setup offers **Code only**, **Code + running app**, or **Running app only**. Sup
 
 For an app, setup also asks for its environment, verifies control with DNS TXT or an HTTPS verification file, and records allowed paths, HTTP methods, request rate, and expiry. Valid ownership is reused for the same app origin. Accounts are optional for anonymous checks; authenticated checks need usable test identities.
 
-**Choose the next command:** `/bypass:discover` for SAST, policy discovery, or both, `/bypass:review` for Muse-assisted source review, or `/bypass:blackbox` for running-app discovery. See the examples below.
+**Choose the next command in Muse Code:** `/bypass:discover` for SAST, policy discovery, or both, `/bypass:review` for Muse Code-assisted source review, or `/bypass:blackbox` for running-app discovery. See the examples below.
 
 <details>
 <summary>Updating, permissions, and model privacy</summary>
 
-Rerun the installer to update or repair, then start a **new Muse session**. An open session keeps its loaded package. `muse plugins update bypass` only refreshes the recorded local source and may not download a newer public release.
+Rerun the installer to update or repair, then start a **new Muse Code session**. An open session keeps its loaded package. `muse plugins update bypass` only refreshes the recorded local source and may not download a newer public release.
 
-If permissions remain pending, open `/plugins` → **Installed → Bypass → Runtime**, review the MCP server and session hook, then start a new session.
+If permissions remain pending, open `/plugins` → **Installed → Bypass for Muse Code → Runtime**, review the MCP server and session hook, then start a new session.
 
-Muse owns plugin reasoning and billing. Bypass cannot verify subscription billing through MCP; check Muse account/settings. For confidential or personal content, use Standard mode with Contributor mode off. Bypass does not change these settings. [Model and privacy details](docs/AI_MODES.md).
+Muse Code owns plugin reasoning and billing. Bypass cannot verify subscription billing through MCP; check Muse Code account/settings. For confidential or personal content, use Standard mode with Contributor mode off. Bypass does not change these settings. [Model and privacy details](docs/AI_MODES.md).
 
 </details>
 
 ## Ways to run Bypass
 
-| Workflow | In Muse | Standalone | Requirements |
+| Workflow | In Muse Code | Standalone | Requirements |
 | --- | --- | --- | --- |
-| SAST and AI policy discovery | `/bypass:discover` → SAST / Policy / Both | `bypass discover --detector <mode>` | Source + Docker; SAST needs no model; policy uses Muse or a CLI API profile |
-| AI-assisted source review | `/bypass:review` | `bypass scan --mode code` | Muse session; CLI needs a provider key + Docker |
+| SAST and AI policy discovery | `/bypass:discover` → SAST / Policy / Both | `bypass discover --detector <mode>` | Source + Docker; SAST needs no model; policy uses Muse Code or a CLI API profile |
+| AI-assisted source review | `/bypass:review` | `bypass scan --mode code` | Muse Code session; CLI needs a provider key + Docker |
 | Running-app discovery and testing | `/bypass:blackbox` | `bypass blackbox <url>` | Verified target + scope; CLI needs an API key, Meta by default |
 | Saved regression replay | `/bypass:tests` | `bypass test run --all` | Saved checks and valid target setup; no model calls |
-| GitHub PR review and smoke tests | Ask Muse to generate setup | `bypass ci init --agent` | GitHub Actions; Meta API key for source review |
+| GitHub PR review and smoke tests | Ask Muse Code to generate setup | `bypass ci init --agent` | GitHub Actions; Meta API key for source review |
 
 ## White-box source review
 
@@ -90,13 +94,15 @@ Connect your source through `/bypass:start`, choose **Code only** or **Code + ru
 /bypass:discover
 ```
 
-Choose **SAST**, **Policy**, or **Both** in Muse:
+Choose **SAST**, **Policy**, or **Both** in Muse Code:
 
 | Mode | What it checks | AI usage |
 | --- | --- | --- |
 | **SAST** | CodeQL security rules across supported languages | No model calls |
-| **Policy** | Source paths against policies for object access, privileged actions, outbound destinations, and filesystem boundaries | Your active Muse session |
-| **Both** | CodeQL rules and AI policy discovery, with independent selections and evidence | Your active Muse session for policy tasks |
+| **Policy** | Source paths against policies for object access, privileged actions, outbound destinations, and filesystem boundaries | Your active Muse Code session |
+| **Both** | CodeQL rules and AI policy discovery, with independent selections and evidence | Your active Muse Code session for policy tasks |
+
+SAST/Both use GitHub CodeQL under its [separate usage terms](https://github.com/github/codeql-cli-binaries/blob/main/LICENSE.md); Bypass's license does not grant CodeQL rights for private or commercial code.
 
 Docker must be running. First use prepares the selected image: Policy uses a lightweight Python runtime; SAST/Both download the pinned CodeQL toolchains. Later scans reuse the image. No host Python, host CodeQL, or separate plugin API key is required.
 
@@ -134,9 +140,9 @@ Use exact CodeQL IDs from `scanner rules` and policy IDs from `scanner policies`
 
 </details>
 
-**Read the result correctly:** both detectors produce **unevaluated signals**, not confirmed live vulnerabilities. Policy tasks map source surfaces, inspect code through recorded evidence, and retain assumptions, counterevidence, and deferred work. Muse continues the task queue until it finishes, reaches a limit, or is blocked. Formal evaluation, runtime reproduction, and patching remain unimplemented in this scanner. [Scanner usage](scanner/README.md) · [Policy workflow, custom policies, and limits](docs/POLICY_SIGNAL_DISCOVERY.md).
+**Read the result correctly:** both detectors produce **unevaluated signals**, not confirmed live vulnerabilities. Policy tasks map source surfaces, inspect code through recorded evidence, and retain assumptions, counterevidence, and deferred work. Muse Code continues the task queue until it finishes, reaches a limit, or is blocked. Formal evaluation, runtime reproduction, and patching remain unimplemented in this scanner. [Scanner usage](scanner/README.md) · [Policy workflow, custom policies, and limits](docs/POLICY_SIGNAL_DISCOVERY.md).
 
-### Investigate source with Muse
+### Investigate source with Muse Code
 
 With **Code only** selected, run:
 
@@ -144,21 +150,21 @@ With **Code only** selected, run:
 /bypass:review
 ```
 
-Muse reads bounded source and reports cited hypotheses and recommendations. This is a separate workflow from SAST/policy discovery. With **Code + running app**, it can also configure supported HTTP controls and save regressions after proof. Code-only review makes no live-app requests and cannot establish runtime exploitability.
+Muse Code reads bounded source and reports cited hypotheses and recommendations. This is a separate workflow from SAST/policy discovery. With **Code + running app**, it can also configure supported HTTP controls and save regressions after proof. Code-only review makes no live-app requests and cannot establish runtime exploitability.
 
 ## Black-box audit
 
 Use this entry point when you have a running app, including when you have **no repository**.
 
-### In Muse
+### In Muse Code
 
 Replace the URL with your app and provide the five run settings together:
 
 ```text
-/bypass:blackbox Audit https://app.example.com; allow /; use 2 rps, 120 Muse calls, 30 minutes.
+/bypass:blackbox Audit https://app.example.com; allow /; use 2 rps, 120 Muse Code calls, 30 minutes.
 ```
 
-Muse connects the app, completes missing ownership/scope setup, and drives the black-box engine in the active session. Bypass discovers public pages, scripts, and API leads, executes permitted tests, records evidence, and independently checks supported proofs. No separate API key or Docker is needed for this path. Browser-based proof families need Chrome/Chromium; missing prerequisites are reported as coverage gaps.
+Muse Code connects the app, completes missing ownership/scope setup, and drives the black-box engine in the active session. Bypass discovers public pages, scripts, and API leads, executes permitted tests, records evidence, and independently checks supported proofs. No separate API key or Docker is needed for this path. Browser-based proof families need Chrome/Chromium; missing prerequisites are reported as coverage gaps.
 
 The URL and paths are run inputs, not permission by themselves. Review the exact scope before testing. The request rate, engine-decision cap, and time limit bound the audit; the displayed “Muse calls” cap does not include every surrounding host turn.
 
@@ -166,7 +172,7 @@ The URL and paths are run inputs, not permission by themselves. Review the exact
 
 ### From the CLI
 
-Load your Meta Model API key privately as `MODEL_API_KEY` in your shell or secret manager. This is an API key, not a Muse subscription/login token. Existing `META_API_KEY` or `LLM_KEY` variables are also supported.
+Load your Meta Model API key privately as `MODEL_API_KEY` in your shell or secret manager. This is an API key, not a Muse Code subscription/login token. Existing `META_API_KEY` or `LLM_KEY` variables are also supported.
 
 For a local app you control:
 
@@ -203,7 +209,7 @@ bypass blackbox export <run-id>
 bypass blackbox resume <run-id>
 ```
 
-In Muse, ask it to replay the black-box proofs, export tests for confirmed findings, or resume the named run. These operations use the `bypass_blackbox_*` tools. Black-box run IDs are separate from guided-review `run_*` IDs and their saved checks.
+In Muse Code, ask it to replay the black-box proofs, export tests for confirmed findings, or resume the named run. These operations use the `bypass_blackbox_*` tools. Black-box run IDs are separate from guided-review `run_*` IDs and their saved checks.
 
 </details>
 
@@ -211,7 +217,7 @@ In Muse, ask it to replay the black-box proofs, export tests for confirmed findi
 
 ## Standalone CLI
 
-Install without opening Muse:
+Prefer a separate terminal workflow? Use the standalone CLI. AI reasoning requires your own provider API key; it does not use your Muse Code subscription. Install without opening Muse Code:
 
 ```bash
 curl -fsSL https://bypasslabs.ai/install | bash
@@ -249,7 +255,7 @@ Run `bypass init /path/to/app` first if the application is not connected. Preset
 /bypass:demo
 ```
 
-Muse investigates an isolated invoice app. Bypass proves cross-account access, saves a failing regression, and retests the fixture fix. Reintroducing the bug makes that regression fail again without model calls for replay. This demo explicitly includes fixture remediation; ordinary assessments only report and recommend.
+Muse Code investigates an isolated invoice app. Bypass proves cross-account access, saves a failing regression, and retests the fixture fix. Reintroducing the bug makes that regression fail again without model calls for replay. This demo explicitly includes fixture remediation; ordinary assessments only report and recommend.
 
 <details>
 <summary>Preview the standalone walkthrough</summary>
@@ -262,9 +268,9 @@ This screenshot is from the local walkthrough: discovery is seeded; HTTP proof, 
 
 ## GitHub security agent
 
-Review PR source with a **Meta Model API key**, then replay saved security checks after deployment or every 24 hours. The GitHub runner uses Actions and does not require Docker or a Muse subscription.
+Review PR source with a **Meta Model API key**, then replay saved security checks after deployment or every 24 hours. The GitHub runner uses Actions and does not require Docker or a Muse Code subscription.
 
-**1. Generate setup in your application repository.** Ask Muse:
+**1. Generate setup in your application repository.** Ask Muse Code:
 
 ```text
 Set up Bypass GitHub security reviews for this repository.
@@ -295,7 +301,7 @@ Alternatively, run `gh secret set MODEL_API_KEY` and enter the key privately. St
 <details>
 <summary>Add deployment verification and daily smoke tests</summary>
 
-First connect a DNS-verified app and save the live regression checks to replay. Then ask Muse:
+First connect a DNS-verified app and save the live regression checks to replay. Then ask Muse Code:
 
 ```text
 Add our verified production target and its saved security checks to the
@@ -315,7 +321,7 @@ Review and merge the updated files, then use **Run workflow → operation: smoke
 
 ## Commands to keep handy
 
-| In Muse | What it does |
+| In Muse Code | What it does |
 | --- | --- |
 | `/bypass:start` | Connect/select an app or repository and resume setup |
 | `/bypass:discover` | Choose SAST, AI policy discovery, or both; inspect source signals |
@@ -335,10 +341,18 @@ For CLI help, use `bypass --help` or `bypass <command> --help`. A local monitor 
 - [AI policy discovery: policies, evidence, coverage, and custom context](docs/POLICY_SIGNAL_DISCOVERY.md)
 - [Black-box audit: supported checks and evidence limits](docs/BLACKBOX_AUDIT.md)
 - [Accounts: signup, private imports, and token refresh](docs/ACCOUNTS.md)
-- [AI modes: Muse, provider APIs, and local/self-hosted models](docs/AI_MODES.md)
+- [AI modes: Muse Code, provider APIs, and local/self-hosted models](docs/AI_MODES.md)
 - [Security memory and feature context](docs/SECURITY_MEMORY.md)
 - [GitHub agent setup](docs/GITHUB_AGENT.md)
 - [Architecture](docs/ARCHITECTURE.md) · [Installation](docs/RELEASES.md) · [UAT evidence and open issues](docs/MERGE_UAT_2026_10_30.md)
+
+## Downloads and releases
+
+Use the installers above for the latest tested build. [GitHub Releases](https://github.com/Bypass-Labs/bypass-for-muse/releases) preserves the same six platform archives, installers, `release.json`, and `SHASUMS256.txt` published to R2. Each main build has a unique commit/run tag; it is published as a prerelease after installation checks and R2 promotion pass. [Release process and pinned installs](docs/RELEASES.md).
+
+## License
+
+Bypass code is licensed under [Apache-2.0](LICENSE), allowing commercial use, modification, and redistribution subject to its terms, with an explicit contributor patent grant. Bundled dependencies and downloaded tools retain their own licenses; see [third-party notices](THIRD_PARTY_NOTICES.md). Bypass is an independent Bypass Labs project, not an official Meta product.
 
 ## Contributing
 
@@ -351,6 +365,6 @@ npm run check
 npm test
 ```
 
-Author changes in `src/`, `scanner/`, and the plugin's commands, skill, manifest, hooks, and MCP entry points. `plugin/runtime/` is generated build output. Build it before installing the plugin from source. See [scanner development](scanner/README.md) for Docker/CodeQL checks; `npm run test:live` is an opt-in real Muse fixture run and uses your host allowance/billing.
+Author changes in `src/`, `scanner/`, and the plugin's commands, skill, manifest, hooks, and MCP entry points. `plugin/runtime/` is generated build output. Build it before installing the plugin from source. See [scanner development](scanner/README.md) for Docker/CodeQL checks; `npm run test:live` is an opt-in real Muse Code fixture run and uses your host allowance/billing.
 
 Use Bypass only on applications you own or are authorized to test. Source signals, confirmed HTTP proofs, blocked work, and untested coverage are different outcomes; none is a blanket security clearance.
