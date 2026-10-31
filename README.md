@@ -59,7 +59,20 @@ recommendations. Do not edit application code.
 
 Setup offers **Code only**, **Code + running app**, or **Running app only**. Supply a local source folder or Git URL for code; supply an app URL for live testing. To return later, use `/bypass:start`.
 
-For an app, setup also asks for its environment, verifies control with DNS TXT or an HTTPS verification file, and records allowed paths, HTTP methods, request rate, and expiry. Valid ownership is reused for the same app origin. Accounts are optional for anonymous checks; authenticated checks need usable test identities.
+For a running app, supply its URL and choose its environment if unknown. Bypass shows one compact testing plan with **Approve**, **Decline**, and **Custom instructions**. Approve confirms that you control the app and authorize the displayed paths, methods, request rate and expiry. Custom instructions lets you change the plan before approval. Accounts are optional for anonymous checks; authenticated checks need usable test identities.
+
+<details>
+<summary>Project setting: domain ownership verification</summary>
+
+New projects start with domain verification **off**. Explicit app-control and scope approval is still required. To require proof, tell Muse Code “Require DNS ownership verification for this project” or “Use HTTPS-file verification.” Bypass updates the project setting and shows only the required extra step. In the CLI, use **Settings → Domain ownership verification**, or:
+
+```bash
+bypass config set ownershipVerification dns   # off | dns | http
+```
+
+Changing the setting clears saved testing permission so the next run can review it again. Existing projects retain their verification requirements; valid DNS/HTTPS proof is reused for the same origin. An acknowledgment is recorded as operator authorization, never verified ownership. Apex-domain expansion and GitHub live automation still require DNS proof.
+
+</details>
 
 **Choose the next command in Muse Code:** `/bypass:discover` for SAST, policy discovery, or both, `/bypass:review` for Muse Code-assisted source review, or `/bypass:blackbox` for running-app discovery. See the examples below.
 
@@ -80,7 +93,7 @@ Muse Code owns plugin reasoning and billing. Bypass cannot verify subscription b
 | --- | --- | --- | --- |
 | SAST and AI policy discovery | `/bypass:discover` → SAST / Policy / Both | `bypass discover --detector <mode>` | Source + Docker; SAST needs no model; policy uses Muse Code or a CLI API profile |
 | AI-assisted source review | `/bypass:review` | `bypass scan --mode code` | Muse Code session; CLI needs a provider key + Docker |
-| Running-app discovery and testing | `/bypass:blackbox` | `bypass blackbox <url>` | Verified target + scope; CLI needs an API key, Meta by default |
+| Running-app discovery and testing | `/bypass:blackbox` | `bypass blackbox <url>` | Approved target + scope; CLI needs an API key, Meta by default |
 | Saved regression replay | `/bypass:tests` | `bypass test run --all` | Saved checks and valid target setup; no model calls |
 | GitHub PR review and smoke tests | Ask Muse Code to generate setup | `bypass ci init --agent` | GitHub Actions; Meta API key for source review |
 

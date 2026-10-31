@@ -20,7 +20,7 @@ test('failed model preflight takes precedence over app questions without discard
   assert.equal(result.nextAction.tool,'bypass_add_target');assert.equal(result.selectedRepository,root);
 });
 function environment(t,values){for(const [key,value] of Object.entries(values)){const old=process.env[key];process.env[key]=value;t.after(()=>{if(old===undefined)delete process.env[key];else process.env[key]=old;});}}
-async function sourceReady(){const root=temp();fs.writeFileSync(path.join(root,'app.mjs'),'export const app = true;');await execute('init',[root]);await execute('engine use',['docker'],{project:root});await execute('model add',['muse'],{project:root,provider:'meta','secret-env':'BYPASS_UNIT_API_KEY',model:'test-model',stream:false});return root;}
+async function sourceReady(){const root=temp();fs.writeFileSync(path.join(root,'app.mjs'),'export const app = true;');await execute('init',[root]);await execute('config set',['ownershipVerification','dns'],{project:root});await execute('engine use',['docker'],{project:root});await execute('model add',['muse'],{project:root,provider:'meta','secret-env':'BYPASS_UNIT_API_KEY',model:'test-model',stream:false});return root;}
 
 test('unselected context guides repository selection without leaking host demo history or mutating it',async t=>{
   const host=temp();environment(t,{BYPASS_PLUGIN_STATE_DIR:temp()});
@@ -81,7 +81,7 @@ test('local onboarding permits optional accounts and retains per-probe validatio
 });
 
 test('model credential absence repairs environment without duplicating the profile',async()=>{
-  const root=temp();fs.writeFileSync(path.join(root,'app.mjs'),'export const app = true;');await execute('init',[root]);await execute('engine use',['docker'],{project:root});
+  const root=temp();fs.writeFileSync(path.join(root,'app.mjs'),'export const app = true;');await execute('init',[root]);await execute('config set',['ownershipVerification','dns'],{project:root});await execute('engine use',['docker'],{project:root});
   await execute('model add',['private'],{project:root,provider:'custom','secret-env':'BYPASS_UNIT_API_KEY',stream:false,'base-url':'https://model.example.com',model:'own-model','secret-env':'BYPASS_NONEXISTENT_ONBOARD_KEY'});
   const status=await checklist(root,root);assert.equal(status.stage,'app');assert.equal(status.ready.source,true);
   assert.equal(status.nextAction.tool,'bypass_add_target');

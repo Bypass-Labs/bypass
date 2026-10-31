@@ -4,7 +4,7 @@ import dns from 'node:dns/promises';
 import net from 'node:net';
 import { randomBytes } from 'node:crypto';
 import { need, Fault, now, duration, delay, hash, abortable, abortFault } from './util.mjs';
-import { ownershipRevoked, authorizationRevoked } from './ownership-store.mjs';
+import { ownershipReady, authorizationRevoked } from './ownership-store.mjs';
 import { httpMethods } from './http-methods.mjs';
 
 export const loopback = h => ['localhost','127.0.0.1','::1','[::1]'].includes(h.toLowerCase());
@@ -43,7 +43,7 @@ export function pathAllowed(urlPath, paths) {
   return paths.some(p => p === '/' || urlPath === p || urlPath.startsWith(p.endsWith('/') ? p : p+'/'));
 }
 export function scopeReady(target, pathname, method) {
-  need(target.url&&!ownershipRevoked(target)&&target.ownership?.status === 'verified' && Date.parse(target.ownership.expiresAt) > Date.now(), 'Target ownership is missing or expired. Run target verify.', 3);
+  need(target.url&&ownershipReady(target), 'Target ownership is missing or expired. Verify ownership, or explicitly authorize the scope when project verification is off.', 3);
   const auth = target.authorization;
   need(auth && !authorizationRevoked(target) && auth.origin === target.url && Date.parse(auth.expiresAt) > Date.now(), 'Target authorization is missing, expired or revoked. Run target authorize.', 3);
   const required=method||(pathname?'GET':null);
@@ -113,7 +113,7 @@ export async function verifyOwnership(target, method, {wait,signal} = {}) {
   throw new Fault('Ownership is still pending. Publish the exact TXT record or HTTP challenge and retry.',3,{challenge:c,alternative:{tool:'bypass_scan',arguments:{mode:'code'},command:'scan --mode code',message:'Review source now while DNS propagates; no live requests will be made.'}});
 }
 export function authorization(target, scope, acceptedBy = 'local operator') {
-  need(!ownershipRevoked(target)&&target.ownership?.status==='verified' && Date.parse(target.ownership.expiresAt)>Date.now(),'Verify control before authorizing testing.',3);
+  need(ownershipReady(target),'Verify control before authorizing testing.',3);
   need(Array.isArray(scope.paths) && scope.paths.length && scope.paths.every(p=>typeof p==='string' && p.startsWith('/') && !/[?#*\\]/.test(p) && pathAllowed(p,[p])), 'Scope requires explicit path prefixes, e.g. ["/api"].');
   const methods=httpMethods(scope.methods);
   const exactPath = p => typeof p==='string' && p.startsWith('/') &&

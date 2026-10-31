@@ -1,7 +1,7 @@
 import { promptValue, confirmChoice, scopeSuggestions, credentialTypes } from './interaction.mjs';
 import { reviewChoices, reviewQuestion } from './application-setup.mjs';
 import { rememberSelection } from './plugin-context.mjs';
-import { ownershipRevoked } from './ownership-store.mjs';
+import { ownershipReady, verificationDisabled } from './ownership-store.mjs';
 import { promptAPIProfile } from './provider-setup.mjs';
 import { execute, readiness } from './service.mjs';
 import { connectProject } from './onboarding-repository.mjs';
@@ -15,7 +15,7 @@ import { promptMethods, mayChangeData } from './http-methods.mjs';
 import { cleanText, redact, Fault, need, outcome } from './util.mjs';
 
 const unique = (base, entries) => { let name=base, n=2; while(entries.some(x=>x.name===name)) name=base+n++; return name; };
-const verified = target => target?.ownership?.status==='verified' && Date.parse(target.ownership.expiresAt)>Date.now() && !ownershipRevoked(target);
+const verified = ownershipReady;
 const authorized = target => { try { scopeReady(target); return true; } catch { return false; } };
 
 // The same wizard is used by onboard, interactive init, and the terminal menu.
@@ -132,7 +132,7 @@ export async function onboard(options={}, args=[], io={}) {
       await call(root,'target use',[target.name]);
     }
   }
-  if(target)io.setContext?.({app:`${target.url} · ${authorized(target)?'authorized':verified(target)?'scope required':'DNS pending'}`});
+  if(target)io.setContext?.({app:`${target.url} · ${authorized(target)?'authorized':verified(target)||verificationDisabled(target)?'scope required':'verification pending'}`});
   if(target){await connectApp();target=read(root).targets.find(t=>t.name===target.name);}
 
   io.task?.(2,'done');io.task?.(3,'running');
@@ -168,26 +168,28 @@ export async function onboard(options={}, args=[], io={}) {
   return finish();
 
   async function connectApp(){
-    if(!verified(target)&&target.environment!=='local'){
+    if(!verificationDisabled(target)&&!verified(target)&&target.environment!=='local'){
       const {sharedOwnership}=await import('./ownership-store.mjs');
       if(sharedOwnership(target.url))target=(await call(root,'target verify',[target.name])).target;
     }
-    if(!verified(target)){
+    if(!verificationDisabled(target)&&!verified(target)){
       if(target.environment==='local'){
         if(!await yes(`Confirm you control ${target.url}?`))return;
         target=(await call(root,'target verify',[target.name],{method:'local'})).target;
       }else{
         if(Date.parse(target.challenge?.expiresAt||0)<=Date.now())target=(await call(root,'target verify',[target.name],{renew:true})).target;
-        say('If your DNS provider appends the zone name, omit that suffix from the record name.\nExample: for staging.example.com in the example.com zone, enter _bypass-verification.staging.');
-        const pendingMessage=mode==='live'?'App testing can begin after ownership and scope are ready.':'Source review can continue while DNS is pending.';
+        const useFile=target.ownershipVerification==='http';
+        if(!useFile)say('If your DNS provider appends the zone name, omit that suffix from the record name.\nExample: for staging.example.com in the example.com zone, enter _bypass-verification.staging.');
+        const pendingMessage=mode==='live'?'App testing can begin after ownership and scope are ready.':'Source review can continue while verification is pending.';
         say(pendingMessage);
-        say(`\nAdd this DNS record (keep unrelated records):\n  Type    TXT · TTL Auto\n  Name    ${target.challenge.record}\n  Value   ${target.challenge.token}`);
+        if(useFile)say(`Serve ${target.challenge.token} at:\n${target.url}${target.challenge.httpPath}`);
+        else say(`\nAdd this DNS record (keep unrelated records):\n  Type    TXT · TTL Auto\n  Name    ${target.challenge.record}\n  Value   ${target.challenge.token}`);
         while(!verified(target)){
-          const choices=[{label:"I've added the record — check DNS",method:'dns'},{label:mode==='live'?'Save setup — verify DNS later':'Continue to my review — verify DNS later (recommended)',method:null}];
-          if(advanced)choices.push({label:'Use the HTTPS challenge instead',method:'http'});
-          const selection=await pick('Optional: verify ownership now',choices,1);
-          if(!selection.method){say('DNS pending — saved for later. '+pendingMessage);return;}
-          if(selection.method==='http'){
+          const choices=[{label:useFile?"I've added the file — check HTTPS":"I've added the record — check DNS",method:useFile?'http':'dns'},{label:mode==='live'?'Save setup — verify later':'Continue to my review — verify later (recommended)',method:null}];
+          if(advanced)choices.push({label:useFile?'Use DNS TXT instead':'Use HTTPS file instead',method:useFile?'dns':'http'});
+          const selection=await pick('Verify app ownership',choices,1);
+          if(!selection.method){say('Verification pending — saved for later. '+pendingMessage);return;}
+          if(selection.method==='http'&&!useFile){
             say(`Serve ${target.challenge.token} at:\n${target.url}${target.challenge.httpPath}`);
             if(!await yes('Is that HTTPS challenge published?'))continue;
           }
@@ -196,7 +198,7 @@ export async function onboard(options={}, args=[], io={}) {
         }
       }
     }
-    say(target.ownership.reused?`✓ Ownership already verified for ${new URL(target.url).hostname}.`:'✓ App ownership verified.');
+    if(!verificationDisabled(target))say(target.ownership.reused?`✓ Ownership already verified for ${new URL(target.url).hostname}.`:'✓ App ownership verified.');
     if(authorized(target)){say(`Keeping authorized scope: ${target.authorization.paths.join(', ')}`);return;}
     await recover(async()=>{
       const paths=await suggested('Paths to test (comma-separated)',scopeSuggestions(target));
@@ -215,10 +217,10 @@ export async function onboard(options={}, args=[], io={}) {
   async function finish(){
     rememberSelection(options.project||process.cwd(),root);
     const info=readiness(root);
-    io.setContext?.({model:info.model?`${info.model.name} · ${info.model.provider} · ${info.model.connection}`:'not configured',app:info.target?`${info.target.url} · ${info.target.authorized?'authorized':info.target.ownership==='verified'?'scope required':'DNS pending'}`:'not connected · source review available'});
+    io.setContext?.({model:info.model?`${info.model.name} · ${info.model.provider} · ${info.model.connection}`:'not configured',app:info.target?`${info.target.url} · ${info.target.authorized?'authorized':info.target.ownership==='verified'||info.target.ownershipVerification==='off'?'scope required':'verification pending'}`:'not connected · source review available'});
     io.task?.(3,'done');io.setNext?.(mode==='live'?'Run /blackbox; type / to see commands':'Run /review; type / to see commands');
     say('\nSetup saved\n');
-    say(`  ${mode==='live'?'App profile   ':'Repository    '}${root}\n  Model         ${info.model?`${info.model.name} · ${info.model.connection}`:'add later'}\n  App           ${info.target?`${info.target.url} · ${info.target.authorized?'verified and authorized':info.target.ownership==='verified'?'scope required':'verification pending'}`:'add later; code-only review available'}\n  Test accounts ${read(root).identities.length} references\n  Muse plugin   ${museInstalled?'installed; approve in Muse':'optional'}`);
+    say(`  ${mode==='live'?'App profile   ':'Repository    '}${root}\n  Model         ${info.model?`${info.model.name} · ${info.model.connection}`:'add later'}\n  App           ${info.target?`${info.target.url} · ${info.target.authorized?'authorized':info.target.ownership==='verified'||info.target.ownershipVerification==='off'?'scope required':'verification pending'}`:'add later; code-only review available'}\n  Test accounts ${read(root).identities.length} references\n  Muse plugin   ${museInstalled?'installed; approve in Muse':'optional'}`);
     if(mode==='live')say('\nUse /blackbox to audit the running app. The selected API model runs without Docker; check its connection in /models.');
     else say(info.engine.mode==='docker'?'\nReal AI selected. The first review checks your model connection before sending source.':'\nYour saved offline-preview choice is retained. Use /engine to switch to real AI.');
     say('\nYour review\n'+reviewSummary(info.review));
