@@ -1,4 +1,5 @@
 node_modules/
+/plugin/runtime/
 .bypass/
 .tmp/
 .demo/

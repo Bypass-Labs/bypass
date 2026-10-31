@@ -33,12 +33,13 @@ The CLI follows the same choices-first pattern with arrow/number selection, sugg
 
 ## Host account and privacy
 
-For `/bypass:discover` or explicit whitebox scanner scaffold requests, use
-`bypass_discover` with `plan: true` and follow `commands/discover.md`. This separate
-Python/Docker scaffold reports analysis as not implemented. Do not run normal app
-onboarding, configure an external model, launch nested AI, or substitute an HTTP
-review. The active Muse session owns reasoning; current task/evidence/submission
-tools are interfaces only and must not be retried as though a worker is running.
+For `/bypass:discover` or source scanner requests, follow `commands/discover.md`.
+Offer SAST, Policy, or Both when the user has not chosen. Keep SAST rule/exclude-rule
+and policy/exclude-policy filters independent. SAST uses pinned CodeQL with zero
+model calls. Policy discovery uses the active Muse session to perform leased
+next_task/evidence/submit work. Never use a provider API profile or independent
+inference inside Muse. All scanner signals remain unevaluated. Source-only policy
+evidence does not authorize shell execution, target requests, or code changes.
 
 Use the active signed-in Muse session. Explain once that Bypass does not receive session billing attestation through the current Muse MCP/hook interfaces; subscription usage is **not verified**. Ask the user to confirm subscription mode in Muse account/settings if it is unknown. If supported host status or the user explicitly says API billing is active, stop the AI review and tell them to switch Muse to subscription mode, then resume. Do not infer billing from credential files, environment variables, an available subscription allowance, or a successful chat. Never read credentials to establish billing.
 

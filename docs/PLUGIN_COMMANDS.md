@@ -2,11 +2,11 @@
 
 The Muse plugin is the primary experience. Use ordinary requests or its slash commands; Muse calls these tools for you. You do not need to learn MCP syntax or leave Muse for project operations.
 
-Standalone model setup has a deliberate mode boundary: plugin model tools explain host ownership and cannot configure or invoke API inference. This reference is generated from the CLI catalog and plugin definitions. CI checks all 107 public CLI commands and their options; there are 108 typed tools. Regenerate with `node scripts/check-plugin-parity.mjs --write` after intentionally changing the catalog.
+Standalone model setup has a deliberate mode boundary: plugin model tools explain host ownership and cannot configure or invoke API inference. This reference is generated from the CLI catalog and plugin definitions. CI checks all 111 public CLI commands and their options; there are 112 typed tools. Regenerate with `node scripts/check-plugin-parity.mjs --write` after intentionally changing the catalog.
 
 ## Start inside Muse
 
-Use /bypass:blackbox to audit an authorized running app through the active Muse session, then replay proofs and export regressions. A bare command asks for the target URL first, then allowed paths, request rate, Muse-call cap and time limit, one question at a time. The user can type custom numbers or choose 120 Muse calls and 30 minutes as separate defaults. It does not start an audit of an app selected in an earlier session.
+Use /bypass:blackbox to audit an authorized running app through the active Muse session, then replay proofs and export regressions. A bare command asks for the target URL first, then allowed paths, allowed methods, request rate, Muse-call cap and time limit, one question at a time. The user can type custom numbers or choose 120 Muse calls and 30 minutes as separate defaults. It does not start an audit of an app selected in an earlier session.
 
 - `/bypass:start`: reuse your repository and active Muse reasoning, and finish missing app/DNS/scope setup; accounts are optional.
 - `/bypass:demo`: a real local Muse-directed demonstration, through proof, fixture fix, saved test, deliberate regression, one monitor tick and security context. Ask for an offline preview explicitly to use seeded discovery.
@@ -33,13 +33,17 @@ CLI global `--project` maps to the selected repository; `--json` maps to structu
 | `blackbox verify` | `bypass_blackbox_verify` | Re-execute generated proofs and check ledger integrity. |
 | `blackbox export` | `bypass_blackbox_export` | Write Node regression tests for confirmed findings. |
 | `blackbox resume` | `bypass_blackbox_resume` | Continue saved Muse research in a fresh scoped audit. |
-| `discover` | `bypass_discover` | Inspect the whitebox scanner scaffold; analysis is not implemented. |
-| `discover status` | `bypass_discover_status` | Scanner run-status interface; execution is not implemented. |
-| `discover resume` | `bypass_discover_resume` | Scanner continuation interface; execution is not implemented. |
-| `discover cancel` | `bypass_discover_cancel` | Scanner cancellation interface; execution is not implemented. |
-| `discover report` | `bypass_discover_report` | Scanner report interface; generation is not implemented. |
-| `scanner doctor` | `bypass_scanner_doctor` | Inspect Docker and the local scanner scaffold image; no inference. |
-| `scanner prepare` | `bypass_scanner_prepare` | Build the local Python scanner scaffold image; analysis remains unavailable. |
+| `discover` | `bypass_discover` | Choose sast, policy, or both. SAST and policy rule filters are independent; signals remain unevaluated. |
+| `discover status` | `bypass_discover_status` | Read durable SAST/policy progress and coverage. |
+| `discover resume` | `bypass_discover_resume` | Resume discovery after identity checks; standalone policy reasoning requires an API profile. |
+| `discover cancel` | `bypass_discover_cancel` | Cancel discovery and retain accepted artifacts. |
+| `discover report` | `bypass_discover_report` | Write a discovery report and return its artifact reference. |
+| `discover signals` | `bypass_discover_signals` | Read a bounded page of unevaluated SAST/policy signals. |
+| `discover artifact` | `bypass_discover_artifact` | Read a bounded page of a recorded discovery artifact. |
+| `scanner rules` | `bypass_scanner_rules` | Browse exact rule IDs from the pinned upstream packs. |
+| `scanner policies` | `bypass_scanner_policies` | List exact bundled policy IDs without Docker or inference. |
+| `scanner doctor` | `bypass_scanner_doctor` | Inspect the selected detector runtime and image readiness; no inference. |
+| `scanner prepare` | `bypass_scanner_prepare` | Prepare the lightweight policy or pinned SAST runtime. |
 | `poc` | `bypass_demo_start` · {"kind":"real"} | Conversational real demo replaces the standalone terminal screen. |
 | `poc start` | `bypass_demo_start` · {"kind":"real"} | Create a separate real fixture for Muse to investigate; no plugin API key or Docker required. |
 | `poc resume` | `bypass_demo_control` · {"action":"resume"} | Restart the saved generated local fixture; preserve findings and tests. |

@@ -1,12 +1,11 @@
-"""Bounded newline-delimited JSON-RPC transport for the MCP scaffold.
+"""Bounded newline-delimited MCP JSON-RPC; discovery delegates to the service.
 
-Only initialization, ping, tool discovery, and capability inspection execute.
-This transport deliberately has no model client, repository access, or state.
+The transport has no model client and emits only protocol messages on stdout.
 """
 import json
 import sys
 
-from bypass_scanner.service import MANIFEST, invoke
+from bypass_scanner.service import MANIFEST, invoke, close
 
 MAX_BYTES = 1_048_576
 
@@ -38,8 +37,8 @@ class Server:
                 return error(-32602, "Unsupported protocol version or repeated initialization.")
             self.initialized = True
             result = {"protocolVersion": requested, "capabilities": {"tools": {"listChanged": False}},
-                      "serverInfo": {"name": "bypass-scanner", "version": "0.1.0"},
-                      "instructions": "Scanner scaffold only. Analysis is not implemented. The caller owns reasoning."}
+                      "serverInfo": {"name": "bypass-scanner", "version": "0.3.0"},
+                      "instructions": "SAST and policy discovery. Policy reasoning is supplied by the host or CLI task loop. Python never calls models. Signals remain unevaluated."}
         elif not self.initialized:
             return error(-32002, "Initialize the scanner first.")
         elif method == "ping":
@@ -48,7 +47,7 @@ class Server:
             result = {"tools": [
                 {"name": "scanner_" + name, "description": definition["description"],
                  "inputSchema": definition["inputSchema"],
-                 "annotations": {"readOnlyHint": True, "destructiveHint": False}}
+                 "annotations": {"readOnlyHint": name in ('capabilities', 'rules', 'policies', 'status', 'signals', 'artifact'), "destructiveHint": False}}
                 for name, definition in MANIFEST["operations"].items()
             ]}
         elif method == "tools/call":
@@ -60,7 +59,7 @@ class Server:
             except ValueError as exc:
                 return error(-32602, str(exc))
             result = {"content": [{"type": "text", "text": json.dumps(value)}],
-                      "isError": value.get("status") == "not_implemented"}
+                      "isError": value.get("status") in ("not_implemented", "error")}
         else:
             return error(-32601, "Method not found")
         return {"jsonrpc": "2.0", "id": identity, "result": result}

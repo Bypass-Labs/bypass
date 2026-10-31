@@ -58,7 +58,14 @@ The CLI-only path is `bypass onboard`. Existing app state stays in the app's `.b
 
 ## CI publishing
 
-`.github/workflows/release.yml` runs on pushes to `main` and manual dispatches of `main`:
+`.github/workflows/release.yml` runs Windows account/MCP and macOS terminal smoke
+checks on pull requests. Each job installs dependencies and explicitly builds
+the generated plugin runtime before invoking Node or Python tests directly.
+Superseded PR checks are cancelled; main publishing runs remain serialized.
+`npm run check` also verifies that every esbuild platform binary has its pinned
+version and integrity hash recorded in the lockfile.
+
+Pushes to `main` and manual dispatches of `main` run the publishing pipeline:
 
 1. Run syntax checks and the full test suite, including real fixture HTTP requests and Docker agent tests. The piped installer must also pass interactive terminal input checks on Linux and macOS before promotion. CI does not call a paid model or test a production application.
 2. Build six archives using the pinned runtime/checksums in `scripts/node-runtime.json`. Include Node's upstream license.
@@ -71,7 +78,9 @@ Every release has an immutable ID `main-<commit SHA>-<GitHub run ID>-<attempt>`.
 
 Re-running a failed test/promotion job can reuse an upload from an earlier attempt of the same GitHub run and commit. Signed publishing identity cannot promote another run's artifacts. Re-running the build produces a new attempt prefix.
 
-Pull requests run tests through `check.yml` with no publishing permission.
+Pull requests also run the general and CodeQL suites through `check.yml`.
+The platform smoke jobs have only read access; publishing jobs require `main`
+and are skipped for pull requests.
 
 ## Identity and scope
 

@@ -13,6 +13,8 @@
   "scripts": {
     "start": "node bin/bypass.mjs",
     "test": "node --import ./test/legacy-muse-env.mjs --test --test-concurrency=1 test/*.test.mjs",
+    "test:scanner": "node scripts/test-scanner.mjs",
+    "test:codeql": "node scripts/codeql-smoke.mjs && node scripts/codeql-boundaries.mjs && node scripts/codeql-scope-smoke.mjs && node scripts/policy-smoke.mjs --combined",
     "check": "node scripts/check.mjs && node scripts/check-plugin-parity.mjs",
     "demo": "node bin/bypass.mjs demo",
     "plugin:build": "node scripts/build-plugin.mjs",
@@ -20,7 +22,14 @@
     "test:live": "node scripts/live-poc.mjs",
     "release:build": "node scripts/build-release.mjs",
     "release:upload": "node scripts/publish-release.mjs",
-    "release:promote": "node scripts/publish-release.mjs --promote"
+    "release:promote": "node scripts/publish-release.mjs --promote",
+    "pretest": "npm run plugin:build",
+    "precheck": "npm run plugin:build",
+    "preplugin:validate": "npm run plugin:build",
+    "pretest:codeql": "npm run plugin:build",
+    "pretest:live": "npm run plugin:build",
+    "test:policy": "node scripts/policy-smoke.mjs",
+    "pretest:policy": "npm run plugin:build"
   },
   "dependencies": {
     "openai": "7.45.1"

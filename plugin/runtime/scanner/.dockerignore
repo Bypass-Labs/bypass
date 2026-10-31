@@ -1,8 +1,0 @@
-*
-!Dockerfile
-!protocol/
-!protocol/v1.json
-!src/
-!src/**
-**/__pycache__/
-**/*.pyc
