@@ -69,10 +69,10 @@ test('model HTTP sequences reject oversized step lists before issuing requests',
   }
 });
 
-test('read experiments reject Content-Type before execution while valid headers remain accepted',()=>{
+test('read experiments preserve valid HTTP headers',()=>{
   const spec=sequence();const values={...spec,parameter:'term',headers:[]};
   assert.equal(modelExperimentReason(values),null);
-  assert.equal(modelExperimentReason({...values,headers:[{name:'Content-Type',value:'application/json'}]}),'headers');
+  assert.equal(modelExperimentReason({...values,headers:[{name:'Content-Type',value:'application/json'}]}),null);
   assert.equal(modelExperimentReason({...values,headers:[{name:'Accept',value:'application/json'}]}),null);
 });
 

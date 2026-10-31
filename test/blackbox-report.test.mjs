@@ -6,7 +6,8 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import { temp } from './helpers.mjs';
-import { buildFindings, consolidateBrowserXssProofs, renderReport, summaryText,
+import { buildFindings, consolidateBrowserXssProofs, consolidateRawBoundaryProofs,
+  renderReport, summaryText,
   exitCodeFor } from '../src/blackbox/report.mjs';
 
 const ORIGIN = 'http://127.0.0.1:4329';
@@ -95,6 +96,49 @@ test('two confirmed browser proofs of the same reflected input form one finding 
     webProof: {...xss.webProof, request: {...xss.webProof.request,
       as: 'anonymous'}}}]).length, 2,
   'different identities remain separate findings');
+});
+
+test('one proved access recipe across routes reports one gate issue with separate proofs', t => {
+  const root = temp();
+  t.after(() => fs.rmSync(root, {recursive: true, force: true}));
+  const ledgerFile = writeLedger(root, ['ev-0001', 'ev-0002']);
+  const make = (id, route, cookie = 'admission=valid', closed = 'Example — Invite Gate') => ({
+    id, kind: 'model-raw-boundary', title: `Model-authored request crossed an access boundary: ${route}`,
+    severity: 'medium', owasp: 'A07 Identification and Authentication Failures',
+    cwe: 'CWE-287', pattern: route, url: `${ORIGIN}${route}`, host: '127.0.0.1:4329',
+    task: null, verdict: 'confirmed', rule: 'confirmed/raw-boundary/fresh-controls',
+    evidence: ['ev-0001'], confirmation: ['ev-0002'],
+    mirror: {result: 'confirmed', evidence: []}, tags: ['muse-proposed'],
+    reach: {observed: 1, basis: 'gate crossed'}, dataClasses: [],
+    remediation: 'Validate access state on the server.', foundBy: 'muse-proposed-http-sequence',
+    status: 'open', proof: `${root}/poc/${id}/poc.mjs`,
+    webProof: {kind: 'model-raw-boundary', as: 'anonymous',
+      rawRequests: [{method: 'GET', path: route,
+        headers: [{name: 'Cookie', value: cookie}], body: ''}],
+      rawProof: {baseline: [{method: 'GET', path: route, headers: [], body: ''}],
+        negative: [], closedText: closed, openText: 'Example — Dashboard'}},
+    webSteps: [{identity: 'anonymous', method: 'GET', url: `${ORIGIN}${route}`,
+      status: 200, evidence: 'ev-0001'}],
+  });
+  const grouped = consolidateRawBoundaryProofs([
+    make('f-001', '/members'), make('f-002', '/'), make('f-003', '/search')]);
+  assert.equal(grouped.length, 1);
+  assert.equal(grouped[0].title, 'Access gate bypass: Example — Invite Gate');
+  assert.deepEqual(grouped[0].corroboratingProofs.map(item => [item.id, item.pattern]),
+    [['f-002', '/'], ['f-003', '/search']]);
+  const report = renderReport({run: 'bx-grouped', scope, scopeHash: 'test',
+    surface: surfaceFixture(), findings: grouped, results: [], ledgerFile});
+  assert.equal(report.json.summary.findings.length, 1);
+  assert.equal(report.json.summary.corroboratingProofs, 2);
+  assert.match(report.markdown, /Corroborating independent proof f-002.*`\/`/);
+  const terminal = summaryText({kind: 'blackbox-audit', run: 'bx-grouped',
+    origin: ORIGIN, findings: grouped, runDir: root, projectRoot: root});
+  assert.match(terminal, /Findings: 1 confirmed/);
+  assert.match(terminal, /3 replayable proofs across 1 confirmed finding/);
+  assert.equal(consolidateRawBoundaryProofs([
+    make('f-001', '/members'), make('f-002', '/', 'admission=other')]).length, 2);
+  assert.equal(consolidateRawBoundaryProofs([
+    make('f-001', '/members'), make('f-002', '/', 'admission=valid', 'Other Gate')]).length, 2);
 });
 
 const scope = {

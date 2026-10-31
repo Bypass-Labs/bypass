@@ -35,12 +35,24 @@ const SOURCE_UNRESOLVED_TOTAL = 24;
 const SOURCE_SECRET_PER_FILE = 8;
 const SOURCE_SECRET_TOTAL = 64;
 
-function safeRoutePath(value) {
+function routeWithoutCredentialValues(value) {
   if (typeof value !== 'string' || !value.startsWith('/') || value.includes('#') || value.length > 240 ||
-    /[\\;\x00-\x1f]/.test(value) || maskSecrets(value) !== value ||
-    !URL.canParse(value, 'https://source.invalid')) return false;
+    /[\\;\x00-\x1f]/.test(value) ||
+    !URL.canParse(value, 'https://source.invalid')) return null;
   const url = new URL(value, 'https://source.invalid');
-  return url.origin === 'https://source.invalid' && ![...url.searchParams.keys()].some(credentialQueryKey);
+  if (url.origin !== 'https://source.invalid') return null;
+  let redacted = value;
+  if ([...url.searchParams.keys()].some(credentialQueryKey)) {
+    const query = new URLSearchParams();
+    for (const [name, entry] of url.searchParams)
+      query.append(name, credentialQueryKey(name) ? '' : entry);
+    redacted = `${url.pathname}?${query}`;
+  }
+  return maskSecrets(redacted) === redacted ? redacted : null;
+}
+
+function safeRoutePath(value) {
+  return routeWithoutCredentialValues(value) !== null;
 }
 
 function safePrefix(value) {
@@ -171,7 +183,8 @@ function routeFacts(text, file) {
         joinedRoute([...prefixes, literal]) : null;
       if (path && !safeRoutePath(path)) continue;
       if (!path) continue;
-      matches.push({path, method: method.toUpperCase() === 'ROUTE' ? 'UNKNOWN' : method.toUpperCase(),
+      matches.push({path: routeWithoutCredentialValues(path),
+        method: method.toUpperCase() === 'ROUTE' ? 'UNKNOWN' : method.toUpperCase(),
         index: match.index, receiver});
     }
   }
@@ -338,7 +351,8 @@ export async function reviewSource(sourcePath, {infer = null, model = null, log 
       const extracted = extractFromScript(body, {url: `source://${relative}`, origin});
       for (const entry of extracted.endpoints) if (safeRoutePath(entry.path)) {
         const offset = body.indexOf(entry.path);
-        routes.push({path: entry.path, method: entry.method, params: entry.params ?? [], file: relative,
+        routes.push({path: routeWithoutCredentialValues(entry.path),
+          method: entry.method, params: entry.params ?? [], file: relative,
           line: entry.line ?? (offset >= 0 ? body.slice(0, offset).split('\n').length : null), source: 'source-assisted'});
       }
     }
@@ -399,10 +413,11 @@ export async function reviewSource(sourcePath, {infer = null, model = null, log 
             parameters: (Array.isArray(note.parameters) ? note.parameters : [])
               .filter(value => known.get(note.path).params.has(value)).map(value => maskExcerpt(maskSecrets(value)))});
         for (const path of (answer.paths ?? []).slice(0, 8)) {
-          if (!safeRoutePath(path) || proposals.includes(path)) continue;
-          const methods = sourceMethods.get(new URL(path, 'https://source.invalid').pathname);
+          const redactedPath = routeWithoutCredentialValues(path);
+          if (!redactedPath || proposals.includes(redactedPath)) continue;
+          const methods = sourceMethods.get(new URL(redactedPath, 'https://source.invalid').pathname);
           if (methods && !methods.has('GET') && !methods.has('UNKNOWN')) continue;
-          proposals.push(path);
+          proposals.push(redactedPath);
         }
       } catch (error) {
         modelError = error.message;

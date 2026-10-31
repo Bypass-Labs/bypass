@@ -400,7 +400,7 @@ test('Muse reaches a protected read after 32 entries without repeating input cov
   assert.equal(run.findings[0].webProof.protectedPath, target);
 });
 
-test('verified deployed access-boundary planning uses only an explicitly reviewed POST', async t => {
+test('verified deployed access-boundary planning uses an observed authorized POST', async t => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'bypass-boundary-deployed-'));
   t.after(() => fs.rmSync(dir, {recursive: true, force: true}));
   const origin = 'https://app.example.test', postPath = '/api/filter';
@@ -458,7 +458,7 @@ test('verified deployed access-boundary planning uses only an explicitly reviewe
   const {scope: unreviewed} = loadScope({file: noPostFile, origin, targets: [target]});
   const excluded = await planAccessBoundaries(surface, unreviewed, {env,
     model: 'fixture', budget: 1, modelCallsAvailable: 1, infer});
-  assert.equal(excluded.coverage.postsAvailable, 0);
-  assert.equal(excluded.leads.length, 0);
-  assert.equal(modelCalls, 1, 'an unreviewed POST must never enter Muse planning');
+  assert.equal(excluded.coverage.postsAvailable, 1);
+  assert.equal(excluded.leads.length, 1);
+  assert.equal(modelCalls, 2, 'the observed authorized POST reaches Muse without a duplicate scope gate');
 });

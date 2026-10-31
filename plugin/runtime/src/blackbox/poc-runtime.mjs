@@ -39,43 +39,22 @@ export const HOST_HEADER_CANARIES = Object.freeze(['bypass-audit.invalid', 'bypa
 export const validQueryParameter = value => typeof value === 'string' && value.length > 0 &&
   value.length <= 80 && value.trim() === value && !/[\x00-\x1f\x7f]/.test(value);
 const safeProbeParameter = value => typeof value === 'string' &&
-  /^[A-Za-z_][A-Za-z0-9_.-]{0,79}$/.test(value) && !credentialQueryKey(value);
-const modelValueReason = (value, markers = [], maxLength = 256, localSyntax = false,
-  observation = false) => {
-  if (typeof value !== 'string' || value.length < 1 || value.length > maxLength ||
-      /[^\x20-\x7e]/.test(value)) return 'value-shape';
+  /^[A-Za-z_][A-Za-z0-9_.-]{0,79}$/.test(value);
+const modelValueReason = (value, markers = []) => {
+  if (typeof value !== 'string') return 'value-shape';
   if (markers.some(marker => value.toLowerCase().includes(marker.toLowerCase())))
     return 'literal-marker';
-  // Local, observed inputs may construct a canary through a bounded template
-  // expression or numeric HTML entities in simple formatting tags. Event
-  // handlers, arbitrary markup and shell separators remain disallowed.
-  const syntax = localSyntax ? value
-    .replace(/\$\{\s*String\.fromCharCode\(\s*\d{1,3}(?:\s*,\s*\d{1,3}){0,31}\s*\)\s*\}/g, '')
-    .replace(/<\/?(?:b|strong|em|span)>/gi, '')
-    .replace(/&#(x[0-9a-f]{1,2}|\d{1,3});/gi, (whole, encoded) => {
-      const code = encoded[0].toLowerCase() === 'x' ? parseInt(encoded.slice(1), 16) : Number(encoded);
-      return /^[a-z0-9]$/.test(String.fromCharCode(code)) ? '' : whole;
-    }) : value;
-  if (!(localSyntax && observation) &&
-      (localSyntax ? /[;`$<>|&\\]/ : /[;`$<>|&\\{}=]/).test(syntax))
-    return 'unsafe-syntax';
-  if (/\b(?:process|require|import|eval|function|constructor|globalthis|global|child_process|exec|spawn|write|unlink|delete|update|insert|drop|truncate|alter|sleep|benchmark|fetch|xmlhttprequest|window|document|location|__proto__)\b/i.test(value))
-    return 'unsafe-operation';
-  if (/(?:https?:|file:|ftp:|gopher:|data:)/i.test(value)) return 'external-destination';
-  if (/\b(?:bearer\s+\S+|password\s*=|(?:api[_-]?key|secret|token)\s*=|AKIA[A-Z0-9]{16}|gh[pousr]_[A-Za-z0-9]{20,})/i.test(value))
-    return 'credential-shape';
   return null;
 };
-const harmlessModelValue = (value, markers = [], maxLength = 256, localSyntax = false) =>
-  modelValueReason(value, markers, maxLength, localSyntax) === null;
+const harmlessModelValue = (value, markers = []) =>
+  modelValueReason(value, markers) === null;
 export function validModelHeaders(headers, markers = []) {
-  if (!Array.isArray(headers) || headers.length > 4) return false;
+  if (!Array.isArray(headers)) return false;
   const seen = new Set();
   for (const header of headers) {
     const name = String(header?.name ?? '').toLowerCase();
-    if (!/^(?:accept|accept-language|content-type|x-[a-z0-9-]{1,40})$/.test(name) ||
-        /(?:auth|token|key|secret|cookie|forwarded|host|override|method|bypass|csrf)/.test(name) ||
-        seen.has(name) || !harmlessModelValue(header?.value, markers, 128)) return false;
+    if (!/^[!#$%&'*+.^_`|~0-9a-z-]+$/.test(name) || seen.has(name) ||
+        typeof header?.value !== 'string' || /[\r\n\x00]/.test(header.value)) return false;
     seen.add(name);
   }
   return true;
@@ -88,14 +67,13 @@ export function modelExperimentReason(spec) {
   if (!observation && (markers.some(marker => !/^bx[0-9a-f]{12}$/.test(marker ?? '')) ||
       markers[0] === markers[1])) return 'markers';
   const values = [spec.controlValue, spec.firstValue, spec.secondValue];
-  const localSyntax = typeof spec?.origin === 'string' && URL.canParse(spec.origin) &&
-    localHost(new URL(spec.origin).hostname);
   for (const value of values) {
-    const reason = modelValueReason(value, markers, 256, localSyntax, observation);
+    const reason = modelValueReason(value, markers);
     if (reason) return reason;
   }
-  if (!validModelHeaders(spec?.headers ?? [], markers) ||
-      (spec?.headers ?? []).some(header => header.name.toLowerCase() === 'content-type')) return 'headers';
+  if (!validModelHeaders(spec?.headers ?? [], markers)) return 'headers';
+  if ((spec?.headers ?? []).some(header => markers.some(marker =>
+    header.value.toLowerCase().includes(marker.toLowerCase())))) return 'literal-marker';
   if (new Set(values).size !== values.length) return 'duplicate-values';
   return null;
 }
@@ -125,14 +103,14 @@ export function stateChangeCanaries(original, firstValue, secondValue) {
 }
 /** Companion JSON fields satisfy an observed request schema; none is a probe field. */
 export function validModelFixedFields(fields, parameter, markers = [], observedFields = null) {
-  if (!Array.isArray(fields) || fields.length > 3 ||
+  if (!Array.isArray(fields) ||
       observedFields != null && (!Array.isArray(observedFields) ||
         !observedFields.includes(parameter))) return false;
   const names = new Set();
   for (const item of fields) {
     if (!item || !safeProbeParameter(item.field) || item.field === parameter ||
         names.has(item.field) || observedFields != null && !observedFields.includes(item.field) ||
-        !harmlessModelValue(item.value, markers, 128)) return false;
+        !harmlessModelValue(item.value, markers)) return false;
     names.add(item.field);
   }
   return true;
@@ -498,6 +476,85 @@ export function responseCached(value) {
   return value?.headers?.age != null || /HIT/i.test(value?.headers?.['x-cache'] ?? '');
 }
 
+/** An arbitrary value for one named cookie must repeatedly cross the same access boundary. */
+export function cookieAccessOutcome(responses) {
+  if (!Array.isArray(responses) || responses.length !== 8)
+    return {verdict: 'inconclusive', reason: 'cookie access controls are incomplete'};
+  if (responses.some(item => item?.blocked || item?.refused ||
+      !Number.isInteger(item?.status) || item.status === 429 ||
+      item.status >= 500 || responseCached(item)))
+    return {verdict: 'inconclusive', reason: 'a cookie access control was unavailable or cached'};
+  const signature = item => JSON.stringify([item.status, item.type, item.hash]);
+  const [noCookieA, wrongNameA, namedA, namedB,
+    noCookieB, wrongNameB, namedC, namedD] = responses;
+  const closed = signature(noCookieA), opened = signature(namedA);
+  if ([wrongNameA, noCookieB, wrongNameB].some(item => signature(item) !== closed) ||
+      [namedB, namedC, namedD].some(item => signature(item) !== opened))
+    return {verdict: 'inconclusive', reason: 'cookie controls did not produce stable responses'};
+  if (closed === opened)
+    return {verdict: 'not_reproduced', reason: 'the named cookie did not change access'};
+  if ([namedA, namedB, namedC, namedD].some(item =>
+    item.status < 200 || item.status >= 300 ||
+    !(item.bytes > 0 || typeof item.body === 'string' && item.body.length > 0)))
+    return {verdict: 'inconclusive', reason: 'the changed response did not serve a successful body'};
+  return {verdict: 'confirmed',
+    reason: 'fresh arbitrary values for the named cookie repeatedly opened a distinct response; missing and wrong-name controls stayed closed'};
+}
+
+/** Replay model-authored requests and compare an access boundary, never a label alone. */
+export function rawBoundaryOutcome(responses, proof, candidateRequests = []) {
+  if (!Array.isArray(responses) || responses.length !== 6)
+    return {verdict: 'inconclusive', reason: 'raw proof controls are incomplete'};
+  const pathOf = requests => {
+    try {return new URL(requests.at(-1).path, 'https://proof.invalid').pathname;}
+    catch {return null;}
+  };
+  const paths = [proof?.baseline, proof?.negative, candidateRequests].map(pathOf);
+  if (!paths[0] || paths.some(path => path !== paths[0]))
+    return {verdict: 'inconclusive',
+      reason: 'raw proof controls did not address the same final route'};
+  if (responses.some(item => !item || item.blocked || item.refused ||
+      !Number.isInteger(item.status) || item.status === 429 ||
+      item.status >= 500 || responseCached(item)))
+    return {verdict: 'inconclusive', reason: 'a raw proof response was unavailable or cached'};
+  const [baselineA, negativeA, candidateA, candidateB, negativeB, baselineB] = responses;
+  const controls = [baselineA, negativeA, negativeB, baselineB];
+  const candidates = [candidateA, candidateB];
+  const closedText = proof?.closedText ?? '';
+  const openText = proof?.openText ?? '';
+  const signature = item => JSON.stringify([item.status, item.type,
+    item.hash ?? `sha256:${sha(item.body ?? '')}`]);
+  if (controls.every(item => signature(item) === signature(candidateA)) &&
+      signature(candidateA) === signature(candidateB))
+    return {verdict: 'not_reproduced', reason: 'candidate and controls returned the same response'};
+  if (closedText && openText) {
+    if (closedText === openText || JSON.stringify(candidateRequests).includes(openText))
+      return {verdict: 'inconclusive',
+        reason: 'the positive marker is ambiguous or supplied by the request itself'};
+    const closed = item => String(item.body ?? '').includes(closedText) &&
+      !String(item.body ?? '').includes(openText);
+    const opened = item => item.status >= 200 && item.status < 300 &&
+      String(item.body ?? '').includes(openText) &&
+      !String(item.body ?? '').includes(closedText);
+    if (controls.every(closed) && candidates.every(opened))
+      return {verdict: 'confirmed',
+        reason: 'two fresh candidate replays crossed the recorded page boundary while both negative controls stayed closed'};
+    if (controls.every(closed) && candidates.every(closed))
+      return {verdict: 'not_reproduced', reason: 'candidate stayed on the same gated page as the controls'};
+    return {verdict: 'inconclusive', reason: 'page boundary markers were unstable across controls'};
+  }
+  if (closedText || openText)
+    return {verdict: 'inconclusive', reason: 'both closed and open response markers are needed'};
+  const denied = item => [401, 403, 404].includes(item.status);
+  const opened = item => item.status >= 200 && item.status < 300 &&
+    String(item.body ?? '').length > 0;
+  if (controls.every(denied) && candidates.every(opened))
+    return {verdict: 'confirmed',
+      reason: 'two fresh candidate replays returned content from a route denied to both controls'};
+  return {verdict: 'inconclusive',
+    reason: 'the candidate did not establish a stable denied-to-allowed boundary'};
+}
+
 /** Encode the marker as octal escapes so a plain reflection cannot satisfy the output oracle. */
 export function commandOutputCanary(marker) {
   if (!/^bx[0-9a-f]{24}$/.test(marker)) throw Error('Invalid command-output marker.');
@@ -819,20 +876,103 @@ function checkedUrl(spec, raw, {reviewedJsonPost = false, reviewedFlowPost = fal
   if (url.origin !== spec.origin || url.username || url.password || url.hash || url.pathname.includes('%') ||
       /[\\;]/.test(url.pathname) || url.pathname.split('/').some(part => part === '.' || part === '..') ||
       !included ||
-      neverMatches(spec, url.pathname, url.search, {pathOnly}) || url.searchParams.size > 8 ||
-      [...url.searchParams.keys()].some(credentialQueryKey))
+      neverMatches(spec, url.pathname, url.search, {pathOnly}) || url.searchParams.size > 8)
     throw Error('Proof request is outside its recorded scope.');
   return url;
 }
 
-const PRIVATE_QUERY_KEY = /^(?:token|key|apikey|api_key|sig|signature|secret|auth|session|code|password|access_token|id_token|authorization|credential|credentials)$/;
-function credentialQueryKey(name) {
-  let decoded = String(name);
-  for (let pass = 0; pass < 2 && /%[0-9a-f]{2}/i.test(decoded); pass++) {
-    try {decoded = decodeURIComponent(decoded);} catch {break;}
+async function checkModelCookieAccess(spec) {
+  const subject = spec.subject;
+  if (spec.kind !== 'model-cookie-access' || spec.as !== 'anonymous' ||
+      !['GET', 'HEAD'].includes(subject?.method) ||
+      subject.placement !== 'cookie' ||
+      !/^[A-Za-z0-9._~-]{1,128}$/.test(subject.key ?? ''))
+    return {verdict: 'inconclusive', reason: 'cookie proof request is incomplete'};
+  const url = checkedUrl(spec, subject.path);
+  if (url.search || url.pathname !== subject.path)
+    return {verdict: 'inconclusive', reason: 'cookie proof path changed'};
+  const wrongName = `bxw_${randomBytes(8).toString('hex')}`;
+  const values = Array.from({length: 4}, () => `bx${randomBytes(12).toString('hex')}`);
+  const variants = [null, `${wrongName}=${values[0]}`,
+    `${subject.key}=${values[0]}`, `${subject.key}=${values[1]}`,
+    null, `${wrongName}=${values[2]}`,
+    `${subject.key}=${values[2]}`, `${subject.key}=${values[3]}`];
+  const labels = ['missing-a', 'wrong-name-a', 'named-a', 'named-b',
+    'missing-b', 'wrong-name-b', 'named-c', 'named-d'];
+  const responses = [], controls = [];
+  for (const [index, cookie] of variants.entries()) {
+    await pace(spec);
+    const response = await guardedRequest(url, {method: subject.method,
+      headers: {'cache-control': 'no-cache', ...(cookie ? {cookie} : {})},
+      allowRemoteHttp: spec.allowRemoteHttp === true,
+      maxBodyBytes: MODEL_RESPONSE_BYTES});
+    const fact = {status: response.status,
+      type: response.headers['content-type'] ?? '',
+      hash: `sha256:${sha(response.body)}`,
+      bytes: Buffer.byteLength(response.body), headers: response.headers};
+    responses.push(fact);
+    controls.push({label: labels[index], status: fact.status,
+      hash: fact.hash, cached: responseCached(fact)});
   }
-  const normalized = decoded.replace(/([a-z0-9])([A-Z])/g, '$1_$2').toLowerCase();
-  return PRIVATE_QUERY_KEY.test(normalized) || normalized.split(/[^a-z0-9]+/).some(part => PRIVATE_QUERY_KEY.test(part));
+  return {...cookieAccessOutcome(responses), controls};
+}
+
+async function checkModelRawBoundary(spec, env) {
+  if (!Array.isArray(spec.rawRequests) || !spec.rawRequests.length ||
+      !Array.isArray(spec.rawProof?.baseline) || !spec.rawProof.baseline.length ||
+      !Array.isArray(spec.rawProof?.negative) || !spec.rawProof.negative.length)
+    return {verdict: 'inconclusive', reason: 'raw proof requests are incomplete'};
+  const phases = [
+    ['baseline-a', spec.rawProof.baseline],
+    ['negative-a', spec.rawProof.negative],
+    ['candidate-a', spec.rawRequests],
+    ['candidate-b', spec.rawRequests],
+    ['negative-b', spec.rawProof.negative],
+    ['baseline-b', spec.rawProof.baseline],
+  ];
+  const allowedEnv = new Set([spec.identities?.owner, spec.identities?.outsider,
+    spec.derivedLogin?.usernameEnv, spec.derivedLogin?.passwordEnv]
+    .filter(value => typeof value === 'string'));
+  const expand = value => String(value).replace(/\{\{env:([A-Za-z_][A-Za-z0-9_]*)\}\}/g,
+    (whole, name) => allowedEnv.has(name) && typeof env[name] === 'string' ?
+      env[name] : whole);
+  const controls = [], responses = [];
+  let derivedSession = null;
+  for (const [index, [label, requests]] of phases.entries()) {
+    if ((index === 0 || index === 3) && phases.some(([, steps]) =>
+      steps.some(step => (step.as ?? spec.as) === 'derived'))) {
+      const loginSpec = {...spec, ...spec.derivedLogin, kind: 'model-auth-login',
+        origin: spec.origin, include: spec.include, never: spec.never,
+        targetEnvironment: spec.targetEnvironment, auth: spec.auth};
+      const login = await checkModelAuthLogin(loginSpec, env,
+        session => {derivedSession = session;});
+      if (login.verdict !== 'confirmed' || !derivedSession)
+        return {verdict: 'inconclusive',
+          reason: 'fresh derived session was unavailable for raw proof', controls};
+    }
+    let last = null;
+    for (const [stepIndex, request] of requests.entries()) {
+      const url = checkedUrl(spec, expand(request.path));
+      if (Array.isArray(spec.methods) && !spec.methods.includes(request.method))
+        return {verdict: 'inconclusive', reason: 'request method is outside the recorded scope', controls};
+      const as = request.as ?? spec.as;
+      const identity = as === 'derived' ? sessionHeaders(spec.auth, derivedSession) :
+        await headerFor(spec, as, env, url);
+      const headers = {...identity, ...Object.fromEntries((request.headers ?? [])
+        .map(header => [header.name, expand(header.value)]))};
+      await pace(spec);
+      last = await guardedRequest(url, {method: request.method, headers,
+        body: expand(request.body ?? ''),
+        allowRemoteHttp: spec.allowRemoteHttp === true && as === 'anonymous',
+        maxBodyBytes: MODEL_RESPONSE_BYTES});
+      controls.push({label: `${label}-${stepIndex + 1}`, method: request.method,
+        path: url.pathname, status: last.status,
+        hash: `sha256:${sha(last.body)}`});
+    }
+    responses.push({...last, type: last.headers?.['content-type'] ?? '',
+      hash: `sha256:${sha(last.body)}`});
+  }
+  return {...rawBoundaryOutcome(responses, spec.rawProof, spec.rawRequests), controls};
 }
 
 const LOGIN_TOKEN = /^[\x21-\x7e]{1,8192}$/;
@@ -1525,7 +1665,7 @@ export function validModelHttpSequence(spec) {
       return false;
     if (['GET', 'HEAD'].includes(step.method))
       return step.placement == null && step.key == null && step.value == null;
-    const operation = ['POST', 'PUT', 'PATCH'].includes(step.method) ?
+    const operation = (step.method === 'POST' || SEQUENCE_WRITE_METHODS.has(step.method)) ?
       reviewedSequenceOperation(spec, step) : null;
     let typedScalar = step.valueEncoding == null || step.valueEncoding === 'string';
     if (step.valueEncoding === 'json' && step.placement === 'json') {
@@ -1557,7 +1697,6 @@ export function validModelHttpSequence(spec) {
   };
   if (spec.prelude.some((step, index) => !stepValid(step, 'prelude', index)) ||
       spec.observe.some((step, index) => !stepValid(step, 'observe', index)) ||
-      spec.observe.some(step => !['GET', 'HEAD'].includes(step.method)) ||
       !safePath(subject.path) ||
       !validModelHeaders(subject.headers ?? [], markers) ||
       (subject.headers ?? []).some(item => item.name.toLowerCase() === 'content-type')) return false;
@@ -2380,14 +2519,8 @@ async function checkPublicSessionToken(spec, env) {
 
 const AUTH_FIELD = /^[A-Za-z_][A-Za-z0-9_.-]{0,79}$/;
 const PRINCIPAL_FIELD = /^(?:id|_id|uid|sub|userId|accountId|principalId|username|email)$/i;
-const SYNTHETIC_AUTH_ADDRESS = /^@(?:invalid|example\.(?:invalid|test|com|net|org)|invalid\.test)(?=$|[^a-z0-9.-])/i;
 export const safeAuthUserPayload = value => typeof value === 'string' &&
-  value.length > 0 && value.length <= 128 && /^[\x20-\x7e]+$/.test(value) &&
-  !/[;`<>|&\\]/.test(value) &&
-  !/(?:https?:|file:|ftp:|gopher:|data:|bearer\s|password\s*=|secret\s*=|token\s*=)/i
-    .test(value) &&
-  !/(?:AKIA[A-Z0-9]{16}|gh[pousr]_[A-Za-z0-9]{20,})/.test(value) &&
-  [...value.matchAll(/@/g)].every(match => SYNTHETIC_AUTH_ADDRESS.test(value.slice(match.index)));
+  !/[\r\n\x00]/.test(value);
 
 /** Return only the failed proof prerequisite; never include candidate inputs. */
 export function modelAuthLoginRejection(spec) {
@@ -3397,6 +3530,8 @@ async function checkWithinBudget(spec, env, replay) {
     if (spec.kind === 'ssti-arithmetic') return await checkSstiArithmetic(spec, env);
     if (spec.kind === 'model-differential') return await checkModelDifferential(spec, env);
     if (spec.kind === 'model-json-differential') return await checkModelJsonDifferential(spec, env);
+    if (spec.kind === 'model-cookie-access') return await checkModelCookieAccess(spec);
+    if (spec.kind === 'model-raw-boundary') return await checkModelRawBoundary(spec, env);
     if (['model-http-sequence', 'model-browser-execution'].includes(spec.kind))
       return await checkModelHttpSequence(spec, env);
     if (spec.kind === 'model-state-change') return await checkModelStateChange(spec, env);

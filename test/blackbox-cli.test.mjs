@@ -57,9 +57,10 @@ test('scope CLI records explicit descendant audit domains and rejects wider doma
   assert.equal(created.code, 0);
   const scope = JSON.parse(fs.readFileSync(created.data.file, 'utf8'));
   assert.deepEqual(scope.discovery.auditDomains, ['example.test']);
-  assert.equal(scope.probes.crlfResponseHeader, false);
-  assert.equal(scope.probes.hostHeaderRedirect, false);
-  assert.equal(scope.probes.jwtUnsigned, false);
-  assert.equal(scope.probes.commandExecution, false);
-  assert.equal(scope.probes.pathTraversal, false);
+  assert.equal(scope.probes.crlfResponseHeader, true);
+  assert.equal(scope.probes.hostHeaderRedirect, true);
+  assert.equal(scope.probes.jwtUnsigned, true);
+  assert.equal(scope.probes.commandExecution, true);
+  assert.equal(scope.probes.pathTraversal, true);
+  assert.equal(scope.probes.xmlExternalEntity, true);
 });

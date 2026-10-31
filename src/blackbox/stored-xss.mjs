@@ -1,7 +1,6 @@
 // Muse selects observed scoped routes and a string field; browser execution decides stored XSS.
 import {randomBytes} from 'node:crypto';
 import {validateUrl} from './scope.mjs';
-import {credentialQueryKey} from './private-query.mjs';
 import {renderCapturedHtml, responseCached, validModelFixedFields, xssPayload} from './poc-runtime.mjs';
 import {MODEL_RESPONSE_BYTES, requestFailureVerdict, responseSizeReason} from './response-size.mjs';
 
@@ -9,7 +8,7 @@ const STYLES = new Set(['html-double', 'html-single', 'script-close']);
 const unique = values => [...new Set(values.filter(Boolean))];
 const brief = (value, size = 300) => String(value ?? '').replace(/[\x00-\x1f\x7f]/g, ' ').slice(0, size);
 const safeField = value => typeof value === 'string' &&
-  /^[A-Za-z_][A-Za-z0-9_.-]{0,79}$/.test(value) && !credentialQueryKey(value);
+  /^[A-Za-z_][A-Za-z0-9_.-]{0,79}$/.test(value);
 const exactGet = record => typeof record?.pattern === 'string' &&
   record.pattern.startsWith('/') && !/[{}?#%]/.test(record.pattern) &&
   (!Array.isArray(record.methods) || !record.methods.length || record.methods.includes('GET'));

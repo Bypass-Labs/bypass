@@ -60,7 +60,7 @@ function inventory(surface, scope, env, derivedSession = null) {
           !record.methods.includes('GET') ||
         !validateUrl(scope, path, {method: 'GET', identity: 'anonymous'}).ok) return [];
     const fields = Object.keys(record.params ?? {}).filter(key =>
-      /^[A-Za-z_][A-Za-z0-9_.-]{0,63}$/.test(key) && !credentialQueryKey(key));
+      /^[A-Za-z_][A-Za-z0-9_.-]{0,63}$/.test(key));
     return fields.length ? [{path, method: 'GET', fields, requiredFields: [],
       fieldExamples: record.params, purpose: record.purpose ?? ''}] : [];
   });

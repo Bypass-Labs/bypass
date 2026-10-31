@@ -1,5 +1,5 @@
 import {parseOpenApi} from './recon.mjs';
-import {mutatingActionPath, validateUrl} from './scope.mjs';
+import {validateUrl} from './scope.mjs';
 
 function registrationContract(item, path, fields) {
   const segments = path.split('/').filter(Boolean);
@@ -12,13 +12,15 @@ function registrationContract(item, path, fields) {
 
 /** Admit exact public JS/OpenAPI method contracts within the reviewed scope. */
 export async function deriveLocalPostScope(scope, mined, requester) {
-  const postAuthorized = scope.target.environment === 'local' ||
+  const postAuthorized = scope.methods.includes('POST') &&
+    (scope.target.environment === 'local' ||
     scope.target.acknowledged === 'verified-authorized' &&
-    scope.authorizedOrigins?.[scope.target.origin]?.authorization?.methods?.includes('POST');
+    scope.authorizedOrigins?.[scope.target.origin]?.authorization?.methods?.includes('POST'));
   // Check the route shape and include boundary before admitting an observed POST.
   // The GET-only action guard is bypassed for this check; explicit never entries
   // still apply to both read and write methods.
-  const candidates = [...(mined?.endpoints ?? []).map(item => ({...item, source: 'public-js'}))];
+  const candidates = [...(mined?.endpoints ?? []).map(item => ({...item,
+    source: item.sources?.includes('public-html') ? 'public-html' : 'public-js'}))];
   for (const pathname of scope.discover.filter(value => /(?:openapi|swagger|api-docs).*\.json$/i.test(value)).slice(0, 5)) {
     const response = await requester({url: pathname, identity: 'anonymous', method: 'GET',
       step: 'recon', purpose: 'discover'});
@@ -45,7 +47,6 @@ export async function deriveLocalPostScope(scope, mined, requester) {
         'unsupported-content-type' :
       !fields.length || fields.length > 8 ? 'no-bounded-string-body-contract' :
       !postAuthorized ? 'post-not-authorized' :
-      mutatingActionPath(path) && !alreadyReviewed ? 'mutating-post-needs-review' :
       !validateUrl({...scope, discover: [...scope.discover, path]}, path, {method: 'GET'}).ok ?
         'outside-scope-or-never' : null;
     if (reason) {skipped.push({path, method: 'POST', reason}); continue;}
@@ -84,14 +85,8 @@ export async function deriveLocalPostScope(scope, mined, requester) {
       skipped.push({path, method: item.method, reason: 'outside-scope-or-never'});
       continue;
     }
-    const exactReviewed = placement => scope.probes.writeOperations?.some(entry =>
-      entry.method === item.method && entry.path === path &&
-      entry.placement === placement);
-    const targetReviewed = placement => local || authorized?.methods?.includes(item.method) &&
-      authorized?.writeOperations?.some(entry => entry.method === item.method &&
-        entry.path === path && entry.placement === placement);
-    const canAutoAdmit = local && ['PUT', 'PATCH'].includes(item.method) &&
-      !mutatingActionPath(path);
+    const methodAuthorized = scope.methods.includes(item.method) &&
+      (local || authorized?.methods?.includes(item.method));
     const safeFields = values => [...new Set((values ?? []).filter(name =>
       typeof name === 'string' && /^[A-Za-z_][A-Za-z0-9_.-]{0,79}$/.test(name)))].slice(0, 8);
     const bodyPlacement = ['json', 'form', 'xml'].includes(item.bodyEncoding) ?
@@ -111,14 +106,8 @@ export async function deriveLocalPostScope(scope, mined, requester) {
       const contentType = bodyPlacement ? item.contentType ??
         ({json: 'application/json', form: 'application/x-www-form-urlencoded',
           xml: 'application/xml'})[placement] : null;
-      const exact = exactReviewed(placement);
-      const legacyPost = item.method === 'POST' && bodyPlacement && (
-        scope.probes[`${placement}PostPaths`]?.includes(path) ||
-        admitted.has(`${placement} ${path}`));
       const reason = !fields.length ? 'no-controllable-observed-field' :
-        item.method === 'DELETE' && !exact ? 'delete-needs-exact-review' :
-        !exact && !canAutoAdmit && !legacyPost ? 'method-needs-exact-review' :
-        !targetReviewed(placement) && !legacyPost ? 'method-not-authorized' :
+        !methodAuthorized ? 'method-not-authorized' :
         placement === 'xml' && !item.rootElement ? 'xml-root-unobserved' :
         bodyPlacement && !/^(?:application\/(?:json|[a-z0-9.-]+\+json)|application\/x-www-form-urlencoded|application\/xml)(?:\s*;|$)/i.test(contentType) ?
           'unsupported-content-type' : null;
@@ -154,12 +143,6 @@ export async function deriveLocalPostScope(scope, mined, requester) {
       contentType: item.contentType}]));
   effective.localAuthPostContracts = Object.fromEntries([...authAdmitted.values()]
     .map(item => [item.path, item]));
-  effective.probes.writeOperations = [...new Map([
-    ...effective.probes.writeOperations,
-    ...[...methodAdmitted.values()].filter(item => local &&
-      ['PUT', 'PATCH'].includes(item.method)).map(item =>
-      ({method: item.method, path: item.path, placement: item.placement}))]
-    .map(item => [`${item.method} ${item.path} ${item.placement}`, item])).values()];
   effective.localAutoMethodContracts = Object.fromEntries([...methodAdmitted]
     .map(([key, item]) => [key, item]));
   return {scope: effective, admitted: [...admitted.values()],
@@ -227,6 +210,18 @@ export async function anonymousSurface(scope, requester, mined) {
       fieldValueExamples: item.fieldValueExamples ?? {},
       fieldExamples: Object.fromEntries(Object.entries(item.fieldExamples ?? {})
         .filter(([name]) => fields.includes(name))), source: 'public-js',
+      files: (item.files ?? []).slice(0, 4), purpose: item.purpose ?? ''});
+  }
+  for (const item of mined?.endpoints ?? []) {
+    if (item.method !== 'POST' || item.bodyEncoding !== 'form' ||
+        !item.bodyFields?.length || item.path?.includes('{') ||
+        !scope.probes.formPostPaths.includes(item.path) ||
+        !validateUrl(scope, item.path, {identity: 'anonymous', method: 'POST', purpose: 'form-body'}).ok)
+      continue;
+    formBodyOperations.set(item.path, {path: item.path, method: 'POST',
+      contentType: 'application/x-www-form-urlencoded', fields: item.bodyFields,
+      requiredFields: item.bodyRequiredFields ?? [],
+      source: item.sources?.includes('public-html') ? 'public-html' : 'public-asset',
       files: (item.files ?? []).slice(0, 4), purpose: item.purpose ?? ''});
   }
   for (const pathname of scope.discover.filter(value => /(?:openapi|swagger|api-docs).*\.json$/i.test(value)).slice(0, 5)) {

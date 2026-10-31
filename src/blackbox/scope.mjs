@@ -20,8 +20,6 @@ const MAX_AGENTS = 100;
 const AUTH_FORMAT = /^(bearer|cookie|header:[A-Za-z0-9!#$%&'*+.^_`|~-]+)$/;
 const WORDLIST_FIELDS = new Set(['seeds.words', 'seeds.children', 'seeds.dnsWords']);
 const STEPS = new Set(['discovery', 'recon', 'identity', 'control', 'task', 'anonymous', 'followup', 'reverify', 'mirror', 'chain', 'poc']);
-const CALLER_HEADERS = new Set(['accept', 'accept-language', 'cache-control', 'pragma', 'origin', 'host', 'content-type', 'range']);
-const HOST_HEADER_CANARIES = new Set(['bypass-audit.invalid', 'bypass-audit-two.invalid']);
 const JWT_CANARY_IDENTITIES = new Map([['jwt-invalid-signature', 'invalidSignature'],
   ['jwt-unsigned-one', 'first'], ['jwt-unsigned-two', 'second']]);
 const STORED_HEADERS = ['content-type', 'cache-control', 'age', 'x-cache', 'etag', 'vary', 'www-authenticate', 'location', 'link',
@@ -73,7 +71,7 @@ export const DEFAULT_SCOPE = deepFreeze({
   include: ['/'],
   discover: ['/', '/openapi.json', '/swagger.json', '/swagger/v1/swagger.json', '/api-docs', '/docs', '/robots.txt', '/sitemap.xml'],
   never: [],
-  methods: ['GET', 'HEAD'],
+  methods: ['GET', 'HEAD', 'POST', 'PATCH', 'DELETE'],
   identities: {owner: {env: 'OWNER_TOKEN', role: 'member', login: null},
     outsider: {env: 'OTHER_TOKEN', role: 'member', login: null}, auth: 'bearer', identityPath: null,
     identityCookieName: null, login: null},
@@ -136,12 +134,6 @@ export function loadScope({file, origin, overrides = {}, targets = []} = {}) {
     scopeReady(registered);
   }
   scope.target = {origin: target, environment: local ? 'local' : registered.environment, acknowledged: local ? 'local-owner' : 'verified-authorized'};
-  if (!local && fromFile.probes?.crlfResponseHeader !== true) scope.probes.crlfResponseHeader = false;
-  if (!local && fromFile.probes?.hostHeaderRedirect !== true) scope.probes.hostHeaderRedirect = false;
-  if (!local && fromFile.probes?.jwtUnsigned !== true) scope.probes.jwtUnsigned = false;
-  if (!local && fromFile.probes?.commandExecution !== true) scope.probes.commandExecution = false;
-  if (!local && fromFile.probes?.pathTraversal !== true) scope.probes.pathTraversal = false;
-  if (!local && fromFile.probes?.xmlExternalEntity !== true) scope.probes.xmlExternalEntity = false;
   scope.credentialOrigins = (fromFile.credentialOrigins ?? [target]).map(originOf);
   // A reviewed `never` array is authoritative. Older saved scopes retain their written exclusions.
   // Redaction fields always retain their defaults independently of request scope.
@@ -159,14 +151,6 @@ export function loadScope({file, origin, overrides = {}, targets = []} = {}) {
     if (scope.probes.jsonPostPaths.length || scope.probes.formPostPaths.length)
       need(registered.authorization.methods.includes('POST'),
         'Reviewed JSON/form POST paths need POST in the target authorization.', 2);
-    for (const entry of scope.probes.xmlPostPaths) need(registered.authorization.xmlPostPaths?.includes(entry),
-      `XML POST path ${entry} needs exact target authorization.`, 2);
-    for (const entry of scope.probes.writeOperations) need(
-      registered.authorization.methods.includes(entry.method) &&
-      registered.authorization.writeOperations?.some(item =>
-        item.method === entry.method && item.path === entry.path &&
-        item.placement === entry.placement),
-      `${entry.method} ${entry.path} (${entry.placement}) needs exact target authorization.`, 2);
     need(scope.limits.rps <= registered.authorization.maxRequestsPerSecond,
       `Scope rate ${scope.limits.rps} exceeds target authorization rate ${registered.authorization.maxRequestsPerSecond}.`, 2);
     for (const domain of scope.domains) {
@@ -247,21 +231,12 @@ function mutatingReadAction(parsed) {
     /^(?:action|op|do)$/i.test(key) && MUTATING_READ_ACTION.test(value));
 }
 
-function observedPostAuthorized(scope) {
-  return scope.target.environment === 'local' ||
-    scope.target.acknowledged === 'verified-authorized' &&
-    scope.authorizedOrigins?.[scope.target.origin]?.authorization?.methods?.includes('POST') === true;
-}
-
 function observedMethodAuthorized(scope, method) {
-  return WRITE_METHODS.includes(method) && (scope.target.environment === 'local' ||
+  return scope.methods.includes(method) && WRITE_METHODS.includes(method) &&
+    (scope.target.environment === 'local' ||
     scope.target.acknowledged === 'verified-authorized' &&
     scope.authorizedOrigins?.[scope.target.origin]?.authorization?.methods?.includes(method) === true);
 }
-
-const reviewedWrite = (scope, method, path, placement) =>
-  scope.probes.writeOperations?.some(item => item.method === method &&
-    item.path === path && item.placement === placement);
 
 /** True when the path sits under an include prefix, matched exactly as pathAllowed does. */
 export function inInclude(scope, pathname) {
@@ -284,34 +259,23 @@ export function validateUrl(scope, url, {purpose = 'task', identity = null, meth
   const credentialed = identity != null && identity !== 'anonymous';
   if (!onScopeOrigin(scope, parsed, purpose, credentialed) || input.includes('#')) return refusal('origin');
   const exactOrigin = parsed.origin === scope.target.origin;
-  const reviewedBody = placement => exactOrigin && !parsed.search &&
-    observedMethodAuthorized(scope, method) &&
-    reviewedWrite(scope, method, parsed.pathname, placement);
-  const xmlPost = purpose === 'xml-body' && (
-    method === 'POST' && scope.probes.xmlExternalEntity === true && exactOrigin &&
-      scope.probes.xmlPostPaths.includes(parsed.pathname) && !parsed.search ||
-    reviewedBody('xml'));
-  const jsonPost = purpose === 'json-body' && (
-    method === 'POST' && observedPostAuthorized(scope) && exactOrigin &&
-      scope.probes.jsonPostPaths.includes(parsed.pathname) && !parsed.search ||
-    reviewedBody('json'));
-  const formPost = purpose === 'form-body' && (
-    method === 'POST' && observedPostAuthorized(scope) && exactOrigin &&
-      scope.probes.formPostPaths.includes(parsed.pathname) && !parsed.search ||
-    reviewedBody('form'));
+  const bodyMethod = WRITE_METHODS.includes(method) && exactOrigin && !parsed.search;
   const authPost = purpose === 'auth-body' && method === 'POST' &&
-    observedPostAuthorized(scope) && parsed.origin === scope.target.origin &&
+    bodyMethod &&
     scope.localAuthPostContracts?.[parsed.pathname] && !parsed.search;
-  const reviewedMethod = purpose === 'reviewed-method' && exactOrigin &&
-    observedMethodAuthorized(scope, method) &&
-    (reviewedWrite(scope, method, parsed.pathname, 'query') ||
-      reviewedWrite(scope, method, parsed.pathname, 'header'));
-  if ((!xmlPost && !jsonPost && !formPost && !authPost && !reviewedMethod &&
-      (!READ_METHODS.includes(method) || !scope.methods.includes(method))) ||
-      (purpose === 'xml-body' && !xmlPost) || (purpose === 'json-body' && !jsonPost) ||
-      (purpose === 'form-body' && !formPost) || (purpose === 'auth-body' && !authPost) ||
-      (purpose === 'reviewed-method' && !reviewedMethod))
+  if (!scope.methods.includes(method) ||
+      ['xml-body', 'json-body', 'form-body'].includes(purpose) && !bodyMethod ||
+      purpose === 'auth-body' && !authPost ||
+      purpose === 'reviewed-method' && (!WRITE_METHODS.includes(method) || !exactOrigin))
     return refusal('method');
+  const authorization = scope.authorizedOrigins?.[parsed.origin]?.authorization;
+  if (scope.target.environment !== 'local' && parsed.origin === scope.target.origin &&
+      !authorization) return refusal('target-authorization');
+  const exactAuthorizedXmlPost = method === 'POST' &&
+    authorization?.xmlPostPaths?.includes(parsed.pathname);
+  if (authorization && !authorization.methods.includes(method) &&
+      !exactAuthorizedXmlPost)
+    return refusal('target-authorization');
   if (credentialed && !scope.credentialOrigins.includes(parsed.origin)) return refusal('credential-origin');
   // The URL parser resolves '..', '%2e%2e' and '\' silently, so the raw input is checked as well.
   const rawPath = rawPathOf(input);
@@ -328,8 +292,6 @@ export function validateUrl(scope, url, {purpose = 'task', identity = null, meth
       !scope.discover.includes(`${parsed.pathname}${parsed.search}`)) return refusal('read-action-review');
   const keys = [...parsed.searchParams.keys()];
   if (keys.length > MAX_QUERY_PARAMS) return refusal('query-count');
-  const credentialKey = keys.find(credentialQueryKey);
-  if (credentialKey) return refusal('credentialed-query', credentialKey);
   return {ok: true, url: parsed.href};
 }
 
@@ -414,38 +376,35 @@ export function createRequester(scope, {ledger, limiter = createLimiter(scope.li
 
   async function request({url, identity = 'anonymous', method = 'GET', headers = {}, body, step, task = null, agent = null, maxBytes,
     noCache = false, purpose = 'task', timeout, derivedBearer = null,
-    derivedCookie = null, omitExcerpt = false,
+    derivedCookie = null, omitExcerpt = false, rawModelRequest = false,
     rawForSessionChain = false, rawForAuthProof = false, redactValues = [],
     auditCallback = null} = {}) {
     need(STEPS.has(step), `Unknown evidence step '${step}'.`);
     need(maxBytes == null || (Number.isInteger(maxBytes) && maxBytes > 0 && maxBytes <= MAX_BODY_BYTES), `maxBytes must be a whole number up to ${MAX_BODY_BYTES}.`);
-    const callerHeaders = allowedCallerHeaders(headers, scope);
-    const allowedEmails = new Set(['owner', 'outsider']
-      .map(identity => scope.identities[identity]?.login?.usernameEnv)
-      .map(name => name && env[name])
-      .filter(value => typeof value === 'string' && value.includes('@')));
-    // Only the harness can supply this exact one-use local callback. It does
-    // not permit a model-supplied or unrelated external destination.
-    const outbound = value => externalDestination(value, scope.target.origin,
-      {allowedEmails}) && !(scope.target.environment === 'local' &&
-        value === auditCallback && typeof auditCallback === 'string' &&
-        /^http:\/\/127\.0\.0\.1:\d+\/bx-ssrf\/[0-9a-f]{24}$/.test(auditCallback));
+    const callerHeaders = rawModelRequest ? {...headers} : allowedCallerHeaders(headers);
+    need(!rawModelRequest || noCache && purpose === 'task' &&
+      headers && typeof headers === 'object' && !Array.isArray(headers) &&
+      Object.entries(headers).every(([name, value]) =>
+        /^[!#$%&'*+.^_`|~0-9A-Za-z-]+$/.test(name) &&
+        typeof value === 'string' && !/[\r\n\x00]/.test(value)),
+    'A model request must be an uncached scoped HTTP request with valid header syntax.');
     const derivedRead = ['GET', 'HEAD'].includes(method) && purpose === 'task';
     const derivedReviewedWrite = WRITE_METHODS.includes(method) &&
-      ['json-body', 'form-body', 'xml-body', 'reviewed-method'].includes(purpose);
+      (['json-body', 'form-body', 'xml-body', 'reviewed-method'].includes(purpose) ||
+        rawModelRequest) && observedMethodAuthorized(scope, method);
     need(derivedBearer == null || (identity === 'anonymous' &&
       (derivedRead || derivedReviewedWrite && observedMethodAuthorized(scope, method)) && noCache &&
       typeof derivedBearer === 'string' && /^[\x21-\x7e]{16,4096}$/.test(derivedBearer)),
-    'A derived bearer requires an uncached scoped read or reviewed method contract on the audited application.');
+    'A derived bearer requires an uncached scoped request on the audited application.');
     need(derivedCookie == null || (derivedBearer == null && identity === 'anonymous' &&
       (derivedRead || derivedReviewedWrite && observedMethodAuthorized(scope, method)) && noCache &&
       typeof derivedCookie === 'string' &&
       /^[A-Za-z0-9._~-]{1,128}=[^\x00-\x20;,\x7f]{1,4096}$/.test(derivedCookie)),
-    'A derived cookie requires an uncached scoped read or reviewed method contract on the audited application.');
+    'A derived cookie requires an uncached scoped request on the audited application.');
     need(!rawForSessionChain || (scope.target.environment === 'local' &&
       identity === 'anonymous' && method === 'GET' && purpose === 'task' && noCache && omitExcerpt),
     'Raw session-chain extraction requires an uncached, unlogged local anonymous GET.');
-    need(!rawForAuthProof || (observedPostAuthorized(scope) &&
+    need(!rawForAuthProof || (observedMethodAuthorized(scope, 'POST') &&
       identity === 'anonymous' && method === 'POST' && purpose === 'auth-body' && noCache && omitExcerpt),
     'Raw authentication proof extraction requires an uncached, unlogged scoped anonymous POST.');
     const additionalSecrets = Array.isArray(redactValues) ? redactValues.filter(value =>
@@ -463,48 +422,25 @@ export function createRequester(scope, {ledger, limiter = createLimiter(scope.li
     const xmlBody = WRITE_METHODS.includes(method) && purpose === 'xml-body' && noCache &&
       typeof body === 'string' && Buffer.byteLength(body) > 0 && Buffer.byteLength(body) <= 4096 &&
       contentTypes.length === 1 && contentTypes[0][1] === expectedType;
-    let jsonDocument = null;
+    let jsonDocument = null, jsonParsed = false;
     if (['json-body', 'auth-body'].includes(purpose) && typeof body === 'string')
-      try {jsonDocument = JSON.parse(body);} catch { /* refused below */ }
-    const boundedJsonValue = value => {
-      const pending = [value];
-      while (pending.length) {
-        const item = pending.pop();
-        if (typeof item === 'string') {
-          if (!item.length || item.length > 256 || /[\x00-\x1f\x7f]/.test(item)) return false;
-        } else if (typeof item === 'number') {
-          if (!Number.isFinite(item)) return false;
-        } else if (item && typeof item === 'object') {
-          if (!Array.isArray(item) && !isPlainObject(item)) return false;
-          pending.push(...Object.values(item));
-        } else if (item !== null && typeof item !== 'boolean') return false;
-      }
-      return true;
-    };
+      try {jsonDocument = JSON.parse(body); jsonParsed = true;} catch { /* refused below */ }
     const jsonBody = WRITE_METHODS.includes(method) && purpose === 'json-body' && noCache &&
       typeof body === 'string' && Buffer.byteLength(body) > 0 && Buffer.byteLength(body) <= 4096 &&
       contentTypes.length === 1 && contentTypes[0][1] === expectedType &&
       /^application\/(?:json|[a-z0-9.-]+\+json)(?:\s*;|$)/i.test(expectedType) &&
-      isPlainObject(jsonDocument) && Object.keys(jsonDocument).length > 0 &&
-      Object.keys(jsonDocument).length <= 8 &&
-      Object.entries(jsonDocument).every(([key, value]) =>
-        /^[A-Za-z_][A-Za-z0-9_.-]{0,79}$/.test(key) && !credentialQueryKey(key) &&
-        boundedJsonValue(value));
+      jsonParsed;
     const formParams = purpose === 'form-body' && typeof body === 'string' ? new URLSearchParams(body) : null;
     const formEntries = formParams ? [...formParams.entries()] : [];
     const formBody = WRITE_METHODS.includes(method) && purpose === 'form-body' && noCache &&
       typeof body === 'string' && Buffer.byteLength(body) > 0 && Buffer.byteLength(body) <= 4096 &&
       contentTypes.length === 1 && contentTypes[0][1] === expectedType &&
-      formParams.toString() === body && formEntries.length > 0 && formEntries.length <= 8 &&
-      new Set(formEntries.map(([key]) => key)).size === formEntries.length &&
-      formEntries.every(([key, value]) =>
-        /^[A-Za-z_][A-Za-z0-9_.-]{0,79}$/.test(key) && !credentialQueryKey(key) &&
-        value.length > 0 && value.length <= 256 && !/[\x00-\x1f\x7f]/.test(value));
+      formParams != null;
     const authPath = URL.canParse(url, scope.target.origin) ? new URL(url, scope.target.origin).pathname : '';
     const authContract = scope.localAuthPostContracts?.[authPath];
     const authValues = isPlainObject(jsonDocument) ? Object.entries(jsonDocument) : [];
     const authBody = method === 'POST' && purpose === 'auth-body' && noCache && omitExcerpt &&
-      rawForAuthProof && observedPostAuthorized(scope) &&
+      rawForAuthProof && observedMethodAuthorized(scope, 'POST') &&
       contentTypes.length === 1 && contentTypes[0][1] === 'application/json' &&
       typeof body === 'string' && Buffer.byteLength(body) <= 4096 &&
       authContract && authValues.length === 2 &&
@@ -514,75 +450,39 @@ export function createRequester(scope, {ledger, limiter = createLimiter(scope.li
         !externalDestination(value, scope.target.origin, {allowEmail: true})) &&
       authValues.some(([key]) => key === authContract.usernameField) &&
       authValues.some(([key]) => key === authContract.passwordField);
-    need((body === undefined && !['xml-body', 'json-body', 'form-body', 'auth-body'].includes(purpose)) ||
+    const rawBody = rawModelRequest && (body === undefined ||
+      typeof body === 'string' && Buffer.byteLength(body) <= MAX_BODY_BYTES);
+    need(rawBody || (body === undefined && !['xml-body', 'json-body', 'form-body', 'auth-body'].includes(purpose)) ||
       xmlBody || jsonBody || formBody || authBody,
       'Request bodies require an uncached, bounded, reviewed XML, JSON or form POST path.');
-    const autoKind = method !== 'POST' ? null :
-      purpose === 'json-body' ? 'json' : purpose === 'form-body' ? 'form' : null;
-    const autoPath = methodPath;
-    const autoContract = autoKind && scope.localAutoPostContracts?.[
-      `${autoKind} ${autoPath}`];
-    if (autoContract) {
-      const submitted = autoKind === 'json' ? Object.entries(jsonDocument ?? {}) : formEntries;
-      const mismatch = contentTypes[0]?.[1] !== autoContract.contentType ? 'content-type' :
-        !submitted.length ? 'empty-body' :
-          submitted.some(([name]) => !autoContract.fields.includes(name)) ? 'unobserved-field' :
-          submitted.some(([, value]) => outbound(typeof value === 'string' ? value :
-            JSON.stringify(value))) ?
-              'external-destination' : null;
-      if (mismatch)
-        return refuse({url, identity, method, task, agent,
-          secrets: [...credentialSecrets(scope, env),
-            ...(derivedBearer ? [derivedBearer] : []),
-            ...(derivedCookie ? [derivedCookie, derivedCookie.slice(derivedCookie.indexOf('=') + 1)] : []),
-            ...additionalSecrets]},
-        'local-auto-post-contract', mismatch);
-    }
-    if (WRITE_METHODS.includes(method) && (method !== 'POST' ||
-        purpose === 'reviewed-method' || reviewedWrite(scope, method, methodPath,
-          methodPlacement))) {
-      const parsed = URL.canParse(url, scope.target.origin) ?
-        new URL(url, scope.target.origin) : null;
-      const placement = purpose === 'reviewed-method' ?
-        parsed?.search ? 'query' : 'header' : methodPlacement;
-      const contract = scope.localAutoMethodContracts?.[
-        `${method} ${placement} ${methodPath}`];
-      need(contract && noCache, 'A reviewed method requires an exact observed contract and an uncached request.');
-      if (purpose === 'reviewed-method') {
-        const queryFields = parsed ? [...parsed.searchParams] : [];
-        const headerFields = Object.entries(callerHeaders).filter(([name]) =>
-          contract.fields.includes(name));
-        const values = placement === 'query' ? queryFields : headerFields;
-        need(body === undefined && contentTypes.length === 0 &&
-          values.length > 0 && values.length <= 8 &&
-          values.every(([name, value]) => contract.fields.includes(name) &&
-            typeof value === 'string' && value.length > 0 && value.length <= 256 &&
-            !/[\x00-\x1f\x7f]/.test(value) &&
-            !outbound(value)),
-        'A reviewed bodyless method requires observed query or header fields with bounded values.');
-      } else {
-        const submitted = methodPlacement === 'json' ?
-          Object.entries(jsonDocument ?? {}) : methodPlacement === 'form' ?
-            formEntries : [];
-        need(contentTypes[0]?.[1] === contract.contentType &&
-          (methodPlacement === 'xml' || submitted.length > 0 &&
-            submitted.every(([name, value]) => contract.fields.includes(name) &&
-              !outbound(typeof value === 'string' ? value : JSON.stringify(value)))),
-        'A reviewed method body must match its observed fields and content type.');
-      }
-    }
-    need(contentTypes.length === 0 || xmlBody || jsonBody || formBody || authBody,
-      'Content-Type is reserved for a reviewed XML, JSON or form POST probe.');
-    if (Object.keys(callerHeaders).some(name => name.toLowerCase() === 'host'))
-      need(identity === 'anonymous' && method === 'GET' && purpose === 'task' && noCache,
-        'Host-header probes require anonymous uncached GET requests in task scope.');
     if (JWT_CANARY_IDENTITIES.has(identity)) need(method === 'GET' && purpose === 'task' && noCache,
       'Unsigned-JWT probes require uncached GET requests in task scope.');
+    const inputSecrets = URL.canParse(url, scope.target.origin) ?
+      [...new URL(url, scope.target.origin).searchParams].filter(([name]) =>
+        credentialQueryKey(name)).map(([, value]) => value).filter(Boolean) : [];
+    if (isPlainObject(jsonDocument)) for (const [name, value] of Object.entries(jsonDocument))
+      if (credentialQueryKey(name) && typeof value === 'string' && value)
+        inputSecrets.push(value);
+    for (const [name, value] of formEntries)
+      if (credentialQueryKey(name) && value) inputSecrets.push(value);
+    const rawSecrets = rawModelRequest ? [
+      ...Object.values(callerHeaders).filter(value => typeof value === 'string' && value.length >= 4),
+      ...Object.entries(callerHeaders).filter(([name]) =>
+        name.toLowerCase() === 'cookie').flatMap(([, value]) =>
+        String(value).split(';').map(pair => pair.slice(pair.indexOf('=') + 1).trim())
+          .filter(part => part.length >= 4)),
+      ...Object.entries(callerHeaders).filter(([name]) =>
+        name.toLowerCase() === 'authorization').map(([, value]) =>
+        String(value).replace(/^\S+\s+/, '')).filter(part => part.length >= 4),
+      ...(typeof body === 'string' && body.length >= 4 ? [body] : []),
+      ...(jsonDocument && typeof jsonDocument === 'object' ?
+        Object.values(jsonDocument).filter(value => typeof value === 'string' && value.length >= 4) : []),
+    ] : [];
     const context = {url, identity, method, step, task, agent, purpose, maxBytes, timeout, body,
-      omitExcerpt, rawForSessionChain, rawForAuthProof,
+      omitExcerpt, rawModelRequest, rawForSessionChain, rawForAuthProof,
       secrets: [...credentialSecrets(scope, env), ...(derivedBearer ? [derivedBearer] : []),
         ...(derivedCookie ? [derivedCookie, derivedCookie.slice(derivedCookie.indexOf('=') + 1)] : []),
-        ...additionalSecrets]};
+        ...additionalSecrets, ...inputSecrets, ...rawSecrets]};
     if (Date.now() >= deadline) return refuse(context, 'time-budget');
     const check = validateUrl(scope, url, {purpose, identity, method});
     if (!check.ok) return refuse(context, check.reason, check.match);
@@ -703,7 +603,10 @@ export function createRequester(scope, {ledger, limiter = createLimiter(scope.li
     return {...facts, body: context.rawForAuthProof ? '' : body,
       prefixHex: response.prefixHex,
       ...(context.rawForSessionChain || context.rawForAuthProof ? {rawBody: response.body} : {}),
-      ...(context.rawForAuthProof ? {rawSetCookie: response.headers['set-cookie'] ?? []} : {}),
+      // This value is returned only to the in-process caller. The ledger's
+      // storedHeaders above still omits Set-Cookie and credential values.
+      ...(context.rawForAuthProof || context.rawModelRequest ?
+        {rawSetCookie: response.headers['set-cookie'] ?? []} : {}),
       headers, ids: idsOf(json), ms, evidenceId};
   }
 
@@ -923,7 +826,11 @@ function checkScope(scope) {
   envName(identities.outsider.env);
   need(identities.owner.env !== identities.outsider.env, 'The owner and outsider accounts need different environment variables.');
   need(AUTH_FORMAT.test(identities.auth), `Credential placement '${identities.auth}' must be bearer, cookie or header:<Name>.`);
-  need(scope.methods.length > 0 && scope.methods.every(method => READ_METHODS.includes(method)), 'Scope methods may only be GET and HEAD.');
+  need(Array.isArray(scope.methods) && scope.methods.length > 0 &&
+    scope.methods.every(method => typeof method === 'string' &&
+      /^[A-Z][A-Z0-9!#$%&'+.^_`|~-]{0,31}$/.test(method) &&
+      !['CONNECT', 'PRI'].includes(method)),
+  'Scope methods must be HTTP method names supported by the request runner.');
   need(scope.include.length > 0 && scope.include.every(isPathPrefix), 'Each include entry must be a path prefix such as /api.');
   need(scope.domains.every(domain => typeof domain === 'string' && domain.length <= 253 &&
     /^(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z][a-z0-9-]{1,62}$/.test(domain)),
@@ -1121,17 +1028,10 @@ function credentialSecrets(scope, env) {
   return [...values, ...cookieValues.filter(value => value.length >= 8)];
 }
 
-function allowedCallerHeaders(headers, scope) {
+function allowedCallerHeaders(headers) {
   for (const name of Object.keys(headers)) {
-    need(CALLER_HEADERS.has(name.toLowerCase()) ||
-      validModelHeaders([{name, value: headers[name]}]),
-    `Header '${name}' cannot be passed to the requester as a fixed safe client header.`);
-    if (name.toLowerCase() === 'origin') need(['https://bypass-audit.invalid', 'https://bypass-audit-two.invalid'].includes(headers[name]),
-      'Origin header must be one of the fixed audit canaries.');
-    if (name.toLowerCase() === 'host') need(scope.probes.hostHeaderRedirect === true &&
-      HOST_HEADER_CANARIES.has(headers[name]), 'Host header must be an enabled fixed audit canary.');
-    if (name.toLowerCase() === 'range') need(['bytes=0-63', 'bytes=0-4095'].includes(headers[name]),
-      'Only fixed 64-byte or 4-KB signature ranges are allowed.');
+    need(validModelHeaders([{name, value: headers[name]}]),
+      `Header '${name}' cannot be represented as an HTTP header.`);
   }
   return headers;
 }

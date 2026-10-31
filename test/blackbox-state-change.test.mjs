@@ -149,14 +149,13 @@ test('Muse state-change plans prove anonymous and outsider mutations of a dispos
     {runDir: collisionRunDir, surface, scope, env, ledger, web: collision});
     assert.equal(collisionProved.length, 1, 'collision adjusted proof must replay');
     assert.equal(state, baseline);
-    state = `pending;${suffix}`;
-    const unsafeBaseline = await runResearchFlows(planned.leads, scope,
+    state = `pending\n${suffix}`;
+    const punctuationBaseline = await runResearchFlows(planned.leads, scope,
       {requester, surface, ledger, env, modelCallsAvailable: 0});
-    assert.equal(unsafeBaseline.results[0].verdict, 'inconclusive');
-    assert.equal(unsafeBaseline.results[0].reason,
-      'owner field cannot be safely restored: unsafe-syntax');
-    assert.ok(!unsafeBaseline.investigations[0].attempts[0].controls.some(item =>
-      item.label === 'first-write'), 'unsafe baseline must not be changed');
+    assert.equal(punctuationBaseline.results[0].verdict, 'confirmed');
+    assert.ok(punctuationBaseline.investigations[0].attempts[0].controls.some(item =>
+      item.label === 'first-write'));
+    assert.equal(state, `pending\n${suffix}`, 'the owner value must be restored exactly');
     state = baseline;
     denyAnonymousRestore = true;
     const fallback = await runResearchFlows(planned.leads, scope,

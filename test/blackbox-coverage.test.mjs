@@ -1,6 +1,27 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import {coverageFor} from '../src/blackbox/coverage.mjs';
+import {countPendingResearchCheckpoints} from '../src/blackbox/index.mjs';
+
+test('finished route paging still reports an accepted unexecuted HTTP lead', t => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'bypass-pending-page-'));
+  t.after(() => fs.rmSync(dir, {recursive: true, force: true}));
+  const file = path.join(dir, 'http-sequence-page-checkpoint.json');
+  const page = {nextRouteOffset: 27, totalRoutes: 27,
+    pendingLeads: [{proposalId: 'first'}, {proposalId: 'second'}],
+    pendingCompletedIds: ['second']};
+  fs.writeFileSync(file, JSON.stringify({pages: [page]}));
+  assert.equal(countPendingResearchCheckpoints(dir), 1);
+  page.pendingCompletedIds.push('first');
+  fs.writeFileSync(file, JSON.stringify({pages: [page]}));
+  assert.equal(countPendingResearchCheckpoints(dir), 0);
+  page.nextRouteOffset = 26;
+  fs.writeFileSync(file, JSON.stringify({pages: [page]}));
+  assert.equal(countPendingResearchCheckpoints(dir), 1);
+});
 
 test('coverage keeps an attempted but blocked browser class untested and lists requested classes', () => {
   const scope = {target: {environment: 'local'}, discovery: {sensitivePaths: false},

@@ -187,6 +187,7 @@ export async function reconObservedRoutes(scope, requester, {deadline = Infinity
     const negotiatedHtml = false;
     record.status = Number.isInteger(response?.status) ? response.status : null;
     record.type = response?.type ?? null;
+    record.hash = response?.hash ?? null;
     record.evidenceId = response?.evidenceId ?? null;
     if (isCandidate) filesChecked++;
     if (isCandidate && response?.blocked && /size limit/i.test(response.reason ?? '')) cuts.fileSize++;

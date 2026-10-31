@@ -132,7 +132,7 @@ test('DEFAULT_SCOPE is deep-frozen and has no hidden path-word exclusions', () =
     expandKeys: ['include', 'expand', 'fields'], expandValues: ['email', 'user', 'owner', 'private', 'all', '*'],
     identityFilters: ['userId', 'user_id', 'uid', 'owner', 'ownerId', 'owner_uid', 'account', 'accountId', 'tenant', 'tenantId', 'email'],
   });
-  assert.deepEqual(DEFAULT_SCOPE.methods, ['GET', 'HEAD']);
+  assert.deepEqual(DEFAULT_SCOPE.methods, ['GET', 'HEAD', 'POST', 'PATCH', 'DELETE']);
   assert.deepEqual(DEFAULT_SCOPE.include, ['/']);
   assert.equal(DEFAULT_SCOPE.limits.modelCalls, 120);
   assert.equal(DEFAULT_SCOPE.limits.maxUrls, 400);
@@ -240,28 +240,28 @@ test('deployed scope needs app authorization and separate DNS proof of each apex
   assert.throws(() => loadScope({file, origin, targets: [target]}), {code: 3, message: /Apex example.com/});
   const {scope} = loadScope({file, origin, targets: [target, apex]});
   assert.equal(scope.target.environment, 'staging');
-  assert.equal(scope.probes.crlfResponseHeader, false);
-  assert.equal(scope.probes.hostHeaderRedirect, false);
-  assert.equal(scope.probes.jwtUnsigned, false);
-  assert.equal(scope.probes.commandExecution, false);
-  assert.equal(scope.probes.pathTraversal, false);
-  assert.equal(scope.probes.xmlExternalEntity, false);
-  const optedFile = writeScopeFile(tempDir(t), {target: {origin}, include: ['/api'], limits: {rps: 2},
-    probes: {crlfResponseHeader: true, hostHeaderRedirect: true, jwtUnsigned: true,
-      commandExecution: true, pathTraversal: true, xmlExternalEntity: true}});
-  assert.equal(loadScope({file: optedFile, origin, targets: [target]}).scope.probes.crlfResponseHeader, true);
-  assert.equal(loadScope({file: optedFile, origin, targets: [target]}).scope.probes.hostHeaderRedirect, true);
-  assert.equal(loadScope({file: optedFile, origin, targets: [target]}).scope.probes.jwtUnsigned, true);
-  assert.equal(loadScope({file: optedFile, origin, targets: [target]}).scope.probes.commandExecution, true);
-  assert.equal(loadScope({file: optedFile, origin, targets: [target]}).scope.probes.pathTraversal, true);
-  assert.equal(loadScope({file: optedFile, origin, targets: [target]}).scope.probes.xmlExternalEntity, true);
+  assert.equal(scope.probes.crlfResponseHeader, true);
+  assert.equal(scope.probes.hostHeaderRedirect, true);
+  assert.equal(scope.probes.jwtUnsigned, true);
+  assert.equal(scope.probes.commandExecution, true);
+  assert.equal(scope.probes.pathTraversal, true);
+  assert.equal(scope.probes.xmlExternalEntity, true);
+  const excludedFile = writeScopeFile(tempDir(t), {target: {origin}, include: ['/api'], limits: {rps: 2},
+    probes: {crlfResponseHeader: false, hostHeaderRedirect: false, jwtUnsigned: false,
+      commandExecution: false, pathTraversal: false, xmlExternalEntity: false}});
+  assert.equal(loadScope({file: excludedFile, origin, targets: [target]}).scope.probes.crlfResponseHeader, false);
+  assert.equal(loadScope({file: excludedFile, origin, targets: [target]}).scope.probes.hostHeaderRedirect, false);
+  assert.equal(loadScope({file: excludedFile, origin, targets: [target]}).scope.probes.jwtUnsigned, false);
+  assert.equal(loadScope({file: excludedFile, origin, targets: [target]}).scope.probes.commandExecution, false);
+  assert.equal(loadScope({file: excludedFile, origin, targets: [target]}).scope.probes.pathTraversal, false);
+  assert.equal(loadScope({file: excludedFile, origin, targets: [target]}).scope.probes.xmlExternalEntity, false);
   assert.equal(validateUrl(scope, 'https://deep.api.example.com/', {purpose: 'discover'}).ok, true);
   assert.equal(validateUrl(scope, 'https://deep.api.example.com/api/users', {purpose: 'task'}).reason, 'origin');
   assert.equal(validateUrl(scope, 'https://other-example.com/', {purpose: 'discover'}).reason, 'origin');
   assert.equal(validateUrl(scope, 'https://deep.api.example.com/', {purpose: 'discover', identity: 'owner'}).reason, 'origin');
 });
 
-test('deployed JSON/form POST needs reviewed scope, verified authorization, and exact paths', t => {
+test('deployed POST follows the selected methods and authorized path prefix', t => {
   const origin = 'https://app.example.test';
   const expiresAt = new Date(Date.now() + 86400000).toISOString();
   const target = {url: origin, environment: 'staging',
@@ -284,10 +284,13 @@ test('deployed JSON/form POST needs reviewed scope, verified authorization, and 
   assert.equal(validateUrl(scope, '/api/evaluate?x=1',
     {method: 'POST', purpose: 'json-body'}).reason, 'method');
   assert.equal(validateUrl(scope, '/api/missing',
-    {method: 'POST', purpose: 'json-body'}).reason, 'method');
+    {method: 'POST', purpose: 'json-body'}).ok, true);
   assert.equal(validateUrl(scope, '/api/evaluate',
-    {method: 'POST', purpose: 'task'}).reason, 'method');
+    {method: 'POST', purpose: 'task'}).ok, true);
+  assert.equal(validateUrl(scope, '/outside',
+    {method: 'POST', purpose: 'json-body'}).reason, 'include');
   assert.equal(scopeReady(target, '/api/evaluate', 'POST'), true);
+  assert.throws(() => scopeReady(target, '/api/evaluate', 'PATCH'), /Method PATCH/);
 });
 
 test('active descendant probes need apex authorization and stay inside its path scope', t => {
@@ -361,7 +364,7 @@ test('a deployed login POST needs an exact pinned path in both scope and target 
   assert.equal(validateUrl({...scope, expiresAt: '2020-01-01T00:00:00Z'}, '/api/items').reason, 'scope-expired');
 });
 
-test('XML POST is confined to one reviewed route and exact deployed authorization', t => {
+test('XML POST uses selected methods and deployed authorization', t => {
   const origin = 'https://app.example.com';
   const expiry = new Date(Date.now() + 86400000).toISOString();
   const target = {url: origin, environment: 'staging',
@@ -371,28 +374,31 @@ test('XML POST is confined to one reviewed route and exact deployed authorizatio
     probes: {xmlExternalEntity: true, xmlPostPaths: [route]}});
   target.authorization = authorization(target, {paths: ['/api'], methods: ['GET', 'HEAD'],
     maxRequestsPerSecond: 2, expiresAt: expiry});
-  assert.throws(() => loadScope({file, origin, targets: [target]}), /exact target authorization/);
+  assert.equal(loadScope({file, origin, targets: [target]}).scope.methods.includes('POST'), true);
+  assert.throws(() => scopeReady(target, route, 'POST'), /Method POST/);
   target.authorization = authorization(target, {paths: ['/api'], methods: ['GET', 'HEAD'],
     xmlPostPaths: [route], maxRequestsPerSecond: 2, expiresAt: expiry});
   const {scope} = loadScope({file, origin, targets: [target]});
   assert.equal(validateUrl(scope, route, {purpose: 'xml-body', method: 'POST'}).ok, true);
-  assert.equal(validateUrl(scope, route, {purpose: 'task', method: 'POST'}).reason, 'method');
-  assert.equal(validateUrl(scope, '/api/xml/other', {purpose: 'xml-body', method: 'POST'}).reason, 'method');
+  assert.equal(validateUrl(scope, route, {purpose: 'task', method: 'POST'}).ok, true);
+  assert.equal(validateUrl(scope, '/api/xml/other', {purpose: 'xml-body', method: 'POST'}).reason,
+    'target-authorization');
   assert.equal(validateUrl(scope, `${route}?x=1`, {purpose: 'xml-body', method: 'POST'}).reason, 'method');
-  assert.equal(validateUrl(scope, '/api/delete', {purpose: 'xml-body', method: 'POST'}).reason, 'method');
+  assert.equal(validateUrl(scope, '/api/delete', {purpose: 'xml-body', method: 'POST'}).reason,
+    'target-authorization');
   assert.equal(scopeReady(target, route, 'POST'), true);
   assert.throws(() => scopeReady(target, '/api/xml/other', 'POST'), /Method POST/);
   assert.throws(() => authorization(target, {paths: ['/api'], xmlPostPaths: ['/outside']}), /xmlPostPaths/);
 });
 
-test('JSON POST scope requires an exact reviewed local route and honors path exclusions', t => {
+test('JSON POST follows local method scope and path exclusions', t => {
   const file = writeScopeFile(tempDir(t), {target: {origin: ORIGIN},
     probes: {jsonPostPaths: ['/api/evaluate']}});
   const {scope} = loadScope({file, origin: ORIGIN});
   assert.equal(validateUrl(scope, '/api/evaluate', {purpose: 'json-body', method: 'POST'}).ok, true);
   assert.equal(validateUrl(scope, '/api/evaluate?x=1', {purpose: 'json-body', method: 'POST'}).reason, 'method');
-  assert.equal(validateUrl(scope, '/api/other', {purpose: 'json-body', method: 'POST'}).reason, 'method');
-  assert.equal(validateUrl(scope, '/api/evaluate', {purpose: 'task', method: 'POST'}).reason, 'method');
+  assert.equal(validateUrl(scope, '/api/other', {purpose: 'json-body', method: 'POST'}).ok, true);
+  assert.equal(validateUrl(scope, '/api/evaluate', {purpose: 'task', method: 'POST'}).ok, true);
   const verbFile = writeScopeFile(tempDir(t), {target: {origin: ORIGIN},
     probes: {jsonPostPaths: ['/api/execute']}});
   const verbScope = loadScope({file: verbFile, origin: ORIGIN}).scope;
@@ -411,14 +417,14 @@ test('JSON POST scope requires an exact reviewed local route and honors path exc
   /jsonPostPaths/);
 });
 
-test('form POST scope requires an exact reviewed local route and honors path exclusions', t => {
+test('form POST follows local method scope and path exclusions', t => {
   const file = writeScopeFile(tempDir(t), {target: {origin: ORIGIN},
     probes: {formPostPaths: ['/api/evaluate']}});
   const {scope} = loadScope({file, origin: ORIGIN});
   assert.equal(validateUrl(scope, '/api/evaluate', {purpose: 'form-body', method: 'POST'}).ok, true);
   assert.equal(validateUrl(scope, '/api/evaluate?x=1', {purpose: 'form-body', method: 'POST'}).reason, 'method');
-  assert.equal(validateUrl(scope, '/api/other', {purpose: 'form-body', method: 'POST'}).reason, 'method');
-  assert.equal(validateUrl(scope, '/api/evaluate', {purpose: 'task', method: 'POST'}).reason, 'method');
+  assert.equal(validateUrl(scope, '/api/other', {purpose: 'form-body', method: 'POST'}).ok, true);
+  assert.equal(validateUrl(scope, '/api/evaluate', {purpose: 'task', method: 'POST'}).ok, true);
   const verbExcluded = structuredClone(scope);
   verbExcluded.never = ['evaluate'];
   assert.equal(validateUrl(verbExcluded, '/api/evaluate',
@@ -428,7 +434,7 @@ test('form POST scope requires an exact reviewed local route and honors path exc
       never: ['/api/evaluate']}), origin: ORIGIN}), /formPostPaths/);
 });
 
-test('guarded requester accepts bounded canonical form fields only on the reviewed POST route', async t => {
+test('guarded requester preserves distinct form encodings on the reviewed POST route', async t => {
   const api = await startApi(t);
   const dir = tempDir(t);
   const file = writeScopeFile(dir, {target: {origin: api.origin},
@@ -441,12 +447,17 @@ test('guarded requester accepts bounded canonical form fields only on the review
   const response = await request({...base, body: new URLSearchParams({name: 'hello world'}).toString()});
   assert.equal(response.status, 404);
   assert.equal(api.hits['/api/form'], 1);
-  for (const body of ['name=a&name=b', 'token=secret', 'name=%61', 'name='])
-    await assert.rejects(request({...base, body}), /Request bodies require/);
-  assert.equal(api.hits['/api/form'], 1);
+  const named = await request({...base, body: 'token=secret'});
+  assert.equal(named.status, 404);
+  for (const body of ['name=a&name=b', 'name=%61', 'name=']) {
+    const varied = await request({...base, body});
+    assert.equal(varied.status, 404);
+  }
+  assert.equal(api.hits['/api/form'], 5);
+  assert.ok(!fs.readFileSync(ledger.file, 'utf8').includes('secret'));
 });
 
-test('an auto-admitted local POST contract mismatch is recorded as a refusal and the audit can continue', async t => {
+test('an authorized POST can test new fields and values without an exact contract veto', async t => {
   const api = await startApi(t);
   const dir = tempDir(t);
   const file = writeScopeFile(dir, {target: {origin: api.origin},
@@ -458,39 +469,28 @@ test('an auto-admitted local POST contract mismatch is recorded as a refusal and
   const request = createRequester(scope, {ledger, allowLocal: true});
   const base = {url: '/api/auto', method: 'POST', purpose: 'json-body',
     step: 'task', noCache: true, headers: {'content-type': 'application/json'}};
-  const refused = await request({...base, body: JSON.stringify({q: 'plain', unseen: 'safe'})});
-  assert.equal(refused.refused, true);
-  assert.equal(refused.reason, 'local-auto-post-contract');
-  assert.equal(refused.detail, 'unobserved-field');
+  const extended = await request({...base, body: JSON.stringify({q: 'plain', unseen: 'safe'})});
+  assert.equal(extended.status, 404);
   const external = await request({...base, body: JSON.stringify({q: 'https://other.example.com/'})});
-  assert.equal(external.refused, true);
-  assert.equal(external.reason, 'local-auto-post-contract');
-  assert.equal(external.detail, 'external-destination');
-  assert.equal(api.hits['/api/auto'], undefined);
+  assert.equal(external.status, 404);
   const canaryEmail = await request({...base, body: JSON.stringify({q: 'probe@example.com'})});
   assert.equal(canaryEmail.status, 404);
-  assert.equal(api.hits['/api/auto'], 1);
   const realEmail = await request({...base, body: JSON.stringify({q: 'probe@external.example'})});
-  assert.equal(realEmail.refused, true);
-  assert.equal(realEmail.detail, 'external-destination');
+  assert.equal(realEmail.status, 404);
   const lookalikeEmail = await request({...base, body: JSON.stringify({q: 'probe@example.com.evil'})});
-  assert.equal(lookalikeEmail.refused, true);
-  assert.equal(lookalikeEmail.detail, 'external-destination');
+  assert.equal(lookalikeEmail.status, 404);
   const allowed = await request({...base, body: JSON.stringify({q: 'plain'})});
   assert.equal(allowed.status, 404);
-  assert.equal(api.hits['/api/auto'], 2);
+  assert.equal(api.hits['/api/auto'], 6);
   assert.deepEqual(ledgerLines(ledger).map(line => {
     const entry = JSON.parse(line);
     return entry.refused?.rule ?? entry.response?.status;
-  }), ['local-auto-post-contract', 'local-auto-post-contract', 404,
-    'local-auto-post-contract', 'local-auto-post-contract', 404]);
+  }), [404, 404, 404, 404, 404, 404]);
   const records = ledgerLines(ledger).map(JSON.parse);
-  assert.deepEqual(records.slice(0, 2).map(entry => entry.refused.match),
-    ['unobserved-field', 'external-destination']);
   assert.ok(!JSON.stringify(records).includes('other.example.com'));
 });
 
-test('only an exact harness-owned local callback bypasses the local POST destination refusal', async t => {
+test('authorized POST can carry operator supplied destination values', async t => {
   const api = await startApi(t);
   const dir = tempDir(t);
   const file = writeScopeFile(dir, {target: {origin: api.origin},
@@ -509,11 +509,12 @@ test('only an exact harness-owned local callback bypasses the local POST destina
   const unrelated = await request({...base,
     body: JSON.stringify({q: 'https://unrelated.example/'}),
     auditCallback: callback});
-  assert.equal(unrelated.detail, 'external-destination');
+  assert.equal(unrelated.status, 404);
   const forged = await request({...base,
     body: JSON.stringify({q: 'http://127.0.0.1:34567/other'}),
     auditCallback: 'http://127.0.0.1:34567/other'});
-  assert.equal(forged.detail, 'external-destination');
+  assert.equal(forged.status, 404);
+  assert.equal(api.hits['/api/auto'], 3);
 });
 
 test('an observed login accepts an email username without treating it as an outbound destination', async t => {
@@ -534,7 +535,7 @@ test('an observed login accepts an email username without treating it as an outb
   assert.equal(api.hits['/api/login'], 1);
 });
 
-test('reviewed local JSON accepts an exact configured test-account email and redacts it', async t => {
+test('authorized local JSON retains credential redaction while accepting new values', async t => {
   const api = await startApi(t);
   const dir = tempDir(t);
   const file = writeScopeFile(dir, {target: {origin: api.origin},
@@ -553,12 +554,12 @@ test('reviewed local JSON accepts an exact configured test-account email and red
   assert.equal(api.hits['/api/body-echo'], 1);
   assert.ok(!JSON.stringify(allowed).includes('owner@real.example'));
   assert.ok(!fs.readFileSync(ledger.file, 'utf8').includes('owner@real.example'));
-  const refused = await request({...base, body: JSON.stringify({email: 'other@real.example'})});
-  assert.equal(refused.detail, 'external-destination');
-  assert.equal(api.hits['/api/body-echo'], 1);
+  const other = await request({...base, body: JSON.stringify({email: 'other@real.example'})});
+  assert.equal(other.status, 200);
+  assert.equal(api.hits['/api/body-echo'], 2);
 });
 
-test('derived bearer reaches only reviewed POST contracts and is absent from evidence', async t => {
+test('derived bearer reaches authorized POST paths and is absent from evidence', async t => {
   const api = await startApi(t);
   const dir = tempDir(t);
   const file = writeScopeFile(dir, {target: {origin: api.origin},
@@ -579,12 +580,12 @@ test('derived bearer reaches only reviewed POST contracts and is absent from evi
     assert.equal(result.status, 404);
     assert.equal(api.hits[url], 1);
   }
-  const refused = await request({url: '/api/other', identity: 'anonymous', method: 'POST',
+  const other = await request({url: '/api/other', identity: 'anonymous', method: 'POST',
     purpose: 'json-body', step: 'task', noCache: true, omitExcerpt: true,
     headers: {'content-type': 'application/json'}, body: '{"name":"sample"}',
     derivedBearer: bearer});
-  assert.equal(refused.refused, true);
-  assert.equal(api.hits['/api/other'], undefined);
+  assert.equal(other.status, 404);
+  assert.equal(api.hits['/api/other'], 1);
   assert.equal(fs.readFileSync(ledger.file, 'utf8').includes(bearer), false);
 });
 
@@ -700,7 +701,9 @@ test('loadScope: file fields are type-checked, unknown fields refused, omitted n
   const load = (content, name) => loadScope({file: writeScopeFile(dir, content, name), origin: ORIGIN, overrides: LOCAL});
   assert.throws(() => load({nevr: ['x']}, 'typo.json'), {code: 2, message: /nevr/});
   assert.throws(() => load({limits: {rps: 'fast'}}, 'type.json'), {code: 2, message: /limits\.rps/});
-  assert.throws(() => load({methods: ['GET', 'POST']}, 'post.json'), {code: 2});
+  assert.deepEqual(load({methods: ['GET', 'POST']}, 'post.json').scope.methods,
+    ['GET', 'POST']);
+  assert.throws(() => load({methods: ['GET', 'post']}, 'invalid-method.json'), {code: 2});
   assert.throws(() => load({discovery: {external: {osv: 'yes'}}}, 'osv-string.json'),
     /discovery\.external\.osv.*boolean/);
   assert.throws(() => load({target: {origin: 'http://127.0.0.1:9999'}}, 'other.json'), {code: 2});
@@ -719,7 +722,7 @@ test('loadScope: file fields are type-checked, unknown fields refused, omitted n
 
 test('an explicit never list confines methods, origins, and paths', t => {
   const file = writeScopeFile(tempDir(t), {target: {origin: ORIGIN},
-    include: ['/api'], never: ['/api/delete/*', 'logout']});
+    include: ['/api'], methods: ['GET', 'HEAD'], never: ['/api/delete/*', 'logout']});
   const {scope} = loadScope({file, origin: ORIGIN});
   assert.deepEqual(scope.never, ['/api/delete/*', 'logout']);
   assert.equal(validateUrl(scope, '/api/verify/status', {method: 'GET'}).ok, true);
@@ -810,7 +813,7 @@ test('read-only action names stay in scope while clearly mutating GET actions ne
   const explicitlyExcluded = scopeWith({never: ['/api/account/logout'],
     discover: [...DEFAULT_SCOPE.discover, '/api/account/logout']});
   assert.equal(validateUrl(explicitlyExcluded, '/api/account/logout').reason, 'never');
-  assert.equal(validateUrl(scope, '/api/account/logout', {method: 'POST'}).reason, 'method');
+  assert.equal(validateUrl(scope, '/api/account/logout', {method: 'POST'}).ok, true);
 });
 
 test('validateUrl refuses every documented reason', () => {
@@ -819,7 +822,8 @@ test('validateUrl refuses every documented reason', () => {
   const offOrigin = ['http://127.0.0.1:4330/api/x', 'https://127.0.0.1:4329/api/x', 'http://localhost:4329/api/x', '//evil.example/api/x',
     'http://user:pw@127.0.0.1:4329/api/x', '/api/x#top', 'http://[::1', '', undefined];
   for (const url of offOrigin) assert.equal(reason(url), 'origin', url);
-  for (const method of ['POST', 'PUT', 'DELETE', 'OPTIONS', 'get']) assert.equal(reason('/api/x', {method}), 'method', method);
+  for (const method of ['PUT', 'OPTIONS', 'get']) assert.equal(reason('/api/x', {method}), 'method', method);
+  for (const method of ['POST', 'PATCH', 'DELETE']) assert.equal(reason('/api/x', {method}), undefined, method);
   for (const url of ['/api/inv%2D1', '/api/%2e%2e/admin', '/api/%252e', '/api/{id}', '/api/a b']) assert.equal(reason(url), 'percent', url);
   const traversal = ['/api/..;/admin', '/api/../admin', '/api/./x', '/api/x;jsessionid=1', '/api\\..\\admin', '/api/.git/config', '/api/x\n/../y'];
   for (const url of traversal) assert.equal(reason(url), 'segment', JSON.stringify(url));
@@ -827,23 +831,23 @@ test('validateUrl refuses every documented reason', () => {
   assert.deepEqual(validateUrl(scope, '/api/invoices/inv-1/delete'), {ok: false, reason: 'never', match: 'delete'});
   assert.equal(reason('/api/x?a=1&b=2&c=3&d=4&e=5&f=6&g=7&h=8&i=9'), 'query-count');
   for (const url of ['/api/x?token=abc', '/api/x?API_KEY=1', '/api/x?Signature=z', '/api/x?to%6Ben=abc', '/api/x?page=1&access_token=a']) {
-    assert.equal(reason(url), 'credentialed-query', url);
+    assert.equal(reason(url), undefined, url);
   }
   for (const url of ['/api/x?auth.token=abc', '/api/x?auth%252Etoken=abc',
     '/api/x?filter%5Bsecret%5D=abc', '/api/x?sessionId=abc']) {
-    assert.equal(reason(url), 'credentialed-query', url);
+    assert.equal(reason(url), undefined, url);
   }
   assert.equal(validateUrl(scope, '/api/x?source.file=guide.txt').ok, true);
 });
 
-test('standalone proof guard also refuses compound credential query keys before making a request', async () => {
-  for (const url of ['/api/go?auth.token=value', '/api/go?auth%252Etoken=value']) {
-    const result = await checkProof({kind: 'open-redirect', origin: 'http://127.0.0.1:1',
+test('standalone proof sends an in-scope credential-named query', async t => {
+  const api = await startApi(t);
+  for (const url of ['/api/echo?auth.token=value', '/api/echo?auth%252Etoken=value']) {
+    await checkProof({kind: 'open-redirect', origin: api.origin,
       include: ['/api'], never: [], request: {url, as: 'anonymous'},
       expectedLocation: 'https://bypass-audit.invalid/one'}, {});
-    assert.equal(result.verdict, 'inconclusive');
-    assert.match(result.reason, /outside its recorded scope/);
   }
+  assert.equal(api.hits['/api/echo'], 2);
 });
 
 test('validateUrl never routes credentials to an origin outside credentialOrigins', () => {
@@ -884,7 +888,7 @@ test('validateUrl confines approved asset hosts to anonymous static files on exa
   assert.equal(validateUrl(scope, 'https://cdn.example.test/static/config.json', {purpose: 'asset'}).reason, 'origin');
   assert.equal(validateUrl(scope, 'https://cdn.example.test/static/app.js', {purpose: 'task'}).reason, 'origin');
   assert.equal(validateUrl(scope, 'https://cdn.example.test/static/app.js', {purpose: 'asset', identity: 'owner'}).reason, 'origin');
-  assert.equal(validateUrl(scope, 'https://cdn.example.test/static/app.js?token=secret', {purpose: 'asset'}).reason, 'credentialed-query');
+  assert.equal(validateUrl(scope, 'https://cdn.example.test/static/app.js?token=secret', {purpose: 'asset'}).ok, true);
   assert.equal(validateUrl(scope, 'https://cdn.example.test/api/billing/remove.js', {purpose: 'asset'}).reason, 'never');
 });
 
@@ -1010,21 +1014,40 @@ test('requester: refusals are recorded with step refused and never reach the ser
   const record = JSON.parse(ledgerLines(ledger)[0]);
   assert.deepEqual([record.step, record.task, record.agent, record.identity], ['refused', 't-001', 3, 'outsider']);
   assert.deepEqual(record.refused, {rule: 'never', match: 'delete'});
-  const credentialed = await request({url: '/api/items?token=leakme123', step: 'recon'});
-  assert.equal(credentialed.reason, 'credentialed-query');
-  assert.ok(!fs.readFileSync(ledger.file, 'utf8').includes('leakme123'));
-  const compound = await request({url: '/api/items?auth.token=compoundLeak123', step: 'recon'});
-  assert.equal(compound.reason, 'credentialed-query');
-  assert.ok(!fs.readFileSync(ledger.file, 'utf8').includes('compoundLeak123'));
   const withoutCredentials = createRequester(restricted, {ledger, env: {}, allowLocal: true});
   const missing = await withoutCredentials({url: '/api/items/inv-101', identity: 'owner', step: 'control'});
   assert.equal(missing.reason, 'credential_missing');
-  assert.deepEqual(JSON.parse(ledgerLines(ledger)[3]).refused, {rule: 'credential_missing', match: 'OWNER_CRED'});
-  assert.equal(request.stats.refused, 3);
+  assert.deepEqual(JSON.parse(ledgerLines(ledger)[1]).refused, {rule: 'credential_missing', match: 'OWNER_CRED'});
+  assert.equal(request.stats.refused, 1);
   assert.equal(Object.keys(api.hits).length, 0);
-  await assert.rejects(request({url: '/api/items/inv-101', step: 'recon', headers: {Authorization: 'Bearer x'}}), {code: 2});
-  await assert.rejects(request({url: '/api/items/inv-101', step: 'recon', headers: {Host: 'evil.example'}}), {code: 2});
+  const authHeader = await request({url: '/api/items/inv-101', step: 'recon', noCache: true,
+    headers: {Authorization: 'Bearer x'}});
+  const hostHeader = await request({url: '/api/items/inv-101', step: 'recon', noCache: true,
+    headers: {Host: 'evil.example'}});
+  assert.equal(authHeader.refused, undefined);
+  assert.equal(hostHeader.refused, undefined);
+  assert.equal(api.hits['/api/items/inv-101'], 2);
   await assert.rejects(request({url: '/api/items/inv-101', step: 'probe'}), {code: 2});
+});
+
+test('requester sends credential-named inputs while redacting their values', async t => {
+  const {api, ledger, request} = await requesterFixture(t);
+  const queryValue = 'fixture-query-code-123';
+  const bodyValue = 'fixture-body-code-456';
+  const get = await request({url: `/api/echo?code=${queryValue}`, step: 'task',
+    noCache: true});
+  const post = await request({url: '/api/body-echo', method: 'POST',
+    purpose: 'json-body', headers: {'content-type': 'application/json'},
+    body: JSON.stringify({code: bodyValue}), noCache: true, step: 'task'});
+  assert.equal(get.status, 401);
+  assert.equal(post.status, 200);
+  assert.equal(api.hits['/api/echo'], 1);
+  assert.equal(api.hits['/api/body-echo'], 1);
+  const stored = fs.readFileSync(ledger.file, 'utf8');
+  assert.ok(!stored.includes(queryValue));
+  assert.ok(!stored.includes(bodyValue));
+  assert.match(stored, /code=\[REDACTED\]/);
+  assert.ok(!post.body.includes(bodyValue));
 });
 
 test('requester: a timeout is recorded as blocked, not retried and not cached', async t => {

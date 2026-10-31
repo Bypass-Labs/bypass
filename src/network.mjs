@@ -71,7 +71,10 @@ export async function safeRequest(value, {allowLocal=false,allowPrivate=false,al
   const chosen = addresses[0];
   return new Promise((resolve,reject) => {
     const client = url.protocol === 'https:' ? https : http;
-    const request = client.request(url, {method,headers:{Accept:'application/json','User-Agent':'Bypass-Skeleton/0.1',...headers},
+    const requestHeaders={Accept:'application/json','User-Agent':'Bypass-Skeleton/0.1',...headers};
+    if(body!=null&&!Object.keys(requestHeaders).some(name=>/^(content-length|transfer-encoding)$/i.test(name)))
+      requestHeaders['Content-Length']=Buffer.byteLength(body);
+    const request = client.request(url, {method,headers:requestHeaders,
       agent:false, family:chosen.family, servername:net.isIP(host) ? undefined : host,
       lookup:(_host,opts,cb)=>opts?.all ? cb(null,[chosen]) : cb(null,chosen.address,chosen.family), signal}, response => {
       onHeaders?.({status:response.statusCode,headers:response.headers});
@@ -134,7 +137,7 @@ export function authorization(target, scope, acceptedBy = 'local operator') {
       pathAllowed(item.path,scope.paths)),
     'writeOperations must list at most 100 exact method, path, and placement contracts inside the authorized paths.');
   const rps=scope.maxRequestsPerSecond ?? 2;
-  need(Number.isFinite(rps)&&rps>0&&rps<=10,'maxRequestsPerSecond must be between 0 and 10.');
+  need(Number.isFinite(rps)&&rps>0&&rps<=32,'maxRequestsPerSecond must be between 0 and 32.');
   const expiresAt=scope.expiresAt ?? new Date(Date.now()+7*86400000).toISOString();
   need(Date.parse(expiresAt)>Date.now() && Date.parse(expiresAt)<=Date.now()+30*86400000, 'Authorization expiry must be within 30 days.');
   need(target.environment!=='production' || scope.productionAcknowledged===true, 'Production scope requires productionAcknowledged: true.');

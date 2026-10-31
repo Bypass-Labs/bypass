@@ -83,6 +83,68 @@ test('derived session walks protected assets and routes without exposing its bea
   assert.ok(!Object.hasOwn(result, 'findings'));
 });
 
+test('generated client request contracts keep their external destination instead of becoming local GETs', async t => {
+  const suffix = randomBytes(5).toString('hex');
+  const externalOrigin = `https://accounts-${suffix}.example.test`;
+  const path = `/v7/${suffix}/enroll`;
+  const script = `const settings={apiHost:"accounts-${suffix}.example.test",apiScheme:"https"};` +
+    'async function send(client,method,path,payload){return fetch(`${client.config.apiScheme}://${client.config.apiHost}${path}`,' +
+    '{method,body:JSON.stringify(payload)})}' +
+    `async function enroll(client,email,pin){return send(client,"POST","${path}",{email,pin})}`;
+  const server = http.createServer((request, response) => {
+    if (request.url === '/private') {
+      response.writeHead(200, {'content-type': 'text/html'});
+      response.end('<script src="/client.js"></script>');
+    } else if (request.url === '/client.js') {
+      response.writeHead(200, {'content-type': 'application/javascript'});
+      response.end(script);
+    } else {
+      response.writeHead(404);
+      response.end('missing');
+    }
+  });
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+  t.after(() => new Promise(resolve => server.close(resolve)));
+  const origin = `http://127.0.0.1:${server.address().port}`;
+  const scope = loadScope({origin, overrides: {acceptLocal: true}}).scope;
+  const sent = [];
+  const result = await reconDerivedSession(scope, {
+    observedRoutes: ['/private'],
+    requestAuthenticated: async ({url}) => {
+      sent.push(new URL(url).pathname);
+      const reply = await fetch(url);
+      return {status: reply.status, type: reply.headers.get('content-type'),
+        body: await reply.text(), evidenceId: `ev-${sent.length}`};
+    },
+    infer: async (_model, messages) => {
+      const context = JSON.parse(messages[1].content);
+      if (!context.requestHints) return {paths: []};
+      assert.ok(context.requestHints.some(hint => hint.method === 'POST' && hint.path === path));
+      assert.ok(JSON.stringify(context).includes(`accounts-${suffix}.example.test`));
+      return {contracts: context.requestHints.map(hint => ({id: hint.id,
+        origin: externalOrigin, bodyEncoding: 'json', bodyFields: ['email', 'pin']}))};
+    },
+    model: {name: 'fixture'},
+  });
+  assert.ok(sent.includes('/client.js'));
+  assert.ok(!sent.includes(path), 'an external request path must not become a local GET');
+  assert.ok(result.externalContracts.some(contract => contract.origin === externalOrigin &&
+    contract.path === path && contract.method === 'POST' &&
+    contract.bodyFields.includes('email') && contract.bodyFields.includes('pin')));
+  assert.ok(derivedAnonymousSurface(result).assetSignals.some(signal =>
+    signal.authFlow.includes(externalOrigin) && signal.authFlow.includes(path)));
+  const noModel = await reconDerivedSession(scope, {observedRoutes: ['/private'],
+    requestAuthenticated: async ({url}) => {
+      const reply = await fetch(url);
+      return {status: reply.status, type: reply.headers.get('content-type'),
+        body: await reply.text(), evidenceId: 'ev-no-model'};
+    }});
+  assert.ok(noModel.unresolvedContracts.some(contract =>
+    contract.path === path && contract.method === 'POST' &&
+    contract.reason === 'model-or-time-budget'));
+  assert.ok(!noModel.routes.some(route => route.path === path));
+});
+
 test('derived recon overlaps independent GETs and commits route evidence in discovery order', async t => {
   const active = {count: 0, peak: 0};
   const seen = [];

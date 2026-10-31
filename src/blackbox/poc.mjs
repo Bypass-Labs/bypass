@@ -19,7 +19,9 @@ const WEB_PROOF_KINDS = new Set(['open-redirect', 'host-header-redirect', 'jwt-u
   'xss-dom-fragment', 'ssti-arithmetic', 'sql-boolean', 'nosql-operator-bypass',
   'command-output', 'path-traversal-hosts', 'xxe-hosts', 'xxe-body-hosts',
   'crlf-header', 'public-private-key', 'public-api-credential', 'model-differential',
-  'model-json-differential', 'model-http-sequence', 'model-browser-execution', 'model-access-boundary',
+  'model-json-differential', 'model-http-sequence', 'model-cookie-access',
+  'model-raw-boundary',
+  'model-browser-execution', 'model-access-boundary',
   'model-state-change', 'xss-stored',
   'public-session-token', 'model-auth-login']);
 const PARAMETER_PROOF_KINDS = new Set(['host-header-redirect', 'jwt-unsigned',
@@ -147,7 +149,8 @@ export async function proveFindings(findings, results, {runDir, surface, scope, 
         if (WEB_PROOF_KINDS.has(finding.kind)) {
           const lead = web?.results?.find(item => item.lead.path === finding.pattern &&
             item.origin === webOrigin &&
-            (['model-http-sequence', 'model-browser-execution'].includes(finding.kind) ?
+            (['model-http-sequence', 'model-cookie-access', 'model-raw-boundary',
+              'model-browser-execution'].includes(finding.kind) ?
               item.kind === finding.kind && item.lead.path === finding.pattern :
             finding.kind === 'model-access-boundary' ?
               item.kind === finding.kind &&
@@ -207,6 +210,9 @@ export async function proveFindings(findings, results, {runDir, surface, scope, 
         identityPath: context.scope.identities.identityPath,
         identityCookieName: context.scope.identities.identityCookieName,
         ...finding.webProof,
+        ...(finding.kind === 'model-raw-boundary' ? {
+          methods: context.scope.methods,
+          targetEnvironment: context.scope.target.environment} : {}),
         ...(finding.kind === 'xss-dom-fragment' ? {
           domScriptBytes: context.scope.limits.domScriptBytes,
         } : {}),

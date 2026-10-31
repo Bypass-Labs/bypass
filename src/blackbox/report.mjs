@@ -139,6 +139,54 @@ export function consolidateBrowserXssProofs(findings) {
   return findings.filter(item => !corroborating.has(item.id));
 }
 
+// A proved access recipe can open several pages through the same gate. Keep
+// every sealed route proof, but count the shared boundary failure once.
+function rawBoundaryKey(finding) {
+  if (finding.kind !== 'model-raw-boundary' || finding.verdict !== 'confirmed' ||
+      !finding.proof) return null;
+  const {rawRequests, rawProof, as} = finding.webProof ?? {};
+  if (!rawRequests?.length || !rawProof?.baseline?.length ||
+      !rawProof.closedText || !rawProof.openText) return null;
+  try {
+    const origin = new URL(finding.url).origin;
+    const withoutFinalRoute = steps => steps.map((step, index) => {
+      if (index !== steps.length - 1) return step;
+      const url = new URL(step.path, finding.url);
+      return {...step, path: `${url.origin}${url.search}`};
+    });
+    return JSON.stringify([origin, finding.cwe, finding.severity, as,
+      rawProof.closedText, rawProof.openText,
+      withoutFinalRoute(rawRequests), withoutFinalRoute(rawProof.baseline)]);
+  } catch { return null; }
+}
+
+export function consolidateRawBoundaryProofs(findings) {
+  const primaryByKey = new Map();
+  const corroborating = new Set();
+  for (const finding of findings) {
+    const key = rawBoundaryKey(finding);
+    if (!key) continue;
+    const primary = primaryByKey.get(key);
+    if (!primary) {
+      primaryByKey.set(key, finding);
+      const gate = safeAssetHint(finding.webProof.rawProof.closedText);
+      finding.title = gate && gate !== '[redacted]' ?
+        `Access gate bypass: ${gate.replace(/\|/g, '/')}` : 'Access gate bypass';
+      continue;
+    }
+    primary.corroboratingProofs = [...(primary.corroboratingProofs ?? []), {
+      id: finding.id, kind: finding.kind, pattern: finding.pattern,
+      proof: finding.proof, rule: finding.rule,
+      evidence: finding.evidence ?? [], confirmation: finding.confirmation ?? []}];
+    primary.evidence = unique([...(primary.evidence ?? []), ...(finding.evidence ?? [])]);
+    primary.confirmation = unique([...(primary.confirmation ?? []),
+      ...(finding.confirmation ?? [])]);
+    primary.tags = unique([...(primary.tags ?? []), ...(finding.tags ?? [])]);
+    corroborating.add(finding.id);
+  }
+  return findings.filter(item => !corroborating.has(item.id));
+}
+
 function outranks(candidate, current) {
   if (rank(candidate.severity) !== rank(current.severity)) return rank(candidate.severity) < rank(current.severity);
   return candidate.reach.observed > current.reach.observed;
@@ -513,6 +561,7 @@ function findingSection(finding, result, scope, ledger) {
     rationale: `${classes} · ${finding.reach.basis}`,
     reproduction: steps,
     curl: (['xss-dom-fragment', 'jwt-unsigned', 'model-json-differential', 'model-http-sequence',
+      'model-cookie-access', 'model-raw-boundary',
       'model-browser-execution',
       'model-access-boundary', 'xss-stored'].includes(finding.kind) ||
       steps.some(step => step.identity === 'derived' || !['GET', 'HEAD'].includes(step.method))) && finding.proof ?
@@ -592,14 +641,14 @@ function openChain(chain) {
 function limitations({ scope, surface, assets, untested, stats, discovery, advisories, extraLimitations }) {
   const nonGet = nonGetOperations(assets).length;
   const methods = (scope.methods ?? ['GET', 'HEAD']).join(' and ');
-  const observed = `${plural(nonGet, 'non-GET operation')} seen in assets; exact reviewed POST routes may have been requested, while other operations remain inventory only`;
+  const observed = `${plural(nonGet, 'non-GET operation')} seen in assets; observed contracts for any authorized method may be investigated and replayed`;
   const never = plural(surface?.never?.length ?? 0, 'path');
   const skippedRecon = plural(surface?.outOfScope?.length ?? 0, 'recon candidate');
   const roles = `owner ${scope.identities?.owner?.role ?? 'undeclared'}, outsider ${scope.identities?.outsider?.role ?? 'undeclared'}`;
   const identity = surface?.identity?.verified ? 'the identity endpoint proved two distinct principals' : 'no identity endpoint proved the accounts';
   const elapsed = stats.elapsedMs == null ? '' : ` (${(stats.elapsedMs / 1000).toFixed(1)} s of task execution)`;
   return [
-    `Methods: ${methods} were the general audit methods, with exact reviewed POST exceptions for login, XML, JSON and form. ${observed}.`,
+    `Methods selected for this audit: ${methods}. ${observed}.`,
     `Skipped during discovery or planning: ${never} matched by never, ${skippedRecon} refused by method, scope or budget, ${plural(untested.length, 'task')} beyond the task budget. Reviewed operations may still be tested later.`,
     discovery ? `Discovery reached ${discovery.stats.hostsFound} hosts and left ${discovery.stats.cut} checks incomplete; ${discovery.stats.tlsFailures ?? 0} TLS certificate lookups failed; Wayback lookups were not run.` :
       'External host discovery did not run.',
@@ -927,7 +976,7 @@ function markdownFinding(finding) {
     `- Pattern: ${code(finding.pattern)} · URL: ${code(finding.url)}`,
     `- Found by: ${finding.foundBy} · task ${finding.task ?? 'none'} · status ${finding.status}`,
     `- Tags: ${finding.tags.length ? finding.tags.join(', ') : 'none'}`,
-    ...(finding.modelHypothesis ? [`- Muse hypothesis: ${code(finding.modelHypothesis.family)} · ${code(finding.modelHypothesis.why ?? 'no rationale supplied')}. ${finding.kind === 'public-session-token' ? 'The public owner-token replay is proved; the broader family label remains a hypothesis.' : finding.kind === 'model-access-boundary' ? 'The owner-only record disclosure is independently proved; the proposed mechanism remains a hypothesis.' : 'The response behavior below is observed; this hypothesis and its security impact are not established by the generic canary check.'}`] : []),
+    ...(finding.modelHypothesis ? [`- Muse hypothesis: ${code(finding.modelHypothesis.family)} · ${code(finding.modelHypothesis.why ?? 'no rationale supplied')}. ${finding.kind === 'public-session-token' ? 'The public owner-token replay is proved; the broader family label remains a hypothesis.' : finding.kind === 'model-access-boundary' ? 'The owner-only record disclosure is independently proved; the proposed mechanism remains a hypothesis.' : finding.kind === 'model-cookie-access' ? 'Fresh arbitrary cookie values crossed the measured page gate; the broader family label remains a hypothesis.' : finding.kind === 'model-raw-boundary' ? 'The exact model-authored request crossed the measured access boundary under fresh controls; the broader mechanism remains a hypothesis.' : 'The response behavior below is observed; this hypothesis and its security impact are not established by the generic canary check.'}`] : []),
     ...(finding.kind === 'model-differential' && finding.webProof?.prelude?.length ?
       [`- Muse-selected read-only prelude: ${finding.webProof.prelude.map(code).join(', ')}. The proof repeats these requests before each control and probe.`] : []),
     ...(finding.kind === 'public-session-token' ? [`- Replay input: extract ${code(finding.webProof.tokenPointer)} from the public JSON response into ${code('$PUBLIC_SESSION_TOKEN')}; the proof does this in memory and stores no token value.`] : []),
@@ -943,7 +992,7 @@ function markdownFinding(finding) {
     `- Mirror: ${mirrorText}`,
     `- Proof of concept and regression test: ${finding.proof}`,
     ...((finding.corroboratingProofs ?? []).map(item =>
-      `- Corroborating independent proof ${item.id} (${item.kind}): ${item.proof}`)),
+      `- Corroborating independent proof ${item.id} (${item.kind}${item.pattern ? `, ${code(item.pattern)}` : ''}): ${item.proof}`)),
     ...(finding.assessment ? [`- Muse assessment (interpretation): ${finding.assessment.impact} Preconditions: ${finding.assessment.preconditions} Suggested remediation: ${finding.assessment.remediation}`] : []),
     `- Remediation: ${finding.remediation}`,
   ];
@@ -1048,7 +1097,8 @@ export function summaryText(result, {color = false} = {}) {
       lines.push(`  ${columns[0]}  ${paint(tone, columns[1])}  ${columns[2]}  ${title}${researchBehavior(finding) ? ' · observed' : ''}`);
       if (finding.pattern) lines.push(`         ${dim(finding.pattern)}`);
       if (finding.corroboratingProofs?.length)
-        lines.push(`         ${dim(`Corroborated by ${finding.corroboratingProofs.map(item => `${item.id} ${item.kind}`).join(', ')}`)}`);
+        lines.push(`         ${dim(`Corroborated by ${finding.corroboratingProofs.map(item =>
+          `${item.id} ${item.pattern ?? item.kind}`).join(', ')}`)}`);
     }
     if (corroboratingProofs)
       lines.push('', `Proof sources    ${plural(confirmedFindings.length + corroboratingProofs, 'replayable proof')} across ${plural(confirmedFindings.length, 'confirmed finding')}`);

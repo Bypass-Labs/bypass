@@ -454,8 +454,7 @@ function nestedFieldShape(schema, document, cuts, depth = 0, seen = new Set()) {
   if (inferred === 'object') {
     const shape = schemaShape(resolved.value, document, cuts, resolved.seen, depth);
     const entries = Object.entries(shape.properties).filter(([name]) =>
-      /^[A-Za-z_][A-Za-z0-9_.-]{0,79}$/.test(name) &&
-      !credentialQueryKey(name) && !CREDENTIAL_PARAM.test(name));
+      /^[A-Za-z_][A-Za-z0-9_.-]{0,79}$/.test(name));
     cuts.count += Math.max(0, entries.length - OPENAPI_NESTED_FIELDS);
     fact.properties = Object.fromEntries(entries.slice(0, OPENAPI_NESTED_FIELDS)
       .map(([name, child]) => [name, nestedFieldShape(child, document, cuts,
@@ -875,7 +874,7 @@ function modelQueryPath(session, raw) {
   if (!local?.query) return null;
   try {
     const url = new URL(`${local.path}${local.query}`, session.origin);
-    if ([...url.searchParams].some(([name, value]) => credentialQueryKey(name) ||
+    if ([...url.searchParams].some(([, value]) =>
         value.length > 100 || maskSecrets(value) !== value ||
         maskExcerpt(value, session.scope.harvest?.redactFields ?? []) !== value)) return null;
     return `${url.pathname}${url.search}`;

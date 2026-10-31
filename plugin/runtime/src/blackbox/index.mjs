@@ -19,11 +19,12 @@ import {reconObservedRoutes, observedExposureMatches} from './robots-directory.m
 import { planTasks, oneAccountMissingAuthCandidate } from './planner.mjs';
 import { decide, severityFor, classify, dataClasses } from './verdict.mjs';
 import { runSwarm, reverify, mirror, identityRecheck } from './swarm.mjs';
-import { buildFindings, consolidateBrowserXssProofs, renderReport, exitCodeFor } from './report.mjs';
+import { buildFindings, consolidateBrowserXssProofs, consolidateRawBoundaryProofs,
+  renderReport, exitCodeFor } from './report.mjs';
 import { proveFindings } from './poc.mjs';
 import {reviewSource} from './source.mjs';
 import {runWebProbes} from './web-probes.mjs';
-import {reconDerivedSession, derivedAnonymousSurface} from './derived-session-recon.mjs';
+import {reconDerivedSession, derivedAnonymousSurface, reconConfirmedAccess} from './derived-session-recon.mjs';
 import {checkDerivedAnonymousAccess} from './derived-access.mjs';
 import {auditDiscoveredHosts, followupResponseHints, mergeResponsePatterns} from './host-audit.mjs';
 import {auditCredentialOrigins} from './credential-origins.mjs';
@@ -40,6 +41,26 @@ const RESEARCH_KINDS = new Set(['model-differential', 'model-json-differential',
 const ACCEPTED_RESEARCH_CHECKPOINT = /^(?:json-experiment|access-boundary)(?:-derived-[0-9a-f]{12})?(?:-queue-[0-9a-f]{12})?-checkpoint\.json$/;
 const HTTP_SEQUENCE_CHECKPOINT = /^http-sequence(?:-derived-[0-9a-f]{12})?(?:-page-[0-9a-f]{12})?(?:-queue-[0-9a-f]{12})?-checkpoint\.json$/;
 const AUDIT_MODEL_DEADLINE_MESSAGE = 'Audit wall-clock deadline cut a Muse research call; remaining work is untested.';
+
+const hasPendingPageLeads = page => Array.isArray(page?.pendingLeads) &&
+  page.pendingLeads.some(lead =>
+    !page.pendingCompletedIds?.includes(lead.proposalId));
+const pendingRoutePage = page => Number.isInteger(page?.nextRouteOffset) &&
+  Number.isInteger(page?.totalRoutes) && page.nextRouteOffset >= 0 &&
+  (page.nextRouteOffset < page.totalRoutes || hasPendingPageLeads(page));
+
+export function countPendingResearchCheckpoints(runDir) {
+  return fs.readdirSync(runDir)
+    .filter(name => ACCEPTED_RESEARCH_CHECKPOINT.test(name) ||
+      HTTP_SEQUENCE_CHECKPOINT.test(name) ||
+      ['research-checkpoint.json', 'http-sequence-page-checkpoint.json'].includes(name))
+    .reduce((count, name) => {
+      const state = JSON.parse(fs.readFileSync(path.join(runDir, name), 'utf8'));
+      return count + (Array.isArray(state.leads) && Number.isInteger(state.cursor) &&
+        state.cursor < state.leads.length ? 1 : 0) +
+        (Array.isArray(state.pages) ? state.pages.filter(pendingRoutePage).length : 0);
+    }, 0);
+}
 
 /** Identify a timeout imposed by this audit, leaving genuine provider timeouts untouched. */
 export function classifyAuditModelDeadline(error, {auditLimited, deadline, nowMs = Date.now()}) {
@@ -321,16 +342,10 @@ export async function runAudit({url, root = process.cwd(), scopeFile = null, ove
     }
     const checkpointEntries = checkpointFiles.map(file => ({file,
       state: JSON.parse(fs.readFileSync(file, 'utf8'))}));
-    const hasPendingPageLeads = page => Array.isArray(page.pendingLeads) &&
-      page.pendingLeads.some(lead =>
-        !page.pendingCompletedIds?.includes(lead.proposalId));
     resumeCheckpointBacklog = checkpointEntries.filter(({state}) =>
       (Array.isArray(state.leads) && Number.isInteger(state.cursor) &&
         state.cursor >= 0 && state.cursor < state.leads.length) ||
-      (Array.isArray(state.pages) && state.pages.some(page =>
-        Number.isInteger(page.nextRouteOffset) &&
-        Number.isInteger(page.totalRoutes) && page.nextRouteOffset >= 0 &&
-        (page.nextRouteOffset < page.totalRoutes || hasPendingPageLeads(page)))));
+      (Array.isArray(state.pages) && state.pages.some(pendingRoutePage)));
     need(resumeCheckpointBacklog.every(({state}) => state.version === 1 &&
       state.run === resumeFrom && state.scopeHash === prior.scopeHash &&
       state.origin === scope.target.origin),
@@ -338,9 +353,7 @@ export async function runAudit({url, root = process.cwd(), scopeFile = null, ove
     const pendingPageEntry = checkpointEntries.flatMap(({file, state}) =>
       (state.pages ?? []).map(page => ({file,
         page: {...state, ...page, pages: undefined, kind: 'http-sequence-page'}})))
-      .filter(({page}) => Number.isInteger(page.nextRouteOffset) &&
-        Number.isInteger(page.totalRoutes) && page.nextRouteOffset >= 0 &&
-        (page.nextRouteOffset < page.totalRoutes || hasPendingPageLeads(page)) &&
+      .filter(({page}) => pendingRoutePage(page) &&
         page.origin === scope.target.origin)
       .sort((a, b) => String(b.page.updatedAt).localeCompare(String(a.page.updatedAt)))[0];
     const pendingPage = pendingPageEntry?.page;
@@ -470,6 +483,10 @@ export async function runAudit({url, root = process.cwd(), scopeFile = null, ove
   const derivedWeb = [];
   const resumedWeb = [];
   const derivedPending = [];
+  const provedAccessQueue = [];
+  const provedAccessRecon = [];
+  const provedAccessSurfaces = [];
+  const provedAccessScopes = [];
   const derivedScopedRequesters = [];
   const derivedSessionKeys = new Map();
   let derivedSessionsReused = 0;
@@ -645,6 +662,8 @@ export async function runAudit({url, root = process.cwd(), scopeFile = null, ove
       if (sourceReview?.notes?.length) surface.modelNotes.push(...sourceReview.notes.map(note => ({...note, by: 'source-assisted'})));
       if (assetAnalysis?.notes?.length) surface.modelNotes.push(...assetAnalysis.notes
         .filter(note => note.summaryIndexes.includes(0)));
+      surface.assetSignals = (assetAnalysis?.signals ?? [])
+        .filter(signal => signal.summaryIndexes.includes(0));
       stats.modelCalls += surface.modelCalls ?? 0;
       modelError = modelError ?? surface.modelError;
       atomic(path.join(runDir, 'surface.json'), surface);
@@ -715,7 +734,10 @@ export async function runAudit({url, root = process.cwd(), scopeFile = null, ove
         exposureSelection: exposureScan.selection,
         outOfScope: [], never: [], mined,
         modelNotes: [...(sourceReview?.notes ?? []), ...(assetAnalysis?.notes ?? [])
-          .filter(note => note.summaryIndexes.includes(0))], sourceReview: sourceReview ?
+          .filter(note => note.summaryIndexes.includes(0))],
+        assetSignals: (assetAnalysis?.signals ?? [])
+          .filter(signal => signal.summaryIndexes.includes(0)),
+        sourceReview: sourceReview ?
           {files: sourceReview.files, notes: sourceReview.notes, secretLeads: sourceReview.secretLeads,
             stats: sourceReview.stats,
             modelCoverage: model ? sourceReview.modelCoverage : null} : null};
@@ -739,7 +761,7 @@ export async function runAudit({url, root = process.cwd(), scopeFile = null, ove
       const observed = observedRoutes.routes.find(item => item.path === record.pattern);
       if (observed?.status != null && !record.responseFacts)
         record.responseFacts = {status: observed.status, type: observed.type,
-          evidenceId: observed.evidenceId, shape: null};
+          hash: observed.hash ?? null, evidenceId: observed.evidenceId, shape: null};
     }
     surface.authBodyOperations ??= Object.values(sessions.scope.localAuthPostContracts ?? {});
     surface.graphql = await inspectGraphql(sessions.scope, {requester,
@@ -1089,6 +1111,9 @@ export async function runAudit({url, root = process.cwd(), scopeFile = null, ove
         if (failure) throw failure;
         return used;
       };
+      const captureProvedAccess = item => provedAccessQueue.push(item);
+      Object.defineProperty(surface, 'onConfirmedAccess',
+        {value: captureProvedAccess, configurable: true});
       const onConfirmedSession = async ({lead, loginProof, principalFingerprint,
         requestAuthenticated, derivedBearer, derivedCookie}) => {
         const derivedCookieName = derivedCookie?.split('=', 1)[0] ?? null;
@@ -1178,6 +1203,8 @@ export async function runAudit({url, root = process.cwd(), scopeFile = null, ove
             mapped.coverage.methodContractsSkipped = admitted.skipped.length;
           }
           const nextSurface = derivedAnonymousSurface(mapped, surface);
+          Object.defineProperty(nextSurface, 'onConfirmedAccess',
+            {value: captureProvedAccess});
           mapped.coverage.anonymousRoutesAvailable = nextSurface.patterns.length;
           mapped.coverage.anonymousChecks = 0;
           mapped.coverage.anonymousConfirmed = 0;
@@ -1327,6 +1354,95 @@ export async function runAudit({url, root = process.cwd(), scopeFile = null, ove
         log: say});
       let remainingWebBudget = Math.max(0,
         webBudget - resumedPrimary - executedWebTasks(primaryWeb) - derivedEarlyTested);
+      const seenAccessContexts = new Set();
+      const drainProvedAccess = async () => {
+        while (provedAccessQueue.length && remainingWebBudget > 0 &&
+            Date.now() < researchDeadline) {
+          const {context, finding} = provedAccessQueue.shift();
+          const witness = context.requests.at(-1);
+          const contextKey = hash(JSON.stringify([witness.headers,
+            new URL(witness.path, scope.target.origin).search, context.setCookies]));
+          if (seenAccessContexts.has(contextKey)) continue;
+          seenAccessContexts.add(contextKey);
+          const row = {sourceEvidence: finding.evidence,
+            sourcePath: new URL(finding.pattern, scope.target.origin).pathname,
+            status: 'mapping'};
+          provedAccessRecon.push(row);
+          try {
+            const observed = [witness.path,
+              ...(surface.patterns ?? []).map(item => ({path: item.representative ?? item.pattern,
+                method: item.methods?.includes('GET') ? 'GET' : 'UNKNOWN',
+                params: Object.keys(item.params ?? {})})),
+              ...(mined.endpoints ?? []).map(item => ({path: item.path,
+                method: item.method, params: item.params, headers: item.headers,
+                bodyEncoding: item.bodyEncoding, bodyFields: item.bodyFields,
+                bodyStringFields: item.bodyStringFields,
+                contentType: item.contentType, rootElement: item.rootElement}))];
+            const {mapped, nextSurface} = await reconConfirmedAccess(sessions.scope,
+              {context, requester, observedRoutes: observed, publicSurface: surface,
+                infer: model ? invokeModel : null, model,
+                maxRequests: sessions.scope.limits.maxUrls,
+                remainingModelCalls: remainingWebModelCalls, deadline: researchDeadline});
+            Object.defineProperty(nextSurface, 'onConfirmedAccess',
+              {value: captureProvedAccess});
+            let accessScope = sessions.scope;
+            let accessRequester = requester;
+            if (accessScope.target.environment === 'local' && mapped.contracts.length) {
+              const admitted = await deriveLocalPostScope(accessScope,
+                {endpoints: mapped.contracts}, requester);
+              accessScope = admitted.scope;
+              if (accessScope !== sessions.scope) {
+                provedAccessScopes.push(accessScope);
+                accessRequester = createRequester(accessScope, {ledger,
+                  limiter: auditLimiter, env: sessions.env, allowLocal, log: say,
+                  run, signal, deadline});
+              }
+            }
+            const knownPaths = new Set((surface.patterns ?? []).map(item => item.pattern));
+            const knownContracts = new Set((mined.endpoints ?? []).map(item =>
+              `${item.method} ${new URL(item.path, scope.target.origin).pathname}`));
+            Object.assign(row, {status: 'mapped', requested: mapped.coverage.requested,
+              routes: mapped.routes.length, assets: mapped.assets.length,
+              contracts: mapped.contracts.length,
+              externalContracts: mapped.externalContracts,
+              unresolvedContracts: mapped.unresolvedContracts,
+              newRoutes: nextSurface.patterns.filter(item =>
+                !knownPaths.has(item.pattern)).length,
+              changedRoutes: nextSurface.patterns.filter(item =>
+                item.responseFacts?.hash && item.responseFacts?.anonymousHash &&
+                item.responseFacts.hash !== item.responseFacts.anonymousHash).length,
+              newContracts: mapped.contracts.filter(item =>
+                !knownContracts.has(`${item.method} ${new URL(item.path, scope.target.origin).pathname}`)).length,
+              coverage: mapped.coverage});
+            provedAccessSurfaces.push(nextSurface);
+            say({stage: 'derived-recon', message:
+              `Proved-access recon: ${row.requested} requests · ${row.assets} assets · ` +
+              `${row.newRoutes} new routes · ${row.newContracts} new contracts`});
+            const checked = await runWebProbes(nextSurface, accessScope, {
+              requester: accessRequester, ledger, budget: remainingWebBudget,
+              env: sessions.env, infer: model ? invokeModel : null, model,
+              maxModelPages: remainingWebModelCalls(),
+              remainingModelCalls: remainingWebModelCalls, researchDeadline,
+              onProgressCheckpoint: onWebProgress(`proved-access-${provedAccessRecon.length}`),
+              log: say});
+            checked.discoveredVia = 'confirmed-access';
+            derivedWeb.push(checked);
+            row.checksExecuted = executedWebTasks(checked);
+            row.checksUntested = checked.results.filter(item =>
+              item.verdict === 'untested').length;
+            row.modelCalls = checked.modelCalls + mapped.coverage.modelCalls;
+            remainingWebBudget = Math.max(0, remainingWebBudget - row.checksExecuted);
+          } catch (error) {
+            row.status = 'recon-error';
+            row.error = error?.name ?? 'Error';
+            say({stage: 'derived-recon', message:
+              `Proved-access recon failed (${row.error}); the original proof remains valid.`});
+          }
+          atomic(path.join(runDir, 'confirmed-access-recon.json'),
+            {contexts: provedAccessRecon, pending: provedAccessQueue.length});
+        }
+      };
+      await drainProvedAccess();
       const derivedCheckedPaths = new Set();
       const deferredEarlyCuts = new Map();
       const supersededDeferredResults = new Map();
@@ -1615,6 +1731,7 @@ export async function runAudit({url, root = process.cwd(), scopeFile = null, ove
         remainingModelCalls: remainingWebModelCalls, log: say,
         resumeHints: resumeDescendantFeedback,
         onFeedbackCheckpoint: checkpointDescendantFeedback});
+      await drainProvedAccess();
       derivedWeb.push(...resumedWeb);
       const derivedResultRows = derivedWeb.flatMap(run =>
         reconciledPassResults(run, supersededDeferredResults.get(run))
@@ -1800,15 +1917,18 @@ export async function runAudit({url, root = process.cwd(), scopeFile = null, ove
         untested: stats.queuedUntested ?? 0});
       phase('done', 4, 'Plan and test observed leads');
       phase('doing', 5, 'Replay and assess');
-      const proofSurface = derivedPending.length ? {...surface,
+      const proofSurface = derivedPending.length || provedAccessSurfaces.length ? {...surface,
         patterns: [...(surface.patterns ?? []),
-          ...derivedPending.flatMap(item => item.nextSurface.patterns ?? [])],
+          ...derivedPending.flatMap(item => item.nextSurface.patterns ?? []),
+          ...provedAccessSurfaces.flatMap(item => item.patterns ?? [])],
         methodOperations: [...(surface.methodOperations ?? []),
-          ...derivedPending.flatMap(item => item.nextSurface.methodOperations ?? [])],
+          ...derivedPending.flatMap(item => item.nextSurface.methodOperations ?? []),
+          ...provedAccessSurfaces.flatMap(item => item.methodOperations ?? [])],
       } : surface;
       // The PoC receives only exact local contracts observed during this run.
       // It obtains a fresh login; no derived bearer is written to disk.
-      const proofScope = derivedPending.reduce((effective, item) => {
+      const proofScope = [...derivedPending, ...provedAccessScopes.map(scope => ({scope}))]
+        .reduce((effective, item) => {
         if (item.scope === sessions.scope || item.scope.target.environment !== 'local') return effective;
         const merged = structuredClone(effective);
         for (const name of ['jsonPostPaths', 'formPostPaths', 'writeOperations'])
@@ -1819,7 +1939,7 @@ export async function runAudit({url, root = process.cwd(), scopeFile = null, ove
         merged.localAutoMethodContracts = {...merged.localAutoMethodContracts,
           ...item.scope.localAutoMethodContracts};
         return merged;
-      }, sessions.scope);
+        }, sessions.scope);
       findings = await proveFindings(findings, results, {runDir, surface: proofSurface,
         scope: proofScope,
         originSurfaces, originContexts: Object.fromEntries(credentialAudits.map(audit =>
@@ -1863,7 +1983,7 @@ export async function runAudit({url, root = process.cwd(), scopeFile = null, ove
       phase('skipped', 5, 'Replay and assess');
     }
     phase('doing', 6, 'Report and coverage');
-    findings = consolidateBrowserXssProofs(findings);
+    findings = consolidateRawBoundaryProofs(consolidateBrowserXssProofs(findings));
     atomic(path.join(runDir, 'surface.json'), surface);
     atomic(path.join(runDir, 'results.json'), results);
     atomic(path.join(runDir, 'findings.json'), findings);
@@ -1949,7 +2069,8 @@ export async function runAudit({url, root = process.cwd(), scopeFile = null, ove
     const assetModelCut = !!model && !!assetAnalysis?.coverage &&
       (assetAnalysis.coverage.filesSent < assetAnalysis.coverage.filesAvailable ||
         assetAnalysis.coverage.routesSent < assetAnalysis.coverage.routesAvailable ||
-        assetAnalysis.coverage.hintsSent < assetAnalysis.coverage.hintsAvailable);
+        assetAnalysis.coverage.hintsSent < assetAnalysis.coverage.hintsAvailable ||
+        assetAnalysis.coverage.sourceChunksSent < assetAnalysis.coverage.sourceChunksAvailable);
     const graphqlModelCuts = model ? [
       {origin: sessions.scope.target.origin, coverage: surface.graphql?.coverage},
       ...credentialAudits.map(audit => ({origin: audit.origin, coverage: audit.surface.graphql?.coverage})),
@@ -1987,25 +2108,18 @@ export async function runAudit({url, root = process.cwd(), scopeFile = null, ove
       sourceReview.stats.traversalCut);
     const sourceUnresolved = (sourceReview?.stats.unresolvedRoutes ?? 0) > 0;
     const discoveryModelCut = !!model && (discovery?.modelAnalysis?.operationsCut ?? 0) > 0;
-    const pendingResearchCheckpoints = fs.readdirSync(runDir)
-      .filter(name => ACCEPTED_RESEARCH_CHECKPOINT.test(name) ||
-        HTTP_SEQUENCE_CHECKPOINT.test(name) ||
-        ['research-checkpoint.json',
-          'http-sequence-page-checkpoint.json'].includes(name))
-      .reduce((count, name) => {
-        const state = JSON.parse(fs.readFileSync(path.join(runDir, name), 'utf8'));
-        return count + (Array.isArray(state.leads) && Number.isInteger(state.cursor) &&
-          state.cursor < state.leads.length ? 1 : 0) +
-          (Array.isArray(state.pages) ? state.pages.filter(page =>
-            Number.isInteger(page.nextRouteOffset) &&
-            Number.isInteger(page.totalRoutes) &&
-            page.nextRouteOffset < page.totalRoutes).length : 0);
-      }, 0);
+    const pendingResearchCheckpoints = countPendingResearchCheckpoints(runDir);
     const redactedResearchLeads = fs.readdirSync(runDir)
       .filter(name => ACCEPTED_RESEARCH_CHECKPOINT.test(name))
       .reduce((count, name) => count +
         (JSON.parse(fs.readFileSync(path.join(runDir, name), 'utf8'))
           .redactedExecutableLeads ?? 0), 0);
+    const provedAccessCut = provedAccessQueue.length + provedAccessRecon.reduce((count, item) =>
+      count + (item.coverage?.budgetCut ?? 0) + (item.status === 'recon-error' ? 1 : 0), 0);
+    const externalScriptContracts = provedAccessRecon.reduce((count, item) =>
+      count + (item.externalContracts?.length ?? 0), 0);
+    const unresolvedScriptContracts = provedAccessRecon.reduce((count, item) =>
+      count + (item.unresolvedContracts?.length ?? 0), 0);
     if (researchDeadlineCut && modelError === AUDIT_MODEL_DEADLINE_MESSAGE) modelError = null;
     const incomplete = dryRun || researchDeadlineCut || !credentialsReady || credentialAudits.some(audit => !audit.usable) ||
       planModelCut || credentialPlanCuts.length > 0 || reconModelCuts.length > 0 ||
@@ -2025,7 +2139,9 @@ export async function runAudit({url, root = process.cwd(), scopeFile = null, ove
       sourceMapBudgetCut > 0 || assetHintsCut > 0 ||
       inferredRoutesCut > 0 || inferredClassesCut > 0 || modelNamingCut ||
       !!modelError || !integrity.ok || web.cut > 0 ||
-      pendingResearchCheckpoints > 0 || redactedResearchLeads > 0 || advisories.incomplete ||
+      pendingResearchCheckpoints > 0 || redactedResearchLeads > 0 || provedAccessCut > 0 ||
+      unresolvedScriptContracts > 0 ||
+      advisories.incomplete ||
       chains.some(chain => chain.status !== 'confirmed') ||
       (scope.domains.length > 0 && (!discovery || discovery.incomplete));
     const oneAccountChecks = results.filter(item => item.task?.kind === 'missing-auth' &&
@@ -2104,7 +2220,7 @@ export async function runAudit({url, root = process.cwd(), scopeFile = null, ove
         ...(sourceReview?.stats.secretLeadsCut ? [`Source review did not retain ${sourceReview.stats.secretLeadsCut} credential-shaped leads beyond its per-file or total limit.`] : []),
         ...(sourceReview?.stats.traversalCut ? ['Source review stopped enumerating files at its directory-entry budget.'] : []),
         ...(sourceModelCut ? [`Muse received ${sourceReview.modelCoverage.snippetsSent} of ${sourceReview.modelCoverage.snippetsAvailable} source route excerpts in ${sourceReview.modelCoverage.pagesSent} of ${sourceReview.modelCoverage.pagesAvailable} pages.`] : []),
-        ...(assetModelCut ? [`Muse reviewed ${assetAnalysis.coverage.filesSent} of ${assetAnalysis.coverage.filesAvailable} mined files, ${assetAnalysis.coverage.routesSent} of ${assetAnalysis.coverage.routesAvailable} route facts and ${assetAnalysis.coverage.hintsSent} of ${assetAnalysis.coverage.hintsAvailable} indirect call hints in ${assetAnalysis.coverage.pagesSent} of ${assetAnalysis.coverage.pagesAvailable} asset-analysis pages.`] : []),
+        ...(assetModelCut ? [`Muse reviewed ${assetAnalysis.coverage.filesSent} of ${assetAnalysis.coverage.filesAvailable} mined files, ${assetAnalysis.coverage.routesSent} of ${assetAnalysis.coverage.routesAvailable} route facts, ${assetAnalysis.coverage.hintsSent} of ${assetAnalysis.coverage.hintsAvailable} indirect call hints and ${assetAnalysis.coverage.sourceChunksSent} of ${assetAnalysis.coverage.sourceChunksAvailable} redacted source chunks in ${assetAnalysis.coverage.pagesSent} of ${assetAnalysis.coverage.pagesAvailable} asset-analysis pages.`] : []),
         ...graphqlModelCuts.map(item => `Muse reviewed ${item.coverage.operationsSent} of ${item.coverage.operationsAvailable} GraphQL root signatures on ${item.origin} in ${item.coverage.pagesSent} of ${item.coverage.pagesAvailable} pages.`),
         ...(graphqlFieldsCut ? [`GraphQL schema inventory omitted ${graphqlFieldsCut} root fields beyond its per-endpoint limits.`] : []),
         ...(graphqlPathsCut ? [`GraphQL schema inventory did not request ${graphqlPathsCut} eligible endpoints beyond its per-origin path limit.`] : []),
@@ -2125,6 +2241,9 @@ export async function runAudit({url, root = process.cwd(), scopeFile = null, ove
         ...derivedSessions.filter(session => session.coverage?.anonymousRoutesAvailable &&
           !session.coverage?.anonymousChecks && !session.coverage?.anonymousTestError)
           .map(session => `For one derived session, recon mapped ${session.coverage.anonymousRoutesAvailable} new routes, but no anonymous follow-up checks ran for that session within the reserved budget or deadline.`),
+        ...(provedAccessCut ? [`Proved-access reconnaissance left ${provedAccessCut} context or scoped URL leads unvisited; see confirmed-access-recon.json.`] : []),
+        ...(externalScriptContracts ? [`Post-access JavaScript suggested ${externalScriptContracts} request contracts on other origins; none were sent. See confirmed-access-recon.json for their source evidence.`] : []),
+        ...(unresolvedScriptContracts ? [`Post-access JavaScript left ${unresolvedScriptContracts} request destinations unresolved or beyond the Muse budget; see confirmed-access-recon.json.`] : []),
         ...graphqlBolaModelCuts.map(item => `Muse ranked ${item.coverage.candidatesSent} of ${item.coverage.candidatesAvailable} observed GraphQL object-query pairs on ${item.origin} in ${item.coverage.pagesSent} of ${item.coverage.pagesAvailable} pages.`),
         ...(researchDeadlineCut ? [AUDIT_MODEL_DEADLINE_MESSAGE] : []),
         ...(modelError ? [`A Muse model stage failed: ${modelError}`] : []),
@@ -2144,6 +2263,18 @@ export async function runAudit({url, root = process.cwd(), scopeFile = null, ove
     coverage.pendingResearchCheckpoints = pendingResearchCheckpoints;
     coverage.researchDeadlineCut = researchDeadlineCut;
     coverage.redactedResearchLeads = redactedResearchLeads;
+    coverage.confirmedAccessRecon = {contexts: provedAccessRecon.length,
+      pendingContexts: provedAccessQueue.length,
+      requests: provedAccessRecon.reduce((count, item) => count + (item.requested ?? 0), 0),
+      routes: provedAccessRecon.reduce((count, item) => count + (item.routes ?? 0), 0),
+      assets: provedAccessRecon.reduce((count, item) => count + (item.assets ?? 0), 0),
+      newRoutes: provedAccessRecon.reduce((count, item) => count + (item.newRoutes ?? 0), 0),
+      changedRoutes: provedAccessRecon.reduce((count, item) => count + (item.changedRoutes ?? 0), 0),
+      newContracts: provedAccessRecon.reduce((count, item) => count + (item.newContracts ?? 0), 0),
+      externalContracts: externalScriptContracts,
+      unresolvedContracts: unresolvedScriptContracts,
+      checksExecuted: provedAccessRecon.reduce((count, item) => count + (item.checksExecuted ?? 0), 0),
+      budgetCut: provedAccessCut};
     coverage.testResponseFollowup = surface.testResponseFollowup ?? null;
     coverage.derivedTestResponseFollowup = surface.derivedTestResponseFollowup ?? null;
     coverage.descendantFeedbackPending = web.descendantFeedbackPending ?? [];

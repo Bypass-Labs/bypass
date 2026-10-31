@@ -3,7 +3,7 @@
 import {createHash, randomBytes} from 'node:crypto';
 import {Fault} from '../util.mjs';
 import {maskSecrets} from './assets.mjs';
-import {credentialQueryKey, validateUrl} from './scope.mjs';
+import {validateUrl} from './scope.mjs';
 import {responseCached, modelExperimentReason, validModelExperiment,
   validModelFixedFields} from './poc-runtime.mjs';
 import {MODEL_RESPONSE_BYTES, requestFailureVerdict, responseSizeReason} from './response-size.mjs';
@@ -14,7 +14,7 @@ const digest = value => createHash('sha256').update(String(value)).digest('hex')
 const opaqueString = value => ({type: 'string', length: value.length,
   digest: digest(value)});
 const safeField = value => typeof value === 'string' &&
-  /^[A-Za-z_][A-Za-z0-9_.-]{0,79}$/.test(value) && !credentialQueryKey(value);
+  /^[A-Za-z_][A-Za-z0-9_.-]{0,79}$/.test(value);
 const numericStep = (before, after) => {
   const old = /^(.*?)(\d{1,8})$/.exec(before), next = /^(.*?)(\d{1,8})$/.exec(after);
   return Boolean(old && next && old[1] === next[1] && Number(next[2]) === Number(old[2]) + 1);
@@ -90,12 +90,12 @@ const EXPERIMENT_SCHEMA = {type: 'object', properties: {
     family: {type: 'string', maxLength: 60}, path: {type: 'string', maxLength: 300},
     field: {type: 'string', maxLength: 80}, as: {type: 'string', enum: ['anonymous', 'owner']},
     oracle: {type: 'string', enum: ['marker', 'observation']},
-    controlValue: {type: 'string', maxLength: 256},
-    firstValue: {type: 'string', maxLength: 256}, secondValue: {type: 'string', maxLength: 256},
+    controlValue: {type: 'string'},
+    firstValue: {type: 'string'}, secondValue: {type: 'string'},
     marker: {type: 'string'}, secondMarker: {type: 'string'},
-    fixedFields: {type: 'array', maxItems: 3, items: {type: 'object',
+    fixedFields: {type: 'array', items: {type: 'object',
       properties: {field: {type: 'string', maxLength: 80},
-        value: {type: 'string', maxLength: 128}},
+        value: {type: 'string'}},
       required: ['field', 'value'], additionalProperties: false}},
     prelude: {type: 'array', items: {type: 'string', maxLength: 300}},
     observePath: {type: 'string', maxLength: 300},
@@ -184,7 +184,10 @@ export async function planJsonExperiments(surface, scope, {infer, model, env = {
           parameter: proposal?.field, controlValue: proposal?.controlValue,
           firstValue: proposal?.firstValue, secondValue: proposal?.secondValue,
           marker: proposal?.marker, secondMarker: proposal?.secondMarker};
-        const oracle = experimentOracle(proposal, experiment);
+        const markerMismatch = proposal.marker !== context.marker ||
+          proposal.secondMarker !== context.secondMarker;
+        const oracle = experimentOracle(markerMismatch ?
+          {...proposal, oracle: 'observation'} : proposal, experiment);
         const prelude = proposal?.prelude;
         const observePath = proposal?.observePath;
         const observeAs = proposal?.observeAs;
@@ -196,14 +199,13 @@ export async function planJsonExperiments(surface, scope, {infer, model, env = {
         else if (!/^[A-Za-z][A-Za-z0-9 ()/+.-]{2,80}$/.test(proposal.family ?? ''))
           decision.reason = 'invalid-family';
         else if (!Number.isInteger(proposal.priority)) decision.reason = 'priority';
-        else if (proposal.marker !== context.marker ||
-            proposal.secondMarker !== context.secondMarker) decision.reason = 'marker-mismatch';
         else if (oracle.reason) {
           decision.reason = 'invalid-controls';
           decision.controlReason = oracle.reason;
         }
         else if (!validModelFixedFields(fixedFields, proposal.field,
-            [proposal.marker, proposal.secondMarker], observedFields) ||
+            oracle.oracle === 'observation' ? [] :
+              [proposal.marker, proposal.secondMarker], observedFields) ||
             (operation.requiredFields ?? []).some(field =>
               field !== proposal.field && !fixedFields.some(item => item.field === field)))
           decision.reason = 'invalid-fixed-fields';
@@ -223,7 +225,7 @@ export async function planJsonExperiments(surface, scope, {infer, model, env = {
         else if (result.leads.length >= budget) decision.reason = 'task-budget';
         else {
           decision.accepted = true;
-          if (oracle.translated) decision.translatedTo = 'observation';
+          if (oracle.translated || markerMismatch) decision.translatedTo = 'observation';
           const requestKey = JSON.stringify([proposal.path, proposal.field, proposal.as,
             fixedFields, prelude, observePath, observeAs, oracle.oracle,
             proposal.controlValue, proposal.firstValue, proposal.secondValue]);

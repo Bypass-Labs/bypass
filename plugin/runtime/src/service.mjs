@@ -258,7 +258,8 @@ export async function execute(key,args=[],o={},context={}){
       const name=args[0]||s.activeTarget;
       need(o['scope-file']||o.accept,'Review scope, then provide --scope-file or --accept --paths /api. Ownership alone is not authorization.');
       need(!(o['scope-file']&&o.methods!==undefined),'Choose methods in the scope file or with --methods, not both.');
-      const scope=context.scope||(o['scope-file']?loadJSON(o['scope-file']):{paths:(o.paths||'/api').split(','),methods:o.methods,productionAcknowledged:!!o.production,publicConfigDiscovery:o['public-config']??named(s.targets,name,'Target').authorization?.publicConfigDiscovery});
+      const reviewedScope=context.scope||(o['scope-file']?loadJSON(o['scope-file']):{paths:(o.paths||'/api').split(','),methods:o.methods,productionAcknowledged:!!o.production,publicConfigDiscovery:o['public-config']??named(s.targets,name,'Target').authorization?.publicConfigDiscovery});
+      const scope=o.production?{...reviewedScope,productionAcknowledged:true}:reviewedScope;
       result=await change(root,state=>{const t=named(state.targets,name,'Target');t.authorization=authorization(t,scope);event(state,'authorized',`${name}: testing authorized`,{scope:t.authorization});return {target:t.name,authorization:t.authorization};});break;
     }
     case 'target revoke':case 'target remove':result=await change(root,state=>{

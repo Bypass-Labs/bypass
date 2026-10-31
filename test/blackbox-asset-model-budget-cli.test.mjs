@@ -58,7 +58,7 @@ test('CLI sends late source-map route facts to Muse when the model-call budget a
       "const messages=JSON.parse(fs.readFileSync(value('--prompt-file'),'utf8'));",
       'const system=messages[0].content;',
       'let answer;',
-      "if(system.includes('Interpret only the extracted, redacted client-asset facts')){",
+      "if(system.includes('Interpret the extracted client-asset facts')){",
       ' const context=JSON.parse(messages.at(-1).content);',
       " fs.appendFileSync(process.env.BX_ASSET_PAGE_LOG,JSON.stringify({page:context.page,routes:context.files.flatMap(file=>file.routes.map(route=>route.path))})+'\\n');",
       " answer={files:context.files.map(file=>({id:file.id,role:'app',why:'Observed client requests',authFlow:'',routes:file.routes.map(route=>({path:route.path,method:route.method,purpose:'Observed request',parameters:[]})),proposals:[]}))};",
@@ -70,7 +70,8 @@ test('CLI sends late source-map route facts to Muse when the model-call budget a
       "console.log(JSON.stringify({payload:{kind:'run_terminal',terminal:'completed',text:JSON.stringify(answer)}}));",
     ].join('\n') + '\n', {mode: 0o700});
     const modelLog = path.join(root, 'asset-pages.jsonl');
-    const env = {...process.env, PATH: `${bin}${path.delimiter}${process.env.PATH}`,
+    const env = {...process.env, BYPASS_TEST_LEGACY_MUSE: '1',
+      PATH: `${bin}${path.delimiter}${process.env.PATH}`,
       BX_ASSET_PAGE_LOG: modelLog};
     const done = await execFile(process.execPath,
       [CLI, 'blackbox', origin, '--project', root, '--accept-local', '--rps', '50',

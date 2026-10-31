@@ -3,7 +3,8 @@
 // libraries, environment leakage and comments. Implements docs/BLACKBOX_AUDIT.md sections 5.4 and 6.3.
 import { hash, need } from '../util.mjs';
 import { loopback, pathAllowed } from '../network.mjs';
-import {credentialQueryKey} from './private-query.mjs';
+import {credentialQueryKey, maskCredentialParams} from './private-query.mjs';
+import {maskExcerpt} from './ledger.mjs';
 
 const ACCEPT_HTML = 'text/html, application/json;q=0.9, */*;q=0.8';
 const ACCEPT_SCRIPT = 'application/javascript, text/javascript;q=0.9, */*;q=0.8';
@@ -99,6 +100,7 @@ function parseJson(text) {
 
 const unique = list => [...new Set(list)];
 const INDIRECT_REQUEST = /\b(?:fetch|axios\.(?:get|request)|[A-Za-z_$][\w$]*\.(?:get|request))\s*\(\s*(?!['"`])/g;
+const GENERATED_METHOD_PATH = /(["'`])(GET|HEAD|POST|PUT|PATCH|DELETE|OPTIONS)\1\s*,\s*(["'`])(\/(?!\/)[^"'`\s\\]{1,240})\3/g;
 const ROUTE_HINTS_PER_FILE = 32;
 const INFERRED_CALLS_PER_FORM = 120;
 const INFERRED_CLASSES_PER_FILE = 512;
@@ -110,11 +112,10 @@ function safeRouteLiteral(value) {
       maskSecrets(value) !== value) return false;
   if (/^\/(?!\/)(?!.*(?:^|\/)\.\.?\/)\S*$/.test(value) &&
       /^\/[A-Za-z0-9_./?&=:-]*$/.test(value)) {
-    const query = value.split('?', 2)[1];
-    return !query || ![...new URLSearchParams(query).keys()].some(credentialQueryKey);
+    return true;
   }
   if (/^\?[A-Za-z][A-Za-z0-9_-]{0,40}=\/[A-Za-z0-9_./-]{0,60}$/.test(value))
-    return !credentialQueryKey(value.slice(1).split('=', 1)[0]);
+    return true;
   return /^[A-Za-z][A-Za-z0-9_-]{1,39}$/.test(value) && value.includes('-') &&
     !/(?:secret|token|password|credential|api.?key)/i.test(value);
 }
@@ -145,8 +146,9 @@ function redactedRouteWindow(text) {
       }
       const value = text.slice(at + 1, end);
       if (safeRouteLiteral(value)) {
-        literals.push(value);
-        excerpt += `${quote}${value}${quote}`;
+        const masked = maskCredentialParams(value);
+        literals.push(masked);
+        excerpt += `${quote}${masked}${quote}`;
       } else excerpt += '"[literal]"';
       at = end < text.length ? end + 1 : end;
       continue;
@@ -217,6 +219,33 @@ function routeHintsIn(text, maxHints = ROUTE_HINTS_PER_FILE) {
       line: locate(match.index).line, method, ...context});
   }
   return {hints, cut: eligible - hints.length};
+}
+
+// A generated client may pass a literal method and path to a transport whose
+// origin is configured elsewhere. Keep the call and host context for Muse.
+export function generatedRequestHints(text) {
+  const safeSnippet = value => maskExcerpt(maskSecrets(value)).slice(0, 900);
+  const hostCandidates = unique([...text.matchAll(
+    /\b(?:apiHost|baseURL|baseUrl|apiBase|endpointHost|serviceHost)\s*:\s*["'`]([^"'`]{1,180})["'`]/g)]
+    .map(match => match[1]).filter(value => /^(?:https?:\/\/)?[A-Za-z0-9.-]+(?::\d+)?\/?$/.test(value)));
+  const hostContext = [...text.matchAll(/\b(?:apiHost|baseURL|baseUrl|apiScheme)\b/g)]
+    .slice(0, 8).map(match => safeSnippet(text.slice(Math.max(0, match.index - 230), match.index + 270)));
+  const lineOf = locator(text);
+  const hints = [];
+  for (const match of text.matchAll(GENERATED_METHOD_PATH)) {
+    const [, , method, , path] = match;
+    if (!/^[A-Za-z0-9_./:{}?&=+%-]+$/.test(path) || maskSecrets(path) !== path) continue;
+    const before = text.slice(Math.max(0, match.index - 180), match.index);
+    const caller = /([A-Za-z_$][\w$]*)\s*\([^()]{0,100}$/.exec(before)?.[1];
+    const functionName = [...before.matchAll(/(?:async\s+)?function\s+([A-Za-z_$][\w$]*)\s*\(/g)].at(-1)?.[1];
+    const functionAt = caller ? text.indexOf(`function ${caller}(`) : -1;
+    const callbackAt = functionName ? text.indexOf(`,${functionName})`, match.index + match[0].length) : -1;
+    hints.push({method, path, line: lineOf(match.index).line,
+      excerpt: safeSnippet(text.slice(Math.max(0, match.index - 220), match.index + 280)),
+      ...(functionAt >= 0 ? {transport: safeSnippet(text.slice(functionAt, functionAt + 550))} : {}),
+      ...(callbackAt >= 0 ? {caller: safeSnippet(text.slice(Math.max(0, callbackAt - 300), callbackAt + 120))} : {})});
+  }
+  return {hints, hostCandidates, hostContext};
 }
 
 function uniqueBy(list, key) {
@@ -690,7 +719,7 @@ function searchParamKeys(source, before, names) {
       const expression = assignments.at(-1)?.[1] ?? '';
       const fromSuffix = [...expression.matchAll(/[?&]([A-Za-z_][A-Za-z0-9_.-]{0,79})=/g)]
         .map(match => match[1]);
-      return unique([...fromObject, ...fromSuffix]).filter(key => !credentialQueryKey(key));
+      return unique([...fromObject, ...fromSuffix]);
     });
 }
 
@@ -725,6 +754,12 @@ function endpointsIn(source, base, lineOf) {
   for (const match of source.matchAll(XHR_OPEN)) {
     const site = xhrOpenSite(source, match);
     if (site) add(site.chain, site);
+  }
+  // A path passed beside an explicit verb to a generated transport wrapper
+  // is a request contract, not evidence of a same-origin anonymous GET.
+  for (const match of source.matchAll(GENERATED_METHOD_PATH)) {
+    const literal = `${match[3]}${match[4]}${match[3]}`;
+    claimed.add(match.index + match[0].lastIndexOf(literal));
   }
   for (const match of source.matchAll(ROUTE)) {
     const at = match.indices[1][0];
@@ -1102,15 +1137,24 @@ export function extractFromScript(text, {url = null, origin = null,
     ...directHostRoutes.endpoints,
     ...classRoutes.endpoints,
   ]);
-  const routeHints = routeHintsIn(text, maxRouteHints);
+  const generated = generatedRequestHints(text);
+  const generatedHints = generated.hints.map(hint => ({kind: 'generated-client', method: hint.method,
+    line: hint.line, literals: [hint.path],
+    excerpt: maskExcerpt(maskSecrets([
+      generated.hostCandidates.length ? `Host config: ${generated.hostCandidates.join(', ')}` : '',
+      hint.caller, hint.excerpt, hint.transport, ...generated.hostContext,
+    ].filter(Boolean).join(' '))).slice(0, 900)}));
+  const routeHints = routeHintsIn(text, Math.max(0, maxRouteHints - generatedHints.length));
+  const allHints = [...generatedHints, ...routeHints.hints].slice(0, maxRouteHints)
+    .map((hint, index) => ({...hint, id: `h${index + 1}`}));
   const named = sources.map(({source, lineOf}) => hostsIn(source, base, lineOf));
   const env = [...named.flatMap(item => item.env), ...sources.flatMap(({source, lineOf}) => envIn(source, lineOf)), ...hiddenRoutes(endpoints)];
   const result = {
     endpoints,
     inferredRoutesCut: directHostRoutes.cut + classRoutes.routesCut,
     inferredClassesCut: classRoutes.classesCut,
-    routeHints: routeHints.hints,
-    routeHintsCut: routeHints.cut,
+    routeHints: allHints,
+    routeHintsCut: routeHints.cut + Math.max(0, generatedHints.length - maxRouteHints),
     hosts: uniqueBy(named.flatMap(item => item.hosts), host => `${host.kind} ${host.host}`),
     secrets: uniqueBy(found.map(secretRecord), secret => secret.hash),
     libraries: librariesIn(text, locate),
@@ -1128,6 +1172,8 @@ export function extractFromScript(text, {url = null, origin = null,
 const SCRIPT_TAG = /<script\b([^>]*)>([\s\S]*?)<\/script\s*>/gi;
 const LINK_TAG = /<link\b([^>]*)>/gi;
 const ANCHOR_TAG = /<a\b([^>]*)>/gi;
+const FORM_TAG = /<form\b([^>]*)>([\s\S]*?)<\/form\s*>/gi;
+const FORM_CONTROL = /<(input|select|textarea|button)\b([^>]*)>/gi;
 const ATTRIBUTE = /([^\s=\/>"']+)(?:\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>"']+)))?/g;
 const JAVASCRIPT_TYPE = /^(?:module|(?:text|application)\/(?:x-)?(?:java|ecma)script)\b/i;
 const INITIAL_STATE = /__INITIAL_STATE__\s*=\s*\{/;
@@ -1152,7 +1198,7 @@ function addOnce(list, value) {
 
 /** Script, module-preload and link URLs (absolute), inline scripts, and parsed inline JSON (__NEXT_DATA__, __INITIAL_STATE__). */
 export function extractFromHtml(text, {url} = {}) {
-  const page = {scripts: [], links: [], inline: [], json: [], modulepreload: []};
+  const page = {scripts: [], links: [], inline: [], json: [], modulepreload: [], forms: []};
   for (const [, raw, body] of text.matchAll(SCRIPT_TAG)) {
     const attributes = attributesOf(raw);
     const type = attributes.type ?? '';
@@ -1176,6 +1222,28 @@ export function extractFromHtml(text, {url} = {}) {
     addOnce(preload ? page.modulepreload : page.links, absoluteUrl(attributes.href, url));
   }
   for (const [, raw] of text.matchAll(ANCHOR_TAG)) addOnce(page.links, absoluteUrl(attributesOf(raw).href, url));
+  if (url) for (const [, raw, body] of text.matchAll(FORM_TAG)) {
+    const attributes = attributesOf(raw);
+    const action = attributes.action && !attributes.action.startsWith('#') ?
+      absoluteUrl(attributes.action, url) : absoluteUrl(url, url);
+    if (!action || !['http:', 'https:'].includes(new URL(action).protocol)) continue;
+    const method = String(attributes.method ?? 'GET').toUpperCase();
+    if (method === 'DIALOG') continue;
+    const fields = [], requiredFields = [];
+    for (const [, tag, rawControl] of body.matchAll(FORM_CONTROL)) {
+      const control = attributesOf(rawControl);
+      const type = String(control.type ?? '').toLowerCase();
+      if (!control.name || 'disabled' in control ||
+          ['submit', 'button', 'reset', 'image'].includes(type) ||
+          tag.toLowerCase() === 'button') continue;
+      addOnce(fields, control.name);
+      if ('required' in control) addOnce(requiredFields, control.name);
+    }
+    const contentType = String(attributes.enctype ?? 'application/x-www-form-urlencoded')
+      .split(';', 1)[0].trim().toLowerCase();
+    page.forms.push({action, method: method === 'POST' ? 'POST' : 'GET',
+      contentType, fields, requiredFields});
+  }
   return page;
 }
 
@@ -1282,8 +1350,17 @@ function enqueue(miner, url, level, foundBy) {
 
 /** A mined file: URL, size, content hash, how it was found, its evidence ID and everything extracted from it. */
 function fileRecord(miner, url, response, foundBy, contentHash = digest(response.body)) {
-  return {url, bytes: Buffer.byteLength(response.body), hash: contentHash, foundBy, evidenceId: response.evidenceId,
+  const record = {url, bytes: Buffer.byteLength(response.body), hash: contentHash, foundBy, evidenceId: response.evidenceId,
     ...extractFromScript(response.body, {url, origin: miner.base}), sourceMap: 'absent'};
+  if (foundBy !== 'page') attachModelSource(record, [{name: url, text: response.body}]);
+  return record;
+}
+
+// Keep source text available to Muse during this run without adding bundle content to saved assets.json.
+function attachModelSource(record, sources) {
+  const modelSource = sources.filter(item => typeof item?.text === 'string' && item.text.trim())
+    .map(item => ({name: item.name, text: item.text}));
+  if (modelSource.length) Object.defineProperty(record, 'modelSource', {value: modelSource});
 }
 
 function sourceName(value) {
@@ -1378,6 +1455,8 @@ function sourceMapRecord(miner, url, response, map, scriptUrl) {
   record.endpoints = mergeEndpoints(record.endpoints);
   record.hosts = uniqueBy(record.hosts, host => `${host.kind} ${host.host}`);
   record.secrets = uniqueBy(record.secrets, secret => secret.hash);
+  attachModelSource(record, selected.map(({index, source}) =>
+    ({name: source, text: map.sourcesContent?.[index]})));
   miner.sourceMapSourcesCut += record.sourcesCut;
   return record;
 }
@@ -1486,6 +1565,25 @@ async function minePage(miner, url) {
   if (response?.status !== 200) return;
   const html = extractFromHtml(response.body, {url});
   const record = fileRecord(miner, url, response, 'page');
+  attachModelSource(record, html.inline.map((text, index) =>
+    ({name: `${url}#inline-${index + 1}`, text})));
+  for (const form of html.forms) {
+    const action = new URL(form.action);
+    if (action.origin !== miner.base) continue;
+    const params = [...new Set([...action.searchParams.keys(),
+      ...(form.method === 'GET' ? form.fields : [])])];
+    const endpoint = {path: action.pathname, method: form.method, params,
+      headers: [], source: 'public-html'};
+    if (form.method === 'POST') {
+      endpoint.bodyEncoding = form.contentType === 'application/x-www-form-urlencoded' ?
+        'form' : form.contentType === 'multipart/form-data' ? 'multipart' : 'raw';
+      endpoint.contentType = form.contentType;
+      endpoint.bodyFields = form.fields;
+      endpoint.bodyStringFields = form.fields;
+      endpoint.bodyRequiredFields = form.requiredFields;
+    }
+    record.endpoints.push(endpoint);
+  }
   record.scripts = html.scripts.filter(script => new URL(script).origin === miner.base).slice(0, 8);
   record.scriptCut = Math.max(0, html.scripts.length - record.scripts.length);
   miner.files.push(record);
@@ -1541,8 +1639,11 @@ function summarize(miner) {
       if (endpoint.bodyEncoding) {
         entry.bodyEncoding = entry.bodyEncoding && entry.bodyEncoding !== endpoint.bodyEncoding ?
           'mixed' : endpoint.bodyEncoding;
+        if (endpoint.contentType) entry.contentType = endpoint.contentType;
         entry.bodyFields = unique([...(entry.bodyFields ?? []), ...(endpoint.bodyFields ?? [])]);
         entry.bodyStringFields = unique([...(entry.bodyStringFields ?? []), ...(endpoint.bodyStringFields ?? [])]);
+        if (endpoint.bodyRequiredFields?.length) entry.bodyRequiredFields =
+          unique([...(entry.bodyRequiredFields ?? []), ...endpoint.bodyRequiredFields]);
         if (Object.keys(endpoint.bodyFieldTypes ?? {}).length)
           entry.bodyFieldTypes = {...(entry.bodyFieldTypes ?? {}), ...endpoint.bodyFieldTypes};
         if (Object.keys(endpoint.fieldShapes ?? {}).length)

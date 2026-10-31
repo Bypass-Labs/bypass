@@ -4,6 +4,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import {DEFAULT_SCOPE, validateScopeTemplate} from './scope.mjs';
 import {appOriginInput, loopback, makeChallenge, pathAllowed, targetURL} from '../network.mjs';
+import {httpMethods} from '../http-methods.mjs';
 import {atomic, change, initStore, rootFrom} from '../store.mjs';
 import {repositoryInfo} from '../repository.mjs';
 import {envName, hash, need, safeName} from '../util.mjs';
@@ -43,6 +44,7 @@ export function prepareScopeTemplate(working, rawUrl, options = {}, {reuse = fal
   need(rawUrl, 'Provide an app URL: bypass blackbox setup <url>.');
   const root = rootFrom(working, false);
   const origin = appOriginInput(rawUrl);
+  const requestedMethods = options.methods == null ? null : httpMethods(options.methods);
   if (options.rps != null) {
     const requestedRate = Number(options.rps);
     need(Number.isFinite(requestedRate) && requestedRate > 0,
@@ -70,11 +72,14 @@ export function prepareScopeTemplate(working, rawUrl, options = {}, {reuse = fal
       `The existing scope differs from the requested setup flags. Review ${file} or use --force to replace it.`);
     targetURL(origin, scope.target.environment);
     const requestedRate = options.rps == null ? scope.limits.rps : Number(options.rps);
-    if (requestedRate > scope.limits.rps) {
-      need(scope.target.environment === 'local' || requestedRate <= 10,
-        'Deployed black-box scope rates must be at most 10 requests per second.');
+    if (requestedRate > scope.limits.rps || requestedMethods &&
+        JSON.stringify(requestedMethods) !== JSON.stringify(scope.methods)) {
+      if (requestedRate > scope.limits.rps)
+        need(scope.target.environment === 'local' || requestedRate <= 32,
+          'Deployed black-box scope rates must be at most 32 requests per second.');
       scope = structuredClone(scope);
-      scope.limits.rps = requestedRate;
+      if (requestedRate > scope.limits.rps) scope.limits.rps = requestedRate;
+      if (requestedMethods) scope.methods = requestedMethods;
       validateScopeTemplate(scope);
       atomic(file, scope);
       return {root, origin, file, scope, created: false, updated: true};
@@ -86,6 +91,7 @@ export function prepareScopeTemplate(working, rawUrl, options = {}, {reuse = fal
   targetURL(origin, environment);
   const scope = structuredClone(DEFAULT_SCOPE);
   scope.target = {origin, environment, acknowledged: null};
+  if (requestedMethods) scope.methods = requestedMethods;
   if (local) scope.limits.minutes = 30;
   scope.credentialOrigins = options['credential-origins'] ?
     credentialOrigins(origin, options['credential-origins']) : [origin];
@@ -95,17 +101,11 @@ export function prepareScopeTemplate(working, rawUrl, options = {}, {reuse = fal
     scope.limits.minutes = 30;
     scope.harvest.thirdParty = 'count-only';
     scope.harvest.sequentialNeighbors = 0;
-    scope.probes.crlfResponseHeader = false;
-    scope.probes.hostHeaderRedirect = false;
-    scope.probes.jwtUnsigned = false;
-    scope.probes.commandExecution = false;
-    scope.probes.pathTraversal = false;
-    scope.probes.xmlExternalEntity = false;
   }
   if (options.rps != null) {
     const rps = Number(options.rps);
     need(Number.isFinite(rps) && rps > 0, '--rps must be a positive number.');
-    need(local || rps <= 10, 'Deployed black-box scope rates must be at most 10 requests per second.');
+    need(local || rps <= 32, 'Deployed black-box scope rates must be at most 32 requests per second.');
     scope.limits.rps = rps;
   }
   if (options.agents != null) {
@@ -180,26 +180,20 @@ function targetName(url, names) {
 
 function authorized(target, scope, {primary, credentialed}) {
   const auth = target.authorization;
-  const writes = primary ? scope.probes.writeOperations ?? [] : [];
-  const methods = [...new Set(['GET', 'HEAD', 'POST', ...writes.map(item => item.method)])];
+  const methods = scope.methods;
   return auth?.origin === target.url && current(auth.expiresAt) &&
     scope.include.every(entry => pathAllowed(entry, auth.paths ?? [])) &&
     methods.every(method => auth.methods?.includes(method)) &&
     auth.maxRequestsPerSecond >= scope.limits.rps &&
-    (!credentialed || !scope.identities.login?.path || auth.loginPaths?.includes(scope.identities.login.path)) &&
-    (!primary || (scope.probes.xmlPostPaths ?? []).every(entry => auth.xmlPostPaths?.includes(entry))) &&
-    writes.every(entry => auth.writeOperations?.some(item =>
-      item.method === entry.method && item.path === entry.path &&
-      item.placement === entry.placement));
+    (!credentialed || !scope.identities.login?.path || auth.loginPaths?.includes(scope.identities.login.path));
 }
 
 function authorizationFile(file, target, scope, {primary, credentialed}) {
-  const writes = primary ? scope.probes.writeOperations ?? [] : [];
   const contract = {paths: scope.include,
-    methods: [...new Set(['GET', 'HEAD', 'POST', ...writes.map(item => item.method)])],
+    methods: scope.methods,
     loginPaths: credentialed && scope.identities.login?.path ? [scope.identities.login.path] : [],
-    xmlPostPaths: primary ? scope.probes.xmlPostPaths ?? [] : [],
-    writeOperations: writes,
+    xmlPostPaths: [],
+    writeOperations: [],
     maxRequestsPerSecond: scope.limits.rps};
   const name = `blackbox.authorization.${target.name}.${hash(contract).slice(0, 8)}.json`;
   const output = path.join(path.dirname(file), name);
@@ -235,12 +229,12 @@ export async function prepareBlackboxSetup(working, rawUrl, options = {}) {
   const minutesFlag = options.minutes != null ? ` --minutes ${Number(options.minutes)}` : '';
   const auditCommand = `bypass blackbox ${quote(origin)}${scopeFlag}${projectFlag}${rateFlag}${modelCallsFlag}${minutesFlag}`;
   if (scope.target.environment === 'local') return {kind: 'blackbox-setup', root, scopeFile: file,
-    origin, credentialOrigins: scope.credentialOrigins, created: prepared.created,
+    origin, methods: scope.methods, credentialOrigins: scope.credentialOrigins, created: prepared.created,
     updated: prepared.updated ?? false, ready: true,
     modelCheck,
     targets: [], steps: [{kind: 'run', command: auditCommand}],
     next: auditCommand};
-  need(scope.limits.rps <= 10, 'Deployed black-box scope rates must be at most 10 requests per second.');
+  need(scope.limits.rps <= 32, 'Deployed black-box scope rates must be at most 32 requests per second.');
 
   if (!fs.existsSync(path.join(root, '.bypass/state.json'))) initStore(root, await repositoryInfo(root));
   const required = new Map();
@@ -299,7 +293,7 @@ export async function prepareBlackboxSetup(working, rawUrl, options = {}) {
   steps.push({kind: 'run', command: auditCommand});
   return {kind: 'blackbox-setup', root, scopeFile: file, origin, created: prepared.created,
     updated: prepared.updated ?? false,
-    credentialOrigins: scope.credentialOrigins, ready: steps.length === 1,
+    methods: scope.methods, credentialOrigins: scope.credentialOrigins, ready: steps.length === 1,
     modelCheck,
     targets: registered, steps, next: steps[0].command};
 }

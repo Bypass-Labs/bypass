@@ -422,7 +422,7 @@ test('operation patterns exclude writes, unknown query placement and templated r
   ]});
   assert.deepEqual(patterns.map(item => item.pattern), ['/api/search', '/api/preview']);
   assert.deepEqual(patterns[0].params.query, ['record-42']);
-  assert.deepEqual(patterns[1].params, {'source.file': ['guide.txt']});
+  assert.deepEqual(patterns[1].params, {'source.file': ['guide.txt'], 'auth.token': []});
   const client = patternsFromOperations({operations: [{method: 'GET', path: '/api/next',
     params: [{name: 'to', in: null, example: 'guide.txt'}], source: ['client-asset']}]});
   assert.deepEqual(client[0].params, {to: ['guide.txt']});

@@ -70,6 +70,7 @@ export async function followupResponseHints(origin, scope, patterns, {requester,
       record.responseFacts = {status: Number.isInteger(response.status) ? response.status : null,
         ...(responseIdentity === 'derived-session' ? {identity: responseIdentity} : {}),
         type: maskSecrets(String(response.type ?? '').replace(/[\x00-\x1f\x7f]/g, ' ')).slice(0, 80),
+        hash: response.hash ?? null,
         shape: response.status === 200 && /json|\+json/i.test(response.type ?? '') &&
           response.shape && typeof response.shape === 'object' ? response.shape : null,
         evidenceId: response.evidenceId ?? null};
@@ -80,7 +81,7 @@ export async function followupResponseHints(origin, scope, patterns, {requester,
       observations.push({path: record.pattern, status: response.status ?? null,
         type: maskSecrets(String(response.type ?? '').replace(/[\x00-\x1f\x7f]/g, ' ')).slice(0, 80), hints,
         publicIds,
-        parameters: Object.keys(record.params ?? {}).filter(name => !credentialQueryKey(name)).slice(0, 16),
+        parameters: Object.keys(record.params ?? {}).slice(0, 16),
         evidenceId: response.evidenceId ?? null});
     }
     coverage.observations += observations.length;
@@ -119,9 +120,6 @@ export async function followupResponseHints(origin, scope, patterns, {requester,
         const proposed = new URL(checked.url);
         if (proposed.origin !== origin) {rejectPath('off-origin'); continue;}
         if (proposedPaths.has(proposed.href)) {rejectPath('duplicate'); continue;}
-        if ([...proposed.searchParams.keys()].some(credentialQueryKey)) {
-          rejectPath('credential-query'); continue;
-        }
         proposedPaths.add(proposed.href);
         let response;
         try {response = await requester({url: proposed.href, identity: 'anonymous', method: 'GET',
@@ -140,6 +138,7 @@ export async function followupResponseHints(origin, scope, patterns, {requester,
         pattern.responseFacts = {status: response.status,
           ...(responseIdentity === 'derived-session' ? {identity: responseIdentity} : {}),
           type: maskSecrets(String(response.type ?? '').replace(/[\x00-\x1f\x7f]/g, ' ')).slice(0, 80),
+          hash: response.hash ?? null,
           shape: /json|\+json/i.test(response.type ?? '') && response.shape &&
             typeof response.shape === 'object' ? response.shape : null,
           evidenceId: response.evidenceId ?? null};
@@ -186,15 +185,15 @@ export function patternsFromOperations(host) {
         !operation.path.startsWith('/') || operation.path.startsWith('//') || operation.path.includes('{')) continue;
     const query = (operation.params ?? []).filter(param => (param.in === 'query' ||
       (param.in == null && (operation.source ?? []).includes('client-asset'))) &&
-      typeof param.name === 'string' && /^[A-Za-z_][A-Za-z0-9_.-]{0,79}$/.test(param.name) &&
-      !credentialQueryKey(param.name));
+      typeof param.name === 'string' && /^[A-Za-z_][A-Za-z0-9_.-]{0,79}$/.test(param.name));
     if (!query.length && (operation.params ?? []).length) continue;
     const row = patterns.get(operation.path) ?? {pattern: operation.path, methods: ['GET'],
       source: [], params: {}, label: {kind: 'unknown'}};
     row.source.push(...(operation.source ?? []));
     for (const param of query) {
       const values = row.params[param.name] ?? [];
-      if (typeof param.example === 'string' && /^[A-Za-z0-9_.-]{1,64}$/.test(param.example) &&
+      if (!credentialQueryKey(param.name) && typeof param.example === 'string' &&
+          /^[A-Za-z0-9_.-]{1,64}$/.test(param.example) &&
           !values.includes(param.example)) values.push(param.example);
       row.params[param.name] = values;
     }

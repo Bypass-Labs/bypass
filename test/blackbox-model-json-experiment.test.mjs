@@ -30,7 +30,7 @@ test('an accepted JSON plan deferred by time retains its full in-memory request 
   assert.equal(run.deferredLeads[0].firstValue, 'first');
 });
 
-test('a refused local JSON contract records a blocked experiment and leaves the run alive', async t => {
+test('a scoped JSON request reports a network block without aborting the run', async t => {
   const root = temp();
   t.after(() => fs.rmSync(root, {recursive: true, force: true}));
   const origin = 'http://127.0.0.1:49381', route = '/api/inspect';
@@ -50,10 +50,10 @@ test('a refused local JSON contract records a blocked experiment and leaves the 
     marker: 'bx111111111111', secondMarker: 'bx222222222222'};
   const run = await runJsonExperiments([lead], scope, {requester, ledger});
   assert.equal(run.results[0].verdict, 'blocked');
-  assert.equal(requester.stats.sent, 0);
+  assert.equal(requester.stats.sent, 1);
   assert.equal(run.investigations[0].stopReason, 'blocked');
   const records = fs.readFileSync(ledger.file, 'utf8').trim().split('\n').map(JSON.parse);
-  assert.ok(records.some(item => item.refused?.rule === 'local-auto-post-contract'));
+  assert.ok(records.some(item => item.blocked));
   assert.ok(records.some(item => item.kind === 'model-json-attempt' && item.verdict === 'blocked'));
 });
 
@@ -229,10 +229,11 @@ test('Muse JSON POST proposals need a reviewed route and an observed body field'
   assert.equal(plan.coverage.sent, 1);
   assert.deepEqual(plan.decisions.map(item => [item.accepted, item.reason]),
     [[false, 'unobserved-post-field'], [false, 'unobserved-post-field'],
-      [false, 'invalid-fixed-fields'], [false, 'invalid-fixed-fields'], [true, undefined]]);
+      [false, 'invalid-fixed-fields'], [true, undefined], [true, undefined]]);
   assert.deepEqual(plan.leads.map(item => [item.path, item.parameter]),
-    [['/api/evaluate', 'expression']]);
-  assert.deepEqual(plan.leads[0].fixedFields, [{field: 'mode', value: 'preview'}]);
+    [['/api/evaluate', 'expression'], ['/api/evaluate', 'expression']]);
+  assert.deepEqual(plan.leads.map(item => item.fixedFields),
+    [[{field: 'token', value: 'demo'}], [{field: 'mode', value: 'preview'}]]);
 });
 
 test('Muse can plan distinct JSON experiments on one observed POST route', async t => {
@@ -290,7 +291,7 @@ test('JSON planning executes an observed read outside the current model page', a
   assert.equal(plan.leads[0]?.observePath, observePath);
 });
 
-test('JSON proposal rejections record marker and syntax reasons without payloads', async t => {
+test('JSON planning preserves model values and treats mismatched proof markers as observations', async t => {
   const root = temp();
   t.after(() => fs.rmSync(root, {recursive: true, force: true}));
   const origin = 'http://127.0.0.1:4329', route = '/api/evaluate';
@@ -311,8 +312,10 @@ test('JSON proposal rejections record marker and syntax reasons without payloads
       return {experiments: [{...base, marker: 'bx000000000000'},
         {...base, firstValue: '<script>alert(1)</script>'}]};
     }});
-  assert.deepEqual(plan.decisions.map(item => [item.reason, item.controlReason]),
-    [['marker-mismatch', undefined], ['invalid-controls', 'unsafe-syntax']]);
+  assert.deepEqual(plan.decisions.map(item => [item.accepted, item.translatedTo]),
+    [[true, 'observation'], [true, undefined]]);
+  assert.deepEqual(plan.leads.map(item => item.oracle), ['observation', 'marker']);
+  assert.equal(plan.leads[1].firstValue, '<script>alert(1)</script>');
   assert.equal(JSON.stringify(plan.decisions).includes('<script>'), false);
 });
 
@@ -338,10 +341,10 @@ test('Muse can repair a rejected JSON control on the same reviewed field', async
         observePath: '', observeAs: 'anonymous', why: 'Compare responses',
         priority: 5, oracle: 'observation'};
       if (calls === 1) return {experiments: [{...base,
-        firstValue: '<script>alert(1)</script>', oracle: 'marker'}]};
+        firstValue: 'plain', oracle: 'marker'}]};
       assert.match(messages[0].content, /Repair these JSON POST experiments/);
-      assert.equal(context.rejected[0].controlReason, 'unsafe-syntax');
-      assert.equal(messages[1].content.includes('<script>'), false);
+      assert.equal(context.rejected[0].controlReason, 'duplicate-values');
+      assert.equal(messages[1].content.includes('firstValue'), false);
       return {experiments: [base]};
     }});
   assert.equal(plan.modelCalls, 2);
@@ -392,6 +395,43 @@ test('literal Muse canaries on a reviewed JSON POST become feedback, not a findi
   assert.match(run.results[0].reason, /unclassified/);
   assert.equal(run.findings.length, 0);
   assert.equal(run.investigations[0].attempts.length, 1);
+});
+
+test('mismatched proof markers still execute Muse’s exact scoped JSON values as observations', async t => {
+  const root = temp();
+  t.after(() => fs.rmSync(root, {recursive: true, force: true}));
+  const origin = 'http://127.0.0.1:4329';
+  const route = `/api/inspect-${randomBytes(4).toString('hex')}`;
+  const file = path.join(root, 'scope.json');
+  fs.writeFileSync(file, JSON.stringify({schemaVersion: 1, target: {origin},
+    probes: {jsonPostPaths: [route]}}));
+  const scope = loadScope({file, origin}).scope;
+  const surface = {jsonBodyOperations: [{path: route, method: 'POST',
+    contentType: 'application/json', fields: ['code']}]};
+  const planned = await planJsonExperiments(surface, scope, {model: 'fixture',
+    budget: 1, modelCallsAvailable: 1, infer: async () => ({experiments: [{
+      family: 'response behavior', path: route, field: 'code', as: 'anonymous',
+      controlValue: 'plain', firstValue: '<script>first</script>',
+      secondValue: 'second;value', marker: 'bx000000000000',
+      secondMarker: 'bx111111111111', fixedFields: [], prelude: [],
+      observePath: '', observeAs: 'anonymous', why: 'Compare the observed POST response',
+      priority: 5}]})});
+  assert.equal(planned.decisions[0].accepted, true);
+  assert.equal(planned.decisions[0].translatedTo, 'observation');
+  assert.equal(planned.leads[0].oracle, 'observation');
+  const sent = [];
+  const run = await runJsonExperiments(planned.leads, scope, {
+    requester: async request => {
+      sent.push(request);
+      const body = JSON.stringify({received: JSON.parse(request.body).code});
+      return {status: 200, type: 'application/json', body,
+        hash: `sha256:${createHash('sha256').update(body).digest('hex')}`,
+        evidenceId: `ev-${sent.length}`};
+    }, surface, modelCallsAvailable: 0});
+  assert.deepEqual(sent.map(request => JSON.parse(request.body).code),
+    ['plain', '<script>first</script>', 'second;value']);
+  assert.equal(run.results[0].kind, 'model-json-observation');
+  assert.equal(run.findings.length, 0);
 });
 
 test('Muse may plan an exact observed JSON POST on a verified deployed target', async t => {
@@ -585,14 +625,8 @@ test('actual CLI proves a Muse-selected reviewed JSON POST transformation and re
     "else if(system.includes('Select distinct harmless response-transformation experiments for the reviewed JSON POST routes')){",
     'const context=JSON.parse(messages[1].content);',
     'const operation=context.operations.find(item=>item.path===process.env.BX_ROUTE&&item.fields.includes(\'expression\'));',
-    "answer={experiments:operation?[{family:'unsafe-json-expression-evaluation',path:operation.path,field:'expression',as:'anonymous',controlValue:'7',firstValue:'<script>alert(1)</script>',secondValue:'8',marker:context.marker,secondMarker:context.secondMarker,fixedFields:[],prelude:[],observePath:'',observeAs:'anonymous',why:'The reviewed JSON field is evaluated',priority:10}]:[]};",
-    '}',
-    "else if(system.includes('Repair these JSON POST experiments')){",
-    'const context=JSON.parse(messages[1].content);',
-    'const operation=context.operations.find(item=>item.path===process.env.BX_ROUTE&&item.fields.includes(\'expression\'));',
-    'const firstValue=`String.fromCharCode(${[...context.marker].map(char=>char.charCodeAt(0)).join(\',\')})`;',
-    "const secondValue=`[${[...context.secondMarker].map(char=>JSON.stringify(char)).join(',')}].join('')`;",
-    "answer={experiments:operation?[{family:'unsafe-json-expression-evaluation',path:operation.path,field:'expression',as:'anonymous',controlValue:'7',firstValue,secondValue,marker:context.marker,secondMarker:context.secondMarker,fixedFields:[],prelude:[],observePath:'',observeAs:'anonymous',why:'The reviewed JSON field is evaluated',priority:10}]:[]};",
+    "const sourceFor=marker=>'(()=>String.fromCharCode('+[...marker].map(char=>char.charCodeAt(0)).join(',')+'))()';",
+    "answer={experiments:operation?[{family:'unsafe-json-expression-evaluation',path:operation.path,field:'expression',as:'anonymous',controlValue:'7',firstValue:sourceFor(context.marker),secondValue:sourceFor(context.secondMarker),marker:context.marker,secondMarker:context.secondMarker,fixedFields:[],prelude:[],observePath:'',observeAs:'anonymous',why:'The reviewed JSON field is evaluated',priority:10}]:[]};",
     '}',
     "else if(system.includes('Interpret only the extracted')){",
     'const context=JSON.parse(messages[1].content);',
@@ -623,9 +657,9 @@ test('actual CLI proves a Muse-selected reviewed JSON POST transformation and re
   assert.deepEqual(surface.jsonBodyOperations.find(item => item.path === route)?.requiredFields, ['expression']);
   assert.equal(surface.apiSchemaCuts, 0);
   assert.ok(web.strategyDecisions.some(item => item.mode === 'json-experiment' &&
-    item.reason === 'invalid-controls' && item.controlReason === 'unsafe-syntax'));
-  assert.ok(web.strategyDecisions.some(item => item.mode === 'json-experiment' &&
-    item.accepted && item.repaired));
+    item.accepted && !item.repaired), JSON.stringify({decisions: web.strategyDecisions,
+    modelError: modeled.data.modelError, webModelError: web.modelError,
+    modelOutput: modeled.data.modelOutput}));
   assert.equal(modeled.code, 3, JSON.stringify({error: modeled.data.modelError,
     findings: modeled.data.findings, decisions: web.strategyDecisions, results: web.results,
     jsonBodyOperations: surface.jsonBodyOperations, modelCoverage: web.modelCoverage}));
