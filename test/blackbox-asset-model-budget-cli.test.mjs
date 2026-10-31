@@ -58,7 +58,7 @@ test('CLI sends late source-map route facts to Muse when the model-call budget a
       "const messages=JSON.parse(fs.readFileSync(value('--prompt-file'),'utf8'));",
       'const system=messages[0].content;',
       'let answer;',
-      "if(system.includes('Interpret the extracted client-asset facts')){",
+      "if(system.includes('client-asset facts')){",
       ' const context=JSON.parse(messages.at(-1).content);',
       " fs.appendFileSync(process.env.BX_ASSET_PAGE_LOG,JSON.stringify({page:context.page,routes:context.files.flatMap(file=>file.routes.map(route=>route.path))})+'\\n');",
       " answer={files:context.files.map(file=>({id:file.id,role:'app',why:'Observed client requests',authFlow:'',routes:file.routes.map(route=>({path:route.path,method:route.method,purpose:'Observed request',parameters:[]})),proposals:[]}))};",
