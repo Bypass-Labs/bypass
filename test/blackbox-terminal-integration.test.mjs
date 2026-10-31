@@ -17,7 +17,7 @@ test('/blackbox asks for scope and rate, runs, and presents report actions', asy
   const url=`http://127.0.0.1:${app.address().port}`,root=temp();
   fs.writeFileSync(path.join(root,'app.mjs'),'export const app = true;\n');
   await execute('init',[root]);
-  const answers=['blackbox',url,'/','50','y','q'];
+  const answers=['blackbox',url,'/','GET,HEAD,POST,PATCH,DELETE','50','y','q'];
   const questions=[],stages=[],output=[];
   let closed=false;
   const ask=async question=>{questions.push(question);
