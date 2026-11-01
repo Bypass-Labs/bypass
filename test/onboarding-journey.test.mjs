@@ -19,6 +19,15 @@ import { reviewSummary } from '../src/experience.mjs';
 
 const source=()=>{const root=temp();fs.writeFileSync(path.join(root,'app.mjs'),'throw new Error("source must not execute");\n');return root;};
 function isolated(t){const state=temp(),ownership=path.join(state,'ownership'),old=process.env.BYPASS_OWNERSHIP_DIR;process.env.BYPASS_OWNERSHIP_DIR=ownership;t.after(()=>{process.env.BYPASS_OWNERSHIP_DIR=old;});return {stateDir:state,packaged:true,env:{BYPASS_OWNERSHIP_DIR:ownership}};}
+function blank(schema){
+  if(schema?.anyOf)return blank(schema.anyOf[0]);
+  const type=Array.isArray(schema?.type)?schema.type.find(item=>item!=='null'):schema?.type;
+  if(type==='array')return [];
+  if(type==='object')return Object.fromEntries((schema.required??[]).map(key=>[key,blank(schema.properties?.[key])]));
+  if(type==='integer'||type==='number')return schema.minimum??0;
+  if(type==='boolean')return false;
+  return schema?.enum?.[0]??'';
+}
 
 test('fresh plugin offers three modes; empty folder is rejected before initialization or DNS',async t=>{
   const host=temp(),c=await mcpClient(host,isolated(t));t.after(()=>c.close());
@@ -78,8 +87,13 @@ test('expired ownership is not reused and a cached target can renew without an o
   const setup=await pluginOnboarding(app,app,{mode:'combined'});assert.equal(setup.nextAction.automatic,true);assert.equal(setup.nextAction.arguments.renew,true);
 });
 
-test('app-only packaged plugin completes a real local HTTP proof with no repository and no source read',async t=>{
-  const calls=[],server=http.createServer((req,res)=>{calls.push(req.url);res.setHeader('Content-Type','application/json');res.end(JSON.stringify({id:'synthetic-private-resource'}));});
+test('app-only packaged wizard starts blackbox with a fresh or saved scope',async t=>{
+  const calls=[],server=http.createServer((req,res)=>{
+    calls.push(req.url);
+    if(req.url==='/'){res.setHeader('Content-Type','text/html');res.end('<a href="/api/private">API</a><script src="/app.js"></script>');}
+    else if(req.url==='/app.js'){res.setHeader('Content-Type','text/javascript');res.end("fetch('/api/private?q=hello')");}
+    else{res.setHeader('Content-Type','application/json');res.end(JSON.stringify({id:'synthetic-private-resource'}));}
+  });
   await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));t.after(()=>new Promise(resolve=>server.close(resolve)));
   const host=temp(),options=isolated(t),c=await mcpClient(host,options);t.after(()=>c.close());const url=`http://127.0.0.1:${server.address().port}`;
   let setup=await c.call('bypass_onboarding',{mode:'live',url});assert.equal(setup.nextAction.tool,'bypass_connect_app');
@@ -88,13 +102,32 @@ test('app-only packaged plugin completes a real local HTTP proof with no reposit
   const workspace=await c.call('bypass_workspace');assert.equal(workspace.selectedRepository,null);assert.equal(workspace.repository,null);assert.equal(workspace.selectionRequired,false);
   assert.equal((await c.call('bypass_dashboard')).done[0],'App profile connected; source not selected');
   await c.call('bypass_verify_target',{name:'local',method:'local'});
-  await c.call('bypass_authorize_target',{name:'local',accept:true,methods:['GET'],paths:'/api'});
-  await c.call('bypass_add_probe',{name:'private',target:'local',kind:'anonymous',path:'/api/private','resource-id':'synthetic-private-resource',expected:'private'});
-  setup=await c.call('bypass_onboarding');assert.equal(setup.ready.source,false);assert.equal(setup.nextAction.arguments.mode,'live');
-  const review=await c.call(setup.nextAction.tool,setup.nextAction.arguments);
-  const finished=await c.call('bypass_review_step',{id:review.runId,action:'complete'});assert.equal(finished.status,'completed');
-  assert.ok(calls.length>0);const state=read(profile.root),run=state.runs.find(r=>r.id===review.runId);
-  assert.equal(run.host.inventory.sourceFileCount,0);assert.equal(run.host.reads.length,0);assert.ok(state.checks.length>0);assert.ok(state.findings.some(f=>f.status==='confirmed'));
+  await c.call('bypass_authorize_target',{name:'local',accept:true,methods:['GET'],paths:'/'});
+  fs.writeFileSync(path.join(profile.root,'blackbox.scope.json'),JSON.stringify({target:{origin:'https://another-app.example'}}));
+  setup=await c.call('bypass_onboarding');assert.equal(setup.ready.source,false);
+  assert.equal(setup.nextAction.tool,'bypass_blackbox_setup');
+  assert.match(setup.nextAction.arguments.out,/^blackbox\.[a-f0-9]{12}\.scope\.json$/);
+  const {out,...scopeArgs}=setup.nextAction.arguments;
+  assert.deepEqual(scopeArgs,{url,include:'/',methods:'GET',rps:2,environment:'local'});
+  const limits={'model-calls':6,'max-tasks':2,'max-urls':10,minutes:1};
+  const fresh=await c.call(setup.nextAction.tool,{...setup.nextAction.arguments,...limits});
+  assert.equal(fresh.ready,true);assert.equal(fresh.created,true);
+  const saved=await c.call(setup.nextAction.tool,{...setup.nextAction.arguments,...limits});
+  assert.equal(saved.ready,true);assert.equal(saved.created,false);assert.equal(saved.scopeFile,fresh.scopeFile);
+  const started=await c.call('bypass_blackbox_start',{url,scope:saved.scopeFile,'accept-local':true,...limits});
+  assert.equal(started.status,'running');
+  let cursor=0,finished=null,decisions=0;
+  const deadline=Date.now()+30000;
+  while(Date.now()<deadline){
+    const current=await c.call('bypass_blackbox_next',{after:cursor});cursor=current.cursor;
+    for(const pending of current.pending){await c.call('bypass_blackbox_submit',{id:pending.id,decision:blank(pending.schema)});decisions++;}
+    if(current.status!=='running'){finished=current;break;}
+    await new Promise(resolve=>setTimeout(resolve,100));
+  }
+  assert.equal(finished?.status,'completed');
+  assert.ok(decisions>0);assert.ok(calls.length>0);
+  assert.ok(fs.existsSync(path.join(profile.root,'.bypass/runs',finished.result.run,'evidence.jsonl')));
+  assert.equal(read(profile.root).runs.length,0,'wizard did not call bypass_scan');
 });
 
 test('CLI mode and environment use selectors; app-only creates a profile without touching cwd',async t=>{
