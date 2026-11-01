@@ -33,7 +33,8 @@ test('packaged app-only setup reaches one approval picker without DNS, repositor
   const rejected=await c.raw('bypass_authorize_target',{...next.arguments,accept:false});assert.equal(rejected.result.isError,true);
   assert.equal(read(connected.root).targets[0].authorization,null,'Decline/custom do not grant permission');
   const approved=await c.call(next.tool,{...next.arguments,accept:true,production:true});
-  assert.equal(approved.nextAction.tool,'bypass_scan');assert.equal(approved.onboarding.stage,'ready');
+  assert.equal(approved.nextAction.tool,'bypass_blackbox_setup');assert.equal(approved.onboarding.stage,'ready');
+  assert.equal(approved.nextAction.arguments.url,'https://ux-demo.example.com');
   const saved=read(connected.root).targets[0];assert.equal(saved.ownership.status,'acknowledged');assert.equal(sharedOwnership(saved.url),null);
   assert.equal(scopeReady(saved,'/api/owned','POST'),true);assert.throws(()=>scopeReady(saved,'/api/owned','DELETE'),/outside/);
   assert.equal(read(connected.root).runs.length,0,'setup does not start an assessment');
