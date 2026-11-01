@@ -1,4 +1,5 @@
 import { promptValue, confirmChoice, credentialTypes, verificationChoices, scopeSuggestions } from './interaction.mjs';
+import { ownershipReady, verificationDisabled } from './ownership-store.mjs';
 import { appEnvironmentQuestion, appEnvironmentChoices } from './app-connection.mjs';
 import { promptAPIProfile } from './provider-setup.mjs';
 import readline from 'node:readline/promises';
@@ -90,6 +91,7 @@ export function printResult(data){
     if(incomplete)console.log(`\nStopped at: ${r.result?.details?.stage||r.stage||'review'}\nSetup and partial evidence are saved. No complete security result is available.\nNext inside Bypass: ${r.result?.details?.next||'status'}\nEvidence: .bypass/runs/${r.id}.json`);
     console.log(muted(`Exit ${value.exitCode} · model calls ${r.result?.modelCalls??0} · evidence stored locally`));return;
   }
+  if(value.target?.challenge&&verificationDisabled(value.target)){console.log(`\n${value.target.url}\nDomain verification: off (project setting). No DNS/HTTPS proof was checked.\nNext: approve the exact testing scope.`);return;}
   if(value.target?.challenge){const t=value.target;console.log(`\n${bold(t.name)} · ${t.url}\nOwnership: ${t.ownership?.status||'pending'}\n`);if(t.environment==='local')console.log(`Next: bypass target verify ${t.name} --method local`);else console.log(`Publish TXT record:\n  Name:  ${t.challenge.record}\n  Value: ${t.challenge.token}\n\nOr serve exactly that value at:\n  ${t.url}${t.challenge.httpPath}\n\nThen: bypass target verify ${t.name} --method dns`);if(t.authorization)console.log(`Scope: ${t.authorization.paths.join(', ')} · expires ${t.authorization.expiresAt}`);return;}
   if(value.findings){console.log(`\n${value.findings.length} findings`);for(const f of value.findings)console.log(`  ${bold(f.id)}  ${f.title}\n    ${label(f.status)} · ${f.fixture?'local fixture':f.simulation?'SIMULATED · unproven':'evidence available'}`);return;}
   if(value.checks&&Array.isArray(value.checks)){console.log(`\n${value.checks.length} saved checks`);for(const c of value.checks)console.log(`  ${bold(c.id)}  ${c.title||c.behavior}\n    ${c.status||c.lastResult?.status||'not run'} · ${c.enabled===false?'disabled':c.target}`);if(value.message)console.log(value.message);return;}
@@ -155,7 +157,7 @@ export async function modelTestWizard(root,name,{interactive=process.stdin.isTTY
 function updateWorkspace(prompt,root){
   if(!prompt.setContext)return;
   const info=readiness(root);
-  prompt.setContext({demo:false,engine:info.engine.mode,title:info.project.name,repo:root,branch:info.project.repository.branch,app:info.target?`${info.target.url} · ${info.target.authorized?'authorized':info.target.ownership==='verified'?'scope required':'DNS pending'}`:'not connected · code preview available',model:info.model?`${info.model.name} · ${info.model.provider} · ${info.model.connection}`:'not configured · /models for API setup',checks:info.checks.enabled,memory:info.memory?.records||0});
+  prompt.setContext({demo:false,engine:info.engine.mode,title:info.project.name,repo:root,branch:info.project.repository.branch,app:info.target?`${info.target.url} · ${info.target.authorized?'authorized':info.target.ownership==='verified'||info.target.ownershipVerification==='off'?'scope required':'verification pending'}`:'not connected · code preview available',model:info.model?`${info.model.name} · ${info.model.provider} · ${info.model.connection}`:'not configured · /models for API setup',checks:info.checks.enabled,memory:info.memory?.records||0});
 }
 async function modelWizard(ask,root,io){
   const setup=await promptAPIProfile(ask,(title,options)=>choose(ask,options,title));if(!setup)return;
@@ -170,7 +172,7 @@ async function targetWizard(ask,root){
   const url=appOriginInput(await ask('App domain or URL'));const environment=(await choose(ask,appEnvironmentChoices,appEnvironmentQuestion(url)))?.id;if(!environment)return;
   const name=await promptValue(ask,'Target name',[environment]);
   const added=await execute('target add',[name],{project:root,url,environment});printResult(added);
-  if(added.target.ownership.status==='verified'){console.log(`\nOwnership already verified for ${new URL(url).hostname}.`);await authorizeWizard(ask,root,name);}
+  if(verificationDisabled(added.target)||ownershipReady(added.target)){console.log(verificationDisabled(added.target)?'Domain verification is off. Scope approval confirms you control this app.':`\nOwnership already verified for ${new URL(url).hostname}.`);await authorizeWizard(ask,root,name);}
   else if(environment==='local'){await execute('target verify',[name],{project:root,method:'local'});await authorizeWizard(ask,root,name);}
   else console.log('\nPublish the ownership challenge, then choose Targets → Verify. App testing becomes available after verification and scope approval.');
 }
@@ -181,7 +183,7 @@ async function authorizeWizard(ask,root,name){
   console.log(`Methods: ${methods.join(', ')} · Paths: ${paths} · Limit: 2 requests/second`);
   console.log('Also read public app pages/scripts for sign-in setup (anonymous GET only).');
   if(mayChangeData(methods))console.log('These methods can change test data or start jobs. Only explicitly configured requests will run.');
-  if(!await confirmChoice(ask,'Do you authorize these methods and paths?',{yes:'Authorize the displayed scope',no:'Keep testing disabled'}))return;
+  if(!await confirmChoice(ask,verificationDisabled(target)?'Confirm you control this app and authorize these methods and paths?':'Do you authorize these methods and paths?',{yes:'Authorize the displayed scope',no:'Keep testing disabled'}))return;
   let production=false;if(target?.environment==='production')production=await confirmChoice(ask,'Confirm testing on this production app',{yes:'Authorize the displayed production scope',no:'Keep production testing disabled'});
   if(target?.environment==='production'&&!production)return;
   printResult(await execute('target authorize',[name],{project:root,paths,methods,accept:true,production,'public-config':true}));
@@ -297,11 +299,11 @@ export async function terminal(options={},io){
     while(true){
       let choice;
       if(advanced&&prompt.rich){
-        const action=await choose(ask,[{id:'1',label:'Resume setup'},{id:'2',label:'App ownership & test accounts'},{id:'3',label:'Models & privacy'},{id:'6',label:'Saved tests'},{id:'7',label:'Monitoring'},{id:'8',label:'Session context'},{id:'9',label:'Manual fixture controls'},{id:'10',label:'Muse plugin'}],'Settings');
+        const action=await choose(ask,[{id:'1',label:'Resume setup'},{id:'2',label:'App ownership & test accounts'},{id:'3',label:'Models & privacy'},{id:'6',label:'Saved tests'},{id:'7',label:'Monitoring'},{id:'8',label:'Session context'},{id:'9',label:'Manual fixture controls'},{id:'10',label:'Muse plugin'},{id:'11',label:'Domain ownership verification'}],'Settings');
         advanced=false;if(!action)continue;choice=action.id;
       }else if(advanced){
         dashboard(root);
-        console.log('SETTINGS & ADVANCED\n  1  Resume setup                  6  Saved tests\n  2  App & test accounts           7  Monitoring\n  3  Models                        8  Session context\n  4  Review preview                9  Manual demo controls\n  5  Review results               10  Muse plugin\n  0  Back to project home\n');
+        console.log('SETTINGS & ADVANCED\n  1  Resume setup                  6  Saved tests\n  2  App & test accounts           7  Monitoring\n  3  Models                        8  Session context\n  4  Review preview                9  Manual demo controls\n  5  Review results               10  Muse plugin\n 11  Domain ownership verification\n  0  Back to project home\n');
         choice=await ask('Choose, or type a command','0');
         if(['0','back'].includes(choice)){advanced=false;continue;}
       }else{
@@ -397,20 +399,28 @@ export async function terminal(options={},io){
         if(choice==='app'){
           const info=readiness(root),state=read(root);let target=state.targets.find(t=>t.name===state.activeTarget);
           if(!target){await targetWizard(ask,root);continue;}
-          const ownershipValid=target.ownership?.status==='verified'&&Date.parse(target.ownership.expiresAt)>Date.now();
+          const ownershipValid=verificationDisabled(target)||ownershipReady(target);
+          const proofMethod=target.environment==='local'?'local':target.ownershipVerification==='http'?'http':'dns';
           if(!ownershipValid&&Date.parse(target.challenge?.expiresAt||0)<=Date.now())target=(await run('target verify',[target.name],{renew:true})).target;
-          if(ownershipValid)console.log(`\n${target.url}\nOwnership verified · ${info.target.authorized?'testing scope authorized':'choose the paths you authorize for testing'}`);
+          if(verificationDisabled(target))console.log(`\n${target.url}\nDomain verification is off. Approve the exact testing scope to continue.`);
+          else if(ownershipValid)console.log(`\n${target.url}\nOwnership verified · ${info.target.authorized?'testing scope authorized':'choose the paths you authorize for testing'}`);
           else if(target.environment==='local')console.log(`\nConfirm you control the local app at ${target.url}.`);
+          else if(proofMethod==='http')console.log(`\nServe exactly ${target.challenge.token} at:\n${target.url}${target.challenge.httpPath}\nChoose Check the HTTPS file when ready.`);
           else console.log(`\nPublish this DNS record:\n  Type   TXT · TTL Auto\n  Name   ${target.challenge.record}\n  Value  ${target.challenge.token}\n\nChoose the DNS check below when ready. Testing scope is authorized separately.`);
-          prompt.setNext?.(info.target.authorized?'Edit allowed methods and paths, or return with Esc to review.':ownershipValid?'Choose allowed HTTP methods and paths':'Publish the TXT record, then choose Check the DNS TXT record');
-          const action=await choose(ask,[{id:ownershipValid?'authorize':'verify',label:ownershipValid?(info.target.authorized?'Edit allowed methods & paths':'Choose allowed methods & paths'):`Check ${target.environment==='local'?'local ownership':'the DNS TXT record'}`},{id:'add',label:'Connect another app'},{id:'advanced',label:'All app settings & test accounts'}],'App connection');
-          if(action?.id==='verify')await run('target verify',[target.name],{method:target.environment==='local'?'local':'dns'});
+          prompt.setNext?.(info.target.authorized?'Edit allowed methods and paths, or return with Esc to review.':ownershipValid?'Choose allowed HTTP methods and paths':proofMethod==='http'?'Publish the file, then choose Check the HTTPS file':'Publish the TXT record, then choose Check the DNS TXT record');
+          const action=await choose(ask,[{id:ownershipValid?'authorize':'verify',label:ownershipValid?(info.target.authorized?'Edit allowed methods & paths':'Choose allowed methods & paths'):`Check ${proofMethod==='local'?'local ownership':proofMethod==='http'?'the HTTPS file':'the DNS TXT record'}`},{id:'add',label:'Connect another app'},{id:'advanced',label:'All app settings & test accounts'}],'App connection');
+          if(action?.id==='verify')await run('target verify',[target.name],{method:proofMethod});
           else if(action?.id==='authorize')await authorizeWizard(ask,root,target.name);
           else if(action?.id==='add')await targetWizard(ask,root);
           else if(action?.id==='advanced'){advanced=true;}
           continue;
         }
-        if(choice==='1'){const result=await onboard({project:root,flow:'quickstart'},[],{...prompt,inDashboard:true});root=result.root;}
+        if(choice==='11'){
+          const current=read(root).settings.ownershipVerification||'dns';
+          const selected=await choose(ask,[{id:'off',label:'Off: acknowledge control when approving scope'},{id:'dns',label:'Require DNS TXT verification'},{id:'http',label:'Require an HTTPS verification file'}],`Domain verification: ${current}. Changing it clears testing permission.`);
+          if(selected)await run('config set',['ownershipVerification',selected.id]);
+        }
+        else if(choice==='1'){const result=await onboard({project:root,flow:'quickstart'},[],{...prompt,inDashboard:true});root=result.root;}
         else if(choice==='2'){
           const state=read(root);const action=await choose(ask,[{label:'Add a target',id:'add'},{label:'Show targets / ownership challenges',id:'show'},{label:'Verify ownership',id:'verify'},{label:'Authorize testing scope',id:'authorize'},{label:'Select active target',id:'use'},{label:'Add test identity',id:'identity'},{label:'Test identity connection',id:'identity-test'},{label:'Revoke testing',id:'revoke'}],'Targets & identities');
           if(action?.id==='add')await targetWizard(ask,root);

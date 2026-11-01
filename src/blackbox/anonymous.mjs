@@ -1,5 +1,5 @@
 import {parseOpenApi} from './recon.mjs';
-import {validateUrl} from './scope.mjs';
+import {validateUrl, observedMethodAuthorized} from './scope.mjs';
 
 function registrationContract(item, path, fields) {
   const segments = path.split('/').filter(Boolean);
@@ -12,10 +12,7 @@ function registrationContract(item, path, fields) {
 
 /** Admit exact public JS/OpenAPI method contracts within the reviewed scope. */
 export async function deriveLocalPostScope(scope, mined, requester) {
-  const postAuthorized = scope.methods.includes('POST') &&
-    (scope.target.environment === 'local' ||
-    scope.target.acknowledged === 'verified-authorized' &&
-    scope.authorizedOrigins?.[scope.target.origin]?.authorization?.methods?.includes('POST'));
+  const postAuthorized = observedMethodAuthorized(scope, 'POST');
   // Check the route shape and include boundary before admitting an observed POST.
   // The GET-only action guard is bypassed for this check; explicit never entries
   // still apply to both read and write methods.

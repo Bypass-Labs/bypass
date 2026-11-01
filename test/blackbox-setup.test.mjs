@@ -294,7 +294,7 @@ test('deployed setup and authorization accept an operator-selected rate up to 32
     state.targets[0].ownership = {status: 'verified', method: 'dns', expiresAt: expiry,
       origin};
   });
-  const approved = await cli(root, 'target', 'authorize', step.target, '--scope-file', step.file);
+  const approved = await cli(root, 'target', 'authorize', step.target, '--scope-file', step.file, '--accept');
   assert.equal(approved.code, 0, JSON.stringify(approved.data));
   assert.equal(approved.data.authorization.maxRequestsPerSecond, 32);
   const ready = await cli(root, 'blackbox', 'setup', origin, '--rps', '32');
@@ -309,6 +309,8 @@ test('deployed setup and authorization accept an operator-selected rate up to 32
 test('deployed blackbox setup prepares separate app and apex challenges without authorizing them', async t => {
   const root = temp();
   t.after(() => fs.rmSync(root, {recursive: true, force: true}));
+  await cli(root, 'init');
+  await cli(root, 'config', 'set', 'ownershipVerification', 'dns');
   const origin = 'https://app.example.test';
   const args = ['blackbox', 'setup', origin, '--include', '/api', '--domains', 'example.test',
     '--audit-domains', 'example.test'];
@@ -366,6 +368,8 @@ test('deployed blackbox setup prepares separate app and apex challenges without 
 test('setup prepares an extra credential origin with its own ownership and authorization steps', async t => {
   const root = temp();
   t.after(() => fs.rmSync(root, {recursive: true, force: true}));
+  await cli(root, 'init');
+  await cli(root, 'config', 'set', 'ownershipVerification', 'dns');
   const origin = 'https://app.example.test';
   const secondary = 'https://api.example.test';
   const args = ['blackbox', 'setup', origin, '--include', '/api', '--domains', 'example.test',

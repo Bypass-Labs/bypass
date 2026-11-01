@@ -51,7 +51,7 @@ test('provided Git URL is an actual connect action before app setup, even with a
 });
 
 test('same origin keeps verified ownership and exact scope across checkout switch and fresh MCP session',async t=>{
-  const options=isolated(t),host=temp(),app=source();await execute('init',[host]);
+  const options=isolated(t),host=temp(),app=source();await execute('init',[host]);await execute('config set',['ownershipVerification','dns'],{project:host});
   const o={project:host};await execute('target add',['prod'],{...o,url:'https://APP.example.com/',environment:'production'});
   t.mock.method(dns,'resolveTxt',async()=>[[read(host).targets[0].challenge.token]]);
   await execute('target verify',['prod'],{...o,method:'dns'});await execute('target authorize',['prod'],{...o,accept:true,production:true,paths:'/api',methods:'GET,HEAD,POST'});
@@ -63,7 +63,7 @@ test('same origin keeps verified ownership and exact scope across checkout switc
   assert.equal(dns.resolveTxt.mock.callCount(),1);await c.close();
   const fresh=await mcpClient(host,options);t.after(()=>fresh.close());
   const resumed=await fresh.call('bypass_onboarding');assert.equal(resumed.selectedRepository,app);assert.equal(resumed.stage,'ready');assert.match(resumed.steps.find(s=>s.id==='ownership').message,/already verified/);
-  const other=source();await execute('init',[other]);
+  const other=source();await execute('init',[other]);await execute('config set',['ownershipVerification','dns'],{project:other});
   const added=await execute('target add',['prod'],{project:other,url:'https://app.example.com:443/',environment:'production'});
   assert.equal(added.target.challenge,undefined);assert.equal(added.target.ownership.reused,true);assert.equal(added.target.authorization,null,'ownership alone never imports a grant into an independent project');
   const foreign=await execute('target add',['other'],{project:other,url:'https://other.example.com',environment:'production'});assert.equal(foreign.target.ownership.status,'pending');
@@ -79,7 +79,7 @@ test('same origin keeps verified ownership and exact scope across checkout switc
 });
 
 test('expired ownership is not reused and a cached target can renew without an old challenge',async t=>{
-  isolated(t);const app=source();await execute('init',[app]);await execute('target add',['prod'],{project:app,url:'https://expired.example.com',environment:'production'});
+  isolated(t);const app=source();await execute('init',[app]);await execute('config set',['ownershipVerification','dns'],{project:app});await execute('target add',['prod'],{project:app,url:'https://expired.example.com',environment:'production'});
   t.mock.method(dns,'resolveTxt',async()=>[[read(app).targets[0].challenge.token]]);await execute('target verify',['prod'],{project:app,method:'dns'});
   const dir=process.env.BYPASS_OWNERSHIP_DIR;for(const file of fs.readdirSync(dir).filter(f=>f.endsWith('.json'))){const p=path.join(dir,file),record=JSON.parse(fs.readFileSync(p));record.proof.expiresAt='2000-01-01T00:00:00Z';fs.writeFileSync(p,JSON.stringify(record));}
   assert.equal(sharedOwnership('https://expired.example.com'),null);

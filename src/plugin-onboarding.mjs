@@ -1,6 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import { choiceInput, scopeSuggestions } from './interaction.mjs';
+import { choiceInput, scopeSuggestions, testingApproval } from './interaction.mjs';
 import { hostAI } from './execution-mode.mjs';
 import { read } from './store.mjs';
 import { VERSION, hash, need } from './util.mjs';
@@ -13,7 +13,7 @@ import { registrationStatus } from './registration.mjs';
 import { appConnection } from './app-connection.mjs';
 import { methodInput } from './http-methods.mjs';
 import { reviewQuestion, reviewInput, sourceStatus, repositoryAction } from './application-setup.mjs';
-import { ownershipRevoked, sharedOwnership } from './ownership-store.mjs';
+import { ownershipReady, verificationDisabled, sharedOwnership } from './ownership-store.mjs';
 
 function blackboxScopeOutput(root,origin){
   const file=path.join(root,'blackbox.scope.json');
@@ -49,17 +49,18 @@ export async function pluginOnboarding(cwd,root,{intent='real',mode,url,environm
   }
   const target=state.targets.find(t=>t.name===state.activeTarget),ready=reviewReadiness(state,{executionMode:'muse-host'});
   const source=mode!=='live';
-  let owned=!!target&&target.ownership?.status==='verified'&&Date.parse(target.ownership.expiresAt)>Date.now()&&!ownershipRevoked(target),authorized=false;
+  const skipVerification=verificationDisabled(target);
+  let owned=ownershipReady(target),authorized=false;
   if(owned)try{scopeReady(target);authorized=true;}catch{}
-  const reusable=target&&!owned&&target.environment!=='local'?sharedOwnership(target.url):null;
-  const challenge=target&&!owned?target.challenge:null;
+  const reusable=target&&!skipVerification&&!owned&&target.environment!=='local'?sharedOwnership(target.url):null;
+  const challenge=target&&!skipVerification&&!owned?target.challenge:null;
   const steps=[{id:'repository',label:source?'Application source':'Source review not selected',status:source?'complete':'skipped',path:source?root:null},
     {id:'host',label:'AI reasoning in this Muse session',status:'complete',message:'No provider profile or API key required.',billing:hostAI().billing},
     {id:'app',label:'App address',status:target?'complete':'needed',url:target?.url||null,environment:target?.environment||null,tool:'bypass_add_target'},
-    {id:'ownership',label:target?.environment==='local'?'Local ownership acknowledgment':'App ownership',status:owned?'complete':target?'needed':'waiting',tool:'bypass_verify_target',
-      ...(owned?{message:`Ownership already verified for ${new URL(target.url).hostname}.`,expiresAt:target.ownership.expiresAt,reused:!!target.ownership.reused}:{}),
-      ...(challenge?{challenge:{record:challenge.record,value:challenge.token,method:target.environment==='local'?'local':'dns',expiresAt:challenge.expiresAt,renewRequired:Date.parse(challenge.expiresAt)<=Date.now()}}:{})},
-    {id:'scope',label:'Testing permission',status:authorized?'complete':owned?'needed':'waiting',tool:'bypass_authorize_target',paths:target?.authorization?.paths||[],methods:target?.authorization?.methods||[],message:'Ownership and testing permission are separate; production requires explicit acknowledgment.'}];
+    {id:'ownership',label:target?.environment==='local'?'Local ownership acknowledgment':'App ownership',status:owned?'complete':skipVerification?'skipped':target?'needed':'waiting',tool:'bypass_verify_target',
+      ...(owned&&target.ownership.status==='verified'?{message:`Ownership already verified for ${new URL(target.url).hostname}.`,expiresAt:target.ownership.expiresAt,reused:!!target.ownership.reused}:skipVerification?{message:owned?'App control acknowledged with testing permission.':'Confirm control when approving tests.'}:{}),
+      ...(challenge?{challenge:{record:challenge.record,...(target.ownershipVerification==='http'?{url:target.url+challenge.httpPath}:{}),value:challenge.token,method:target.environment==='local'?'local':target.ownershipVerification==='http'?'http':'dns',expiresAt:challenge.expiresAt,renewRequired:Date.parse(challenge.expiresAt)<=Date.now()}}:{})},
+    {id:'scope',label:'Testing permission',status:authorized?'complete':owned||skipVerification?'needed':'waiting',tool:'bypass_authorize_target',paths:target?.authorization?.paths||[],methods:target?.authorization?.methods||[],message:skipVerification?'Confirm you control this app and approve its exact testing scope.':'Ownership and testing permission are separate; production requires explicit acknowledgment.'}];
   const {identities,usable,probes}=ready;
   steps.push({id:'accounts',label:'Test accounts (optional)',status:usable.length>=2?'complete':'optional',tool:'bypass_import_identity',configured:identities.map(i=>({name:i.name,type:i.type,credential:credentialStatus(state,target,i)})),message:'Existing or authorized dedicated accounts are optional; missing credentials do not block anonymous checks.'},
     {id:'registration',label:'Account registration check',status:target?.registration?'configured':'optional',tool:'bypass_configure_registration',...registrationStatus(target)},
@@ -67,7 +68,7 @@ export async function pluginOnboarding(cwd,root,{intent='real',mode,url,environm
   const requestedOrigin=mode!=='code'&&url?appOriginInput(url):null;
   const live=mode!=='code'&&authorized&&ready.live&&(!requestedOrigin||target?.url===requestedOrigin);
   const next=steps.find(s=>s.status==='needed');
-  let nextAction=next?{id:next.id,tool:next.tool,...(next.id==='ownership'?{question:'Verify that you control this app: publish the exact TXT record, then check DNS.',challenge:next.challenge}:{})}:mode==='live'?{
+  let nextAction=next?{id:next.id,tool:next.tool,...(next.id==='ownership'?{question:target.ownershipVerification==='http'?'Publish the HTTPS verification file, then check it.':'Publish the TXT record, then check DNS.',challenge:next.challenge}:{})}:mode==='live'?{
     id:'review',tool:'bypass_blackbox_setup',arguments:{url:target.url,include:target.authorization.paths.join(','),methods:target.authorization.methods.join(','),rps:target.authorization.maxRequestsPerSecond,environment:target.environment,...blackboxScopeOutput(root,target.url)},
     message:'Reuse this app and authorized scope. Ask only for Muse calls (default 120) and minutes (default 30), then set up and start the blackbox audit in this Muse session.'
   }:{id:'review',tool:'bypass_scan',arguments:{mode},message:'Show the selected source/app and scope, then start the requested review.'};
@@ -84,18 +85,25 @@ export async function pluginOnboarding(cwd,root,{intent='real',mode,url,environm
       if(nextAction.automatic){const base=nextAction.arguments.name;let n=2;while(state.targets.some(t=>t.name===nextAction.arguments.name))nextAction.arguments.name=base+n++;}
     }
   }
-  if(reviewScope&&mode!=='code'&&owned&&(!requestedOrigin||requestedOrigin===target.url))nextAction={id:'scope',tool:'bypass_authorize_target'};
+  if(reviewScope&&mode!=='code'&&(owned||skipVerification)&&(!requestedOrigin||requestedOrigin===target.url))nextAction={id:'scope',tool:'bypass_authorize_target'};
   if(nextAction.id==='ownership'){
     if(reusable)nextAction={id:'ownership',tool:'bypass_verify_target',automatic:true,arguments:{name:target.name,method:reusable.method},message:'Reuse existing valid ownership for this app URL. No DNS publication is needed.'};
-    else if(target?.environment!=='local'&&!challenge)nextAction={id:'ownership',tool:'bypass_verify_target',automatic:true,arguments:{name:target.name,renew:true,method:'dns'},message:'The prior ownership proof has expired. Issue a new challenge.'};
+    else if(target?.environment!=='local'&&!challenge)nextAction={id:'ownership',tool:'bypass_verify_target',automatic:true,arguments:{name:target.name,renew:true,method:target.ownershipVerification==='http'?'http':'dns'},message:'The prior ownership proof has expired. Issue a new challenge.'};
     else if(target?.environment==='local')Object.assign(nextAction,{question:`Do you control the app at ${target.url} on this computer?`,input:choiceInput('ownership',[{id:'confirm',label:'Confirm local ownership',description:'I control this local application.',arguments:{name:target.name,method:'local'}},{id:'later',label:'Set up later',description:'Keep live testing disabled.'}])});
-    else nextAction.input=choiceInput('ownership',[{id:'check',label:'I added the TXT record — check DNS',description:'Check the displayed record without starting tests.',arguments:{name:target.name,method:'dns'}},{id:'later',label:source?'Review code while DNS updates':'Save and verify later',description:'Keep app testing disabled.'},{id:'http',label:'Use an HTTPS verification file',description:'Show the exact file URL and contents instead.'}],{recommended:'check'});
+    else nextAction.input=choiceInput('ownership',[{id:'check',label:target.ownershipVerification==='http'?'I added the file: check HTTPS':'I added the TXT record: check DNS',description:'Check the displayed proof without starting tests.',arguments:{name:target.name,method:target.ownershipVerification==='http'?'http':'dns'}},{id:'later',label:source?'Review code while DNS updates':'Save and verify later',description:'Keep app testing disabled.'},{id:target.ownershipVerification==='http'?'dns':'http',label:target.ownershipVerification==='http'?'Use a DNS TXT record':'Use an HTTPS verification file',description:'Show the alternative ownership proof.'}],{recommended:'check'});
   }
-  if(nextAction.id==='scope')Object.assign(nextAction,{question:`Which HTTP methods may Bypass use on ${target.url}?`,input:methodInput(target.authorization?.methods),
-    pathInput:choiceInput('paths',scopeSuggestions(target).map((item,n)=>({...item,id:String(n)})),{recommended:'0',custom:'value'}),
-    scope:{url:target.url,environment:target.environment,paths:target.authorization?.paths||[],maxRequestsPerSecond:target.authorization?.maxRequestsPerSecond||2,expiresAt:target.authorization?.expiresAt||null,publicConfigDiscovery:target.authorization?.publicConfigDiscovery||false,publicConfigOption:{label:'Read public app pages and scripts to discover sign-in setup',method:'GET',authenticated:false}},
-    guidance:'Open the host method picker with custom input. Show the exact URL, paths, rate and expiry. Explain POST creates data/jobs, PUT/PATCH change data, DELETE removes it. Include optional public-config discovery (bounded anonymous GET of this app’s pages/scripts) in the scope summary so it can be approved with the testing methods, without a separate question. Pass public-config true only if this was explicitly included in the approved summary. Pass exactly the selected methods; never broaden permission. Reuse current explicit scope.'});
+  if(nextAction.id==='scope'){
+    const scope={url:target.url,environment:target.environment,paths:target.authorization?.paths||['/'],
+      methods:target.authorization?.methods||['GET','HEAD','POST'],maxRequestsPerSecond:target.authorization?.maxRequestsPerSecond||2,
+      expiresAt:target.authorization?.expiresAt||new Date(Date.now()+7*86400000).toISOString(),
+      publicConfigDiscovery:target.authorization?.publicConfigDiscovery??true};
+    const input=testingApproval(target,scope);
+    Object.assign(nextAction,{question:input.question,input,scope,
+      arguments:{name:target.name,paths:scope.paths.join(','),methods:scope.methods,'public-config':scope.publicConfigDiscovery,rps:scope.maxRequestsPerSecond},
+      custom:{methods:methodInput(target.authorization?.methods),paths:choiceInput('paths',scopeSuggestions(target).map((item,n)=>({...item,id:String(n)})),{recommended:'0',custom:'value'})},
+      guidance:'Show the compact proposed scope and Approve / Decline / Custom instructions picker. Explain that POST may create data or start jobs. Approve confirms app control and the displayed testing scope, including production when shown. Continue automatically after approval. Custom opens method/path choices or accepts instructions; do not require a questionnaire. Keep optional account creation separate unless its exact effects were explicitly approved. Domain verification is a project setting; show DNS/HTTPS steps only when required. Never describe acknowledgment as verified domain ownership.'});
+  }
   return {version:VERSION,runtime:identity,intent,mode,workspace,selectedRepository:source?root:null,profileRoot:root,engine:'host',ai:hostAI(),stage:nextAction.id==='review'?'ready':nextAction.id,steps,ready:{source,live},coverageGaps:mode==='code'?[]:ready.coverageGaps,nextAction,
     alternatives:mode==='combined'&&source&&!live?[{label:'Review code now; connect the app later',tool:'bypass_scan',arguments:{mode:'code'}}]:[],
-    guidance:'Show compact Done / Now / Next. Use native pickers with recommended options and custom notes whenever meaningful alternatives exist. Reuse known answers; discover technical values before asking. Text-only input is reserved for an unknown exact URL/path or a user-selected custom value. Use supplied repository and app URL as actual tool inputs before progressing. Show billing/privacy once at the AI step before review, separately from pickers. Accounts are optional. Never ask users to export tokens or restart Muse for credentials. Source hypotheses are not live proof. App-only review skips source and reports its coverage limits.'};
+    guidance:'Show a short stage label and the next input. Do not repeat Done / Now / Next after simple choices, summarize the checklist, or ask to continue between automatic steps. Use nextAction already returned by a tool rather than calling onboarding again. Use native pickers with recommended options and custom notes whenever meaningful alternatives exist. Reuse known answers; discover technical values before asking. Text-only input is reserved for an unknown exact URL/path or a user-selected custom value. Use supplied repository and app URL as actual tool inputs before progressing. Show billing/privacy only if not already disclosed by the installer or this session. Accounts are optional. Never ask users to export tokens or restart Muse for credentials. Source hypotheses are not live proof. App-only review skips source and reports its coverage limits.'};
 }

@@ -1,3 +1,4 @@
+import {ownershipReady} from '../ownership-store.mjs';
 // Authentication of the two test accounts: finds the login call (pinned in the scope, mined from bundles or
 // documented in OpenAPI), sends exactly one POST of the operator's credentials per account, takes the token from
 // the answer and hands the guarded requester a private env. No credential or token reaches the ledger or a log.
@@ -281,7 +282,7 @@ function loginRefusal(scope, origin, path) {
   if (scope.expiresAt && Date.parse(scope.expiresAt) <= Date.now()) return {rule: 'scope-expired'};
   if (scope.target.environment !== 'local') {
     const registered = scope.authorizedOrigins?.[origin];
-    if (!registered || registered.ownership?.status !== 'verified' || Date.parse(registered.ownership.expiresAt) <= Date.now() ||
+    if (!registered || !ownershipReady(registered) ||
       registered.authorization?.origin !== origin || Date.parse(registered.authorization.expiresAt) <= Date.now() ||
       !registered.authorization.loginPaths?.includes(path) || scope.identities.login?.path !== path)
       return {rule: 'login-post-authorization'};
