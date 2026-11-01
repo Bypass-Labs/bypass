@@ -33,10 +33,15 @@ nonempty inclusion replaces that detector's defaults; exclusions win. Explicit r
 available when switching modes. Discovery plans and bundled policy lists
 require no Docker, model configuration, or inference.
 
-Bundled policies cover object ownership/tenant access, privileged action
-boundaries, outbound destinations, and filesystem containment. The JSON catalog
-under `policies/` references Markdown bodies authored once. Custom catalogs use
-the same schema, with unique IDs and repository-relative in-scope body paths.
+Bundled policies cover authentication and authorization, interpreter and query
+injection, browser and HTTP trust boundaries, unsafe parsing, network and
+filesystem effects, file and field handling, credentials, cryptographic trust
+decisions, sensitive data, resource bounds, workflow integrity, and
+build/extension execution. The JSON catalog under
+`policies/` references Markdown bodies authored once. Mapping assigns only
+applicable surface-policy pairs so the broader catalog does not spend the task
+budget on clearly unrelated checks. Custom catalogs use the same schema, with
+unique IDs and repository-relative in-scope body paths.
 
 ```json
 {

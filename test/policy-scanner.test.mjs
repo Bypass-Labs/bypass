@@ -53,7 +53,7 @@ test('SAST, policy, and combined plans have independent exact-ID selectors witho
     if(detectors.includes('codeql'))assert.deepEqual(result.plan.includeRules,['js/sql-injection']);
     if(detectors.includes('policy'))assert.deepEqual(result.plan.includePolicies,['authz/object-access']);
   }
-  const listed=await execute('scanner policies');assert.equal(listed.policies.length,4);
+  const listed=await execute('scanner policies');assert.equal(listed.policies.length,19);
   assert.deepEqual(fs.readdirSync(root),[]);
   await assert.rejects(execute('discover',[],{project:root,plan:true,detector:'policy',rule:'js/sql-injection'}),/require the sast/);
 });

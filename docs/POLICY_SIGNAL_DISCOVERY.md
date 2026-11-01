@@ -32,8 +32,11 @@ does not establish a detector.
 1. Keep CodeQL as the default detector. Add explicit `policy` and combined
    `codeql,policy` selections. Policy discovery must work with zero CodeQL alerts
    and without constructing a CodeQL database.
-2. Start with four policies: `authz/object-access`, `authz/privileged-action`,
-   `network/destination-boundary`, and `filesystem/path-containment`.
+2. Use a broad bundled catalog spanning identity, authorization, injection,
+   browser and HTTP trust boundaries, parsing, network and filesystem effects,
+   file and data handling, resource bounds, workflow integrity, and trusted
+   execution. Queue only the surface-policy pairs assigned during cited mapping
+   so unrelated checks do not consume the bounded task budget.
 3. Support bundled policies and explicitly selected project policy documents.
    Use a JSON catalog for identifiers, versions, applicability, and Markdown
    references; author each policy body once. Custom policies use the same schema.
@@ -220,9 +223,10 @@ signals, report, and artifact interfaces continue with matching typed Muse tools
 1. **Functional Muse slice:** policy catalog, v3 contracts, lightweight runtime,
    bounded evidence service, durable task queue, and one object-authorization
    policy working end to end in Muse. Keep existing CodeQL tests green.
-2. **Standalone and policy breadth:** implement the API task loop and the other
-   three policies. Test identical tasks/contracts and the strict execution-mode
-   boundary. Missing API settings fail clearly; Muse never consults them.
+2. **Standalone and policy breadth:** implement the API task loop and broaden the
+   bundled invariant catalog. Test identical tasks/contracts and the strict
+   execution-mode boundary. Missing API settings fail clearly; Muse never
+   consults them.
 3. **Combined discovery and quality:** combine detector outputs with retained
    provenance, complete coverage/reporting/resume tests, document interfaces,
    and establish a real-model quality baseline.
