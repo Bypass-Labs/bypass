@@ -94,7 +94,7 @@ for (const sequence of [false, true]) test(`authorized deployed protected-body $
   });
   for (const step of setup.data.steps.filter(item => item.kind === 'authorization')) {
     const approved = await cli(root, 'target', 'authorize', step.target,
-      '--scope-file', step.file);
+      '--scope-file', step.file, '--accept', '--production');
     assert.equal(approved.code, 0, JSON.stringify(approved.data));
     assert.ok(approved.data.authorization.methods.includes('POST'));
   }

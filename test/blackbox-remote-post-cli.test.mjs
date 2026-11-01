@@ -80,7 +80,8 @@ test('authorized deployed CLI executes and replays an observed model-selected PO
     return null;
   });
   for (const step of setup.data.steps.filter(item => item.kind === 'authorization')) {
-    const approved = await cli(root, 'target', 'authorize', step.target, '--scope-file', step.file);
+    const approved = await cli(root, 'target', 'authorize', step.target,
+      '--scope-file', step.file, '--accept', '--production');
     assert.equal(approved.code, 0, JSON.stringify(approved.data));
     assert.deepEqual(approved.data.authorization.methods,
       ['GET', 'HEAD', 'POST', 'PATCH', 'DELETE']);
