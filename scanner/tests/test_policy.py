@@ -198,8 +198,16 @@ class PolicyTests(unittest.TestCase):
         self.assertTrue(any(s['origin'].get('kind')=='policy' for s in signals))
 
     def test_all_bundled_policies_have_readable_content_and_no_inference_dependency(self):
-        self.assertEqual(len(catalog()),4)
+        self.assertEqual(len(catalog()),19)
         self.assertTrue(all(p['instructions'].strip() for p in catalog()))
+
+    def test_mapping_queues_only_applicable_surface_policy_pairs(self):
+        run=self.start({'includePolicies':[]});self.mapping(run)
+        data=self.engine.policy_engine().load(run)
+        queued=[task for task in data['tasks'] if task['definition']['phase']=='policy']
+        self.assertEqual([task['policy']['id'] for task in queued],['authz/object-access'])
+        skipped={row['policyId'] for row in data['coverage'] if row['outcome']=='not_applicable'}
+        self.assertEqual(skipped,{policy['id'] for policy in catalog()}-{'authz/object-access'})
 
     def test_nested_security_guidance_does_not_leak_to_unrelated_surface(self):
         (self.source/'other').mkdir();(self.source/'other/SECURITY.md').write_text('OTHER_SERVICE_ONLY_INVARIANT')
