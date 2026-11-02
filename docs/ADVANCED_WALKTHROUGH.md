@@ -54,7 +54,7 @@ bypass init --repo https://github.com/YOUR-ORG/YOUR-APP.git \
   --dir "$CUSTOMER_REPO" --non-interactive
 ```
 
-For the guided experience, run `bypass onboard "$CUSTOMER_REPO"`. It handles model selection, app connection, DNS verification and scope within one resumable wizard. The explicit commands below are the manual alternative. If the wizard already added a model or target, inspect it with `model list` / `target list` instead of adding the same name again.
+For the guided experience, run `bypass onboard "$CUSTOMER_REPO"`. It handles model selection, app connection and exact testing scope within one resumable wizard. Domain proof is optional: the default confirms control during scope approval, while DNS TXT and HTTPS-file verification remain available in project settings. The explicit commands below are the manual alternative. If the wizard already added a model or target, inspect it with `model list` / `target list` instead of adding the same name again.
 
 ## 2. Connect the live app and verify its DNS TXT record
 

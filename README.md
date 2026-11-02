@@ -268,6 +268,8 @@ bypass
 
 Choose **Connect my application**, or **See the full local walkthrough**. In one first step, onboarding asks where Muse inference runs. Selecting **Meta Model API** immediately opens a masked API-key prompt, discovers the Muse models available to your team, recommends Muse Wonder for the deepest reviews, and verifies one synthetic request before continuing. The key is retained only in the running process; project state stores its environment-variable name, never its value. Type `/` to browse commands; **Ctrl+O** opens activity details and **Ctrl+T** toggles tasks. `bypass onboard` opens setup directly. Use `NO_COLOR=1` to disable color or `BYPASS_PLAIN=1` for a scrolling interface.
 
+Run `bypass onboard` from your application folder, or enter the folder when prompted. Domain verification is optional: the default flow confirms app control together with explicit testing permissions, while DNS TXT and HTTPS-file proof remain configurable under **Settings → Domain ownership verification**.
+
 Before repository initialization, Bypass shows the exact `.gitignore`, `.bypassignore`, and local `.bypass/` file plan. You can apply it, customize source-review exclusions, or leave tracked files unchanged. For scripts, `bypass init . --plan --json` reports the same structured `fileChanges` without creating Bypass project files; `--tracked-files skip` initializes only local state.
 
 ### Model configuration

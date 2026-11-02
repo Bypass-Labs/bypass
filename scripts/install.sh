@@ -99,7 +99,7 @@ NODE
       fail "The CLI is installed, but Muse setup did not finish. Fix the reason above and rerun this same installer. Your project settings and evidence are preserved."
     fi
   else
-    printf 'Next: %s onboard\n\nMuse Code plugin (requires Muse Code installed, opened, and signed in first):\n  curl -fsSL https://bypasslabs.ai/install/muse | bash\n' "$command_name"
+    printf 'Start onboarding (copy this command):\n  %s onboard\n\nRun it from your app folder, or enter the app folder when Bypass asks.\n\nMuse Code plugin (requires Muse Code installed, opened, and signed in first):\n  curl -fsSL https://bypasslabs.ai/install/muse | bash\n' "$command_name"
   fi
   printf '\nUpdate or repair: rerun this same installer. Project settings and evidence stay in your app.\n'
 }

@@ -32,6 +32,8 @@ The installer detects the configured shell from `SHELL` and adds one managed PAT
 
 Open a new terminal, or run the printed `export PATH=…` command to activate Bypass in the existing terminal. A piped child process cannot change its parent shell's environment. The installer prints full-path commands that work immediately too. Set `BYPASS_NO_MODIFY_PATH=1` on the bash process to opt out (for example, `curl -fsSL https://bypasslabs.ai/install | BYPASS_NO_MODIFY_PATH=1 bash`). CI uses this opt-out for its temporary install paths; automated tests independently exercise Bash and Zsh startup files. Pinned releases before 0.3.2 retain their manual PATH setup.
 
+The installer prints `bypass onboard` on its own copyable line. Run it from the application folder; if you start elsewhere, the wizard asks for the application folder or Git URL. `Start onboarding` is a heading, not part of the shell command.
+
 Startup-file references: [Bash](https://www.gnu.org/software/bash/manual/html_node/Bash-Startup-Files), [Zsh](https://zsh.sourceforge.io/Doc/Release/Files.html).
 
 Artifacts contain the CLI, native Muse Code plugin, and an official checksum-pinned Node.js runtime. Six builds are published: Windows x64/arm64 ZIPs, macOS x64/arm64 archives, and Linux x64/arm64 archives. Node 22 requires Windows 10/Server 2016+, macOS 11+, or glibc 2.28+ Linux. Alpine/musl and 32-bit systems are not supported. Git, Muse Code and Docker remain separate prerequisites for the workflows that use them; downloading Bypass itself requires neither GitHub access nor a system Node installation.
@@ -56,7 +58,7 @@ Decline, EOF, cancellation, CI or `BYPASS_NO_OPEN_MUSE=1` do not approve or laun
 
 The source installer variants and installation skill are generated and uploaded with every release. Promotion requires their sizes and SHA-256 digests to match R2 metadata, alongside all six runtime archives. The public entry points always resolve the promoted release. No extra public repository or system npm is required.
 
-The CLI-only path is `bypass onboard`. Existing app state stays in the app's `.bypass` folder.
+The CLI-only path is `bypass onboard`. Existing app state stays in the app's `.bypass` folder. New projects do not require DNS verification: app control is confirmed with the exact testing permission by default. DNS TXT and HTTPS-file proof remain configurable under **Settings → Domain ownership verification**.
 
 ## CI publishing
 

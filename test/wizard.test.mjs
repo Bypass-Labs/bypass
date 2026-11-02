@@ -71,8 +71,10 @@ test('wizard production scope requires the separate production confirmation',asy
   await change(root,state=>{state.models[0].lastTest={status:'connected'};state.models[0].lastAttempt={status:'connected'};});
   await wizard(t,root,['1','','yes','no','n']);
   assert.equal(read(root).targets[0].authorization,null);
-  await wizard(t,root,['','','yes','yes','n']);
+  const result=await wizard(t,root,['','','yes','yes','n']);
   assert.equal(read(root).targets[0].authorization.productionAcknowledged,true);
+  assert.match(result.output,/No DNS record required/);
+  assert.doesNotMatch(result.output,/Add this DNS record/);
 });
 
 test('failed mandatory Muse preflight stays in the same step and never creates project state',async t=>{
