@@ -112,7 +112,7 @@ Choose **SAST**, **Policy**, or **Both** in Muse Code:
 | Mode | What it checks | AI usage |
 | --- | --- | --- |
 | **SAST** | CodeQL security rules across supported languages | No model calls |
-| **Policy** | Source paths against broad policies for identity, authorization, injection, protocol boundaries, parsing, data, resources, workflows, and trusted execution | Your active Muse Code session |
+| **Policy** | Source paths against broad policies for identity and delegation, authorization, injection, AI and protocol boundaries, data lineage, integrations, reliability, workflows, and trusted execution | Your active Muse Code session |
 | **Both** | CodeQL rules and AI policy discovery, with independent selections and evidence | Your active Muse Code session for policy tasks |
 
 SAST/Both use GitHub CodeQL under its [separate usage terms](https://github.com/github/codeql-cli-binaries/blob/main/LICENSE.md); Bypass's license does not grant CodeQL rights for private or commercial code.
