@@ -155,7 +155,9 @@ evaluation tasks accept verdicts; discovery submissions still cannot assign them
 Issued read receipts bind citations to the task, revision, file hash, and range.
 Exact submissions are idempotent. Cancellation/interruption retain accepted
 cases; resume checks source/snapshot/image identity and reissues unfinished
-leases. Expired stage budgets require a new scan with explicit limits.
+leases. Failed SAST queries are retried without discarding accepted evaluations;
+new signals get new cases within the original evaluation budget. Expired stage
+budgets require a new scan with explicit limits.
 
 JSON/Markdown reports separate confirmed, refuted, unresolved, and unevaluated
 cases, with severity rationale and evidence. Inspect `evaluation/cases.json`,

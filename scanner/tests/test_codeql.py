@@ -220,6 +220,35 @@ else: raise SystemExit(10)
         self.engine.resume(run)
         self.assertIn('Source changed',self.wait(run)['message'])
 
+    def test_evaluation_resume_retries_failed_discovery_and_preserves_verdicts(self):
+        self.source.joinpath('a.py').write_text('VULNERABLE')
+        self.source.joinpath('a.ts').write_text('VULNERABLE')
+        fault=self.control/'query-fail-python'
+        fault.touch()
+        run=self.start({'evaluation':'auto'})
+        def settled():
+            deadline=time.monotonic()+8
+            while run in self.engine.tasks and time.monotonic()<deadline:
+                time.sleep(.01)
+            self.assertNotIn(run,self.engine.tasks)
+        settled()
+        task=invoke('next_task',{'run':run},self.engine)['task']
+        ref=invoke('evidence',{'run':run,'task':task['id'],'operation':'read','arguments':{'path':'a.ts'}},self.engine)['evidence']['reference']['id']
+        verdict={'caseId':task['caseId'],'outcome':'refuted','rationale':'The fixture marker is not a security sink.',
+                 'severity':'unknown','severityRationale':'No vulnerability established.','evidence':[ref],
+                 'counterevidence':'The source contains only a fixture marker.','prerequisites':[],
+                 'impact':'No supported impact.','openQuestions':[],'nextAction':'Retain the source review.','followUpQuestions':[]}
+        result=invoke('submit',{'run':run,'task':task['id'],'sourceRevision':task['sourceRevision'],'result':verdict},self.engine)
+        self.assertEqual(result['status'],'incomplete')
+        fault.unlink()
+        self.engine.resume(run)
+        settled()
+        status=self.engine.status(run)
+        self.assertTrue(all(entry.get('queryComplete') for entry in status['languages']),status)
+        self.assertEqual(status['status'],'awaiting_reasoning',status)
+        self.assertEqual(status['evaluationSummary']['refuted'],1)
+        self.assertEqual(status['evaluationSummary']['cases'],2)
+
     def test_cancel_kills_process_group_and_preserves_artifacts(self):
         self.source.joinpath('a.py').write_text('VULNERABLE')
         (self.control/'slow-python').touch()

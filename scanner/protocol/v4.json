@@ -368,69 +368,34 @@
           ]
         },
         "caseId": {
-          "type": "string",
-          "minLength": 1,
-          "maxLength": 160
+          "$ref": "#/schemas/evaluationResult/properties/caseId"
         },
         "outcome": {
-          "type": "string",
-          "enum": [
-            "confirmed",
-            "refuted",
-            "needs_review"
-          ]
+          "$ref": "#/schemas/evaluationResult/properties/outcome"
         },
         "rationale": {
-          "type": "string",
-          "minLength": 1,
-          "maxLength": 32000
+          "$ref": "#/schemas/evaluationResult/properties/rationale"
         },
         "severity": {
-          "type": "string",
-          "enum": [
-            "critical",
-            "high",
-            "medium",
-            "low",
-            "informational",
-            "unknown"
-          ]
+          "$ref": "#/schemas/evaluationResult/properties/severity"
         },
         "severityRationale": {
-          "type": "string",
-          "minLength": 1,
-          "maxLength": 2000
+          "$ref": "#/schemas/evaluationResult/properties/severityRationale"
         },
         "evidence": {
           "$ref": "#/schemas/evidenceList"
         },
         "prerequisites": {
-          "type": "array",
-          "items": {
-            "type": "string",
-            "minLength": 1,
-            "maxLength": 2000
-          },
-          "maxItems": 1000
+          "$ref": "#/schemas/evaluationResult/properties/prerequisites"
         },
         "impact": {
-          "type": "string",
-          "minLength": 1,
-          "maxLength": 2000
+          "$ref": "#/schemas/evaluationResult/properties/impact"
         },
         "openQuestions": {
-          "type": "array",
-          "items": {
-            "type": "string",
-            "minLength": 1,
-            "maxLength": 2000
-          },
-          "maxItems": 1000
+          "$ref": "#/schemas/evaluationResult/properties/openQuestions"
         },
         "nextAction": {
-          "type": "string",
-          "minLength": 1,
-          "maxLength": 2000
+          "$ref": "#/schemas/evaluationResult/properties/nextAction"
         }
       },
       "required": [

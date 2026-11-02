@@ -64,28 +64,28 @@ class EvaluationEngine(TaskEngine):
         self.verify_source(state)
         run = state['id']
         directory = self.directory(run)
+        signals = json.loads((self.w.directory(run)/'signals.json').read_text())
         if (directory/'state.json').is_file():
             data = self.load(run)
             if data['revision']!=state['sourceRevision']:
                 raise ValueError('Evaluation snapshot changed; start a new scan.')
-            if state['evaluation']=='completed':
+            known = {identity for case in data['cases'] for identity in case['signalIds']}
+            signals = [signal for signal in signals if signal['id'] not in known]
+            if not signals and all(task['status']=='done' for task in data['tasks']):
+                self.finish(state,data)
                 return
             if time.time()>=data['deadline']:
                 raise ValueError('Evaluation run budget expired; start a new scan with explicit limits.')
             for task in data['tasks']:
                 if task['status']=='leased':
                     task['status']='pending'
-            state.update(status='awaiting_reasoning', stage='evaluation', evaluation='running', phase='evaluation/tasks',
-                         message='Continue source-only evaluation with next_task.')
-            self.save(state,data)
-            return
-        recorded = json.loads((self.w.directory(run)/'source-manifest.json').read_text())
-        analysis, _ = select(recorded, state['config'])
-        limits = {**MANIFEST['policyLimits'], **state['config'].get('evaluationLimits',{})}
-        data = {'run':run,'revision':state['sourceRevision'],'files':analysis['files'],
-                'limits':limits,'deadline':time.time()+limits['timeoutSeconds'],
-                'tasks':[],'receipts':{},'coverage':[],'bytes':0,'modelRequests':0,'cases':[]}
-        signals = json.loads((self.w.directory(run)/'signals.json').read_text())
+        else:
+            recorded = json.loads((self.w.directory(run)/'source-manifest.json').read_text())
+            analysis, _ = select(recorded, state['config'])
+            limits = {**MANIFEST['policyLimits'], **state['config'].get('evaluationLimits',{})}
+            data = {'run':run,'revision':state['sourceRevision'],'files':analysis['files'],
+                    'limits':limits,'deadline':time.time()+limits['timeoutSeconds'],
+                    'tasks':[],'receipts':{},'coverage':[],'bytes':0,'modelRequests':0,'cases':[]}
         for signal in signals:
             case = {'id':'case_'+digest([data['revision'],signal['id']])[:24],
                     'signalIds':[signal['id']], 'outcome':'not_run', 'evaluation':None}
@@ -97,7 +97,7 @@ class EvaluationEngine(TaskEngine):
                               for ref in signal['evidence']))
             if invalid:
                 self.unresolved(case, 'Candidate evidence is unavailable, out of scope or does not match the snapshot.')
-            elif len(data['tasks'])>=limits['maxTasks']:
+            elif len(data['tasks'])>=data['limits']['maxTasks']:
                 self.unresolved(case, 'Evaluation task budget exhausted before this candidate was reviewed.')
             else:
                 data['tasks'].append(self.task(data,case,signal))
@@ -107,7 +107,7 @@ class EvaluationEngine(TaskEngine):
         state.update(status='awaiting_reasoning',stage='evaluation',evaluation='running',phase='evaluation/tasks',
                      message='Discovery finished; source-only evaluation is ready.')
         self.save(state,data)
-        if not data['tasks']:
+        if all(task['status']=='done' for task in data['tasks']):
             self.finish(state,data)
 
     @staticmethod

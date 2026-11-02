@@ -324,6 +324,15 @@ class Workflow:
                 state.update(sourceRevision=recorded['revision'], sourceReads=len(recorded['files']))
                 self.save(state)
             if resuming and (directory/'evaluation/state.json').is_file():
+                if not state['importSarif'] and any(not entry.get('queryComplete') for entry in state['languages']):
+                    analysis, _ = select_scope(recorded, state['config'])
+                    self.scan(state, analysis, cancel)
+                    policy_gaps = state.get('policy') and any(c['outcome'] in ('needs_review','deferred')
+                        for c in self.policy_engine().load(state['id'])['coverage'])
+                    incomplete = policy_gaps or any(entry['status']!='completed' for entry in state['languages'])
+                    state['discoveryStatus'] = 'incomplete' if incomplete else 'completed'
+                if cancel.is_set():
+                    raise InterruptedError('Cancellation requested.')
                 self.evaluation_engine().prepare(state)
                 return
             analysis, scope_manifest = select_scope(recorded, state['config'])

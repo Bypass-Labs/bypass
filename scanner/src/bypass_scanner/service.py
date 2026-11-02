@@ -52,15 +52,15 @@ def invoke(operation, arguments, engine=None):
             query=arguments.get('query','').lower()
             result=response(operation,policies=[p for p in items if query in (p['id']+' '+p['title']).lower()])
         elif operation in ('next_task','evidence','submit'):
-            policy=engine.task_engine(arguments['run'], arguments.get('task'))
+            tasks=engine.task_engine(arguments['run'], arguments.get('task'))
             if operation=='next_task':
-                run,task=policy.next_task(arguments['run'])
+                run,task=tasks.next_task(arguments['run'])
                 result=response(operation,run['status'],run['message'],run=run,**({'task':task} if task else {}))
             elif operation=='evidence':
-                run,evidence=policy.evidence(arguments['run'],arguments['task'],arguments['operation'],arguments.get('arguments',{}))
+                run,evidence=tasks.evidence(arguments['run'],arguments['task'],arguments['operation'],arguments.get('arguments',{}))
                 result=response(operation,run['status'],run['message'],run=run,evidence=evidence)
             else:
-                run=policy.submit(arguments['run'],arguments['task'],arguments['sourceRevision'],arguments['result'])
+                run=tasks.submit(arguments['run'],arguments['task'],arguments['sourceRevision'],arguments['result'])
                 result=response(operation,run['status'],run['message'],run=run)
         elif operation == 'rules':
             items = engine.catalog()['rules']

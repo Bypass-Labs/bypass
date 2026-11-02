@@ -67,7 +67,11 @@ for(const vulnerable of [true,false]){
           evidence:[ref],counterevidence:'No binding in the cited handler; deployment and upstream controls are unknown.',assumptions:['Unprivileged caller reaches this handler.'],openQuestions:['Is upstream enforcement present?'],
           trace:[{role:'entrypoint',evidenceId:ref},{role:'sink',evidenceId:ref}]}]:[]};
       validateJSON(task.resultSchema,submission);
-      run=(await client.call('bypass_discover_submit',{run:run.id,task:task.id,sourceRevision:task.sourceRevision,result:submission})).run;
+      const submitted=await client.raw('bypass_discover_submit',{run:run.id,task:task.id,sourceRevision:task.sourceRevision,result:submission});
+      const accepted=JSON.parse(submitted.result.content[0].text);
+      assert.ok(accepted.run,JSON.stringify(accepted));
+      assert.equal(submitted.result.isError,accepted.run.status==='incomplete');
+      run=accepted.run;
     }
     assert.equal(run.status,vulnerable?'incomplete':'completed',JSON.stringify(run));assert.equal(run.signalCount,vulnerable?1:0);
     assert.equal(run.evaluation,vulnerable?'incomplete':'completed');
