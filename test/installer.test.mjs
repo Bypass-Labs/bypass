@@ -30,6 +30,7 @@ test('installer verifies checksums, works without system Node, survives repeat i
   const env={...process.env,PATH:'/usr/bin:/bin',BYPASS_NO_MODIFY_PATH:'1',BYPASS_INSTALL_DIR:install,BYPASS_BIN_DIR:bin,BYPASS_DOWNLOAD_BASE_URL:`http://127.0.0.1:${server.address().port}/downloads/bypass`};
   const run=()=>execFile('/bin/bash',[script],{env,timeout:30000});
   const output=(await run()).stdout;assert.match(output,/Installed Bypass 0.3.1/);assert.match(output,/Automatic PATH setup skipped/);assert.match(output,/To use bypass in this terminal now/);
+  assert.match(output,/Start onboarding \(copy this command\):\n  .*bypass onboard\n/);assert.doesNotMatch(output,/Next: .*bypass onboard/);
   assert.equal((await execFile(path.join(bin,'bypass'),['--version'],{env})).stdout.trim(),'Bypass 0.3.1');
   const current=fs.readlinkSync(path.join(install,'current'));await run();assert.equal(fs.readlinkSync(path.join(install,'current')),current);
   const generated=path.join(directory,'generated');buildInstallAssets(generated);
@@ -57,4 +58,5 @@ test('install documentation keeps standalone and Muse Code prerequisites distinc
   assert.match(readme,/Muse Code plugin[^\n]*Muse Code installed, opened, and signed in first/);
   assert.match(bash,/standalone CLI \(no Muse Code required\).*bypasslabs\.ai\/install \| bash/);
   assert.match(powershell,/standalone CLI \(no Muse Code required\).*bypasslabs\.ai\/install\.ps1 \| iex/);
+  for(const installer of [bash,powershell]){assert.match(installer,/Start onboarding \(copy this command\)/);assert.match(installer,/Run it from your app folder/);assert.doesNotMatch(installer,/Next: .*onboard/);}
 });

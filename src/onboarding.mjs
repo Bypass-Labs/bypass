@@ -58,7 +58,7 @@ export async function onboard(options={}, args=[], io={}) {
   say(mode==='live'
     ? 'A black-box audit uses your Muse connection and does not need Docker. Setup and saved tests need no model.'
     : 'Source AI review uses Docker and your Muse connection. Setup and saved tests need no model.');
-  io.setTasks?.('Setup',['Choose and connect Muse inference',mode==='live'?'Connect running app':'Connect application source',mode==='code'?'App testing skipped':'Verify app / choose permissions','Save setup and open project']);
+  io.setTasks?.('Setup',['Choose and connect Muse inference',mode==='live'?'Connect running app':'Connect application source',mode==='code'?'App testing skipped':'Choose app testing permissions','Save setup and open project']);
   io.task?.(0,'running');
 
   say('\nStep 1 of 4 / Choose and connect Muse inference');
@@ -134,7 +134,7 @@ export async function onboard(options={}, args=[], io={}) {
   say(`✓ Muse connection saved: ${model.model}\n  Destination: ${model.dataDestination}\n  Authentication: verified`);
 
   io.task?.(1,'done');io.task?.(2,'running');io.setNext?.('Save setup → open your project → run a review');
-  say(`\nStep 3 of 4 / ${mode==='code'?'Code-only review — app setup skipped':'App ownership and testing permissions'}`);
+  say(`\nStep 3 of 4 / ${mode==='code'?'Code-only review — app setup skipped':'App testing permissions'}`);
   let state=read(root), target=mode==='code'?null:state.targets.find(t=>t.name===state.activeTarget);
   if(mode!=='code'){
     if(!target&&state.targets.length){target=state.targets[0];await call(root,'target use',[target.name]);}
@@ -147,6 +147,7 @@ export async function onboard(options={}, args=[], io={}) {
     }
   }
   if(target)io.setContext?.({app:`${target.url} · ${authorized(target)?'authorized':verified(target)||verificationDisabled(target)?'scope required':'verification pending'}`});
+  if(target&&verificationDisabled(target))say('No DNS record required. Confirm control when you approve the exact testing permissions below. You can require DNS or HTTPS later in Settings → Domain ownership verification.');
   if(target){await connectApp();target=read(root).targets.find(t=>t.name===target.name);}
 
   io.task?.(2,'done');io.task?.(3,'running');

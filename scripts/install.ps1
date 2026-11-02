@@ -174,7 +174,7 @@
                 if ($LASTEXITCODE -ne 0) { throw 'The CLI is installed, but Muse setup did not finish. Fix the reason above and rerun this same installer. Your project settings and evidence are preserved.' }
             } finally { $env:MUSE_NO_AUTO_UPDATE = $previousAutoUpdate }
         } else {
-            Write-Host "`nNext: $commandName onboard`n`nMuse Code plugin (requires Muse Code installed, opened, and signed in first):`n  irm https://bypasslabs.ai/install/muse.ps1 | iex"
+            Write-Host "`nStart onboarding (copy this command):`n  $commandName onboard`n`nRun it from your app folder, or enter the app folder when Bypass asks.`n`nMuse Code plugin (requires Muse Code installed, opened, and signed in first):`n  irm https://bypasslabs.ai/install/muse.ps1 | iex"
         }
         Write-Host "`nUpdate or repair: rerun this same installer. Project settings and evidence stay in your app."
     } finally {
