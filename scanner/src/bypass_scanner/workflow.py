@@ -60,6 +60,8 @@ def settings(value):
               'resources': {**MANIFEST['resourceDefaults'], **value.get('resources', {})}}
     result.update({k:value.get(k,[]) for k in ('includePolicies','excludePolicies','policyCatalogs','contextFiles')})
     result['policyLimits']={**MANIFEST['policyLimits'],**value.get('policyLimits',{})}
+    result['evaluation'] = value.get('evaluation', 'auto')
+    result['evaluationLimits'] = {**MANIFEST['policyLimits'], **value.get('evaluationLimits', {})}
     for name in result['policyCatalogs']+result['contextFiles']:
         relative(name)
     if result['resources']['memoryMb'] < result['resources']['ramMb'] + 1024:
@@ -95,6 +97,52 @@ class Workflow:
         from bypass_scanner.discovery.policy import PolicyEngine
         return PolicyEngine(self)
 
+    def evaluation_engine(self):
+        from bypass_scanner.evaluation.engine import EvaluationEngine
+        return EvaluationEngine(self)
+
+    def task_engine(self, run, identity=None):
+        state = self.read(run)
+        if identity:
+            for engine in (self.policy_engine(), self.evaluation_engine()):
+                if (engine.directory(run)/'state.json').is_file():
+                    if any(t['definition']['id']==identity for t in engine.load(run)['tasks']):
+                        return engine
+            raise ValueError('Unknown task identity for this run.')
+        return self.evaluation_engine() if state['stage'] in ('evaluation','reporting') and (self.directory(run)/'evaluation/state.json').is_file() else self.policy_engine()
+
+    def discovery_finished(self, state):
+        state['discoveryStatus'] = state['status']
+        if state['config'].get('evaluation', 'off')=='auto':
+            self.evaluation_engine().prepare(state)
+        else:
+            state['stage'] = 'reporting'
+            self.save(state)
+            self.render(state)
+
+    def evaluate(self, run):
+        with self.guard:
+            fd = self.lease()
+            try:
+                state = self.read(run)
+                if state['status'] not in TERMINAL:
+                    raise ValueError('Finish or cancel the current discovery/evaluation before evaluating a saved run.')
+                active = self.output/'active-run.json'
+                if active.is_file():
+                    previous = self.read(json.loads(active.read_text())['run'])
+                    if previous['id']!=run and previous['status']=='awaiting_reasoning':
+                        raise ValueError('Another scanner run is awaiting reasoning; finish or cancel it first.')
+                if not state['sourceRevision'] or not (self.directory(run)/'signals.json').is_file():
+                    raise ValueError('Saved discovery has no completed source snapshot and signals to evaluate.')
+                state.setdefault('discoveryStatus', state['status'])
+                self.evaluation_engine().prepare(state)
+                atomic(active, {'run':run})
+                self.save(state)
+                self.render(state)
+                return self.public(state)
+            finally:
+                os.close(fd)
+
     def directory(self, run):
         if not re.fullmatch(r'scan_[a-f0-9]{24}', run):
             raise ValueError('Invalid scanner run ID.')
@@ -128,16 +176,27 @@ class Workflow:
         if state.get('scope'):
             result['scope'] = state['scope']
         result['detectors']=state.get('config',{}).get('detectors',['codeql'])
-        for key in ('policy','reasoning'):
+        for key in ('policy','reasoning','evaluationSummary'):
             if key in state:result[key]=state[key]
         return result
 
     def status(self, run):
         with self.guard:
             state = self.read(run)
-            if state['status']=='awaiting_reasoning':
-                data=self.policy_engine().load(run)
-                self.policy_engine().expire(state,data)
+            if run in self.tasks:
+                return self.public({**state, 'status':'running'})
+            active = self.output/'active-run.json'
+            if (state['status'] in TERMINAL or state['status']=='awaiting_reasoning') and active.is_file() and json.loads(active.read_text())['run']==run:
+                try:
+                    fd = self.lease()
+                except ValueError:
+                    return self.public({**state, 'status':'running'})
+                try:
+                    if state['status']=='awaiting_reasoning':
+                        engine=self.task_engine(run)
+                        engine.expire(state,engine.load(run))
+                finally:
+                    os.close(fd)
             if state['status'] not in TERMINAL and state['status']!='awaiting_reasoning' and run not in self.tasks:
                 try:
                     fd = self.lease()
@@ -179,8 +238,9 @@ class Workflow:
             if active.is_file():
                 previous=self.read(json.loads(active.read_text())['run'])
                 if previous['status']=='awaiting_reasoning':
-                    self.policy_engine().expire(previous,self.policy_engine().load(previous['id']))
-                    if previous['status']=='awaiting_reasoning':raise ValueError(f"Policy run {previous['id']} is awaiting reasoning; resume or cancel it first.")
+                    engine=self.task_engine(previous['id'])
+                    engine.expire(previous,engine.load(previous['id']))
+                    if previous['status']=='awaiting_reasoning':raise ValueError(f"Scanner run {previous['id']} is awaiting reasoning; resume or cancel it first.")
             self.directory(run).mkdir(mode=0o700)
             state = {'id': run, 'status': 'queued', 'stage': 'discovery', 'phase': 'snapshot', 'sourceRevision': '',
                      'executionMode': arguments.get('executionMode', 'standalone-api'), 'modelCalls': 0,
@@ -205,9 +265,10 @@ class Workflow:
             if active.is_file():
                 previous = self.read(json.loads(active.read_text())['run'])
                 if previous['id'] != run and previous['status'] == 'awaiting_reasoning':
-                    self.policy_engine().expire(previous, self.policy_engine().load(previous['id']))
+                    engine=self.task_engine(previous['id'])
+                    engine.expire(previous, engine.load(previous['id']))
                     if previous['status'] == 'awaiting_reasoning':
-                        raise ValueError(f"Policy run {previous['id']} is awaiting reasoning; resume or cancel it first.")
+                        raise ValueError(f"Scanner run {previous['id']} is awaiting reasoning; resume or cancel it first.")
             if state['imageIdentity'] != os.environ.get('BYPASS_SCANNER_IMAGE', 'development'):
                 raise ValueError('Scanner image changed; start a new scan instead of reusing this run.')
             atomic(active, {'run': run})
@@ -234,7 +295,7 @@ class Workflow:
                 return self.public(state)
             atomic(self.directory(run) / 'cancel-request.json', {'requestedAt': now()})
             if state['status']=='awaiting_reasoning':
-                state.update(status='cancelled',message='Policy discovery cancelled. Accepted signals and evidence are retained.')
+                state.update(status='cancelled',message='Scanner reasoning cancelled. Accepted signals, evaluations and evidence are retained.')
                 self.save(state);self.render(state)
                 return self.public(state)
             task = self.tasks.get(run)
@@ -262,6 +323,9 @@ class Workflow:
                 atomic(directory / 'source-manifest.json', recorded)
                 state.update(sourceRevision=recorded['revision'], sourceReads=len(recorded['files']))
                 self.save(state)
+            if resuming and (directory/'evaluation/state.json').is_file():
+                self.evaluation_engine().prepare(state)
+                return
             analysis, scope_manifest = select_scope(recorded, state['config'])
             atomic(directory / 'analysis-scope.json', scope_manifest)
             state['scope'] = scope_manifest['summary']
@@ -284,6 +348,7 @@ class Workflow:
                 return
             state.update(status='incomplete' if any(item['status'] in ('failed', 'partial', 'unknown', 'no_files') for item in state['languages']) else 'completed',
                          phase='done', message='Discovery finished. Signals are not evaluated vulnerabilities; inspect coverage gaps.')
+            self.discovery_finished(state)
         except InterruptedError:
             state.update(status='cancelled', message='Scan cancelled. Completed artifacts are retained.')
         except Exception as error:
@@ -463,11 +528,14 @@ class Workflow:
             scope_manifest['summary'] = state['scope']
             atomic(scope_file, scope_manifest)
         signals = json.loads((directory / 'signals.json').read_text()) if (directory / 'signals.json').exists() else []
+        cases_path = directory/'evaluation/cases.json'
+        cases = json.loads(cases_path.read_text()) if cases_path.is_file() else []
         report = {'run': self.public(state), 'signals': signals, 'unsupportedLanguages': state.get('unsupportedLanguages', []),
+                  'cases':cases,
                   'scope': state.get('scope', {'status': 'not_recorded_for_this_run'}),
                   'artifacts': [item for item in self.artifacts(state['id']) if item['path'] not in ('report.json', 'report.md')],
                   'selection': 'rule-selection.json' if (directory / 'rule-selection.json').exists() else None,
-                  'notice': 'Detector signals are unevaluated. No confirmed/refuted vulnerability verdict or complete security coverage is claimed.'}
+                  'notice': 'Original detector signals are retained unchanged. Evaluation verdicts are source-based, not runtime reproductions. Unresolved and unevaluated cases are not safety claims. Complete security coverage is not established.'}
         atomic(directory / 'report.json', report)
         lines = ['# Security discovery report', '', f"Run: {state['id']}", f"Status: {state['status']}",
                  f"Source revision: {state['sourceRevision']}", f"Signals: {len(signals)}",
@@ -485,8 +553,28 @@ class Workflow:
                           f"Include tests: {scope['includeTests']}; examples/benchmarks: {scope['includeExamples']}; generated/vendor copies: {scope['includeGenerated']}.",
                           f"Filtered detector alerts: {scope['filteredSignals']}. See analysis-scope.json and filtered-signals.json artifacts.",
                           'Build context is retained; compiled builds can extract excluded inputs. Candidate alerts are filtered by primary location. These file counts do not establish extraction coverage.'])
+        evaluated_ids = {signal for case in cases if case['outcome']!='not_run' for signal in case['signalIds']}
         lines.extend(['', '## Unevaluated signals', ''])
-        lines.extend(f"- `{item['ruleId']}`: {item['suspectedIssue'].replace(chr(10), ' ')} (origin: {item['origin']['artifact']})" for item in signals)
+        lines.extend(f"- `{item['ruleId']}`: {item['suspectedIssue'].replace(chr(10), ' ')} (origin: {item['origin']['artifact']})"
+                     for item in signals if item['id'] not in evaluated_ids)
+        for outcome, title in (('confirmed','Confirmed - source evidence only'),('refuted','Refuted'),('needs_review','Needs review')):
+            lines.extend(['', '## '+title, ''])
+            for case in cases:
+                if case['outcome']!=outcome:
+                    continue
+                evaluation=case.get('evaluation')
+                lines.append(f"- Case `{case['id']}`; signals: {', '.join(case['signalIds'])}")
+                if evaluation:
+                    lines.extend([f"  - Severity: {evaluation['severity']} - {evaluation['severityRationale']}",
+                                  '  - Rationale: '+evaluation['rationale'],
+                                  '  - Counterevidence: '+evaluation['counterevidence'],
+                                  '  - Impact: '+evaluation['impact'],
+                                  '  - Prerequisites: '+'; '.join(evaluation['prerequisites']),
+                                  '  - Open questions: '+'; '.join(evaluation['openQuestions']),
+                                  '  - Next action: '+evaluation['nextAction']])
+                    lines.extend(f"  - Evidence: {ref['path']}:{ref['startLine']}-{ref['endLine']} ({ref['contentHash']})" for ref in evaluation['evidence'])
+                if case.get('reason'):
+                    lines.extend(['  - Limitation: '+case['reason'], '  - Next action: '+case.get('nextAction','Review unresolved questions.')])
         lines.extend(['', '## Run diagnostics', '', state['message']])
         (directory / 'report.md').write_text('\n'.join(lines) + '\n')
 
@@ -502,6 +590,13 @@ class Workflow:
             for name in ('submissions','evidence'):
                 folder=policy/name
                 if folder.is_dir() and not folder.is_symlink():allowed.extend(folder.glob('*.json'))
+        evaluation=directory/'evaluation'
+        if evaluation.is_dir() and not evaluation.is_symlink():
+            allowed.extend(evaluation/name for name in ('cases.json','coverage.json'))
+            for name in ('submissions','evidence'):
+                folder=evaluation/name
+                if folder.is_dir() and not folder.is_symlink():
+                    allowed.extend(folder.glob('*.json'))
         return [{'path': path.relative_to(directory).as_posix(), 'bytes': path.stat().st_size}
                 for path in allowed if path.is_file() and not path.is_symlink()]
 

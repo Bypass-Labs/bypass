@@ -23,7 +23,7 @@ async function runCase(item,variant){
   fs.mkdirSync(path.dirname(path.join(root,name)),{recursive:true});fs.writeFileSync(path.join(root,name),text);
  }
  await execute('init',[root]);
- const config={languages:[item.language],includeRules:[item.rule],resources:{timeoutSeconds:180},...(item.build?{builds:{[item.language]:item.build}}:{})};
+ const config={evaluation:'off',languages:[item.language],includeRules:[item.rule],resources:{timeoutSeconds:180},...(item.build?{builds:{[item.language]:item.build}}:{})};
  fs.writeFileSync(path.join(root,'scanner.json'),JSON.stringify(config));
  const result=await execute('discover',[],{project:root,config:'scanner.json'}, {onProgress:step=>console.log(`${item.name}/${variant}: ${step.message}`)});
  const run=result.run;

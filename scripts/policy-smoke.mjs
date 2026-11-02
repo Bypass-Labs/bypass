@@ -49,7 +49,17 @@ for(const vulnerable of [true,false]){
       const task=leased.task;
       const evidence=await client.call('bypass_discover_evidence',{run:run.id,task:task.id,operation:'read',arguments:{path:'app.py'}});
       const ref=evidence.evidence.reference.id;
-      const submission=task.phase==='mapping'?{
+      const submission=task.kind!=='discovery'?{
+        caseId:task.caseId,outcome:'needs_review',severity:'unknown',
+        severityRationale:'Deployment reachability and upstream enforcement are unknown.',
+        rationale:'The cited function returns a selected invoice without an owner binding; the caller is not established.',
+        evidence:[ref],counterevidence:'Upstream authorization may exist outside the inspected function.',
+        prerequisites:['An unprivileged caller can reach the function without another owner check.'],
+        impact:'Private invoice contents could cross the ownership boundary.',
+        openQuestions:['Is authorization enforced by the caller or deployment?'],
+        nextAction:'Review callers and deployment controls before accepting the source hypothesis.',
+        followUpQuestions:[]
+      }:task.phase==='mapping'?{
         summary:'Invoice read with caller-selected identifier.',assumptions:['Deployment exposure unknown'],openQuestions:[],reviewedEvidence:[ref],
         surfaces:[{id:'invoice',title:'Invoice read',paths:['app.py'],policies:['authz/object-access'],evidence:[ref]}]
       }:{outcome:vulnerable?'candidates':'no_candidate',reviewedEvidence:[ref],rationale:vulnerable?'Object returned without an observed owner binding.':'Owner comparison precedes the return.',openQuestions:[],followUps:[],
@@ -59,11 +69,17 @@ for(const vulnerable of [true,false]){
       validateJSON(task.resultSchema,submission);
       run=(await client.call('bypass_discover_submit',{run:run.id,task:task.id,sourceRevision:task.sourceRevision,result:submission})).run;
     }
-    assert.equal(run.status,'completed',JSON.stringify(run));assert.equal(run.signalCount,vulnerable?1:0);
+    assert.equal(run.status,vulnerable?'incomplete':'completed',JSON.stringify(run));assert.equal(run.signalCount,vulnerable?1:0);
+    assert.equal(run.evaluation,vulnerable?'incomplete':'completed');
+    assert.equal(run.evaluationSummary.needs_review,vulnerable?1:0);
     assert.equal(run.reasoning.independentModelRequests,0);assert.equal(run.reasoning.hostTokens,null);
     const folder=path.join(root,'.bypass/scanner',run.id),signals=JSON.parse(fs.readFileSync(path.join(folder,'signals.json')));
     signals.forEach(signal=>validateJSON(manifest.schemas.signal,signal));
     assert.ok(signals.every(signal=>signal.detector==='policy'&&signal.evaluation==='not_run'));
+    const cases=JSON.parse(fs.readFileSync(path.join(folder,'evaluation/cases.json')));
+    cases.forEach(item=>validateJSON(manifest.schemas.evaluationCase,item));
+    assert.equal(cases.length,signals.length);
+    if(vulnerable)assert.equal(cases[0].evaluation.runtimeReproduced,false);
     assert.equal(fs.readFileSync(path.join(root,'app.py'),'utf8'),body);
     const selected=JSON.parse(fs.readFileSync(path.join(folder,'policy/selection.json')));
     assert.deepEqual(selected.policies.map(p=>p.id),['authz/object-access']);
@@ -72,6 +88,6 @@ for(const vulnerable of [true,false]){
       assert.deepEqual(rules.selected.map(r=>r.id),['py/weak-cryptographic-algorithm']);
       assert.ok(run.languages.every(language=>language.queryComplete));
     }
-    console.log(`PASS ${detector}/${vulnerable?'vulnerable':'safe'}: ${signals.length} scripted-host policy signals, zero independent requests, source preserved`);
+    console.log(`PASS ${detector}/${vulnerable?'vulnerable':'safe'}: ${signals.length} signals, automatic source evaluation ${run.evaluation}, zero independent requests, source preserved`);
   }finally{await client.close();}
 }

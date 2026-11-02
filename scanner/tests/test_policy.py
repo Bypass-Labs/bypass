@@ -25,7 +25,7 @@ class PolicyTests(unittest.TestCase):
         (self.source/'.env').write_text('SECRET_MUST_NOT_BE_READ')
 
     def start(self, config=None, mode='muse-host'):
-        run=self.engine.start({'config':{'detectors':['policy'],'includePolicies':['authz/object-access'],**(config or {})},'executionMode':mode})['id']
+        run=self.engine.start({'config':{'detectors':['policy'],'evaluation':'off','includePolicies':['authz/object-access'],**(config or {})},'executionMode':mode})['id']
         deadline=time.monotonic()+5
         while time.monotonic()<deadline:
             if run not in self.engine.tasks:return run

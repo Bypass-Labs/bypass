@@ -11,7 +11,7 @@ export const defaultResources = {...manifest.resourceDefaults};
 export const imagePlatform = 'linux/amd64';
 
 export function scannerPackageFiles(root = scannerDirectory) {
-  const files = ['Dockerfile','.dockerignore','pyproject.toml','README.md','codeql-lock.json','protocol/v3.json'];
+  const files = ['Dockerfile','.dockerignore','pyproject.toml','README.md','codeql-lock.json','protocol/v4.json'];
   function visit(relative) {
     for (const entry of fs.readdirSync(path.join(root,relative),{withFileTypes:true}).sort((a,b)=>a.name.localeCompare(b.name))) {
       const name = `${relative}/${entry.name}`;
@@ -39,7 +39,7 @@ export async function scannerDoctor({signal,runner=execFile,detector='codeql'}={
   const inspected=await runner('docker',['image','inspect',tag,'--format','{{.Id}}'],{signal,timeout:10000});
   const id=inspected.code===0&&/^sha256:[a-f0-9]{64}$/.test(inspected.stdout)?inspected.stdout:null;
   return {...base,docker:{available:true,version:docker.stdout},image:{...base.image,available:!!id,id},status:id?'ready':'blocked',
-    message:id?`${detector} discovery image is ready. Formal AI evaluation is unavailable.`:`First ${detector} use prepares its bundled image; scanner prepare can prewarm it.`};
+    message:id?`${detector} image is ready. Source-only evaluation uses the host/CLI task loop; runtime reproduction is unavailable.`:`First ${detector} use prepares its bundled image; scanner prepare can prewarm it.`};
 }
 
 const preparations=new Map();

@@ -16,7 +16,7 @@ await execute('init',[root]);
 console.log('Artifacts: '+root);
 const results=[];
 for(const include of [false,true]){
-  const result=await execute('discover',[],{project:root,languages:'javascript',rule:fixture.rule,
+  const result=await execute('discover',[],{project:root,'discovery-only':true,languages:'javascript',rule:fixture.rule,
     ...(include?{'include-tests':true,'include-examples':true,'include-generated':true}:{})},
     {onProgress:step=>console.log(step.message)});
   assert.ok(result.run,JSON.stringify(result));

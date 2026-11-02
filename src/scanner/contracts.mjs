@@ -28,7 +28,7 @@ export function resolveManifest(document) {
 }
 
 // The Python package and Node adapters load this same wire contract.
-export const manifest = resolveManifest(JSON.parse(fs.readFileSync(new URL('../../scanner/protocol/v3.json', import.meta.url), 'utf8')));
+export const manifest = resolveManifest(JSON.parse(fs.readFileSync(new URL('../../scanner/protocol/v4.json', import.meta.url), 'utf8')));
 export const protocolVersion = manifest.protocolVersion;
 
 export function validateOperation(operation, arguments_ = {}) {
@@ -42,9 +42,9 @@ export function scannerCapabilities(codeqlReady = false) {
   return {
     protocolVersion, status: 'ready', analysisImplemented: true,
     independentModelRequests: 0,
-    implementedOperations: ['capabilities','rules','policies','start','status','resume','cancel','report','signals','artifact','build_failed','next_task','evidence','submit'],
+    implementedOperations: ['capabilities','rules','policies','start','status','resume','cancel','report','signals','artifact','build_failed','next_task','evidence','submit','evaluate'],
     operations: Object.keys(manifest.operations), stages: ['discovery', 'evaluation', 'reporting'],
-    features: {codeqlDiscovery:true,aiDiscovery:true,evaluation:false,codeqlReady},
+    features: {codeqlDiscovery:true,aiDiscovery:true,evaluation:true,codeqlReady},
     languages: ['cpp','csharp','go','java','javascript','python','ruby','rust','actions']
   };
 }
@@ -52,7 +52,7 @@ export function scannerCapabilities(codeqlReady = false) {
 export function unavailable(operation) {
   const result = {
     protocolVersion, status: 'not_implemented', code: 'not_implemented', operation,
-    message: 'Formal AI evaluation is not implemented. Discovery signals remain unevaluated.',
+    message: 'The requested scanner operation is unavailable.',
     modelCalls: 0
   };
   validateJSON(manifest.schemas.error, result, 'scanner error');

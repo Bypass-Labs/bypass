@@ -38,7 +38,7 @@ class Server:
             self.initialized = True
             result = {"protocolVersion": requested, "capabilities": {"tools": {"listChanged": False}},
                       "serverInfo": {"name": "bypass-scanner", "version": "0.3.0"},
-                      "instructions": "SAST and policy discovery. Policy reasoning is supplied by the host or CLI task loop. Python never calls models. Signals remain unevaluated."}
+                      "instructions": "SAST/policy discovery and automatic source-only evaluation. Reasoning is supplied by the host or CLI task loop. Python never calls models. Source verdicts are not runtime reproduction."}
         elif not self.initialized:
             return error(-32002, "Initialize the scanner first.")
         elif method == "ping":

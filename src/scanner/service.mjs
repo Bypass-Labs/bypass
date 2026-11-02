@@ -25,17 +25,19 @@ function continuation(operation,input,result) {
 }
 
 export function discoveryPlan(options={},config={}) {
+  const evaluate=config.evaluation!=='off';
+  const reasoning=config.detectors?.includes('policy')||evaluate;
   return {kind:'scanner-plan',status:'ready',protocolVersion:manifest.protocolVersion,executionMode:executionMode(),
-    detector:config.detectors?.length===2?'both':config.detectors?.[0]==='policy'?'policy':'sast',detectors:config.detectors||['codeql'],implementedStages:['discovery'],evaluation:'not_run',modelCalls:0,
+    detector:config.detectors?.length===2?'both':config.detectors?.[0]==='policy'?'policy':'sast',detectors:config.detectors||['codeql'],implementedStages:evaluate?['discovery','evaluation','reporting']:['discovery','reporting'],evaluation:evaluate?'auto':'off',modelCalls:0,
     includeRules:config.includeRules??(options.rule?csv(options.rule):[]),excludeRules:config.excludeRules??(options['exclude-rule']?csv(options['exclude-rule']):[]),
     includePolicies:config.includePolicies||[],excludePolicies:config.excludePolicies||[],
-    reasoning:config.detectors?.includes('policy')?{executor:executionMode(),apiProfileRequired:executionMode()!=='muse-host',hostUsage:'unavailable'}:{executor:'none'},
+    reasoning:reasoning?{executor:executionMode(),apiProfileRequired:executionMode()!=='muse-host',hostUsage:'unavailable'}:{executor:'none'},
     languages:config.languages?.length?config.languages:options.languages?csv(options.languages):'local source detection',
     scope:{...Object.fromEntries(Object.entries(scopeFlags).map(([flag,name])=>[name,config[name]??options[flag]??false])),
       defaultExclusions:manifest.sourceScope.categories,buildContext:'retained',artifact:'analysis-scope.json'},
     prerequisites:['Docker installed/running','An explicitly connected source repository',config.detectors?.includes('codeql')||!config.detectors?'Pinned CodeQL image; first preparation downloads the bundle and toolchains':'Lightweight Python evidence runtime; no CodeQL download',
-      ...(config.detectors?.includes('policy')?[executionMode()==='muse-host'?'Active Muse session supplies reasoning':'Configured standalone LLM API profile']:[])],
-    message:'SAST and policy selections are independent; exact-ID exclusions win. SAST requires no LLM. Policy reasoning uses the active Muse session or an explicit standalone API profile. Planning sends no model requests.'};
+      ...(reasoning?[executionMode()==='muse-host'?'Active Muse session supplies reasoning':'Configured standalone LLM API profile']:[])],
+    message:'Evaluation follows discovery by default; --discovery-only disables it. SAST discovery itself makes no model requests. Source-only verdicts are not runtime reproduction. Reasoning uses the active Muse session or an explicit standalone API profile. Planning sends no model requests.'};
 }
 
 function configuration(root,options) {
@@ -54,6 +56,11 @@ function configuration(root,options) {
     need(Object.hasOwn(manifest.detectorAliases,options.detector),'Choose sast, policy, or both (codeql is an alias for sast).',2);
     config.detectors=manifest.detectorAliases[options.detector];
   }
+  if(options['discovery-only']!==undefined){
+    need(typeof options['discovery-only']==='boolean','discovery-only must be a boolean.',2);
+    config.evaluation=options['discovery-only']?'off':'auto';
+  }
+  config.evaluation??='auto';
   config.detectors??=['codeql'];
   for(const [flag,name] of Object.entries(scopeFlags))if(options[flag]!==undefined)config[name]=options[flag];
   validateJSON(manifest.schemas.config,config,'scanner configuration');
@@ -87,7 +94,8 @@ function runConfiguration(root,run) {
   for(const file of [path.join(base,run),filename])need(!fs.lstatSync(file).isSymbolicLink(),'Scanner artifacts must not be symlinked.',2);
   const state=JSON.parse(fs.readFileSync(filename,'utf8'));
   validateJSON(manifest.schemas.config,state.config,'saved scanner configuration');
-  return {config:{...state.config,detectors:state.config.detectors||['codeql']},resources:{...defaultResources,...state.config.resources}};
+  return {config:{...state.config,detectors:state.config.detectors||['codeql'],
+    evaluation:state.evaluation&&state.evaluation!=='not_run'?'auto':state.config.evaluation??'off'},resources:{...defaultResources,...state.config.resources}};
 }
 
 async function connection(root,options,context,resources,sarif,reuse=false) {
@@ -148,11 +156,11 @@ async function waitForRun(session,result,context) {
     }
     if(result.run.status==='awaiting_reasoning'){
       const {runAPIDriver}=await import('./api-driver.mjs');
-      return runAPIDriver(context.profileState,{client:session.client,run:result.run,limits:context.policyLimits,
+      return runAPIDriver(context.profileState,{client:session.client,run:result.run,limits:context.policyLimits,evaluationLimits:context.evaluationLimits,
         signal:context.signal,onProgress:context.onProgress,...(context.scannerSessionFactory?{sessionFactory:context.scannerSessionFactory}:{})});
     }
     await session.client.pumpBuild?.(result.run);
-    if(result.run.phase!==phase){phase=result.run.phase;context.onProgress?.({stage:'scanner',message:`Discovery ${phase} · ${result.run.signalCount} unevaluated signals`});}
+    if(result.run.phase!==phase){phase=result.run.phase;context.onProgress?.({stage:'scanner',message:`Scanner ${phase} · ${result.run.signalCount} detector signals · evaluation ${result.run.evaluation}`});}
     await delay(400);
     result=await session.client.call('status',{run:id});
     if(result.status==='error')break;
@@ -204,25 +212,28 @@ export async function scannerService(key,args=[],options={},context={}) {
     input={run:args[0],...Object.fromEntries(['format','path','offset','cursor','limit','task','sourceRevision','result','operation','arguments'].filter(name=>options[name]!==undefined).map(name=>[name,['offset','cursor','limit'].includes(name)?Number(options[name]):options[name]]))};
   }
   context={...context,detector:config.detectors.includes('codeql')?'codeql':'policy'};
-  if(config.detectors.includes('policy')&&!host&&['start','resume'].includes(operation)){
+  const reasoning=config.detectors.includes('policy')||config.evaluation==='auto'||operation==='evaluate';
+  const executing=['start','resume','evaluate'].includes(operation);
+  if(reasoning&&!host&&executing){
     const {standaloneProfile}=await import('./api-driver.mjs');
     context.profileState=read(root);standaloneProfile(context.profileState);
     context.policyLimits=config.policyLimits;
+    context.evaluationLimits=config.evaluationLimits;
   }
   validateOperation(operation,input);
-  const session=await connection(root,options,context,resources,sarif,!['start','resume'].includes(operation));
+  const session=await connection(root,options,context,resources,sarif,!executing);
   try{
     if(operation==='cancel')await session.client.stopBuilds?.(args[0]);
     let result=await session.client.call(operation,input,{signal:context.signal});
     if(result.run){
       session.runs.set(result.run.id,result.run);
-      if(['start','resume'].includes(operation))session.owned.add(result.run.id);
+      if(executing)session.owned.add(result.run.id);
       if(session.owned.has(result.run.id))await session.client.pumpBuild?.(result.run);
     }
-    if(!host&&['start','resume'].includes(operation)&&result.run)result=await waitForRun(session,result,context);
+    if(!host&&executing&&result.run&&result.status!=='error')result=await waitForRun(session,result,context);
     const code=result.status==='cancelled'?130:['incomplete','failed','interrupted','error','not_implemented'].includes(result.status)?3:0;
     const nextAction=continuation(operation,input,result);
-    const executionAI=config.detectors.includes('policy')&&!host?{mode:'standalone-api',reasoning:'Policy discovery uses the explicitly configured provider; source hypotheses remain unevaluated.'}:ai;
+    const executionAI=reasoning&&!host?{mode:'standalone-api',reasoning:'Policy discovery and source-only evaluation use the explicitly configured provider. Source-based verdicts are not runtime reproduction.'}:ai;
     return outcome({...result,ai:executionAI,...(result.run?{runId:result.run.id}:{}),...(nextAction?{nextAction}:{})},code);
   }finally{
     if(!host){clearInterval(session.timer);await session.client.close();sessions.delete(root);}

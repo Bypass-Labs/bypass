@@ -1,9 +1,9 @@
-# Whitebox SAST and policy discovery
+# Whitebox discovery and source evaluation
 
 The Python scanner runs deterministic CodeQL discovery inside Docker: source
 snapshot → per-language extraction → pinned queries → unevaluated signals and
-reports. Policy discovery adds a source-only reasoning task loop. Formal evaluation,
-runtime reproduction, and patching remain unavailable.
+reports. Policy discovery and automatic source-only evaluation use a bounded
+reasoning task loop. Runtime reproduction and patching remain unavailable.
 
 The Bypass scanner source is licensed under [Apache-2.0](../LICENSE). The
 CodeQL CLI is downloaded separately under [GitHub's usage terms](https://github.com/github/codeql-cli-binaries/blob/main/LICENSE.md).
@@ -74,7 +74,7 @@ surfaces yields deferred coverage, never a clean-coverage claim.
 Policy-only first use prepares a lightweight Python/git image via Docker's
 `policy` target, without downloading CodeQL or compiled-language toolchains.
 SAST and combined runs use the pinned CodeQL image. Status/report/artifact tools
-can inspect saved v2 CodeQL runs; the current wire contract is v3. Policy signals
+can inspect saved v2/v3 runs; the current wire contract is v4. Policy signals
 carry policy/task provenance rather than fabricated SARIF result positions.
 Policy artifacts include selection, context, threat model, coverage, issued
 evidence events, submissions, and signals alongside existing SAST artifacts.
@@ -109,8 +109,57 @@ In Muse use `/bypass:discover`. Typed tools start asynchronously, poll status,
 page signals/artifacts, cancel/resume, and return report references. The direct
 CLI waits for completion and prints phase progress. Both use the same Python
 implementation. Runs live in `.bypass/scanner/<run>/`, separately from assessment
-findings. Signals are not confirmed vulnerabilities. Zero alerts does not prove
+findings. Original signals are candidates; separate evaluation cases record source verdicts. Zero alerts does not prove
 complete coverage.
+
+## Automatic evaluation
+
+Discovery is followed by source-only evaluation by default, for SAST, policy,
+combined runs, and SARIF import. Each candidate gets a separate case; original
+signals and detector severity/provenance remain unchanged. Deterministic
+snapshot/scope checks precede reasoning about controls, reachability,
+prerequisites, counterevidence, and impact.
+
+- `confirmed`: supported by cited source evidence, **not runtime reproduction**.
+- `refuted`: affirmative source evidence disproves the hypothesis.
+- `needs_review`: missing proof or unresolved conditions; retain questions and
+  the next action. Unavailable evidence does not establish safety.
+
+Use the discovery-only opt-out to defer evaluation:
+
+```sh
+bypass discover --discovery-only
+bypass discover evaluate <run>
+```
+
+In Muse, pass `discovery-only: true` to `bypass_discover`, or use
+`bypass_discover_evaluate` on a saved run. JSON config uses `"evaluation": "off"`
+instead of the default `"auto"`. `evaluationLimits` accepts the same bounded
+fields as `policyLimits`, but has a separate task, request, evidence, and time
+budget. Task-budget exhaustion creates unresolved cases rather than dropping
+candidates. A bounded `deep_investigation` task can answer specific source
+questions; runtime-only questions remain unresolved.
+
+Default standalone scans require a valid API profile before starting because
+evaluation uses reasoning. SAST discovery-only remains independent of API
+settings. Zero candidates finish evaluation without model requests. Muse always
+uses the active session, never independent inference or provider credentials.
+
+Evaluation uses the existing `next_task` / `evidence` / `submit` loop. Only
+evaluation tasks accept verdicts; discovery submissions still cannot assign them.
+Issued read receipts bind citations to the task, revision, file hash, and range.
+Exact submissions are idempotent. Cancellation/interruption retain accepted
+cases; resume checks source/snapshot/image identity and reissues unfinished
+leases. Expired stage budgets require a new scan with explicit limits.
+
+JSON/Markdown reports separate confirmed, refuted, unresolved, and unevaluated
+cases, with severity rationale and evidence. Inspect `evaluation/cases.json`,
+`evaluation/coverage.json`, and evaluation submissions/evidence artifacts.
+`signals` pages link candidates to their cases. Any unresolved case or discovery
+failure keeps the overall run incomplete; completed evaluation never establishes
+complete discovery coverage. Historical reports remain inspectable without
+reasoning or source freshness checks; explicit evaluation requires unchanged
+source and the recorded runtime.
 
 ## Analysis scope
 
@@ -119,7 +168,7 @@ or vendored copies from the analysis scope by default. This includes `test/`,
 `tests/`, `__tests__/`, `fixtures/`, `.test.*`/`.spec.*` files, Python `test_*.py`,
 Go `*_test.go`, Java/C# test-name conventions, `examples/`, `benchmarks/`,
 `generated/`, `dist/`, `vendor/`, and the packaged duplicate `plugin/runtime/`.
-The shared `sourceScope` policy in `protocol/v3.json` lists the exact patterns.
+The shared `sourceScope` policy in `protocol/v4.json` lists the exact patterns.
 
 Opt in separately when those sources matter:
 
@@ -317,7 +366,8 @@ that successful query execution established complete extraction.
 ## LLM boundary
 
 SAST/CodeQL discovery and SARIF import make **zero model calls** and require no
-LLM settings in either interface. The SAST-only route never loads the API driver.
+LLM settings when run with `--discovery-only`. Automatic evaluation is a separate
+reasoning stage; default standalone scans check API readiness before discovery.
 Policy-only and combined runs perform policy mapping and discovery through
 `next_task`, `evidence`, and `submit`.
 
@@ -329,14 +379,14 @@ no AI reasoning occurred. Direct CLI policy execution requires an explicit saved
 API profile and runs the same bounded protocol through `src/scanner/api-driver.mjs`.
 Its request attempts are recorded; provider token usage is currently unavailable.
 
-Formal confirmation/refutation is not implemented. Discovery submissions cannot
-set vulnerability verdicts, and all accepted signals keep `evaluation: not_run`.
+Discovery submissions cannot set vulnerability verdicts, and original signals
+keep `evaluation: not_run`. Separate evaluation cases hold source-based verdicts.
 
 ## Files and development
 
 | File/directory | Responsibility |
 | --- | --- |
-| `protocol/v3.json` | Shared authored schemas, operations/version, and local schema references |
+| `protocol/v4.json` | Shared authored schemas, operations/version, and local schema references |
 | `contracts.py` | Manifest loading and structural validation |
 | `service.py` | Transport-independent routing and bounded response pages |
 | `workflow.py` | Project lease, durable lifecycle/checkpoints, reports, artifact allowlist |
@@ -347,19 +397,21 @@ set vulnerability verdicts, and all accepted signals keep `evaluation: not_run`.
 | `repository/snapshot.py` | Source policy, immutable copy, content identity |
 | `worker.py` | Explicit network-enabled extraction helper |
 | `transports/mcp.py` | Bounded newline-delimited stdio MCP; stdout contains protocol only |
-| `evaluation/`, `reporting/` | Future interfaces; discovery reports currently live in workflow |
-| `../src/scanner/` | Node Docker lifecycle/client, CLI/Muse routing, reserved API driver |
+| `tasks.py` | Shared task leases, budgets, source evidence receipts, and citation checks |
+| `evaluation/engine.py` | Durable source-only cases, verdicts, and bounded investigation |
+| `reporting/` | Reporting boundary; JSON/Markdown rendering lives in workflow |
+| `../src/scanner/` | Node Docker lifecycle/client, CLI/Muse routing, standalone API driver |
 
 Python 3.11+ is needed only for local development/tests. No Python runtime package
 dependencies are required.
 
-Repeated protocol shapes use local `$ref` pointers within `protocol/v3.json`.
+Repeated protocol shapes use local `$ref` pointers within `protocol/v4.json`.
 Python and Node expand them at load time, so MCP clients still receive
 self-contained schemas. External references, cycles, and unresolved pointers
 are rejected. There is one authored definition for configuration, build settings,
 run responses, and evidence; packaging copies the same document without rewriting
 it. The reference loaders do not make network requests.
-Only the active v2 contract ships; the retired v1 scaffold remains in Git history.
+Only the active v4 contract ships; earlier contracts remain in Git history.
 
 ```sh
 npm run test:scanner
@@ -388,7 +440,7 @@ Transport development:
 PYTHONPATH=scanner/src PYTHONDONTWRITEBYTECODE=1 python3 -m bypass_scanner
 ```
 
-Initialize with a version in `protocol/v3.json`, send
+Initialize with a version in `protocol/v4.json`, send
 `notifications/initialized`, then inspect `tools/list`/`scanner_capabilities`.
 Without the image, transport/capabilities work but CodeQL operations report the
 missing catalog. Wire frames are capped at 1 MiB; artifact data are paged.

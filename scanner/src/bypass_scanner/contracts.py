@@ -33,8 +33,8 @@ def resolve_manifest(document):
 
 
 def load_manifest():
-    source = Path(__file__).resolve().parents[2] / 'protocol/v3.json'
-    installed = Path(sysconfig.get_path('data')) / 'share/bypass-scanner/protocol/v3.json'
+    source = Path(__file__).resolve().parents[2] / 'protocol/v4.json'
+    installed = Path(sysconfig.get_path('data')) / 'share/bypass-scanner/protocol/v4.json'
     return resolve_manifest(json.loads((source if source.is_file() else installed).read_text()))
 
 

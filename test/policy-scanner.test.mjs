@@ -86,7 +86,7 @@ test('Muse drives real Python tasks and evidence with a broken API profile and z
   const {default:OpenAI}=await import('openai');const requests=t.mock.method(OpenAI.prototype,'makeRequest',()=>assert.fail('Muse must not call a provider'));
   const context={scannerConnect:connect};
   try{
-    const started=await call('discover',[],{project:root,detector:'policy',policy:'authz/object-access'},context);context.run=started.run.id;
+    const started=await call('discover',[],{project:root,'discovery-only':true,detector:'policy',policy:'authz/object-access'},context);context.run=started.run.id;
     let leased=await next(root,context);
     assert.equal(leased.nextAction.tool,'bypass_discover_evidence');
     for(const phase of ['mapping','policy']){
@@ -120,7 +120,7 @@ test('standalone executes the same real tasks through its bounded provider drive
       return {action:'submit',result};
     }};
   }};
-  const result=await execute('discover',[],{project:root,detector:'policy',policy:'authz/object-access'},context);
+  const result=await execute('discover',[],{project:root,'discovery-only':true,detector:'policy',policy:'authz/object-access'},context);
   assert.equal(result.run.status,'completed',JSON.stringify(result));assert.equal(result.run.signalCount,1);
   assert.equal(turns,4);assert.equal(result.run.reasoning.independentModelRequests,4);assert.equal(result.run.reasoning.hostReasoning,false);
   const signal=JSON.parse(fs.readFileSync(path.join(root,'.bypass/scanner',result.run.id,'signals.json')))[0];
@@ -153,7 +153,7 @@ test('standalone policy uses the real provider transport only at the configured 
   });
   await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));t.after(()=>new Promise(resolve=>server.close(resolve)));
   await execute('model add',['policy-api'],{project:root,provider:'custom','base-url':`http://127.0.0.1:${server.address().port}/v1`,model:'fixture',stream:false,'secret-env':key,'allow-private':true});
-  const result=await execute('discover',[],{project:root,detector:'policy',policy:'authz/object-access'},{scannerConnect:connect});
+  const result=await execute('discover',[],{project:root,'discovery-only':true,detector:'policy',policy:'authz/object-access'},{scannerConnect:connect});
   assert.equal(result.run.status,'completed',JSON.stringify(result));assert.equal(requests,4);
   assert.equal(result.run.reasoning.independentModelRequests,4);
 });

@@ -85,11 +85,24 @@ else: raise SystemExit(10)
         self.fail('Workflow did not finish: '+str(self.engine.status(run)))
 
     def start(self, config=None, **arguments):
-        return self.engine.start({'config':config or {}, **arguments})['id']
+        return self.engine.start({'config':{'evaluation':'off', **(config or {})}, **arguments})['id']
 
     def calls(self):
         file=self.control/'calls'
         return [json.loads(line) for line in file.read_text().splitlines()] if file.exists() else []
+
+    def test_codeql_automatically_hands_candidates_to_source_evaluation(self):
+        self.source.joinpath('a.py').write_text('VULNERABLE')
+        run=self.start({'evaluation':'auto'})
+        deadline=time.monotonic()+8
+        while run in self.engine.tasks and time.monotonic()<deadline:
+            time.sleep(.01)
+        status=self.engine.status(run)
+        self.assertEqual(status['status'],'awaiting_reasoning',status)
+        self.assertEqual(status['stage'],'evaluation')
+        self.assertEqual(status['signalCount'],1)
+        self.assertEqual(invoke('next_task',{'run':run},self.engine)['task']['kind'],'evaluation')
+        self.engine.cancel(run)
 
     def test_every_family_emits_signals_with_no_model_and_preserves_source(self):
         for language, filename in [('cpp','a.cpp'),('csharp','a.cs'),('go','a.go'),('java','a.java'),('javascript','a.ts'),('python','a.py'),('ruby','a.rb'),('rust','a.rs'),('actions','.github/workflows/a.yml')]:

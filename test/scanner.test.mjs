@@ -48,7 +48,7 @@ readline.createInterface({input:process.stdin}).on('line',line=>{
 }
 
 test('scanner schemas and command family expose the agreed contract', () => {
-  assert.equal(protocolVersion, 'bypass-scanner.v3');
+  assert.equal(protocolVersion, 'bypass-scanner.v4');
   assert.deepEqual(defaultResources,manifest.resourceDefaults);
   assert.ok(defaultResources.timeoutSeconds>0);
   for(const name of ['capabilities','config','response','evaluation','evidence','run','signal','task'])assert.ok(manifest.schemas[name]);
@@ -65,7 +65,7 @@ test('scanner schemas and command family expose the agreed contract', () => {
 });
 
 test('scanner contract expands shared definitions into self-contained wire schemas',()=>{
-  const raw=JSON.parse(fs.readFileSync(path.join(scannerDirectory,'protocol/v3.json')));
+  const raw=JSON.parse(fs.readFileSync(path.join(scannerDirectory,'protocol/v4.json')));
   assert.deepEqual(raw.operations.start.inputSchema.properties.config,{$ref:'#/schemas/config'});
   assert.deepEqual(manifest.operations.start.inputSchema.properties.config,manifest.schemas.config);
   assert.deepEqual(manifest.schemas.response.properties.run,manifest.schemas.run);
@@ -138,7 +138,7 @@ test('default containers have no mounts/network and package only allowlisted fil
   assert.equal(helper[helper.indexOf('--network')+1],'bridge');
   assert.deepEqual(helper.slice(-4),['-m','bypass_scanner.worker','r','j']);
   const files = scannerPackageFiles();
-  assert.ok(files.includes('protocol/v3.json'));
+  assert.ok(files.includes('protocol/v4.json'));
   assert.equal(files.includes('protocol/v1.json'),false);
   assert.ok(files.includes('src/bypass_scanner/transports/mcp.py'));
   assert.ok(files.every(file => !file.includes('__pycache__') && !file.startsWith('tests/')));
@@ -161,7 +161,8 @@ test('planning works before initialization and never creates project state', asy
   const before = fs.readdirSync(root);
   const result = await cli(root, 'discover', '--plan');
   assert.equal(result.code, 0);
-  assert.deepEqual(result.data.plan.implementedStages,['discovery']);
+  assert.deepEqual(result.data.plan.implementedStages,['discovery','evaluation','reporting']);
+  assert.equal(result.data.plan.evaluation,'auto');
   assert.equal(result.data.plan.executionMode, 'standalone-api');
   assert.equal(result.data.plan.modelCalls, 0);
   assert.equal(result.data.plan.scope.includeTests,false);
@@ -217,7 +218,7 @@ test('CodeQL discovery bypasses API settings in both CLI and Muse execution mode
   const OpenAI=(await import('openai')).default;
   t.mock.method(OpenAI.prototype,'makeRequest',()=>{throw new Error('Unexpected LLM request');});
   for(const mode of ['standalone-api','muse-host']){
-    const result=await inExecutionMode(mode,()=>execute('discover',[],{project:root,detector:'codeql',rule:'js/sql-injection','exclude-rule':'js/other'},{scannerConnect:async()=>deterministicClient(root,calls)}));
+    const result=await inExecutionMode(mode,()=>execute('discover',[],{project:root,'discovery-only':true,detector:'codeql',rule:'js/sql-injection','exclude-rule':'js/other'},{scannerConnect:async()=>deterministicClient(root,calls)}));
     assert.equal(result.modelCalls,0);assert.equal(result.run.signalCount,1);assert.equal(result.run.evaluation,'not_run');
     assert.deepEqual(calls.at(-1).input.config.includeRules,['js/sql-injection']);
     assert.deepEqual(calls.at(-1).input.config.excludeRules,['js/other']);
@@ -234,7 +235,7 @@ test('analysis-scope flags override config identically in CLI and Muse modes',as
     const calls=[];
     const plan=await inExecutionMode(mode,()=>execute('discover',[],{project:root,plan:true,config:'scanner.json','include-tests':true,'include-generated':false}));
     assert.equal(plan.plan.scope.includeTests,true);assert.equal(plan.plan.scope.includeExamples,true);assert.equal(plan.plan.scope.includeGenerated,false);
-    await inExecutionMode(mode,()=>execute('discover',[],{project:root,config:'scanner.json','include-tests':true,'include-generated':false},
+    await inExecutionMode(mode,()=>execute('discover',[],{project:root,'discovery-only':true,config:'scanner.json','include-tests':true,'include-generated':false},
       {scannerConnect:async()=>deterministicClient(root,calls)}));
     assert.equal(calls[0].input.config.includeTests,true);
     assert.equal(calls[0].input.config.includeExamples,true);
@@ -361,7 +362,7 @@ test('Muse can inspect capabilities without provider setup and rejects task call
   assert.equal(plan.plan.executionMode,'muse-host');assert.equal(plan.plan.modelCalls,0);
   const withTests=await client.call('bypass_discover',{plan:true,'include-tests':true,'include-examples':true,'include-generated':true});
   assert.equal(withTests.plan.scope.includeTests,true);assert.equal(withTests.plan.scope.includeExamples,true);assert.equal(withTests.plan.scope.includeGenerated,true);
-  const caps=await client.call('bypass_scanner_capabilities');assert.equal(caps.features.codeqlDiscovery,true);assert.equal(caps.features.evaluation,false);
+  const caps=await client.call('bypass_scanner_capabilities');assert.equal(caps.features.codeqlDiscovery,true);assert.equal(caps.features.evaluation,true);
   const unselected=await client.raw('bypass_discover',{});assert.equal(unselected.result.isError,true);
   await client.call('bypass_connect_repository',{repository:root,confirmed:true});
   const filename=path.join(root,'.bypass/state.json'), before=fs.readFileSync(filename,'utf8');

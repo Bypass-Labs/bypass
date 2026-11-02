@@ -11,7 +11,7 @@ fs.writeFileSync(path.join(root,'main.py'),"from Crypto.Cipher import DES\nciphe
 console.log('Artifacts: '+root);
 const terminal=run=>['completed','incomplete','failed','cancelled','interrupted'].includes(run.status);
 const sleep=ms=>new Promise(resolve=>setTimeout(resolve,ms));
-const input=config=>({detector:'codeql',executionMode:'standalone-api',config:{languages:['python'],includeRules:['py/weak-cryptographic-algorithm'],resources:{timeoutSeconds:180},...config}});
+const input=config=>({detector:'codeql',executionMode:'standalone-api',config:{evaluation:'off',languages:['python'],includeRules:['py/weak-cryptographic-algorithm'],resources:{timeoutSeconds:180},...config}});
 async function wait(client,id,predicate=terminal){
   const deadline=Date.now()+240000;
   while(Date.now()<deadline){
