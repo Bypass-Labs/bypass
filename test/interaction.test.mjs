@@ -1,10 +1,11 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { choiceInput, promptValue, confirmChoice, accountInput } from '../src/interaction.mjs';
-import { promptAPIProfile } from '../src/provider-setup.mjs';
+import { museModelChoices, promptAPIProfile, promptMuseProfile } from '../src/provider-setup.mjs';
 import { reviewInput } from '../src/application-setup.mjs';
 import { appConnection } from '../src/app-connection.mjs';
 import { registrationStatus } from '../src/registration.mjs';
+import { metaModelFixture } from './helpers.mjs';
 
 test('native decisions have custom instructions; only grounded choices receive a recommendation',()=>{
   const inputs=[reviewInput(),appConnection({url:'https://app.example.com'}).input,accountInput({url:'https://app.example.com',environment:'production'})];
@@ -33,4 +34,40 @@ test('provider suggestions and custom values travel to the profile unchanged; se
   const result=await promptAPIProfile(ask,async(_title,items)=>items.find(x=>x.provider==='openai'));
   assert.equal(result.config['secret-env'],'MY_MODEL_KEY');assert.equal(result.config.model,'my-model');assert.equal(result.config['base-url'],'https://models.example.com/v1');
   assert.match(prompts[0],/NAME.*never paste/);assert.equal(custom.length,1);
+});
+
+test('Meta onboarding authenticates, discovers only Muse reasoning models, recommends Wonder, and preflights inline',async t=>{
+  const meta=await metaModelFixture(t,{models:['muse-image-1.0','muse-spark-1.3-contributor','muse-spark-1.3','muse-wonder-1.0','llama-4']});
+  const selections=[],output=[];
+  const result=await promptMuseProfile(async()=>assert.fail('Meta setup should not ask for manual profile fields.'),async(title,items)=>{
+    selections.push({title,items});return items[0];
+  },{metaBaseUrl:meta.baseUrl,write:value=>output.push(value)});
+  assert.deepEqual(selections.map(item=>item.title),['Where should Muse inference run?','Choose a Muse model']);
+  assert.deepEqual(selections[1].items.map(item=>item.id),['muse-wonder-1.0','muse-spark-1.3','muse-spark-1.3-contributor']);
+  assert.match(selections[1].items[0].label,/Muse Wonder 1\.0.*most capable/);
+  assert.match(selections[1].items[2].description,/may be used to improve Meta models/);
+  assert.equal(result.config.model,'muse-wonder-1.0');
+  assert.equal(result.config['secret-env'],'MODEL_API_KEY');
+  assert.deepEqual(meta.calls.map(call=>[call.method,call.path]),[['GET','/v1/models'],['POST','/v1/responses']]);
+  assert.match(output.join('\n'),/Authenticated with Meta Model API/);
+  assert.match(output.join('\n'),/Muse Wonder 1\.0 key authenticated.*billing and inference working/);
+  assert.doesNotMatch(JSON.stringify({result,output,selections}),/meta-onboarding-fixture-key/);
+});
+
+test('Muse model choices keep Meta naming and do not silently opt into Contributor',()=>{
+  const choices=museModelChoices(['muse-spark-1.3-contributor','muse-spark-1.2','muse-image-1.0']);
+  assert.deepEqual(choices.map(item=>item.id),['muse-spark-1.2','muse-spark-1.3-contributor']);
+  assert.equal(choices[0].id,'muse-spark-1.2');
+  assert.match(choices[1].description,/Prompts, code, context, and responses/);
+});
+
+test('Meta selection requests a private key immediately when MODEL_API_KEY is absent',async t=>{
+  const meta=await metaModelFixture(t,{models:['muse-wonder-1.0']}),raw='inline-meta-key-for-test';delete process.env.MODEL_API_KEY;
+  const prompts=[],output=[];
+  const result=await promptMuseProfile(async()=>assert.fail('Only the masked secret prompt should collect the key.'),async(_title,items)=>items[0],{
+    metaBaseUrl:meta.baseUrl,secret:async title=>{prompts.push(title);return raw;},write:value=>output.push(value)
+  });
+  assert.deepEqual(prompts,['Meta Model API key']);assert.equal(result.config['secret-env'],'MODEL_API_KEY');
+  assert.equal(meta.calls[0].authorization,`Bearer ${raw}`);
+  assert.doesNotMatch(JSON.stringify({result,output}),new RegExp(raw));
 });

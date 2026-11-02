@@ -4,6 +4,15 @@
 
 [Quick start](#start-in-muse-code) · [White-box](#white-box-source-review) · [Black-box](#black-box-audit) · [CLI](#standalone-cli) · [GitHub agent](#github-security-agent) · [Docs](#documentation)
 
+## Choose your experience
+
+| Experience | What you need | Install |
+| --- | --- | --- |
+| **Standalone CLI** | A Meta Model API key, or a local server running Muse Spark Open or Muse Glimmer. Muse Code is not required. | `curl -fsSL https://bypasslabs.ai/install \| bash` |
+| **Muse Code plugin** | Muse Code installed, opened, and signed in first. | `curl -fsSL https://bypasslabs.ai/install/muse \| bash` |
+
+Windows uses the matching `install.ps1` or `install/muse.ps1` URL. The standalone wizard connects Meta Model API authentication and a Muse model before it asks for your application.
+
 ## Overview
 
 Bypass is a native plugin for **[Muse Code](https://dev.meta.ai/docs/muse-code)**, Meta's coding agent. It adds security skills, slash commands, MCP tools, and saved security context to your existing coding session. Muse Code investigates and explains; Bypass runs scoped operations and keeps the evidence.
@@ -29,7 +38,7 @@ Start with the Muse Code plugin. A **standalone CLI** is also available for term
 
 ## Start in Muse Code
 
-**Requires Muse Code installed and signed in.** You can select your application during setup; you do not need to start in its folder.
+**Requires Muse Code installed, opened, and signed in first.** Install Muse Code from [Meta's official guide](https://dev.meta.ai/docs/muse-code), then run the Bypass plugin installer. You can select your application during setup; you do not need to start in its folder.
 
 **1. Install the plugin.**
 
@@ -230,7 +239,7 @@ In Muse Code, ask it to replay the black-box proofs, export tests for confirmed 
 
 ## Standalone CLI
 
-Prefer a separate terminal workflow? Use the standalone CLI. AI reasoning requires your own provider API key; it does not use your Muse Code subscription. Install without opening Muse Code:
+Prefer a separate terminal workflow? Use the standalone CLI. It connects either **Meta Model API** for hosted Muse Wonder and Muse Spark, or an existing local/self-hosted server for **Muse Spark Open** or **Muse Glimmer**. It does not require Muse Code or use a Muse Code subscription. Install without opening Muse Code:
 
 ```bash
 curl -fsSL https://bypasslabs.ai/install | bash
@@ -246,21 +255,23 @@ The installer includes Node and configures PATH. On macOS/Linux, open a new term
 bypass
 ```
 
-Choose **Connect my application**, or **See the full local walkthrough**. Type `/` to browse commands; **Ctrl+O** opens activity details and **Ctrl+T** toggles tasks. `bypass onboard` opens setup directly. Use `NO_COLOR=1` to disable color or `BYPASS_PLAIN=1` for a scrolling interface.
+Choose **Connect my application**, or **See the full local walkthrough**. In one first step, onboarding asks where Muse inference runs. Selecting **Meta Model API** immediately opens a masked API-key prompt, discovers the Muse models available to your team, recommends Muse Wonder for the deepest reviews, and verifies one synthetic request before continuing. The key is retained only in the running process; project state stores its environment-variable name, never its value. Type `/` to browse commands; **Ctrl+O** opens activity details and **Ctrl+T** toggles tasks. `bypass onboard` opens setup directly. Use `NO_COLOR=1` to disable color or `BYPASS_PLAIN=1` for a scrolling interface.
+
+Before repository initialization, Bypass shows the exact `.gitignore`, `.bypassignore`, and local `.bypass/` file plan. You can apply it, customize source-review exclusions, or leave tracked files unchanged. For scripts, `bypass init . --plan --json` reports the same structured `fileChanges` without creating Bypass project files; `--tracked-files skip` initializes only local state.
 
 ### Model configuration
 
-SAST, reports, and saved regression replay need no model key. Standalone policy discovery and AI source review need Docker and an explicit provider profile. Load the key privately, then configure its environment-variable **name**, never its value:
+SAST, reports, and saved regression replay need no model key. Standalone policy discovery and AI source review need Docker and a Muse connection. The guided wizard uses a masked prompt. For noninteractive setup, load the Meta key privately and configure its environment-variable **name**, never its value:
 
 ```bash
-bypass model add review --provider meta --secret-env MODEL_API_KEY --project /path/to/app
+bypass model add review --provider meta --model muse-wonder-1.0 --secret-env MODEL_API_KEY --project /path/to/app
 bypass model use review --project /path/to/app
 bypass discover --detector policy --project /path/to/app
 ```
 
 For the separate guided source-review workflow, use `bypass engine use docker --project /path/to/app`, then `bypass scan --mode code --project /path/to/app`.
 
-Run `bypass init /path/to/app` first if the application is not connected. Presets include **Meta, OpenAI, Anthropic, Moonshot, DeepSeek, and custom**. For a local or self-hosted model, use `custom` with an explicit endpoint, model ID, API-key variable, and transport. Bypass does not switch providers or billing paths automatically. [Provider examples and migration](docs/AI_MODES.md).
+Run `bypass init /path/to/app` first if the application is not connected. The first-run experience supports **Meta Model API** and local OpenAI-compatible servers running **Muse Spark Open** or **Muse Glimmer**. Explicit legacy provider profiles remain available through advanced commands but are not offered during onboarding. Bypass never changes billing paths or enables Muse Spark Contributor without an explicit model selection. [Provider examples and migration](docs/AI_MODES.md).
 
 ## See the complete demo
 

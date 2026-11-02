@@ -31,6 +31,45 @@ test('repository onboarding is idempotent, never executes source, and holds live
   assert.equal((await cli(root,'scan','--mode','code')).code,3);
 });
 
+test('repository setup reports exact file changes, preserves existing exclusions, and respects a whole-directory ignore',async()=>{
+  const root=temp();fs.writeFileSync(path.join(root,'.gitignore'),'dist/\n.bypass/\n');fs.writeFileSync(path.join(root,'.bypassignore'),'private-fixture/\n');
+  const first=await execute('init',[root]);
+  assert.deepEqual(first.fileChanges,[{path:'.bypass/',action:'created',purpose:'private project state and evidence',commit:false}]);
+  assert.equal(fs.readFileSync(path.join(root,'.gitignore'),'utf8'),'dist/\n.bypass/\n');
+  assert.equal(fs.readFileSync(path.join(root,'.bypassignore'),'utf8'),'private-fixture/\n');
+  const second=await execute('init',[root]);assert.deepEqual(second.fileChanges,[]);
+});
+
+test('repository file plan is a real dry run and tracked setup files can be skipped or customized',async()=>{
+  const skipped=temp();fs.writeFileSync(path.join(skipped,'.gitignore'),'dist/\n');
+  const plan=await execute('init',[skipped],{plan:true});
+  assert.equal(plan.plan,true);assert.equal(fs.existsSync(path.join(skipped,'.bypass')),false);
+  assert.equal(fs.readFileSync(path.join(skipped,'.gitignore'),'utf8'),'dist/\n');
+  assert.deepEqual(plan.fileChanges.map(item=>item.path),['.bypass/','.gitignore','.bypassignore']);
+  assert.ok(plan.fileChanges.every(item=>item.planned));
+  assert.deepEqual(plan.fileChanges.find(item=>item.path==='.gitignore').details.add,['.bypass/state.json','.bypass/.lock/','.bypass/runs/','.bypass/drafts/','.bypass/discovery/','.bypass/demo-state.json','.bypass/worker.json','.bypass/*.log']);
+  const connected=await execute('init',[skipped],{'tracked-files':'skip'});
+  assert.deepEqual(connected.fileChanges.map(item=>item.path),['.bypass/']);
+  assert.equal(fs.readFileSync(path.join(skipped,'.gitignore'),'utf8'),'dist/\n');
+  assert.equal(fs.existsSync(path.join(skipped,'.bypassignore')),false);
+  assert.deepEqual(connected.filePlan.filter(item=>item.commit).map(item=>item.action),['skipped','skipped']);
+
+  const customized=temp();
+  await execute('init',[customized],{bypassIgnoreContent:'vendor/\nprivate-fixtures/\n'});
+  assert.equal(fs.readFileSync(path.join(customized,'.bypassignore'),'utf8'),'vendor/\nprivate-fixtures/\n');
+});
+
+test('read-only tracked files fail before project state and can be explicitly skipped',async()=>{
+  const root=temp(),ignore=path.join(root,'.gitignore');fs.writeFileSync(ignore,'dist/\n');fs.chmodSync(ignore,0o444);
+  try{
+    const plan=await execute('init',[root],{plan:true});assert.equal(plan.plan,true);
+    await assert.rejects(execute('init',[root]),error=>error.details.reason==='repository_read_only');
+    assert.equal(fs.existsSync(path.join(root,'.bypass')),false);
+    const connected=await execute('init',[root],{'tracked-files':'skip'});assert.deepEqual(connected.fileChanges.map(item=>item.path),['.bypass/']);
+    assert.equal(fs.readFileSync(ignore,'utf8'),'dist/\n');
+  }finally{fs.chmodSync(ignore,0o644);}
+});
+
 test('strict parsing, missing fields, secrets, and scopes remain explicit',async()=>{
   assert.throws(()=>parse(['scan','--mode']),/requires a value/);
   assert.throws(()=>parse(['scan','--bogus']),/requires a value/);

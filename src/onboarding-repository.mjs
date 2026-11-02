@@ -4,6 +4,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { execute, PACKAGE_ROOT } from './service.mjs';
+import { DEFAULT_BYPASSIGNORE } from './store.mjs';
 import { repositoryInfo } from './repository.mjs';
 import { execFile, Fault, need } from './util.mjs';
 import { isBypassSource } from './project-selection.mjs';
@@ -34,13 +35,38 @@ function availableFolder(base) {
 }
 
 // Keep the source while correcting the destination; never merge into an occupied folder.
-export async function connectProject(options, args, {ask, say, yes, pick, activity, signal}) {
+export async function connectProject(options, args, {ask, say, yes, pick, activity, signal,filePlanChoice}) {
   let location=options.repo||args[0]||options.project;
   let fallback=process.cwd()===PACKAGE_ROOT||isBypassSource(process.cwd()) ? '' : process.cwd();
   let suppliedDirectory=options.dir;
-  const init=(source,dir) => {
-    const work=signal=>execute('init',[source],{...options,repo:undefined,dir,'non-interactive':true},{signal,requireSource:true});
-    return activity?activity(isRemote(source)?'Clone application repository':'Connect application repository',work):work(signal);
+  const run=(label,work)=>activity?activity(label,work):work(signal);
+  const init=async(source,dir) => {
+    const planned=await run(isRemote(source)?'Clone and inspect application repository':'Inspect application repository',operationSignal=>execute('init',[source],{...options,repo:undefined,dir,plan:true,'non-interactive':true},{signal:operationSignal,requireSource:true}));
+    if(!planned.resumed&&planned.fileChanges.length){
+      say('\nRepository file plan (no Bypass project files written yet):');
+      for(const file of planned.fileChanges){
+        say(`  ${file.action.padEnd(7)} ${file.path} · ${file.purpose}${file.commit?' · review and commit':' · local only'}`);
+        if(file.details?.add?.length)say(`           add: ${file.details.add.join(', ')}`);
+        if(file.path==='.bypassignore'&&file.details?.content)say(`           patterns: ${file.details.content.trim().split('\n').join(', ')}`);
+      }
+      const fileChoices=[
+        {id:'apply',label:'Apply recommended files (recommended)',description:'Create safe exclusions and local project state.'},
+        {id:'customize',label:'Customize source-review exclusions',description:'Edit .bypassignore patterns before it is created.'},
+        {id:'skip',label:'Leave tracked files unchanged',description:'Create local .bypass state only.'}
+      ];
+      const choice=filePlanChoice?await filePlanChoice(fileChoices,planned):await pick('How should Bypass set up repository files?',fileChoices);
+      let bypassIgnoreContent;
+      if(choice.id==='customize'){
+        const defaults=DEFAULT_BYPASSIGNORE.trim().split('\n').join(',');
+        const patterns=await promptValue(ask,'Source-review exclusions (comma-separated)',[defaults],{write:say});
+        bypassIgnoreContent=patterns.split(',').map(value=>value.trim()).filter(Boolean).join('\n')+'\n';
+      }
+      const trackedFiles=choice.id==='skip'?'skip':'apply';
+      const connected=await run('Save application repository setup',operationSignal=>execute('init',[planned.root],{...options,repo:undefined,'tracked-files':trackedFiles,bypassIgnoreContent,'non-interactive':true},{signal:operationSignal,requireSource:true}));
+      if(choice.id==='skip')say('Tracked repository files left unchanged. Add .bypass/ to your own ignore rules before committing.');
+      return connected;
+    }
+    return run('Connect application repository',operationSignal=>execute('init',[planned.root],{...options,repo:undefined,'non-interactive':true},{signal:operationSignal,requireSource:true}));
   };
 
   while(true) {

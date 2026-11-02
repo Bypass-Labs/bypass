@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import dns from 'node:dns/promises';
 import http from 'node:http';
-import { temp } from './helpers.mjs';
+import { temp, metaModelFixture } from './helpers.mjs';
 import { execute } from '../src/service.mjs';
 import { read, change } from '../src/store.mjs';
 import { pluginOnboarding } from '../src/plugin-onboarding.mjs';
@@ -132,8 +132,8 @@ test('app-only packaged wizard starts blackbox with a fresh or saved scope',asyn
 
 test('CLI mode and environment use selectors; app-only creates a profile without touching cwd',async t=>{
   const options=isolated(t),old=process.env.BYPASS_PLUGIN_STATE_DIR;process.env.BYPASS_PLUGIN_STATE_DIR=options.stateDir;t.after(()=>{process.env.BYPASS_PLUGIN_STATE_DIR=old;});
-  const selections=[],prompts=[],host=temp();
-  const result=await onboard({flow:'quickstart',project:host},[],{write:()=>{},select:async(title,items)=>{
+  const selections=[],prompts=[],host=temp(),meta=await metaModelFixture(t);
+  const result=await onboard({flow:'quickstart',project:host},[],{metaBaseUrl:meta.baseUrl,write:()=>{},select:async(title,items)=>{
     selections.push({title,ids:items.map(i=>i.id)});
     if(items.some(i=>i.id==='live'))return items.find(i=>i.id==='live');
     if(items.some(i=>i.id==='production'))return items.find(i=>i.id==='production');

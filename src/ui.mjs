@@ -3,6 +3,7 @@ import { ownershipReady, verificationDisabled } from './ownership-store.mjs';
 import { appEnvironmentQuestion, appEnvironmentChoices } from './app-connection.mjs';
 import { promptAPIProfile } from './provider-setup.mjs';
 import readline from 'node:readline/promises';
+import { emitKeypressEvents } from 'node:readline';
 import fs from 'node:fs';
 import path from 'node:path';
 import { read, rootFrom } from './store.mjs';
@@ -117,6 +118,22 @@ function createPrompt(){
   rl.once('SIGINT',()=>{controller.abort();rl.close();});
   rl.once('close',()=>controller.abort());
   const ask=async(text,defaultValue='')=>{try{const result=await rl.question(`${text}${defaultValue?muted(` [${defaultValue}]`):''}: `,{signal:controller.signal});return result.trim()||defaultValue;}catch(e){if(e.name==='AbortError')throw new Fault('Setup stopped. Saved choices are retained.',130);throw e;}};
+  const secret=async text=>{
+    if(!process.stdin.isTTY||!process.stdout.isTTY)throw new Fault('Set MODEL_API_KEY before launching Bypass in a non-interactive environment.',3,{reason:'credential_missing'});
+    rl.pause();const input=process.stdin,output=process.stdout,wasRaw=input.isRaw;let value='';
+    emitKeypressEvents(input);input.setRawMode(true);input.resume();output.write(`${text}: `);
+    return new Promise((resolve,reject)=>{
+      const finish=(error)=>{input.off('keypress',key);input.setRawMode(Boolean(wasRaw));rl.resume();output.write('\n');if(error)reject(error);else resolve(value);};
+      const key=(str,event={})=>{
+        if(event.ctrl&&event.name==='c'){finish(new Fault('Setup stopped. Saved choices are retained.',130));return;}
+        if(['return','enter'].includes(event.name)){finish();return;}
+        if(event.name==='backspace'){if(value){value=value.slice(0,-1);output.write('\b \b');}return;}
+        if(str&&!event.ctrl&&!event.meta&&!str.includes('\x1b')&&value.length<8192){const clean=str.replace(/[\r\n]/g,'');value+=clean;output.write('•'.repeat([...clean].length));}
+      };
+      input.on('keypress',key);
+    });
+  };
+  ask.secret=secret;
   const run=async work=>{
     if(controller.signal.aborted)throw abortFault(controller.signal);
     const operation=new AbortController();
@@ -126,7 +143,7 @@ function createPrompt(){
     try{return await work(operation.signal);}
     finally{rl.removeListener('line',skip);controller.signal.removeEventListener('abort',stop);}
   };
-  return {ask,run,signal:controller.signal,close:()=>rl.close()};
+  return {ask,secret,run,signal:controller.signal,close:()=>rl.close()};
 }
 async function choose(ask,items,title){
   if(ask.select&&items.length)return ask.select(title,items,{back:true});

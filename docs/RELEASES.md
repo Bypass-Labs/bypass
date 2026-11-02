@@ -1,6 +1,6 @@
 # GitHub Releases, R2, and one-line installation
 
-For the **Muse Code plugin**, run:
+For the **Muse Code plugin**, first install Muse Code, open it, and sign in. Then run:
 
 ```bash
 curl -fsSL https://bypasslabs.ai/install/muse | bash
@@ -11,6 +11,8 @@ Windows: `irm https://bypasslabs.ai/install/muse.ps1 | iex`.
 Run it from your app folder. After explaining the two permissions, the installer asks once to approve them and open Muse Code. Answer `y` to begin onboarding in a new Muse Code session automatically. Noninteractive installation leaves permission review and session startup to the user. [Quick start](../README.md#start-in-muse-code).
 
 ## Standalone CLI installation
+
+The standalone CLI does not require Muse Code. Its onboarding connects Meta Model API or an existing local Muse Spark Open or Muse Glimmer server.
 
 Windows PowerShell 5.1 / PowerShell 7:
 
