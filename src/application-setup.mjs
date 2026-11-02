@@ -3,7 +3,7 @@ import path from 'node:path';
 import { initStore, read, change } from './store.mjs';
 import { inventory } from './repository.mjs';
 import { appOriginInput, scopeReady } from './network.mjs';
-import { userStateDirectory, rememberProjectOwnership, sharedOwnership } from './ownership-store.mjs';
+import { userStateDirectory, rememberProjectOwnership, sharedOwnership, ownershipVerification, verificationDisabled } from './ownership-store.mjs';
 import { hash, need } from './util.mjs';
 
 export const reviewChoices=[
@@ -43,13 +43,14 @@ export async function carryAppSetup(previousRoot,root,{url,environment,mode}={})
     let target=state.targets.find(t=>t.url===source.url&&t.environment===source.environment);
     if(!target){
       if(state.targets.length)return;
-      target={name:source.name,url:source.url,environment:source.environment,createdAt:source.createdAt,ownership:{status:'pending'},authorization:null};
+      target={name:source.name,url:source.url,environment:source.environment,createdAt:source.createdAt,ownershipVerification:ownershipVerification(state),ownership:{status:'pending'},authorization:null};
       if(source.environment!=='local'){
         target.ownership=sharedOwnership(source.url)||{status:'pending'};
         if(source.challenge)target.challenge=structuredClone(source.challenge);
       }else{target.ownership=structuredClone(source.ownership);if(source.challenge)target.challenge=structuredClone(source.challenge);}
       state.targets.push(target);state.activeTarget=target.name;
     }
+    if(verificationDisabled(target)&&verificationDisabled(source)&&source.ownership?.status==='acknowledged'&&!target.authorization)target.ownership=structuredClone(source.ownership);
     if(source.environment!=='local'&&target.ownership.status!=='verified')target.ownership=sharedOwnership(source.url)||target.ownership;
     if(!target.authorization&&source.authorization){
       try{scopeReady({...target,authorization:source.authorization});target.authorization=structuredClone(source.authorization);}catch{/* Expired or revoked permission needs renewal. */}

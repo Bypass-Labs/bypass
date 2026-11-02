@@ -6,6 +6,7 @@ import { temp } from './helpers.mjs';
 import { execute } from '../src/service.mjs';
 import { read, change } from '../src/store.mjs';
 import { pluginOnboarding } from '../src/plugin-onboarding.mjs';
+import { prepareBlackboxSetup } from '../src/blackbox/setup.mjs';
 import { rememberSelection, savedSelection, sessionHint, monitorSummary } from '../src/plugin-context.mjs';
 import { VERSION } from '../src/util.mjs';
 
@@ -20,7 +21,7 @@ test('failed model preflight takes precedence over app questions without discard
   assert.equal(result.nextAction.tool,'bypass_add_target');assert.equal(result.selectedRepository,root);
 });
 function environment(t,values){for(const [key,value] of Object.entries(values)){const old=process.env[key];process.env[key]=value;t.after(()=>{if(old===undefined)delete process.env[key];else process.env[key]=old;});}}
-async function sourceReady(){const root=temp();fs.writeFileSync(path.join(root,'app.mjs'),'export const app = true;');await execute('init',[root]);await execute('engine use',['docker'],{project:root});await execute('model add',['muse'],{project:root,provider:'meta','secret-env':'BYPASS_UNIT_API_KEY',model:'test-model',stream:false});return root;}
+async function sourceReady(){const root=temp();fs.writeFileSync(path.join(root,'app.mjs'),'export const app = true;');await execute('init',[root]);await execute('config set',['ownershipVerification','dns'],{project:root});await execute('engine use',['docker'],{project:root});await execute('model add',['muse'],{project:root,provider:'meta','secret-env':'BYPASS_UNIT_API_KEY',model:'test-model',stream:false});return root;}
 
 test('unselected context guides repository selection without leaking host demo history or mutating it',async t=>{
   const host=temp();environment(t,{BYPASS_PLUGIN_STATE_DIR:temp()});
@@ -80,8 +81,37 @@ test('local onboarding permits optional accounts and retains per-probe validatio
   assert.equal(read(root).runs.length,0,'onboarding must not make any scan or model calls');
 });
 
+test('running-app-only wizard hands fresh and saved scopes to blackbox',async()=>{
+  const root=temp(),url='http://127.0.0.1:3456';
+  await execute('init',[root]);
+  await execute('target add',['app'],{project:root,url,environment:'local'});
+  await execute('target verify',['app'],{project:root,method:'local'});
+  const file=path.join(root,'approved-scope.json');
+  fs.writeFileSync(file,JSON.stringify({paths:['/api','/public'],methods:['GET','HEAD','POST','PATCH'],maxRequestsPerSecond:7}));
+  await execute('target authorize',['app'],{project:root,'scope-file':file,accept:true});
+
+  const first=await pluginOnboarding(root,root,{mode:'live'});
+  assert.equal(first.stage,'ready');
+  assert.equal(first.nextAction.tool,'bypass_blackbox_setup');
+  assert.deepEqual(first.nextAction.arguments,{url,include:'/api,/public',methods:'GET,HEAD,POST,PATCH',rps:7,environment:'local'});
+  assert.equal(read(root).runs.length,0);
+
+  const options={...first.nextAction.arguments,'model-calls':12,minutes:1};
+  const fresh=await prepareBlackboxSetup(root,url,options);
+  assert.equal(fresh.ready,true);
+  assert.equal(fresh.created,true);
+  const second=await pluginOnboarding(root,root,{mode:'live'});
+  assert.equal(second.nextAction.tool,'bypass_blackbox_setup');
+  assert.deepEqual(second.nextAction.arguments,first.nextAction.arguments);
+  const saved=await prepareBlackboxSetup(root,url,options);
+  assert.equal(saved.ready,true);
+  assert.equal(saved.created,false);
+  assert.equal(saved.scopeFile,fresh.scopeFile);
+  assert.equal(read(root).runs.length,0);
+});
+
 test('model credential absence repairs environment without duplicating the profile',async()=>{
-  const root=temp();fs.writeFileSync(path.join(root,'app.mjs'),'export const app = true;');await execute('init',[root]);await execute('engine use',['docker'],{project:root});
+  const root=temp();fs.writeFileSync(path.join(root,'app.mjs'),'export const app = true;');await execute('init',[root]);await execute('config set',['ownershipVerification','dns'],{project:root});await execute('engine use',['docker'],{project:root});
   await execute('model add',['private'],{project:root,provider:'custom','secret-env':'BYPASS_UNIT_API_KEY',stream:false,'base-url':'https://model.example.com',model:'own-model','secret-env':'BYPASS_NONEXISTENT_ONBOARD_KEY'});
   const status=await checklist(root,root);assert.equal(status.stage,'app');assert.equal(status.ready.source,true);
   assert.equal(status.nextAction.tool,'bypass_add_target');

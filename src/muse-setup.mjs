@@ -7,7 +7,7 @@ import { execFile, Fault, abortFault } from './util.mjs';
 import { museInstallState } from './muse-install-state.mjs';
 import { createTheme } from './terminal-theme.mjs';
 
-export const setupPrompt='Start Bypass setup. Read the bypass skill and call bypass_onboarding. Reuse saved setup; otherwise show the review-type picker first. Use the current folder only after confirming it contains the selected application source, or connect the supplied Git URL. Use native pickers with grounded recommendations and custom instructions for missing choices, one decision at a time. Discover known configuration yourself; do not ask for it again. Do not start live testing until ownership and scope are configured.';
+export const setupPrompt='/bypass:start';
 const required=['plugin:bypass:hook:session-context','plugin:bypass:mcp_server:security'];
 const fallback='In Muse, open /plugins → Installed → Bypass → Runtime. Then start a new session and use /bypass:start.';
 const fingerprint=value=>JSON.stringify([value.record?.package_sha256,value.record?.cache_path,value.active,(value.runtime_capabilities||[]).map(row=>row.candidate).sort((a,b)=>a.stable_id.localeCompare(b.stable_id))]);
@@ -31,7 +31,7 @@ export async function finishMuseSetup({cwd,signal,inspect=()=>inspectMuse(cwd,{s
     if(signal?.aborted)throw abortFault(signal);
     return result;
   });
-  write('\n03 / START   Set up Bypass in Muse Code');
+  write('\n03 / START   Open Muse Code');
   const initial=await step('Check Bypass permissions',inspect),state=museInstallState(initial);
   const rows=initial.runtime_capabilities||[];
   const recognized=rows.length===2&&required.every(id=>rows.some(row=>row.candidate?.stable_id===id));
@@ -42,48 +42,50 @@ export async function finishMuseSetup({cwd,signal,inspect=()=>inspectMuse(cwd,{s
     write(fallback);return {state:'manual_review',opened:false};
   }
   if(!ask){write('Bypass installed. '+(state.reviewRequired?fallback:'Open a new Muse session in your app folder and use /bypass:start.'));return {state:state.state,opened:false};}
-  write('\nProject folder: '+cwd.replace(/[\x00-\x1f\x7f]/g,''));
   if(state.reviewRequired){
-    write('\nBypass permissions in Muse:');
     const status=id=>rows.find(row=>row.candidate.stable_id===id).status==='trusted_enabled'?'already enabled':'needs permission';
-    write(`  1. Security tools (${status(required[1])})`);
-    write('     Review selected code, test approved app routes, save evidence/tests.');
-    write(`  2. Security memory (${status(required[0])})`);
-    write('     Load saved project security context when Muse sessions start.');
-    write('\nReviewed code and context are available to your current Muse model.');
-    write('Live app testing still requires verified ownership and an approved scope.');
-    write('Manage later in Muse: /plugins → Installed → Bypass → Runtime.');
-    write('\n  1 / y   Enable these permissions and open Muse here.');
-    write('  2 / n   Keep installed and decide later (Enter).');
-    write('  3       Review or customize permissions inside Muse.');
+    write(`\nSecurity tools (${status(required[1])}): review selected code, test approved app routes, save evidence/tests.`);
+    write(`Security memory (${status(required[0])}): load saved project security context in future sessions.`);
+    write('Selected code and evidence are available to your current Muse model.');
+    write('You will approve the app and exact testing scope before requests begin.');
+    write('\n  1  Enable Bypass and open Muse Code');
+    write('  2  Later (default)');
+    write('  3  Customize permissions in Muse Code');
   }else{
     write('Security tools and security memory are already enabled.');
-    write('Muse will open here and begin setup using your current Muse account and model.');
-    write('  1 / y   Open Muse here.');write('  2 / n   Decide later (Enter).');
+    write('  1  Open Muse Code');write('  2  Later (default)');
   }
-  const answer=await ask(state.reviewRequired?'\nEnable Bypass and open Muse? [y/N] ':'Open Muse and begin setup? [y/N] ');
+  const answer=await ask('\nChoose [2]: ');
   if(state.reviewRequired&&answer?.trim()==='3'){write(fallback);return {state:'manual_review',opened:false};}
   if(!/^(1|y|yes)$/i.test(answer?.trim()||'')){
     write('Setup paused. Rerun the same installer whenever you are ready.');return {state:'deferred',opened:false};
   }
   // Re-read immediately before recording consent; never approve a package that
   // changed while the user was deciding or permissions they explicitly rejected.
-  const current=await step('Confirm the reviewed plugin',async()=>{
-    const value=await inspect();
-    if(fingerprint(value)!==fingerprint(initial)||value.runtime_capabilities.some(row=>!['review_needed','modified','trusted_enabled'].includes(row.status))){
-      throw new Fault('Bypass changed during permission review. Rerun the installer to review the current version.',3);
+  const checked=async work=>{
+    if(signal?.aborted)throw abortFault(signal);
+    const result=await work();
+    if(signal?.aborted)throw abortFault(signal);
+    return result;
+  };
+  await step('Enable Bypass',async()=>{
+    const current=await checked(async()=>{
+      const value=await inspect();
+      if(fingerprint(value)!==fingerprint(initial)||value.runtime_capabilities.some(row=>!['review_needed','modified','trusted_enabled'].includes(row.status))){
+        throw new Fault('Bypass changed during permission review. Rerun the installer to review the current version.',3);
+      }
+      return value;
+    });
+    for(const id of [required[1],required[0]]){
+      const row=current.runtime_capabilities.find(row=>row.candidate.stable_id===id);
+      if(row.status!=='trusted_enabled')await checked(()=>approve(id));
     }
-    return value;
+    await checked(async()=>{
+      const verified=await inspect();
+      if(fingerprint(verified)!==fingerprint(initial)||museInstallState(verified).state!=='ready_for_new_session')throw new Fault('Muse has not confirmed both permissions. '+fallback,3);
+    });
   });
-  for(const id of [required[1],required[0]]){
-    const row=current.runtime_capabilities.find(row=>row.candidate.stable_id===id);
-    if(row.status!=='trusted_enabled')await step(id===required[1]?'Enable security tools':'Enable security memory',()=>approve(id));
-  }
-  await step('Verify enabled permissions',async()=>{
-    const verified=await inspect();
-    if(fingerprint(verified)!==fingerprint(initial)||museInstallState(verified).state!=='ready_for_new_session')throw new Fault('Muse has not confirmed both permissions. '+fallback,3);
-  });
-  write('\nBypass is enabled. Opening Muse in this folder…');
+  write('Opening Muse Code. Choose your application there…');
   const exitCode=await launch(setupPrompt);
   if(exitCode)write('Muse exited. Your plugin remains installed. To continue, reopen Muse in this folder and use /bypass:start.');
   return {state:'opened',opened:true,exitCode};

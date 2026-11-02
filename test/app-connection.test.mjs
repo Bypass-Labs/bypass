@@ -30,7 +30,7 @@ test('app connection asks for one missing input; never infers a remote environme
 });
 
 test('onboarding ignores README ports, reuses saved apps, and keeps code-only review free of live setup',async()=>{
-  const root=temp();fs.writeFileSync(path.join(root,'server.mjs'),'export const app = true;');await execute('init',[root]);
+  const root=temp();fs.writeFileSync(path.join(root,'server.mjs'),'export const app = true;');await execute('init',[root]);await execute('config set',['ownershipVerification','dns'],{project:root});
   fs.writeFileSync(path.join(root,'README.md'),'Local app: http://127.0.0.1:4173\n');
   const before=fs.readFileSync(path.join(root,'.bypass/state.json'),'utf8');
   let setup=await pluginOnboarding(root,root,{mode:'combined'});
@@ -66,6 +66,7 @@ test('packaged MCP follows URL -> audience -> DNS, then code review without a mo
   fs.writeFileSync(path.join(root,'README.md'),'Development URL: http://127.0.0.1:4173\n');
   const c=await mcpClient(root,{stateDir:temp(),packaged:true});t.after(()=>c.child.kill());
   await c.call('bypass_connect_repository',{repository:root,confirmed:true});
+  await c.call('bypass_set_config',{key:'ownershipVerification',value:'dns'});
   const empty=await c.call('bypass_onboarding');assert.equal(empty.nextAction.input.kind,'text');
   const remote=await c.call('bypass_onboarding',{mode:'combined',url:'app.example.com'});assert.equal(remote.stage,'environment');
   const choice=await c.call('bypass_onboarding',{mode:'combined',url:'app.example.com',environment:'production'});

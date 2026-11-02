@@ -1,7 +1,7 @@
 import { discoverRegistration } from './registration-discovery.mjs';
 import { assessmentCoverage, findingSummary } from './review-report.mjs';
 import { createAppProfile, requireSource } from './application-setup.mjs';
-import { rememberOwnership, rememberProjectOwnership, sharedOwnership, revokeOwnership } from './ownership-store.mjs';
+import { rememberOwnership, rememberProjectOwnership, sharedOwnership, revokeOwnership, ownershipVerification, verificationDisabled, ownershipReady } from './ownership-store.mjs';
 import { executionMode, hostAI, requireStandaloneAPI } from './execution-mode.mjs';
 import { beginHostReview, hostPlan, hostReviewStep } from './host-review.mjs';
 import { memorySummary, recallMemory, featureContext, forgetMemory, setMemory, consolidateMemory } from './project-memory.mjs';
@@ -46,7 +46,7 @@ export function readiness(root){
   return {runtime:runtimeIdentity(),project:s.project,root,ai:host?hostAI():{mode:'standalone-api'},engine:{mode:host?'host':realEngine(s)?'docker':'mock',analysisImplemented:host||realEngine(s),label:host?'Muse plans; Bypass executes':realEngine(s)?'Docker agents · real source review and scoped HTTP proof':'MOCK analysis · real setup and saved-test replay'},
     review:(executionMode()==='muse-host'?hostPlan:scanPlan)(s,{mode}),
     model:host?{name:'Active Muse session',provider:'muse-host',destination:'Host session',connection:'host managed'}:model?{name:model.name,provider:model.provider,modelId:model.model,destination:model.dataDestination,connection:model.lastAttempt?.status||model.lastTest?.status||'not tested'}:null,
-    target:target?{name:target.name,url:target.url,environment:target.environment,ownership:target.ownership?.status||'pending',authorized:liveReady}:null,
+    target:target?{name:target.name,url:target.url,environment:target.environment,ownership:target.ownership?.status||'pending',ownershipVerification:target.ownershipVerification||'dns',authorized:liveReady}:null,
     ready:{repository:hasSource,model:host||realEngine(s)?shared.modelReady:!!model,source:hasSource&&mode!=='live'&&(host||realEngine(s)?shared.source:true),target:!!target,authorized:liveReady,liveTesting:liveReview,liveReview,canValidateLive:shared.canValidateLive},probes:shared.probes,coverageGaps:shared.coverageGaps,registration:registrationStatus(target),blockers:{source:shared.sourceBlockers,live:shared.liveBlockers},
     findings:{total:findings.length,hiddenSimulated:s.findings.length-findings.length,confirmed:findings.filter(f=>f.status==='confirmed').length,fixtureConfirmed:findings.filter(f=>f.status==='confirmed_fixture').length,simulated:findings.filter(f=>f.status==='simulated_unproven').length,fixed:findings.filter(f=>f.status==='fixed_verified').length},
     checks:{total:s.checks.length,enabled:s.checks.filter(c=>c.enabled).length,passed:s.checks.filter(c=>c.lastResult?.status==='passed').length,failed:s.checks.filter(c=>c.lastResult?.status==='failed').length},
@@ -232,13 +232,24 @@ export async function execute(key,args=[],o={},context={}){
       const [key,value]=args;
       if(key==='autoSave'){need(['true','false'].includes(value),'autoSave must be true or false.');state.settings.autoSave=value==='true';}
       else if(key==='requestTimeoutMs'){need(Number(value)>=1000&&Number(value)<=60000,'requestTimeoutMs must be between 1000 and 60000.');state.settings.requestTimeoutMs=Number(value);}
+      else if(key==='ownershipVerification'){
+        need(['off','dns','http'].includes(value),'ownershipVerification must be off, dns, or http.');
+        if(ownershipVerification(state)!==value){
+          state.settings.ownershipVerification=value;
+          for(const target of state.targets.filter(t=>t.environment!=='local')){
+            target.ownershipVerification=value;target.authorization=null;
+            if(target.ownership?.status==='acknowledged')target.ownership={status:'pending'};
+            if(value!=='off'&&target.ownership?.status!=='verified')target.challenge=makeChallenge(state.project,target);
+          }
+        }
+      }
       else if(key==='project.name'){need(value.length<=100,'Project name is too long.');state.project.name=value;}
-      else throw new Fault('Supported settings: autoSave, requestTimeoutMs, project.name. Use target/model commands for their settings.');
+      else throw new Fault('Supported settings: autoSave, requestTimeoutMs, project.name, ownershipVerification (off/dns/http). Use target/model commands for their settings.');
       return {key,value};});break;
     case 'auth logout':result=await change(root,state=>{state.auth=null;return {message:'Bypass-local account metadata cleared. Use muse logout to sign out of Muse itself.'};});break;
     case 'target add':{
       safeName(args[0]);need(o.url,'--url is required.');const environment=o.environment||'staging',url=targetURL(o.url,environment);
-      result=await change(root,state=>{need(!state.targets.some(t=>t.name===args[0]),'A target with this name already exists.');const t={name:args[0],url,environment,createdAt:now(),ownership:environment==='local'?{status:'pending'}:sharedOwnership(url)||{status:'pending'},authorization:null};if(t.ownership.status!=='verified')t.challenge=makeChallenge(state.project,t);state.targets.push(t);state.activeTarget??=t.name;return {target:t,next:t.ownership.status==='verified'?`bypass target authorize ${t.name}`:`bypass target verify ${t.name} --method ${environment==='local'?'local':'dns'}`};});break;
+      result=await change(root,state=>{need(!state.targets.some(t=>t.name===args[0]),'A target with this name already exists.');const t={name:args[0],url,environment,ownershipVerification:ownershipVerification(state),createdAt:now(),ownership:environment==='local'?{status:'pending'}:sharedOwnership(url)||{status:'pending'},authorization:null};if(t.ownership.status!=='verified')t.challenge=makeChallenge(state.project,t);state.targets.push(t);state.activeTarget??=t.name;return {target:t,next:verificationDisabled(t)||t.ownership.status==='verified'?`bypass target authorize ${t.name}`:`bypass target verify ${t.name} --method ${environment==='local'?'local':t.ownershipVerification}`};});break;
     }
     case 'target list':result={targets:s.targets,active:s.activeTarget};break;
     case 'target show':result={target:named(s.targets,args[0]||s.activeTarget,'Target')};break;
@@ -250,17 +261,26 @@ export async function execute(key,args=[],o={},context={}){
       const existing=t.environment==='local'?null:sharedOwnership(t.url);
       if(existing){result=await change(root,state=>{const target=named(state.targets,name,'Target');target.ownership=existing;return {target,message:`Ownership already verified for ${new URL(t.url).hostname}.`,next:`bypass target authorize ${name}`};});break;}
       let ownership;
-      try{ownership=await verifyOwnership(t,o.method||(t.environment==='local'?'local':'dns'),{wait:o.wait,signal:context.signal});}
+      try{ownership=await verifyOwnership(t,o.method||(t.environment==='local'?'local':t.ownershipVerification==='http'?'http':'dns'),{wait:o.wait,signal:context.signal});}
       catch(error){if(error.details?.challenge&&!context.signal?.aborted)return outcome({kind:'setup-pending',status:error.details.expired?'expired':'pending',target:name,challenge:error.details.challenge,message:error.message,nextAction:{tool:'bypass_verify_target',arguments:{name,method:o.method||'dns',...(error.details.expired?{renew:true}:{})}},alternative:error.details.alternative,liveRequestsAllowed:false},3);throw error;}
       result=await change(root,state=>{const target=named(state.targets,name,'Target');need(target.challenge.id===t.challenge.id,'Challenge changed during verification; retry.',3);target.ownership=ownership;event(state,'ownership',`${name}: ownership verified`);return {target,next:`bypass target authorize ${name}`};});rememberOwnership(read(root),result.target);break;
     }
     case 'target authorize':{
       const name=args[0]||s.activeTarget;
       need(o['scope-file']||o.accept,'Review scope, then provide --scope-file or --accept --paths /api. Ownership alone is not authorization.');
+      need(!(o['scope-file']&&o.rps!==undefined),'Choose the rate in the scope file or with --rps, not both.');
       need(!(o['scope-file']&&o.methods!==undefined),'Choose methods in the scope file or with --methods, not both.');
-      const reviewedScope=context.scope||(o['scope-file']?loadJSON(o['scope-file']):{paths:(o.paths||'/api').split(','),methods:o.methods,productionAcknowledged:!!o.production,publicConfigDiscovery:o['public-config']??named(s.targets,name,'Target').authorization?.publicConfigDiscovery});
+      const reviewedScope=context.scope||(o['scope-file']?loadJSON(o['scope-file']):{paths:(o.paths||'/api').split(','),methods:o.methods,maxRequestsPerSecond:o.rps===undefined?named(s.targets,name,'Target').authorization?.maxRequestsPerSecond:Number(o.rps),productionAcknowledged:!!o.production,publicConfigDiscovery:o['public-config']??named(s.targets,name,'Target').authorization?.publicConfigDiscovery});
       const scope=o.production?{...reviewedScope,productionAcknowledged:true}:reviewedScope;
-      result=await change(root,state=>{const t=named(state.targets,name,'Target');t.authorization=authorization(t,scope);event(state,'authorized',`${name}: testing authorized`,{scope:t.authorization});return {target:t.name,authorization:t.authorization};});break;
+      result=await change(root,state=>{
+        const t=named(state.targets,name,'Target');
+        if(verificationDisabled(t)){
+          need(o.accept===true,'Domain verification is off. Explicitly confirm you control this app and authorize the displayed scope with --accept.',3);
+          if(t.ownership.status!=='verified'||!ownershipReady(t))t.ownership={status:'acknowledged',method:'operator',origin:t.url,acknowledgedAt:now(),expiresAt:scope.expiresAt??new Date(Date.now()+7*86400000).toISOString()};
+        }
+        t.authorization=authorization(t,scope);event(state,'authorized',`${name}: testing authorized`,{scope:t.authorization,ownership:t.ownership.status});
+        return {target:t.name,authorization:t.authorization,ownership:t.ownership.status};
+      });break;
     }
     case 'target revoke':case 'target remove':result=await change(root,state=>{
       const t=named(state.targets,args[0],'Target');revokeOwnership(t);t.authorization=null;t.ownership={status:'revoked'};

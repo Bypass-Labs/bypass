@@ -52,7 +52,7 @@ export async function change(root, fn) {
 export function initStore(root, repository, name) {
   fs.mkdirSync(root, {recursive:true});
   if (fs.existsSync(path.join(root,FILE))) return {state:read(root), resumed:true};
-  const state = {schemaVersion:1, project:{id:id('project'),name:name || path.basename(root),root,repository,createdAt:now()}, settings:{engine:'mock',evidence:'local',autoSave:true,requestTimeoutMs:8000},
+  const state = {schemaVersion:1, project:{id:id('project'),name:name || path.basename(root),root,repository,createdAt:now()}, settings:{engine:'mock',evidence:'local',autoSave:true,requestTimeoutMs:8000,ownershipVerification:'off'},
     models:[],targets:[],identities:[],findings:[],checks:[],runs:[],monitors:[],events:[],activeModel:null,activeTarget:null,integrations:{},auth:null,demo:null};
   save(root,state);
   const ignore = path.join(root,'.gitignore');
