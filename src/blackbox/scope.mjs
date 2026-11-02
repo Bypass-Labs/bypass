@@ -5,6 +5,7 @@
 // Implements design sections 4.1, 4.2, 7.4 (steps 1, 3, 4, 5) and 17 of docs/BLACKBOX_AUDIT.md.
 import fs from 'node:fs';
 import { safeRequest, pathAllowed, loopback, scopeReady } from '../network.mjs';
+import {ownershipReady} from '../ownership-store.mjs';
 import { hash, need, Fault, envName, delay } from '../util.mjs';
 import { scrub } from './ledger.mjs';
 import {jwtUnsignedCanaries, validModelHeaders} from './poc-runtime.mjs';
@@ -133,7 +134,7 @@ export function loadScope({file, origin, overrides = {}, targets = []} = {}) {
     need(registered, `Add ${target} with target add, then run target verify and target authorize.`, 3);
     scopeReady(registered);
   }
-  scope.target = {origin: target, environment: local ? 'local' : registered.environment, acknowledged: local ? 'local-owner' : 'verified-authorized'};
+  scope.target = {origin: target, environment: local ? 'local' : registered.environment, acknowledged: local ? 'local-owner' : registered.ownership.status==='acknowledged'?'operator-authorized':'verified-authorized'};
   scope.credentialOrigins = (fromFile.credentialOrigins ?? [target]).map(originOf);
   // A reviewed `never` array is authoritative. Older saved scopes retain their written exclusions.
   // Redaction fields always retain their defaults independently of request scope.
@@ -188,11 +189,11 @@ export function loadScope({file, origin, overrides = {}, targets = []} = {}) {
       .filter((origin, index, all) => all.indexOf(origin) === index).map(origin => {
       const record = targets.find(item => item.url === origin);
       return [origin, {url: record.url, environment: record.environment,
-        ownership: record.ownership, authorization: record.authorization}];
+        ownershipVerification: record.ownershipVerification, ownership: record.ownership, authorization: record.authorization}];
     }));
     scope.authorizedDomains = Object.fromEntries(scope.discovery.auditDomains.map(domain => {
       const record = targets.find(item => item.url === `https://${domain}`);
-      return [domain, {url: record.url, ownership: record.ownership, authorization: record.authorization}];
+      return [domain, {url: record.url, ownershipVerification: record.ownershipVerification, ownership: record.ownership, authorization: record.authorization}];
     }));
   }
   checkScope(scope);
@@ -231,10 +232,12 @@ function mutatingReadAction(parsed) {
     /^(?:action|op|do)$/i.test(key) && MUTATING_READ_ACTION.test(value));
 }
 
-function observedMethodAuthorized(scope, method) {
+export function observedMethodAuthorized(scope, method) {
   return scope.methods.includes(method) && WRITE_METHODS.includes(method) &&
     (scope.target.environment === 'local' ||
-    scope.target.acknowledged === 'verified-authorized' &&
+    (scope.target.acknowledged === 'verified-authorized' ||
+      scope.target.acknowledged === 'operator-authorized' &&
+      ownershipReady(scope.authorizedOrigins?.[scope.target.origin])) &&
     scope.authorizedOrigins?.[scope.target.origin]?.authorization?.methods?.includes(method) === true);
 }
 

@@ -1,9 +1,24 @@
 {
   "version": 1,
   "policies": [
+    {"id":"authn/session-integrity","version":1,"title":"Authentication and session integrity","file":"session-integrity.md"},
     {"id":"authz/object-access","version":1,"title":"Object ownership and tenant boundaries","file":"object-access.md"},
     {"id":"authz/privileged-action","version":1,"title":"Server-side privileged action authorization","file":"privileged-action.md"},
+    {"id":"injection/interpreter-boundary","version":1,"title":"Untrusted data at interpreter boundaries","file":"interpreter-boundary.md"},
+    {"id":"injection/data-query","version":1,"title":"Untrusted data in structured queries","file":"data-query.md"},
+    {"id":"browser/untrusted-content","version":1,"title":"Untrusted browser content and navigation","file":"untrusted-content.md"},
+    {"id":"browser/cross-origin-action","version":1,"title":"Cross-origin action and message boundaries","file":"cross-origin-action.md"},
+    {"id":"http/request-integrity","version":1,"title":"HTTP authority, proxy, and cache boundaries","file":"request-integrity.md"},
+    {"id":"serialization/untrusted-data","version":1,"title":"Unsafe parsing and object reconstruction","file":"untrusted-data.md"},
     {"id":"network/destination-boundary","version":1,"title":"Untrusted outbound destinations","file":"destination-boundary.md"},
-    {"id":"filesystem/path-containment","version":1,"title":"Filesystem containment before effects","file":"path-containment.md"}
+    {"id":"filesystem/path-containment","version":1,"title":"Filesystem containment before effects","file":"path-containment.md"},
+    {"id":"files/content-handling","version":1,"title":"Uploaded and generated content handling","file":"content-handling.md"},
+    {"id":"secrets/credential-exposure","version":1,"title":"Credential and secret exposure boundaries","file":"credential-exposure.md"},
+    {"id":"crypto/trust-boundary","version":1,"title":"Cryptographic verification and trust decisions","file":"trust-boundary.md"},
+    {"id":"data/sensitive-exposure","version":1,"title":"Sensitive data minimization and disclosure","file":"sensitive-exposure.md"},
+    {"id":"data/field-binding","version":1,"title":"Sensitive field and object binding","file":"field-binding.md"},
+    {"id":"availability/resource-bounds","version":1,"title":"Attacker-controlled resource consumption","file":"resource-bounds.md"},
+    {"id":"workflow/state-integrity","version":1,"title":"Workflow, replay, and state-transition integrity","file":"state-integrity.md"},
+    {"id":"supply-chain/execution-integrity","version":1,"title":"Build and extension execution integrity","file":"execution-integrity.md"}
   ]
 }

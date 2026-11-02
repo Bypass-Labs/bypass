@@ -26,6 +26,8 @@ async function wizard(root, answers, options={}){
 
 test('wizard defers failed DNS and resumes the same challenge through explicit scope without duplicate setup',async t=>{
   const root=temp();
+  await execute('init',[root]);
+  await execute('config set',['ownershipVerification','dns'],{project:root});
   t.mock.method(dns,'resolveTxt',async()=>[['wrong challenge']]);
   const first=await wizard(root,['1','','','','n','https://staging.example.com','2','1','n']);
   const saved=read(root),challenge=saved.targets[0].challenge;
@@ -35,7 +37,6 @@ test('wizard defers failed DNS and resumes the same challenge through explicit s
   assert.match(first.output,/verification pending/);
   assert.equal(first.result.openDashboard,false);
   assert.equal(saved.models[0].lastTest,undefined);
-  assert.equal(saved.settings.analysisEngine,'docker');
   dns.resolveTxt.mock.mockImplementation(async record=>{assert.equal(record,challenge.record);return [[challenge.token]];});
   const second=await wizard(root,['n','1','','GET,HEAD,POST,PROPFIND','yes','n']);
   const resumed=read(root);
@@ -45,7 +46,8 @@ test('wizard defers failed DNS and resumes the same challenge through explicit s
   assert.equal(resumed.targets[0].ownership.status,'verified');
   assert.deepEqual(resumed.targets[0].authorization.paths,['/api']);
   assert.deepEqual(resumed.targets[0].authorization.methods,['GET','HEAD','POST','PROPFIND']);
-  assert.match(second.output,/verified and authorized/);
+  assert.match(second.output,/App ownership verified/);
+  assert.match(second.output,/Testing scope authorized/);
   assert.doesNotMatch(second.output,/What address do you open/,'saved app must not be asked for again');
 });
 
@@ -64,7 +66,7 @@ test('wizard production scope requires the separate production confirmation',asy
   await execute('model add',['muse'],{project:root,provider:'meta','secret-env':'BYPASS_UNIT_API_KEY',model:'test-model',stream:false});
   await execute('target add',['production'],{project:root,url:'https://app.example.com',environment:'production'});
   t.mock.method(dns,'resolveTxt',async()=>[[read(root).targets[0].challenge.token]]);
-  await wizard(root,['n','1','','','yes','no','n']);
+  await wizard(root,['n','1','','yes','no','n']);
   assert.equal(read(root).targets[0].authorization,null);
   await wizard(root,['n','','','yes','yes','n']);
   assert.equal(read(root).targets[0].authorization.productionAcknowledged,true);
@@ -109,6 +111,8 @@ test('demo onboarding refuses to replace existing project or unrelated files',as
 test('wizard accepts a bare domain directly after a typo and defers DNS on Enter',async t=>{
   t.mock.method(dns,'resolveTxt',async()=>assert.fail('Default continuation must not request DNS'));
   const root=temp();
+  await execute('init',[root]);
+  await execute('config set',['ownershipVerification','dns'],{project:root});
   const result=await wizard(root,['1','','','','n','bad input','job-radar.app','1','','n'],{flow:undefined});
   assert.equal(read(root).targets[0].url,'https://job-radar.app');
   assert.equal(read(root).targets[0].environment,'production');

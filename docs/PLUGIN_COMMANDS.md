@@ -6,9 +6,9 @@ Standalone model setup has a deliberate mode boundary: plugin model tools explai
 
 ## Start inside Muse
 
-Use /bypass:blackbox to audit an authorized running app through the active Muse session, then replay proofs and export regressions. A bare command asks for the target URL first, then allowed paths, allowed methods, request rate, Muse-call cap and time limit, one question at a time. The user can type custom numbers or choose 120 Muse calls and 30 minutes as separate defaults. It does not start an audit of an app selected in an earlier session.
+Use /bypass:blackbox to audit an authorized running app through the active Muse session, then replay proofs and export regressions. The same approval picker shows the selected app and saved/proposed scope: Approve, Decline, or Custom instructions. Advanced limits are optional. Domain proof appears only when required by project settings; existing scope is never silently expanded.
 
-- `/bypass:start`: reuse your repository and active Muse reasoning, and finish missing app/DNS/scope setup; accounts are optional.
+- `/bypass:start`: reuse your repository and active Muse reasoning, and finish missing app and scope setup; accounts are optional.
 - `/bypass:demo`: a real local Muse-directed demonstration, through proof, fixture fix, saved test, deliberate regression, one monitor tick and security context. Ask for an offline preview explicitly to use seeded discovery.
 - `/bypass:status`: Done / Now / Next, progress, evidence and actual worker health.
 - `/bypass:review`, `/bypass:tests`, `/bypass:monitor`, `/bypass:build`, `/bypass:context`, `/bypass:help`: the remaining workflows.
@@ -29,7 +29,7 @@ CLI global `--project` maps to the selected repository; `--json` maps to structu
 | --- | --- | --- |
 | `blackbox` | `bypass_blackbox_start` | Run a scoped black-box audit and save evidence under .bypass/runs/. |
 | `blackbox scope` | `bypass_blackbox_scope` | Write a reviewable blackbox.scope.json. |
-| `blackbox setup` | `bypass_blackbox_setup` | Prepare scope, target challenges and reviewable authorization files. |
+| `blackbox setup` | `bypass_blackbox_setup` | Prepare scope and authorization; --plan previews the approval picker without changes. |
 | `blackbox verify` | `bypass_blackbox_verify` | Re-execute generated proofs and check ledger integrity. |
 | `blackbox export` | `bypass_blackbox_export` | Write Node regression tests for confirmed findings. |
 | `blackbox resume` | `bypass_blackbox_resume` | Continue saved Muse research in a fresh scoped audit. |
@@ -58,7 +58,7 @@ CLI global `--project` maps to the selected repository; `--json` maps to structu
 | `status` | `bypass_status` | Show project readiness, results, and next actions. |
 | `doctor` | `bypass_doctor` | Check Node, Git, Muse, configuration, and worker health. |
 | `config show` | `bypass_config` | Show nonsecret project configuration. |
-| `config set` | `bypass_set_config` | Set autoSave, requestTimeoutMs, or project.name. |
+| `config set` | `bypass_set_config` | Set project settings, including ownershipVerification (off, dns, http). |
 | `auth login` | `bypass_auth_login` | Use local mode or launch official Muse account login. |
 | `auth status` | `bypass_auth_status` | Show local mode and Muse account integration status. |
 | `auth logout` | `bypass_auth_logout` | Clear Bypass-local account metadata; Muse account is separate. |

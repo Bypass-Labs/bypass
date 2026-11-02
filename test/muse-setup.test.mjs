@@ -17,9 +17,10 @@ test('one explicit consent approves only the two declared capabilities and opens
   assert.match(f.output.join('\n'),/test approved app routes/);
   assert.match(f.output.join('\n'),/Security memory \(needs permission\)/);
   assert.match(f.output.join('\n'),/saved project security context/);
-  assert.match(f.output.join('\n'),/verified ownership and an approved scope/);
-  assert.match(f.output.join('\n'),/2 \/ n.*Keep installed.*Enter/);
-  assert.match(f.output.join('\n'),/customer app & Ω/);
+  assert.match(f.output.join('\n'),/approve the app and exact testing scope/);
+  assert.match(f.output.join('\n'),/2.*Later.*default/);
+  assert.doesNotMatch(f.output.join('\n'),/Project folder|Confirm the reviewed plugin|Verify enabled permissions/);
+  assert.equal(setupPrompt,'/bypass:start');
 });
 
 test('numbered consent and customize options behave distinctly',async()=>{

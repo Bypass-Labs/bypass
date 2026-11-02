@@ -8,6 +8,16 @@ export function choiceInput(field,choices,{recommended,custom='instructions',...
     guidance:'Open the native picker. Preserve its custom-answer or note field; if unavailable, add a Custom instructions option. Reuse explicit answers already given. Suggestions and defaults are not consent. Interpret custom instructions before acting; clarify conflicts, never silently expand permission.',...extra};
 }
 
+// One explicit approval covers the displayed plan. A custom reply never counts as consent.
+export function testingApproval(target,scope){
+  return choiceInput('approval',[
+    {id:'approve',label:'Approve',description:'I control this app and authorize the displayed tests.',arguments:{accept:true,production:target.environment==='production'}},
+    {id:'decline',label:'Decline',description:'Save setup without running tests.'},
+    {id:'custom',label:'Custom instructions',description:'Change the proposed methods, paths or limits before approving.'}
+  ],{question:`Do you control ${target.url} and authorize these tests?`,scope,
+    guidance:'Show the exact app, environment, paths, methods and rate in a compact plan, then this native picker. Only an explicit Approve answer authorizes that plan; a default selection or custom instructions do not. Keep code fixes separate. If the plan changes, show the changes and obtain approval again.'});
+}
+
 const itemFor=value=>typeof value==='object'?value:{value:String(value),label:String(value)};
 export async function promptValue(ask,title,values=[],{fallback,write=console.log,customLabel='Enter a custom value',recommended=true}={}){
   const seen=new Set(),items=values.map(itemFor).filter(i=>i.value!==undefined&&!seen.has(String(i.value))&&seen.add(String(i.value))).map((i,n)=>({...i,id:i.id||String(n),label:i.label||String(i.value)}));

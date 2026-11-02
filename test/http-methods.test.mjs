@@ -62,7 +62,9 @@ test('packaged Muse flow selects POST, creates a resource, proves access and rep
   });
   fs.writeFileSync(path.join(root,'app.mjs'),'export const jobPath = "/api/jobs";\n');
   const c=await mcpClient(root,{packaged:true,stateDir:temp(),env:{BYPASS_METHOD_OWNER_TOKEN:tokenOwner,BYPASS_METHOD_OTHER_TOKEN:tokenOther}});t.after(()=>c.close());
-  const picker=await c.call('bypass_onboarding',{reviewScope:true});
+  const approval=await c.call('bypass_onboarding',{reviewScope:true});
+  assert.deepEqual(approval.nextAction.input.choices.map(c=>c.id),['approve','decline','custom']);
+  const picker={nextAction:{input:approval.nextAction.custom.methods}};
   assert.equal(picker.nextAction.input.kind,'multiselect');assert.equal(picker.nextAction.input.allowCustom,true);
   assert.deepEqual(picker.nextAction.input.selected,['GET','HEAD']);
   assert.deepEqual(picker.nextAction.input.choices.map(x=>x.id),['GET','HEAD','POST','PUT','PATCH','DELETE','OPTIONS']);

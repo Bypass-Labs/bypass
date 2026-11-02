@@ -5,8 +5,10 @@ import path from 'node:path';
 import {DEFAULT_SCOPE, validateScopeTemplate} from './scope.mjs';
 import {appOriginInput, loopback, makeChallenge, pathAllowed, targetURL} from '../network.mjs';
 import {httpMethods} from '../http-methods.mjs';
-import {atomic, change, initStore, rootFrom} from '../store.mjs';
+import {atomic, change, initStore, rootFrom, read} from '../store.mjs';
 import {repositoryInfo} from '../repository.mjs';
+import {ownershipReady, ownershipVerification, verificationDisabled} from '../ownership-store.mjs';
+import {testingApproval} from '../interaction.mjs';
 import {envName, hash, need, safeName} from '../util.mjs';
 
 const list = value => String(value).split(',').map(item => item.trim()).filter(Boolean);
@@ -81,7 +83,7 @@ export function prepareScopeTemplate(working, rawUrl, options = {}, {reuse = fal
       if (requestedRate > scope.limits.rps) scope.limits.rps = requestedRate;
       if (requestedMethods) scope.methods = requestedMethods;
       validateScopeTemplate(scope);
-      atomic(file, scope);
+      if(!options.plan)atomic(file, scope);
       return {root, origin, file, scope, created: false, updated: true};
     }
     return {root, origin, file, scope, created: false, updated: false};
@@ -165,7 +167,7 @@ export function prepareScopeTemplate(working, rawUrl, options = {}, {reuse = fal
   need(!local || scope.domains.length === 0,
     'The CLI cannot enumerate synthetic local domains. Omit --domains for a loopback target.');
   validateScopeTemplate(scope);
-  atomic(file, scope);
+  if(!options.plan)atomic(file, scope);
   return {root, origin, file, scope, created: true};
 }
 
@@ -219,8 +221,26 @@ function authorizationFile(file, target, scope, {primary, credentialed}) {
 
 /** One setup command prepares scope and target challenges; the operator performs DNS and authorization steps. */
 export async function prepareBlackboxSetup(working, rawUrl, options = {}) {
+  // The picker starts from the selected app's recorded limits when it has no
+  // black-box scope yet. Return those same inputs for the approved setup call.
+  if(options.plan){
+    const root=rootFrom(working,false),file=path.resolve(root,options.out||'blackbox.scope.json');
+    if(!fs.existsSync(file)&&fs.existsSync(path.join(root,'.bypass/state.json'))){
+      const target=read(root).targets.find(t=>t.url===appOriginInput(rawUrl)),auth=target?.authorization;
+      if(target)options={environment:target.environment,...(auth?{include:auth.paths.join(','),methods:auth.methods.join(','),rps:auth.maxRequestsPerSecond}:{}),...options};
+    }
+  }
   const prepared = prepareScopeTemplate(working, rawUrl, options, {reuse: true});
   const {root, origin, file, scope} = prepared;
+  if(options.plan){
+    const proposed={url:origin,environment:scope.target.environment,paths:scope.include,methods:scope.methods,
+      maxRequestsPerSecond:scope.limits.rps,runRequestsPerSecond:options.rps??scope.limits.rps,expiresAt:scope.expiresAt,
+      modelCalls:options['model-calls']??scope.limits.modelCalls,minutes:options.minutes??scope.limits.minutes};
+    const input=testingApproval({url:origin,environment:scope.target.environment},proposed);
+    return {kind:'blackbox-plan',root,origin,scopeFile:file,savedScope:!prepared.created,scope:proposed,input,
+      nextAction:{tool:'bypass_blackbox_setup',arguments:Object.fromEntries(Object.entries({url:rawUrl,...options}).filter(([key])=>!['plan','project','json','non-interactive'].includes(key)))},
+      guidance:'Confirm the selected app, show this exact plan and the shared approval picker. Reuse saved scope without expanding it. Only show advanced fields when Custom instructions is chosen. After explicit approval, prepare the same plan and complete its returned authorization steps with accept; include production only when shown and approved. If the prepared scope differs, ask again. Setup-only requests never start a run.'};
+  }
   const projectFlag = ` --project ${quote(root)}`;
   const modelCheck = `bypass model test${projectFlag}`;
   const scopeFlag = file === path.join(root, 'blackbox.scope.json') ? '' : ` --scope ${quote(file)}`;
@@ -257,22 +277,22 @@ export async function prepareBlackboxSetup(working, rawUrl, options = {}) {
       if (!target) {
         const name = targetName(entry.url, names);
         target = {name, url: entry.url, environment: scope.target.environment,
-          createdAt: new Date().toISOString(), ownership: {status: 'pending'}, authorization: null};
+          createdAt: new Date().toISOString(), ownershipVerification: entry.dns ? 'dns' : ownershipVerification(state), ownership: {status: 'pending'}, authorization: null};
         target.challenge = makeChallenge(state.project, target);
         state.targets.push(target);
         state.activeTarget ??= name;
       }
       need(target.environment === scope.target.environment,
         `Target ${target.name} is ${target.environment}, but the scope is ${scope.target.environment}. Review the target and scope environment.`);
-      const needsOwnership = target.ownership?.status !== 'verified' ||
-        !current(target.ownership.expiresAt) || entry.dns && target.ownership.method !== 'dns';
+      const needsOwnership = entry.dns ? !ownershipReady(target)||target.ownership.method!=='dns' : !verificationDisabled(target)&&!ownershipReady(target);
       if (needsOwnership && !current(target.challenge?.expiresAt)) {
         target.challenge = makeChallenge(state.project, target);
         target.ownership = {status: 'pending'};
         target.authorization = null;
       }
       return {...entry, name: target.name, environment: target.environment,
-        ownershipReady: !needsOwnership, authorizationReady: entry.audit &&
+        verification: verificationDisabled(target)?'off':target.ownershipVerification||'dns',
+        ownershipReady: !needsOwnership, authorizationReady: entry.audit && ownershipReady(target) &&
           authorized(target, scope, {primary: entry.url === origin,
             credentialed: scope.credentialOrigins.includes(entry.url)}),
         challenge: needsOwnership ? target.challenge : null};
@@ -282,13 +302,13 @@ export async function prepareBlackboxSetup(working, rawUrl, options = {}) {
   for (const target of registered.filter(item => !item.ownershipReady)) steps.push({kind: 'ownership',
     target: target.name, origin: target.url, record: target.challenge.record, value: target.challenge.token,
     httpPath: target.challenge.httpPath,
-    command: `bypass target verify ${target.name} --method dns${projectFlag}`});
+    command: `bypass target verify ${target.name} --method ${target.verification==='http'?'http':'dns'}${projectFlag}`});
   for (const target of registered.filter(item => item.audit && !item.authorizationReady)) {
     const authFile = authorizationFile(file, target, scope, {primary: target.url === origin,
       credentialed: scope.credentialOrigins.includes(target.url)});
     steps.push({kind: 'authorization', target: target.name, file: authFile,
-      production: target.environment === 'production',
-      command: `bypass target authorize ${target.name} --scope-file ${quote(authFile)}${projectFlag}`});
+      production: target.environment === 'production', verification:target.verification, acknowledgment:target.verification==='off'?'Confirm control of this app; DNS/HTTPS ownership proof is disabled in project settings.':null,
+      command: `bypass target authorize ${target.name} --scope-file ${quote(authFile)} --accept${projectFlag}`});
   }
   steps.push({kind: 'run', command: auditCommand});
   return {kind: 'blackbox-setup', root, scopeFile: file, origin, created: prepared.created,

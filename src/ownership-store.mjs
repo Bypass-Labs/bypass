@@ -7,6 +7,14 @@ import { hash, now, id, need } from './util.mjs';
 export const userStateDirectory=()=>process.env.BYPASS_PLUGIN_STATE_DIR||path.join(os.homedir(),'.local/state/bypass');
 const directory=()=>process.env.BYPASS_OWNERSHIP_DIR||path.join(userStateDirectory(),'ownership');
 const originOf=value=>new URL(value).origin;
+// Missing settings retain the verification requirement of older projects.
+export const ownershipVerification=state=>state.settings.ownershipVerification??'dns';
+export const verificationDisabled=target=>target?.environment!=='local'&&target?.ownershipVerification==='off';
+export function ownershipReady(target){
+  const proof=target?.ownership;
+  return !!target&&!ownershipRevoked(target)&&Date.parse(proof?.expiresAt)>Date.now()&&
+    (proof?.status==='verified'||verificationDisabled(target)&&proof?.status==='acknowledged'&&proof.origin===target.url);
+}
 const fileFor=origin=>path.join(directory(),hash(origin)+'.json');
 function recordFor(origin){
   try{const record=JSON.parse(fs.readFileSync(fileFor(origin),'utf8'));need(record.version===1&&record.origin===origin,'Saved ownership record is invalid. Repair it before testing.',3);return record;}catch(error){if(error.code==='ENOENT')return null;throw error;}
@@ -29,7 +37,8 @@ export function ownershipRevoked(target){
   if(target.environment==='local')return false;
   const record=recordFor(originOf(target.url));
   const revoked=revokedAtFor(originOf(target.url),record);
-  return !!revoked&&(!target.ownership?.verifiedAt||Date.parse(target.ownership.verifiedAt)<=revoked);
+  const acceptedAt=target.ownership?.verifiedAt||(verificationDisabled(target)?target.ownership?.acknowledgedAt:null);
+  return !!revoked&&(!acceptedAt||Date.parse(acceptedAt)<=revoked);
 }
 export function authorizationRevoked(target){
   if(target.environment==='local')return false;

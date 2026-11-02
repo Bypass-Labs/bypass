@@ -94,11 +94,11 @@ try{
                     if not chunk:
                         break
                     transcript += chunk
-                    if b"[y/N]" in transcript and not sent:
+                    if (b"[y/N]" in transcript or b"Choose [2]:" in transcript) and not sent:
                         typed='y' if answer=='cancel-after-yes' else answer
                         os.write(fd, (typed if typed == "\x03" else typed + "\n").encode())
                         sent = True
-                    if answer=='cancel-after-yes' and b'Enable security tools' in transcript and not cancelled:
+                    if answer=='cancel-after-yes' and sent and transcript.count(b'Enable Bypass')>=2 and not cancelled:
                         os.write(fd,b'\x03');cancelled=True
                     if b"MUSE_INPUT_READY" in transcript and not input_sent:
                         os.write(fd,b"bypass-input\n")
@@ -123,13 +123,13 @@ try{
             assert os.waitstatus_to_exitcode(status) == (130 if answer=='cancel-after-yes' else 0), transcript.decode(errors="replace")
             assert sent, transcript.decode(errors="replace")
             assert b'Security tools (needs permission)' in transcript and b'Security memory (needs permission)' in transcript
-            assert b'verified ownership and an approved scope' in transcript
-            assert b'Enable Bypass and open Muse?' in transcript
+            assert b'approve the app and exact testing scope' in transcript
+            assert b'Enable Bypass and open Muse Code' in transcript
             if answer == "y":
-                assert b'Enable security tools' in transcript and b'Enable security memory' in transcript and b'Verify enabled permissions' in transcript
+                assert b'Enable Bypass' in transcript and b'Opening Muse Code' in transcript
                 launch = json.loads(launched.read_text())
                 assert Path(launch["cwd"]).resolve() == app.resolve()
-                assert len(launch["args"]) == 1 and "bypass_onboarding" in launch["args"][0]
+                assert launch["args"] == ["/bypass:start"]
                 assert launch["input"] == "bypass-input\n"
                 assert len(json.loads(approvals.read_text())) == 2
             else:

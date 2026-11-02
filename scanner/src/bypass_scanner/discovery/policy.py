@@ -92,6 +92,8 @@ class PolicyEngine(TaskEngine):
         if phase == 'mapping':
             instructions += ('\nMap source entrypoints, trust boundaries, sensitive operations and relevant surfaces. '
                              'Use inventory paging/search/read. Each surface needs cited code paths and applicable policy IDs. '
+                             'Assign every policy that plausibly applies to a surface; only assigned surface-policy pairs are queued. '
+                             'Prefer cohesive security surfaces over one surface per file, and do not assign clearly unrelated policies. '
                              'Report unknown assumptions and unreviewed areas. Selected policies:\n' +
                              json.dumps([{k:p[k] for k in ('id','title')} for p in data['policies']]))
         else:
@@ -184,7 +186,12 @@ class PolicyEngine(TaskEngine):
                     if any(path not in data['files'] or path not in {r['path'] for r in refs} for path in surface['paths']):
                         raise ValueError('Mapped paths need issued evidence and must be in scope.')
                     if any(name not in policies for name in surface['policies']):raise ValueError('Surface references an unselected policy.')
-                    for policy in sorted(data['policies'],key=lambda p:p['id'] not in surface['policies']):
+                    applicable=set(surface['policies'])
+                    for policy in data['policies']:
+                        if policy['id'] not in applicable:
+                            coverage.append({'surfaceId':surface['id'],'policyId':policy['id'],'outcome':'not_applicable',
+                                             'reason':'policy not assigned during cited surface mapping'})
+                            continue
                         if len(data['tasks'])+len(pending)<data['limits']['maxTasks']:
                             pending.append(self.task(data,'policy',surface,policy))
                         else:coverage.append({'surfaceId':surface['id'],'policyId':policy['id'],'outcome':'deferred','reason':'task budget'})
