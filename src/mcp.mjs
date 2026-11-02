@@ -27,6 +27,7 @@ const target=str('Configured target name');
 function tool(name,description,properties,required,command,makeArgs=()=>[],makeOptions=a=>a,readOnly=false){return {name,description,inputSchema:{type:'object',properties,required,additionalProperties:false},annotations:{readOnlyHint:readOnly,destructiveHint:!readOnly,idempotentHint:readOnly,openWorldHint:!readOnly},command,makeArgs,makeOptions};}
 const identityKey=str('Finding, check, or run ID');
 const repositorySelection={repository:str('Application repository: explicit local folder or Git URL selected by the user'),dir:str('Empty clone destination for a Git URL'),config:str('Optional user-selected JSON setup file; repository selection remains explicit'),confirmed:bool('True only when the user has identified or confirmed this repository'),allowBypassSource:bool('Only true when the user specifically wants to review Bypass tooling itself'),name:str('Optional project display name')};
+const repositoryConnect={...repositorySelection,plan:bool('Preview Bypass repository files without initializing the project'),'tracked-files':str('Apply recommended tracked setup files or leave them unchanged',{enum:['apply','skip']})};
 const blackboxLimits={agents:integer('Concurrent Muse decisions',1,100),'http-workers':integer('Concurrent scoped HTTP workers',1,100),
   rps:{type:'number',description:'Shared maximum HTTP requests per second'},
   'model-calls':{type:'integer',description:'Muse decision-call budget'},
@@ -72,9 +73,9 @@ export const toolDefinitions=[
   tool('bypass_onboarding','Start or resume setup with one question at a time. Reuse the user-supplied app URL and environment; do not ask again or substitute an example local port. Remembers an explicitly selected review mode and returns the next picker/action. No scanning or app requests.',{intent:str('Requested experience; real is recommended',{enum:['real','preview']}),mode:str('Explicit selection: code, combined, or live (app only). Omit to show the review-type picker.',{enum:['code','combined','live']}),repository:repositorySelection.repository,dir:repositorySelection.dir,url:str('App address explicitly supplied by the user for this repository; not an unconfirmed README/example URL'),environment:str('Only when already identified by the user; loopback is inferred automatically',{enum:['local','preview','staging','production']}),reviewScope:bool('Show the method picker and current scope when the user wants to change allowed methods or paths')},[],'onboarding'),
   tool('bypass_connect_app','Connect an app-only profile by URL, without a repository. Reuses valid ownership; does not make app requests.',{url:str('Explicitly selected app URL'),environment:str('Selected environment',{enum:['local','preview','staging','production']})},['url','environment'],'app-session'),
   tool('bypass_workspace','Inspect the Muse workspace and repository selection without initializing or scanning anything.',{},[],'workspace',undefined,undefined,true),
-  tool('bypass_connect_repository','Select the application repository for ALL subsequent Bypass calls in this Muse session. Reuse its existing setup or clone a Git URL into an explicit empty directory. Never executes repository code.',repositorySelection,['repository','confirmed'],'connect-session'),
+  tool('bypass_connect_repository','Select the application repository for ALL subsequent Bypass calls in this Muse session. Reuse its existing setup or clone a Git URL into an explicit empty directory. Can preview repository setup files first. Never executes repository code.',repositoryConnect,['repository','confirmed'],'connect-session'),
   tool('bypass_status','Read readiness, selected analysis engine, and evidence boundaries.',{},[],'status',undefined,undefined,true),
-  tool('bypass_init','Select and initialize an explicitly user-selected application repository. Reuses an initialized active application workspace; confirms uninitialized repositories.',repositorySelection,['repository','confirmed'],'connect-session'),
+  tool('bypass_init','Select and initialize an explicitly user-selected application repository. Reuses an initialized active application workspace; confirms uninitialized repositories.',repositoryConnect,['repository','confirmed'],'connect-session'),
   tool('bypass_targets','List configured targets and their ownership/scope state.',{},[],'target list',undefined,undefined,true),
   tool('bypass_add_target','Connect a local or deployed app. Returns the DNS/HTTP ownership challenge.',{name:str('Target name'),url:str('Exact origin URL'),environment:str('Environment',{enum:['local','preview','staging','production']})},['name','url','environment'],'target add',a=>[a.name]),
   tool('bypass_verify_target','Check the published ownership challenge. This does not authorize security testing.',{name:str('Target name'),method:str('Challenge method',{enum:['dns','http','local']}),wait:str('Optional bounded DNS wait, e.g. 10s'),renew:bool('Issue a new expired ownership challenge; invalidates prior scope')},['name','method'],'target verify',a=>[a.name]),
@@ -256,14 +257,16 @@ export async function serveMCP(cwd=process.cwd(),io={input:process.stdin,output:
         try{
           const previousRoot=selectedRoot;
           if(previousRoot)rememberProjectOwnership(read(previousRoot));
-          result=await execute('init',[location],{dir:args.dir?projectPath(args.dir,cwd):undefined,config:args.config?projectPath(args.config,cwd):undefined,name:args.name,json:true,'non-interactive':true},{...operationContext,requireSource:true});
-          selectedRoot=result.root;
-          await carryAppSetup(previousRoot,selectedRoot,setupChoices);
-          setupChoices={...setupChoices,repository:args.repository,mode:setupChoices.mode==='live'?'combined':setupChoices.mode||read(selectedRoot).settings.reviewMode||'combined'};
-          await change(selectedRoot,state=>{state.settings.reviewMode=setupChoices.mode;});
-          let persistence;try{persistence=rememberSelection(cwd,selectedRoot);}catch{persistence={remembered:false,reason:'Could not save the workspace selection; this session remains connected.'};}
-          result.session={selectedRepository:selectedRoot,hostWorkspace:cwd,allSubsequentToolsUse:selectedRoot,selectionPersists:persistence.remembered?'future sessions opened from this host folder':'this MCP session only',editorWorkspaceMatches:path.resolve(cwd)===selectedRoot,...persistence};
-          result.onboarding=await pluginOnboarding(cwd,selectedRoot,{...setupChoices,signal:controller.signal});
+          result=await execute('init',[location],{dir:args.dir?projectPath(args.dir,cwd):undefined,config:args.config?projectPath(args.config,cwd):undefined,name:args.name,plan:args.plan,'tracked-files':args['tracked-files'],json:true,'non-interactive':true},{...operationContext,requireSource:true});
+          if(!result.plan){
+            selectedRoot=result.root;
+            await carryAppSetup(previousRoot,selectedRoot,setupChoices);
+            setupChoices={...setupChoices,repository:args.repository,mode:setupChoices.mode==='live'?'combined':setupChoices.mode||read(selectedRoot).settings.reviewMode||'combined'};
+            await change(selectedRoot,state=>{state.settings.reviewMode=setupChoices.mode;});
+            let persistence;try{persistence=rememberSelection(cwd,selectedRoot);}catch{persistence={remembered:false,reason:'Could not save the workspace selection; this session remains connected.'};}
+            result.session={selectedRepository:selectedRoot,hostWorkspace:cwd,allSubsequentToolsUse:selectedRoot,selectionPersists:persistence.remembered?'future sessions opened from this host folder':'this MCP session only',editorWorkspaceMatches:path.resolve(cwd)===selectedRoot,...persistence};
+            result.onboarding=await pluginOnboarding(cwd,selectedRoot,{...setupChoices,signal:controller.signal});
+          }
         }finally{selecting=false;}
       }else if(t.command==='discover'||t.command.startsWith('discover ')||t.command.startsWith('scanner ')){
         need(selectedRoot||t.command.startsWith('scanner ')||t.command==='discover capabilities'||t.command==='discover'&&args.plan,'Select the application source with bypass_connect_repository before discovery.');

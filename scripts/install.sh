@@ -15,7 +15,7 @@ bypass_install() {
     case "$argument" in --muse) integration=muse ;; --help|-h) printf 'Usage: install.sh [--muse]\nInstall Bypass, optionally register the full Muse plugin. Runtime approval stays in Muse.\n'; return ;; *) fail "Unknown option: $argument. Use --muse to install the Muse plugin." ;; esac
   done
   if [ "$integration" = muse ]; then
-    command -v muse >/dev/null 2>&1 || fail 'Muse Code was not found on PATH. Install Muse from https://dev.meta.ai, open it and sign in, then retry this same installer. No Bypass files were changed.'
+    command -v muse >/dev/null 2>&1 || fail 'Muse Code was not found on PATH. Install Muse from https://dev.meta.ai, open it and sign in, then retry. For the standalone CLI (no Muse Code required), run: curl -fsSL https://bypasslabs.ai/install | bash. No Bypass files were changed.'
   fi
   printf '\n%s▰╲▰  BYPASS LABS%s\n' "$bypass_accent" "$bypass_reset"
   if [ "$integration" = muse ]; then printf '%sInstalling Bypass for Muse Code%s\n' "$bypass_dim" "$bypass_reset"
@@ -99,7 +99,7 @@ NODE
       fail "The CLI is installed, but Muse setup did not finish. Fix the reason above and rerun this same installer. Your project settings and evidence are preserved."
     fi
   else
-    printf 'Next: %s onboard\n\nPrefer Muse? Run: curl -fsSL https://bypasslabs.ai/install/muse | bash\n' "$command_name"
+    printf 'Next: %s onboard\n\nMuse Code plugin (requires Muse Code installed, opened, and signed in first):\n  curl -fsSL https://bypasslabs.ai/install/muse | bash\n' "$command_name"
   fi
   printf '\nUpdate or repair: rerun this same installer. Project settings and evidence stay in your app.\n'
 }

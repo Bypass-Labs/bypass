@@ -10,7 +10,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { spawn } from 'node:child_process';
 import { commandInvocation } from './command.mjs';
-import { rootFrom, read, change, initStore, snapshot, atomic, event } from './store.mjs';
+import { rootFrom, read, change, initStore, repositoryFilePlan, snapshot, atomic, event } from './store.mjs';
 import { need, named, safeName, envName, now, duration, outcome, execFile, Fault, redact } from './util.mjs';
 import { samePluginPackage, museInstallState } from './muse-install-state.mjs';
 import { connectRepository, repositoryInfo, inventory } from './repository.mjs';
@@ -168,7 +168,14 @@ export async function execute(key,args=[],o={},context={}){
     const config=o.config?loadJSON(o.config):null;
     const {root,repository}=await connectRepository(o.repo||args[0]||config?.repo||working,o.dir||config?.dir,context);
     if(context.requireSource)await requireSource(root);
-    const {resumed}=initStore(root,repository,o.name||config?.name);
+    const trackedFiles=o['tracked-files']||'apply';
+    need(['apply','skip'].includes(trackedFiles),'--tracked-files must be apply or skip.',3);
+    if(o.plan){
+      const resumed=fs.existsSync(path.join(root,'.bypass/state.json'));
+      const fileChanges=repositoryFilePlan(root,{trackedFiles,bypassIgnore:o.bypassIgnoreContent}).map(item=>({...item,planned:true}));
+      return outcome({root,resumed,plan:true,fileChanges,message:fileChanges.length?'Repository file plan; no Bypass project files were written.':'Existing project found; no repository setup files would change.'});
+    }
+    const {resumed,fileChanges,filePlan}=initStore(root,repository,o.name||config?.name,{trackedFiles,bypassIgnore:o.bypassIgnoreContent});
     if(resumed)rememberProjectOwnership(read(root));
     if(resumed)await change(root,s=>{s.project.repository=repository;s.project.root=root;});
     if(config){
@@ -176,7 +183,7 @@ export async function execute(key,args=[],o={},context={}){
       if(config.target&&!read(root).targets.some(t=>t.name===config.target.name))await execute('target add',[config.target.name],{...config.target,project:root},context);
     }
     await consolidateMemory(root);
-    return outcome({root,resumed,message:resumed?'Existing project resumed; settings and evidence retained.':'Repository connected. No source code was executed.',readiness:readiness(root)});
+    return outcome({root,resumed,fileChanges,filePlan,message:resumed?'Existing project resumed; settings and evidence retained.':'Repository connected. No source code was executed.',readiness:readiness(root)});
   }
   if(key==='poc start'){const {startPOC}=await import('./poc.mjs');return outcome(await startPOC(o));}
   if(key==='poc stop'){const {stopPOC}=await import('./poc.mjs');return outcome(await stopPOC(rootFrom(working)));}

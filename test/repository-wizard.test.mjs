@@ -7,10 +7,10 @@ import { onboard } from '../src/onboarding.mjs';
 import { execute } from '../src/service.mjs';
 import { read } from '../src/store.mjs';
 import { execFile } from '../src/util.mjs';
-import { temp } from './helpers.mjs';
+import { temp, metaModelFixture } from './helpers.mjs';
 
 const remote='https://example.test/team/job-finder';
-const remainingSetup=['1','','','','n','n']; // Model setup, no connection test or dashboard; source-only flow.
+const remainingSetup=['n']; // Do not open the dashboard after repository setup.
 
 async function fixture(t) {
   const home=temp(), source=path.join(home,'source'), config=path.join(home,'gitconfig');
@@ -32,9 +32,12 @@ async function fixture(t) {
   return {home,source,git};
 }
 
-async function wizard(answers,options={}) {
+async function wizard(t,answers,options={}) {
+  const meta=await metaModelFixture(t);answers=['1','',...answers];
   const prompts=[],output=[];
   const result=await onboard({flow:'quickstart',mode:'code',...options},[],{
+    metaBaseUrl:meta.baseUrl,
+    filePlanChoice:async items=>items[0],
     write:value=>output.push(value),
     ask:async(label,fallback)=>{
       prompts.push({label,fallback});
@@ -48,7 +51,7 @@ async function wizard(answers,options={}) {
 
 test('Git URL plus Enter clones into the suggested project folder and continues setup',async t=>{
   const {home}=await fixture(t);
-  const actual=await wizard([`[${remote}](${remote})`,'',...remainingSetup]);
+  const actual=await wizard(t,[`[${remote}](${remote})`,'',...remainingSetup]);
   assert.equal(actual.result.root,path.join(home,'Projects/job-finder'));
   assert.equal(actual.prompts.find(p=>p.label==='Clone into folder').fallback,'~/Projects/job-finder');
   assert.equal(fs.readFileSync(path.join(actual.result.root,'README.md'),'utf8'),'Fixture source; never executed.');
@@ -60,7 +63,7 @@ test('an occupied parent suggests a child and retries only the folder, preservin
   const {home}=await fixture(t);
   fs.mkdirSync(path.join(home,'Projects'));
   const existing=path.join(home,'Projects/keep.txt');fs.writeFileSync(existing,'Do not change.');
-  const actual=await wizard([remote,'~/Projects/','',...remainingSetup]);
+  const actual=await wizard(t,[remote,'~/Projects/','',...remainingSetup]);
   assert.equal(actual.result.root,path.join(home,'Projects/job-finder'));
   assert.equal(actual.prompts.filter(p=>p.label==='Repository directory or Git URL').length,1);
   assert.deepEqual(actual.prompts.filter(p=>p.label==='Clone into folder').map(p=>p.fallback),['~/Projects/job-finder','~/Projects/job-finder']);
@@ -73,22 +76,22 @@ test('an occupied suggested folder or file gets a usable new suggestion without 
   const occupied=path.join(home,'Projects/job-finder');fs.mkdirSync(occupied,{recursive:true});
   fs.writeFileSync(path.join(occupied,'keep.txt'),'Keep');
   fs.writeFileSync(`${occupied}-2`,'Also keep');
-  const actual=await wizard([remote,'','',...remainingSetup]);
+  const actual=await wizard(t,[remote,'','',...remainingSetup]);
   assert.equal(actual.result.root,`${occupied}-3`);
   assert.equal(actual.prompts.filter(p=>p.label==='Clone into folder')[1].fallback,'~/Projects/job-finder-3');
   assert.equal(fs.readFileSync(path.join(occupied,'keep.txt'),'utf8'),'Keep');
   assert.equal(fs.readFileSync(`${occupied}-2`,'utf8'),'Also keep');
-  const second=await wizard([remote,'~/Projects/job-finder-2','',...remainingSetup]);
+  const second=await wizard(t,[remote,'~/Projects/job-finder-2','',...remainingSetup]);
   assert.equal(second.result.root,`${occupied}-4`);
   assert.match(second.output,/is a file/);
 });
 
 test('an existing matching checkout resumes its saved setup and preserves uncommitted source',async t=>{
   await fixture(t);
-  const first=await wizard([remote,'',...remainingSetup]);
+  const first=await wizard(t,[remote,'',...remainingSetup]);
   const id=read(first.result.root).project.id;
   fs.writeFileSync(path.join(first.result.root,'README.md'),'Uncommitted work');
-  const resumed=await wizard([remote,'','yes','n','n']);
+  const resumed=await wizard(t,[remote,'','yes','n']);
   assert.equal(resumed.result.root,first.result.root);
   assert.equal(read(resumed.result.root).project.id,id);
   assert.equal(read(resumed.result.root).models.length,1);
@@ -99,10 +102,10 @@ test('an existing matching checkout resumes its saved setup and preserves uncomm
 
 test('a different origin is explained and the user can explicitly choose that local checkout',async t=>{
   const {git}=await fixture(t);
-  const first=await wizard([remote,'',...remainingSetup]);
+  const first=await wizard(t,[remote,'',...remainingSetup]);
   await git('-C',first.result.root,'remote','set-url','origin','https://example.test/my-fork/job-finder.git');
   fs.writeFileSync(path.join(first.result.root,'README.md'),'My local edits');
-  const resumed=await wizard([remote,'','2','n','n']);
+  const resumed=await wizard(t,[remote,'','2','n']);
   assert.equal(resumed.result.root,first.result.root);
   assert.match(resumed.output,/contains a checkout of example.test\/my-fork\/job-finder/);
   assert.match(resumed.output,/You requested example.test\/team\/job-finder/);
@@ -111,9 +114,9 @@ test('a different origin is explained and the user can explicitly choose that lo
 
 test('SSH URLs and an explicit tilde destination work, and back can switch to a local checkout',async t=>{
   const {home,source}=await fixture(t);
-  const cloned=await wizard([...remainingSetup],{repo:'git@example.test:team/job-finder.git',dir:'~/Work/job-finder'});
+  const cloned=await wizard(t,[...remainingSetup],{repo:'git@example.test:team/job-finder.git',dir:'~/Work/job-finder'});
   assert.equal(cloned.result.root,path.join(home,'Work/job-finder'));
-  const local=await wizard(['back',source,...remainingSetup],{repo:remote});
+  const local=await wizard(t,['back',source,...remainingSetup],{repo:remote});
   assert.equal(local.result.root,source);
   assert.equal(fs.existsSync(path.join(home,'Projects/job-finder')),false);
 });
@@ -123,7 +126,7 @@ test('a failed clone offers retry with the same URL, then a way to change reposi
   // A missing local fixture fails deterministically without a network or credential request.
   const missing='https://example.test/team/missing';
   await git('config','--file',path.join(home,'gitconfig'),`url.${home}/missing-source.insteadOf`,missing);
-  const actual=await wizard([missing,'','1','','2',source,...remainingSetup]);
+  const actual=await wizard(t,[missing,'','1','','2',source,...remainingSetup]);
   assert.equal(actual.result.root,source);
   assert.equal(actual.prompts.filter(p=>p.label==='Repository directory or Git URL').length,2);
   assert.deepEqual(actual.prompts.filter(p=>p.label==='Clone into folder').map(p=>p.fallback),['~/Projects/missing','~/Projects/missing']);
@@ -135,7 +138,7 @@ test('stopping a failed clone exits cleanly; noninteractive init still rejects o
   const {home,git}=await fixture(t);
   const missing='https://example.test/team/missing';
   await git('config','--file',path.join(home,'gitconfig'),`url.${home}/missing-source.insteadOf`,missing);
-  await assert.rejects(wizard([missing,'','3']),error=>error.code===130);
+  await assert.rejects(wizard(t,[missing,'','3']),error=>error.code===130);
   const file=path.join(home,'keep.txt');fs.writeFileSync(file,'Keep');
   await assert.rejects(execute('init',[remote],{dir:file,'non-interactive':true}),/new or empty folder/);
   assert.equal(fs.readFileSync(file,'utf8'),'Keep');

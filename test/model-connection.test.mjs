@@ -15,6 +15,7 @@ async function fixture(t,handler){
 test('API smoke preserves successful history while a failed retest supersedes readiness',async t=>{
   let fail=false;const root=await fixture(t,(req,res)=>{req.resume();res.writeHead(fail?401:200,{'content-type':'application/json'});res.end(fail?'{"error":{"message":"PRIVATE_SECRET"}}':JSON.stringify({choices:[{finish_reason:'stop',message:{role:'assistant',content:'BYPASS_MODEL_OK'}}]}));});
   const output=[];await checkModelConnection(root,'api',{write:x=>output.push(x)});assert.match(output.join('\n'),/Connection verified/);fail=true;
+  assert.doesNotMatch(output.join('\n'),/undefined|NaN/);
   await assert.rejects(execute('model test',['api'],{project:root}),e=>e.details.reason==='authentication'&&!e.message.includes('PRIVATE_SECRET'));
   assert.equal(read(root).models[0].lastTest.status,'connected');assert.equal(readiness(root).model.connection,'failed');
 });
@@ -28,4 +29,9 @@ test('cancelling an API smoke closes the request and records skipped, not connec
   const controller=new AbortController();const root=await fixture(t,(req,res)=>{req.resume();controller.abort(new Fault('Connection check skipped.',130,{skipped:true}));});
   const result=await checkModelConnection(root,'api',{write:()=>{},run:work=>work(controller.signal)});
   assert.equal(result.skipped,true);assert.equal(read(root).models[0].lastAttempt.status,'skipped');assert.equal(read(root).models[0].lastTest,undefined);
+});
+test('HTTP 402 is retained as a non-retryable billing attempt without raw provider details',async t=>{
+  const root=await fixture(t,(req,res)=>{req.resume();res.writeHead(402,{'content-type':'application/json'});res.end('{"error":{"code":"billing_not_configured","message":"PRIVATE_TEAM_ID"}}');});
+  await assert.rejects(execute('model test',['api'],{project:root}),error=>error.details.reason==='billing'&&error.details.retryable===false&&!error.message.includes('PRIVATE_TEAM_ID'));
+  const attempt=read(root).models[0].lastAttempt;assert.equal(attempt.status,'failed');assert.equal(attempt.reason,'billing');assert.doesNotMatch(attempt.message,/PRIVATE_TEAM_ID/);
 });

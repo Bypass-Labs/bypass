@@ -6,7 +6,7 @@ import { need, envName, now, Fault, abortFault, redact, registerSecret, hash } f
 
 // Official contracts checked 2026-10-27; links and restrictions in docs/AI_MODES.md.
 export const providers = Object.freeze({
-  meta:{label:'Meta / Muse',baseUrl:'https://api.meta.ai/v1',model:'muse-spark-1.3',secretEnv:'MODEL_API_KEY',transport:'responses',transports:['responses','chat'],efforts:['none','minimal','low','medium','high','xhigh','max'],encryptedReplay:true},
+  meta:{label:'Meta Model API',baseUrl:'https://api.meta.ai/v1',model:'muse-spark-1.3',secretEnv:'MODEL_API_KEY',transport:'responses',transports:['responses','chat'],efforts:['none','minimal','low','medium','high','xhigh','max'],encryptedReplay:true},
   openai:{label:'OpenAI',baseUrl:'https://api.openai.com/v1',model:'gpt-6-luna',secretEnv:'OPENAI_API_KEY',transport:'responses',transports:['responses','chat'],efforts:['none','low','medium','high','xhigh','max'],encryptedReplay:true},
   anthropic:{label:'Anthropic / Claude',baseUrl:'https://api.anthropic.com/v1',model:'claude-opus-5-5',secretEnv:'ANTHROPIC_API_KEY',transport:'chat',transports:['chat'],efforts:[]},
   moonshot:{label:'Moonshot / Kimi',baseUrl:'https://api.moonshot.ai/v1',model:'kimi-k3.1-pro',secretEnv:'MOONSHOT_API_KEY',transport:'chat',transports:['chat'],efforts:[]},
@@ -60,13 +60,34 @@ function pinnedFetch(profile, apiKey, workspace, onProgress) {
     }).then(()=>{if(!closed){closed=true;controller.close();}}).catch(()=>{const error=new Fault('API connection interrupted or destination rejected. Check the configured endpoint and network.',3,{reason:'network'});if(opened){if(!closed){closed=true;controller.error(error);}}else reject(error);});
   });
 }
-export function providerFailure(error) {
+export function providerFailure(error,provider) {
   if(error instanceof Fault)return error;
   const status=Number(error.status)||undefined;
-  const reason=status===401||status===403?'authentication':status===429?'rate_limit':status===400||status===404||status===422?'unsupported_request':status>=500?'provider_unavailable':'network';
-  const advice={authentication:'Check the named API-key environment variable, model access and optional Anthropic workspace header.',rate_limit:'Provider quota or rate limit reached. Retry later after checking provider usage.',unsupported_request:'Check the exact model, endpoint, protocol and reasoning options. No model or transport fallback was attempted.',provider_unavailable:'Provider service failed. Evidence is saved; retry later.',network:'Check the configured endpoint and network.'};
+  const safeCodes=new Set(['billing_not_configured','billing_hard_limit_reached','insufficient_quota','model_access_denied','insufficient_permissions','invalid_api_key']);
+  const candidate=error.code||error.error?.code;
+  const providerCode=safeCodes.has(candidate)?candidate:undefined;
+  const reason=status===402||providerCode?.startsWith('billing_')?'billing':providerCode==='insufficient_quota'?'quota':status===401||providerCode==='invalid_api_key'?'authentication':status===403||['model_access_denied','insufficient_permissions'].includes(providerCode)?'authorization':status===429?'rate_limit':status===400||status===404||status===422?'unsupported_request':status>=500?'provider_unavailable':'network';
+  const destination=provider==='meta'?'Meta Model API':'the provider';
+  const advice={authentication:'Check the named API-key environment variable.',authorization:`The key authenticated, but it does not have access to this model or operation. Check ${destination} account and model permissions.`,billing:`The API key is valid, but ${destination} billing needs attention before inference can start. Open the billing dashboard, resolve the issue, then retry.`,quota:'Provider usage quota is exhausted. Check account limits before retrying.',rate_limit:'Provider rate limit reached. Retry later after checking provider usage.',unsupported_request:'Check the exact model, endpoint, protocol and reasoning options. No model or transport fallback was attempted.',provider_unavailable:'Provider service failed. Evidence is saved; retry later.',network:'Check the configured endpoint and network.'};
   // Never include error.message, body, headers, request options or credential values.
-  return new Fault(`API request failed${status?` (HTTP ${status})`:''}. ${advice[reason]}`,3,{reason,...(status?{httpStatus:status}:{}),retryable:status===429||status>=500});
+  return new Fault(`API request failed${status?` (HTTP ${status})`:''}. ${advice[reason]}`,3,{reason,...(status?{httpStatus:status}:{}),...(providerCode?{providerCode}:{}),retryable:status===429||status>=500});
+}
+
+// Catalog discovery authenticates the selected destination without sending
+// repository content. Only model IDs cross this boundary or reach the caller.
+export async function listProviderModels(profile,{signal,timeoutMs=15000}={}) {
+  const p=checkedProfile(profile),url=p.baseUrl.replace(/\/$/,'')+'/models';
+  let response;
+  try{
+    response=await safeRequest(url,{allowLocal:loopback(new URL(url).hostname),allowPrivate:p.allowPrivate,method:'GET',headers:{authorization:`Bearer ${process.env[p.secretEnv]}`},signal,timeout:Math.min(timeoutMs,p.timeoutMs),maxBytes:1048576});
+  }catch(error){throw providerFailure(error,p.provider);}
+  if(response.status<200||response.status>=300){
+    let code;try{code=JSON.parse(response.body)?.error?.code;}catch{/* body is intentionally discarded */}
+    throw providerFailure({status:response.status,code},p.provider);
+  }
+  let data;try{data=JSON.parse(response.body);}catch{throw new Fault('The model catalog returned invalid JSON.',3,{reason:'unsupported_request'});}
+  need(Array.isArray(data?.data),'The model catalog response has an unsupported shape.',3,{reason:'unsupported_request'});
+  return [...new Set(data.data.map(item=>item?.id).filter(id=>typeof id==='string'&&/^[\w./:-]{1,160}$/.test(id)))];
 }
 function incompleteResponse(response) {
   const reason = response?.incomplete_details?.reason;
@@ -127,7 +148,7 @@ export class ProviderSession {
     } catch(error) {
       if(signal?.aborted)throw abortFault(signal);
       if(deadline.aborted)throw new Fault('Model request timed out. Earlier evidence is saved; retry explicitly.',3,{reason:'model_timeout'});
-      throw providerFailure(error);
+      throw providerFailure(error,p.provider);
     }
   }
 }

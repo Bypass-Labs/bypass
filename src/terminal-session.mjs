@@ -125,8 +125,9 @@ export function frame(state, columns, rows, now=Date.now()) {
   const before=state.input.slice(0,state.cursor),budget=width-3;
   let offset=0;
   while(cells(before.slice(offset))>=budget&&offset<before.length)offset++;
-  const shown=clip(state.input.slice(offset),budget),composerRow=bottom.length;
-  add(`› ${shown||(!state.input?placeholder:'')}`,state.input?'title':'muted');
+  const visibleInput=state.pending?.secret?'•'.repeat([...state.input].length):state.input;
+  const shown=clip(visibleInput.slice(offset),budget),composerRow=bottom.length;
+  add(`› ${shown||(!state.input?(state.pending?.secret?'Paste key · input is hidden':placeholder):'')}`,state.input?'title':'muted');
   const hint=state.pending?.kind==='command'?'/ commands':state.pending?.kind==='multiselect'?'↑↓ move · Space toggle · Enter confirm':state.pending?.kind==='select'?'↑↓ select':'Enter continue';
   add(state.operation?`${state.operation.cancelable?'Esc stop':'Finishing step'}${state.operation.skipOnEnter?' · Enter skip':''} · Ctrl+O details · Ctrl+C exit`:height<18?'Ctrl+C exit · Esc back':`${hint} · Ctrl+O details${width>=100?' · Ctrl+T tasks':''} · Esc back · Ctrl+C exit`,'muted');
 
@@ -166,7 +167,8 @@ export function frame(state, columns, rows, now=Date.now()) {
   }
   const inputRow=lines.length+composerRow+1;
   lines.push(...bottom);
-  return {lines:lines.slice(0,height),cursor:{row:Math.min(height,inputRow),column:Math.min(columns,4+cells(before.slice(offset)))},maxScroll};
+  const cursorText=state.pending?.secret?'•'.repeat([...before].length):before.slice(offset);
+  return {lines:lines.slice(0,height),cursor:{row:Math.min(height,inputRow),column:Math.min(columns,4+cells(cursorText))},maxScroll};
 }
 const taskTone=status=>status==='done'?'success':status==='running'?'accent':status==='failed'?'error':['attention','cancelled'].includes(status)?'warning':'muted';
 const activityTone=text=>/^✓/.test(text)?'success':/^!|^Error|failed/i.test(text)?'warning':/^›/.test(text)?'accent':/^Step \d|^BYPASS|^Setup saved/.test(text)?'title':/^  \d+ details?/.test(text)?'muted':'normal';
@@ -211,7 +213,7 @@ export function createTerminalSession({input=process.stdin,output=process.stdout
     const pending=state.pending;if(!pending)return;
     state.pending=null;state.menu=[];setInput('');state.scroll=0;
     if(error)pending.reject(error);
-    else {const title=pending.title.trim().replace(/ \(Enter to continue, q to leave\)$/,'');write(`› ${pending.kind==='command'?answer:title+'  '+(pending.items?.find(item=>item.value===answer)?.label||answer?.value||answer||'continue')}`);pending.resolve(answer);}
+    else {const title=pending.title.trim().replace(/ \(Enter to continue, q to leave\)$/,'');write(`› ${pending.kind==='command'?answer:title+'  '+(pending.secret?'[hidden]':pending.items?.find(item=>item.value===answer)?.label||answer?.value||answer||'continue')}`);pending.resolve(answer);}
   };
   const cancel=()=>new Fault('Action stopped. Your saved progress is retained.',130,{cancelled:true});
   const shutdown=()=>{
@@ -287,6 +289,8 @@ export function createTerminalSession({input=process.stdin,output=process.stdout
     return new Promise((resolve,reject)=>{state.pending={kind:'question',title,fallback,resolve,reject,...extra};state.input='';state.cursor=0;state.scroll=0;state.menu=extra.items||[];state.selected=extra.selected||0;mark();render();});
   }
   const ask=(title,fallback='')=>question(title,fallback);
+  const secret=title=>question(title,'',{secret:true});
+  ask.secret=secret;
   const select=(title,items,{fallback=0,back=false,allowCustom=false}={})=>question(title,'',{kind:'select',items:items.map((item,i)=>({...item,label:item.label||item.name||item.id,value:String(i)})),selected:fallback,back,allowCustom}).then(value=>value===null?null:typeof value==='object'?value:items[Number(value)]);
   ask.select=select;
   const multiselect=(title,items,{selected=[]}={})=>question(title,'',{kind:'multiselect',items,values:[...selected]});
@@ -325,7 +329,7 @@ export function createTerminalSession({input=process.stdin,output=process.stdout
   };
   write('Security that stays with your code.\n\nAudit a running app or review a repository. Prove the issue. Keep the fix as a test.\n\n/ commands     /demo guided walkthrough     Ctrl+O activity details');
   render();
-  return {rich:true,ask,select,multiselect,write,activity,run:work=>activity('Check model connection',work,{skipOnEnter:true}),signal:controller.signal,
+  return {rich:true,ask,secret,select,multiselect,write,activity,run:work=>activity('Check model connection',work,{skipOnEnter:true}),signal:controller.signal,
     command:(fallback)=>{state.recommended='/'+fallback;historyIndex=history.length;return question('Choose your next action',fallback,{kind:'command'});},
     setContext:context=>{state.context={...state.context,...context};mark();},
     setNext:next=>{state.next=next;mark();},

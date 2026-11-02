@@ -30,6 +30,9 @@ test('complete preview demo stays inside MCP: proof, fix, test controls, exports
   assert.equal((await c.call('bypass_auth_login',{provider:'muse-code'})).kind,'host-handoff');
   const protectedInstall=await c.raw('bypass_remove_plugin',{confirmed:false});assert.equal(protectedInstall.result.isError,true);
   fs.writeFileSync(path.join(app,'app.mjs'),'export const app = true;');
+  const preview=await c.call('bypass_connect_repository',{repository:app,confirmed:true,plan:true});
+  assert.equal(preview.plan,true);assert.deepEqual(preview.fileChanges.map(item=>item.path),['.bypass/','.gitignore','.bypassignore']);
+  assert.equal(fs.existsSync(path.join(app,'.bypass')),false);assert.equal((await c.call('bypass_dashboard')).selectedRepository,null);
   await c.call('bypass_connect_repository',{repository:app,confirmed:true});
   const original=fs.readFileSync(path.join(app,'.bypass/state.json'),'utf8');
   const demo=await c.call('bypass_demo_start',{kind:'preview'});fixture=demo.root;assert.equal(demo.session.previousRepository,app);
