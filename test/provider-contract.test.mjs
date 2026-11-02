@@ -78,8 +78,8 @@ test('malformed arguments, unknown fields and unsupported tool names cannot exec
   }
 });
 
-test('auth/rate failures have actionable categories, no body/key leakage and no retries',async t=>{
-  for(const [status,reason] of [[401,'authentication'],[403,'authentication'],[429,'rate_limit'],[400,'unsupported_request'],[503,'provider_unavailable']]){
+test('auth/billing/rate failures have actionable categories, no body/key leakage and no retries',async t=>{
+  for(const [status,reason] of [[401,'authentication'],[403,'authorization'],[402,'billing'],[429,'rate_limit'],[400,'unsupported_request'],[503,'provider_unavailable']]){
     const {profile,calls}=await endpoint(t,(_req,res)=>{res.writeHead(status,{'content-type':'application/json'});res.end('{"error":{"message":"PRIVATE_BODY contract-test-value"}}');});
     await assert.rejects(new ProviderSession(profile).turn([{role:'user',content:'x'}]),e=>{assert.equal(e.details.reason,reason);assert.doesNotMatch(e.message,/PRIVATE_BODY|contract-test-value/);return true;});assert.equal(calls.length,1);
   }

@@ -35,7 +35,7 @@ test('installer verifies checksums, works without system Node, survives repeat i
   const generated=path.join(directory,'generated');buildInstallAssets(generated);
   const museScript=path.join(generated,'install-muse.sh');
   const emptyInstall=path.join(directory,'not-created');
-  await assert.rejects(execFile('/bin/bash',[museScript],{env:{...env,BYPASS_INSTALL_DIR:emptyInstall}}),e=>/Muse Code was not found/.test(e.stderr));
+  await assert.rejects(execFile('/bin/bash',[museScript],{env:{...env,BYPASS_INSTALL_DIR:emptyInstall}}),e=>/Muse Code was not found/.test(e.stderr)&&/standalone CLI \(no Muse Code required\)/.test(e.stderr)&&/bypasslabs\.ai\/install \| bash/.test(e.stderr));
   assert.equal(fs.existsSync(emptyInstall),false);
   const fake=path.join(directory,'fake');fs.mkdirSync(fake);fs.writeFileSync(path.join(fake,'muse'),'#!/bin/sh\nexit 0\n',{mode:0o755});
   const museEnv={...env,PATH:fake+':'+env.PATH};
@@ -47,4 +47,14 @@ test('installer verifies checksums, works without system Node, survives repeat i
   corrupt=true;release='main-'+'b'.repeat(40)+'-2-1';await assert.rejects(run(),e=>/Checksum mismatch/.test(e.stderr));assert.equal(fs.readlinkSync(path.join(install,'current')),current);
   const unrelated=path.join(directory,'unrelated');fs.mkdirSync(unrelated);fs.writeFileSync(path.join(unrelated,'keep.txt'),'keep');
   await assert.rejects(execFile('/bin/bash',[script],{env:{...env,BYPASS_INSTALL_DIR:unrelated}}),e=>/unrelated files/.test(e.stderr));assert.equal(fs.readFileSync(path.join(unrelated,'keep.txt'),'utf8'),'keep');
+});
+
+test('install documentation keeps standalone and Muse Code prerequisites distinct',()=>{
+  const read=file=>fs.readFileSync(fileURLToPath(new URL(file,import.meta.url)),'utf8');
+  const readme=read('../README.md'),bash=read('../scripts/install.sh'),powershell=read('../scripts/install.ps1');
+  assert.ok(readme.indexOf('| **Standalone CLI**')<readme.indexOf('curl -fsSL https://bypasslabs.ai/install/muse | bash'));
+  assert.match(readme,/Standalone CLI[^\n]*Muse Code is not required/);
+  assert.match(readme,/Muse Code plugin[^\n]*Muse Code installed, opened, and signed in first/);
+  assert.match(bash,/standalone CLI \(no Muse Code required\).*bypasslabs\.ai\/install \| bash/);
+  assert.match(powershell,/standalone CLI \(no Muse Code required\).*bypasslabs\.ai\/install\.ps1 \| iex/);
 });

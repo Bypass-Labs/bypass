@@ -46,6 +46,17 @@ test('bracketed multiline paste fills one answer and never submits extra command
   tty.key('return');assert.equal(await answer,'https://github.com/org/app /quit');
 });
 
+test('masked secret input never enters the frame, activity transcript, or terminal bytes',async t=>{
+  const tty=terminal(t),raw='LLM_TEST_SECRET_8Qx2';
+  const answer=tty.ui.secret('Meta Model API key');tty.type(raw);
+  const view=frame(tty.ui.state,90,30).lines.map(line=>line.text).join('\n');
+  assert.doesNotMatch(view,new RegExp(raw));assert.match(view,/•{8}/);
+  tty.key('return');assert.equal(await answer,raw);
+  assert.doesNotMatch(transcriptLines(tty.ui.state,100,{expanded:true}).join('\n'),new RegExp(raw));
+  assert.match(transcriptLines(tty.ui.state,100).join('\n'),/Meta Model API key \[hidden\]/);
+  assert.doesNotMatch(tty.bytes,new RegExp(raw));
+});
+
 test('menus accept arrows, numbers and Escape without abandoning the workspace',async t=>{
   const tty=terminal(t),items=[{label:'First',id:1},{label:'Second',id:2}];
   let answer=tty.ui.select('Choose',items,{back:true});tty.key('down');tty.key('return');assert.equal((await answer).id,2);

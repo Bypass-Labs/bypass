@@ -41,7 +41,7 @@ test('/blackbox asks for scope and rate, runs, and presents report actions', asy
   assert.ok(fs.existsSync(path.join(root,'.bypass/runs',runs[0],'report.md')));
 });
 
-test('terminal model setup selects the new generic-key Meta profile', async t => {
+test('terminal model setup selects the Meta profile with its official key variable', async t => {
   const root=temp();
   t.after(()=>fs.rmSync(root,{recursive:true,force:true}));
   fs.writeFileSync(path.join(root,'app.mjs'),'export const app = true;\n');
@@ -55,5 +55,5 @@ test('terminal model setup selects the new generic-key Meta profile', async t =>
     write:()=>{},close:()=>{}});
   const state=JSON.parse(fs.readFileSync(path.join(root,'.bypass/state.json'),'utf8'));
   assert.equal(state.activeModel,'meta-terminal');
-  assert.equal(state.models.find(model=>model.name==='meta-terminal').secretEnv,'LLM_KEY');
+  assert.equal(state.models.find(model=>model.name==='meta-terminal').secretEnv,'MODEL_API_KEY');
 });

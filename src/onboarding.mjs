@@ -2,10 +2,9 @@ import { promptValue, confirmChoice, scopeSuggestions, credentialTypes } from '.
 import { reviewChoices, reviewQuestion } from './application-setup.mjs';
 import { rememberSelection } from './plugin-context.mjs';
 import { ownershipReady, verificationDisabled } from './ownership-store.mjs';
-import { promptAPIProfile } from './provider-setup.mjs';
+import { promptMuseProfile } from './provider-setup.mjs';
 import { execute, readiness } from './service.mjs';
 import { connectProject } from './onboarding-repository.mjs';
-import { checkModelConnection } from './model-check.mjs';
 import { guidedDemo } from './guided-demo.mjs';
 import { reviewSummary } from './experience.mjs';
 import { read, change } from './store.mjs';
@@ -57,11 +56,40 @@ export async function onboard(options={}, args=[], io={}) {
   const mode=options.mode||savedMode||(await pick(reviewQuestion,reviewChoices,1)).id;
   need(['code','combined','live'].includes(mode),'Choose code, combined, or live review.');
   say(mode==='live'
-    ? 'A black-box audit uses your provider API key and does not need Docker. Setup and saved tests need no model.'
-    : 'Source AI review uses Docker and your provider API key. Setup and saved tests need no model.');
-  io.setTasks?.('Setup',[mode==='live'?'Connect running app':'Connect application source','Choose inference connection',mode==='code'?'App testing skipped':'Verify app / choose permissions','Save setup and open project']);
+    ? 'A black-box audit uses your Muse connection and does not need Docker. Setup and saved tests need no model.'
+    : 'Source AI review uses Docker and your Muse connection. Setup and saved tests need no model.');
+  io.setTasks?.('Setup',['Choose and connect Muse inference',mode==='live'?'Connect running app':'Connect application source',mode==='code'?'App testing skipped':'Verify app / choose permissions','Save setup and open project']);
   io.task?.(0,'running');
-  say(`\nStep 1 of 4 / ${mode==='live'?'Connect your running app':'Connect your repository'}`);
+
+  say('\nStep 1 of 4 / Choose and connect Muse inference');
+  let prepared=null,model=null,replaceMuseKey=false;
+  const candidateRoot=options.project||(!/^https:\/\/|^ssh:\/\/|^git@/.test(args[0]||'')?args[0]:null);
+  try{
+    const existing=read(candidateRoot||'');model=existing.models.find(item=>item.name===existing.activeModel);
+    if((model?.lastAttempt||model?.lastTest)?.status==='connected'){
+      prepared={saved:true,check:model.lastAttempt||model.lastTest};
+      say(`✓ Keeping ${model.model} · ${model.provider==='meta'?'Meta Model API':'local Muse model'} · connection verified.`);
+    }else model=null;
+  }catch{/* New application: configure Muse before creating project state. */}
+  while(!prepared){
+    try{
+      prepared=await promptMuseProfile(ask,pick,{secret:io.secret||io.ask.secret,write:say,activity:io.activity,signal:io.signal,metaBaseUrl:io.metaBaseUrl,forceSecret:replaceMuseKey});
+      replaceMuseKey=false;
+    }catch(error){
+      if(error.code===130||error.name==='AbortError')throw error;
+      say(`\nMuse connection not ready. ${error.message}`);
+      const actions=[
+        {id:'retry',label:'Retry this Muse setup (recommended)'},
+        ...(['authentication','authorization','billing','quota'].includes(error.details?.reason)?[{id:'replace',label:'Enter a different API key'}]:[]),
+        {id:'stop',label:'Stop and keep existing setup'}
+      ];
+      const action=await pick('What would you like to do?',actions);
+      if(action.id==='replace'){replaceMuseKey=true;continue;}
+      if(action.id==='stop')throw new Fault('Setup stopped. Saved choices are retained.',130);
+    }
+  }
+  io.task?.(0,'done');io.task?.(1,'running');
+  say(`\nStep 2 of 4 / ${mode==='live'?'Connect your running app':'Connect your repository'}`);
   async function appAddress(){
     say(appAddressQuestion+'\n'+appAddressHelp);
     while(true){
@@ -79,45 +107,31 @@ export async function onboard(options={}, args=[], io={}) {
     const initial=await call(null,'app connect',[app.url],{environment:app.environment});root=initial.root;
     say(`✓ App connected: ${app.url}. No repository required.`);
   }else{
-    say('Choose the application source folder or Git URL.');
-    const initial=await connectProject(options,args,{ask,say,yes,pick,activity:io.activity,signal:io.signal});root=initial.root;
+    say('Choose the application source folder or Git URL. Bypass will preview every repository file before setup writes it.');
+    const initial=await connectProject(options,args,{ask,say,yes,pick,activity:io.activity,signal:io.signal,filePlanChoice:io.filePlanChoice});root=initial.root;
     if(!initial.resumed)await call(root,'engine use',['docker']);
     say(`✓ Application source connected: ${root}${initial.resumed?' · resuming saved setup':''}`);
+    if(initial.fileChanges?.length){
+      say('Repository setup changes:');
+      for(const file of initial.fileChanges)say(`  ${file.action.padEnd(7)} ${file.path} · ${file.purpose}${file.commit?' · review and commit':' · local only'}`);
+    }
   }
   await change(root,s=>{s.settings.reviewMode=mode;});
   io.setContext?.({title:read(root).project.name,repo:root,branch:read(root).project.repository.branch});
-  io.task?.(0,'done');io.task?.(1,'running');
-
-  say('\nStep 2 of 4 / Choose your model connection');
-  let model=read(root).models.find(m=>m.name===read(root).activeModel);
-  if(model&&model.executionMode!=='standalone-api'){say('Your old model profile is retained but cannot run standalone AI. Choose an API-key profile below, or use /bypass:review inside Muse.');model=null;}
-  if(model) say(`Keeping ${model.name} · ${model.provider} · ${model.lastAttempt?.status||model.lastTest?.status||'connection not tested'}. Change it later in Models & privacy.`);
-  else await addModel();
-  async function addModel(){await recover(async()=>{
-    const {selection,config}=await promptAPIProfile(ask,pick);
-    const name=advanced?await suggested('Profile name',[selection.name]):unique(selection.name,read(root).models);
-    const result=await call(root,'model add',[name],config);await call(root,'model use',[name]);model=result.model;
-    io.setContext?.({model:`${model.name} · ${model.provider} · not tested`});
-    say(`✓ Model choice saved: ${model.name}\nModel runs through: ${model.dataDestination}\nConnection has not been checked yet.`);
-    say(`Only the environment-variable name is saved. Set ${model.secretEnv} privately before starting an AI audit.`);
-  });}
-  if(model&&(model.lastAttempt||model.lastTest)?.status!=='connected'){
-    say('Optional: send one small test prompt. Provider usage may apply. You can finish setup without this check.');
-    if(await yes('Check the connection now?'))while(true){
-      try{await checkModelConnection(root,model.name,{...io,write:say});break;}
-      catch(error){
-        if(error.code===130||error.name==='AbortError')throw error;
-        say(`\nConnection not verified. ${error.message}`);
-        const action=await pick('What would you like to do?',[
-          {label:'Continue setup — check the connection later',id:'continue'},
-          {label:'Retry the connection check',id:'retry'},
-          {label:'Choose another model connection',id:'change'}
-        ]);
-        if(action.id==='continue')break;
-        if(action.id==='change'){await addModel();break;}
-      }
+  if(!prepared.saved){
+    const state=read(root),active=state.models.find(item=>item.name===state.activeModel);
+    if((active?.lastAttempt||active?.lastTest)?.status==='connected'&&active.provider===prepared.config.provider&&active.model===prepared.config.model){
+      prepared.saved=true;model=active;say(`✓ Reusing the verified ${active.model} connection already saved with this application.`);
     }
   }
+  if(!prepared.saved){
+    const name=advanced?await suggested('Muse connection name',[prepared.selection.name]):unique(prepared.selection.name,read(root).models);
+    const result=await call(root,'model add',[name],prepared.config);await call(root,'model use',[name]);model=result.model;
+    await change(root,state=>{const saved=state.models.find(item=>item.name===name);saved.lastTest=prepared.check;saved.lastAttempt=prepared.check;});
+    model=read(root).models.find(item=>item.name===name);
+  }else model=read(root).models.find(item=>item.name===read(root).activeModel);
+  io.setContext?.({model:`${model.model} · ${model.provider==='meta'?'Meta Model API':'local Muse'} · connected`});
+  say(`✓ Muse connection saved: ${model.model}\n  Destination: ${model.dataDestination}\n  Authentication: verified`);
 
   io.task?.(1,'done');io.task?.(2,'running');io.setNext?.('Save setup → open your project → run a review');
   say(`\nStep 3 of 4 / ${mode==='code'?'Code-only review — app setup skipped':'App ownership and testing permissions'}`);
