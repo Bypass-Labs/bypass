@@ -33,15 +33,20 @@ nonempty inclusion replaces that detector's defaults; exclusions win. Explicit r
 available when switching modes. Discovery plans and bundled policy lists
 require no Docker, model configuration, or inference.
 
-Bundled policies cover authentication and authorization, interpreter and query
-injection, browser and HTTP trust boundaries, unsafe parsing, network and
-filesystem effects, file and field handling, credentials, cryptographic trust
-decisions, sensitive data, resource bounds, workflow integrity, and
-build/extension execution. The JSON catalog under
+Bundled policies cover authentication and authorization, delegated and reserved
+identities, derived-state lineage, interpreter and query injection, browser and
+HTTP trust boundaries, AI instruction and output authority, unsafe parsing,
+integrations, network and filesystem effects, file and field handling,
+credentials, cryptographic trust decisions, sensitive-data lifecycle, migrations,
+resource bounds, deployment modes, auditability, exceptional conditions,
+workflow integrity, and build/extension execution. The JSON catalog under
 `policies/` references Markdown bodies authored once. Mapping assigns only
 applicable surface-policy pairs so the broader catalog does not spend the task
 budget on clearly unrelated checks. Custom catalogs use the same schema, with
 unique IDs and repository-relative in-scope body paths.
+
+The bundled catalog is mapped to current OWASP Web, API, MCP, and GenAI/agentic
+risk families in [OWASP policy coverage](../docs/OWASP_POLICY_COVERAGE.md).
 
 ```json
 {
