@@ -35,11 +35,15 @@ The CLI follows the same choices-first pattern with arrow/number selection, sugg
 
 For `/bypass:discover` or source scanner requests, follow `commands/discover.md`.
 Offer SAST, Policy, or Both when the user has not chosen. Keep SAST rule/exclude-rule
-and policy/exclude-policy filters independent. SAST uses pinned CodeQL with zero
-model calls. Policy discovery uses the active Muse session to perform leased
-next_task/evidence/submit work. Never use a provider API profile or independent
-inference inside Muse. All scanner signals remain unevaluated. Source-only policy
-evidence does not authorize shell execution, target requests, or code changes.
+and policy/exclude-policy filters independent. SAST discovery uses pinned CodeQL
+with zero model calls. Source-only evaluation follows discovery by default;
+discovery-only=true defers it. Perform leased next_task/evidence/submit work in
+this session for policy discovery and evaluation. Discovery tasks cannot assign
+verdicts; evaluation tasks may confirm/refute against cited source or retain
+needs_review. Keep original signals separate from evaluation cases, and never
+describe source confirmation as runtime reproduction. Never use a provider API
+profile or independent inference inside Muse. Source evidence does not authorize
+shell execution, target requests, exploit payloads, or code changes.
 
 Use the active signed-in Muse session. Explain once that Bypass does not receive session billing attestation through the current Muse MCP/hook interfaces; subscription usage is **not verified**. Ask the user to confirm subscription mode in Muse account/settings if it is unknown. If supported host status or the user explicitly says API billing is active, stop the AI review and tell them to switch Muse to subscription mode, then resume. Do not infer billing from credential files, environment variables, an available subscription allowance, or a successful chat. Never read credentials to establish billing.
 

@@ -23,7 +23,7 @@ async function runCase(item,variant){
   fs.mkdirSync(path.dirname(path.join(root,name)),{recursive:true});fs.writeFileSync(path.join(root,name),text);
  }
  await execute('init',[root]);
- const config={languages:[item.language],includeRules:[item.rule],resources:{timeoutSeconds:180},...(item.build?{builds:{[item.language]:item.build}}:{})};
+ const config={evaluation:'off',languages:[item.language],includeRules:[item.rule],resources:{timeoutSeconds:180},...(item.build?{builds:{[item.language]:item.build}}:{})};
  fs.writeFileSync(path.join(root,'scanner.json'),JSON.stringify(config));
  const result=await execute('discover',[],{project:root,config:'scanner.json'}, {onProgress:step=>console.log(`${item.name}/${variant}: ${step.message}`)});
  const run=result.run;
@@ -49,16 +49,17 @@ if(results.some(item=>item.case==='javascript'&&item.variant==='vulnerable')){
  const client=await mcpClient(root,{stateDir:path.join(output,'plugin-state'),packaged:true});
  try{
   await client.call('bypass_connect_repository',{repository:root,confirmed:true});
-  const started=await client.call('bypass_discover',{detector:'codeql',languages:'javascript',rule:'js/command-line-injection'});
+  const started=await client.call('bypass_discover',{detector:'codeql',languages:'javascript',rule:'js/command-line-injection','discovery-only':true});
   let run=started.run;
   const deadline=Date.now()+240000;
   while(!['completed','incomplete','failed','cancelled','interrupted'].includes(run.status)){
+   assert.equal(run.evaluation,'not_run','Packaged MCP discovery-only scan must not start evaluation');
    assert.ok(Date.now()<deadline,'Packaged MCP scan timed out');
    await new Promise(resolve=>setTimeout(resolve,500));
    const message=await client.raw('bypass_discover_status',{run:run.id});
    run=JSON.parse(message.result.content[0].text).run;
   }
-  assert.ok(run.languages.every(language=>language.queryComplete));assert.ok(run.signalCount>0);assert.equal(run.modelCalls,0);
+  assert.ok(run.languages.every(language=>language.queryComplete));assert.ok(run.signalCount>0);assert.equal(run.modelCalls,0);assert.equal(run.evaluation,'not_run');
   console.log('PASS packaged Muse MCP discovery');
  }finally{await client.close();}
 }

@@ -30,7 +30,7 @@ test('a source-only checkout builds a self-contained plugin and removes stale ou
     assert.deepEqual(fs.readFileSync(path.join(source,name)),fs.readFileSync(path.join(runtime,name)));
   for(const name of ['src/internal/qs/LICENSE.md','src/_vendor/partial-json-parser/LICENSE','src/_vendor/zod-to-json-schema/LICENSE'])
     assert.deepEqual(fs.readFileSync(path.join(source,'node_modules/openai',name)),fs.readFileSync(path.join(runtime,'vendor/openai-licenses',name)));
-  assert.deepEqual(fs.readFileSync(path.join(root,'scanner/protocol/v3.json')),fs.readFileSync(path.join(runtime,'scanner/protocol/v3.json')));
+  assert.deepEqual(fs.readFileSync(path.join(root,'scanner/protocol/v4.json')),fs.readFileSync(path.join(runtime,'scanner/protocol/v4.json')));
   assert.equal(fs.existsSync(path.join(runtime,'scanner/protocol/v1.json')),false);
 
   // The built plugin must launch with no development dependency tree present.
@@ -42,7 +42,7 @@ test('a source-only checkout builds a self-contained plugin and removes stale ou
     const listed=await client.request('tools/list');
     assert.ok(listed.result.tools.some(tool=>tool.name==='bypass_discover'));
     const capabilities=await client.call('bypass_scanner_capabilities');
-    assert.equal(capabilities.protocolVersion,'bypass-scanner.v3');
+    assert.equal(capabilities.protocolVersion,'bypass-scanner.v4');
     assert.equal(capabilities.features.codeqlDiscovery,true);
     assert.equal(capabilities.independentModelRequests,0);
   }finally{await client.close();}

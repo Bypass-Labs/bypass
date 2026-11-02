@@ -14,8 +14,12 @@ SAST uses a pinned CodeQL image and requires no LLM settings. Policy-only uses a
 lightweight Python image and bounded source-only tasks. Muse requests, performs,
 and submits those tasks in its active session; Bypass never reads an API profile
 or calls a provider in that path. The standalone CLI uses its explicitly
-configured API profile through the same task/evidence protocol. Formal evaluation,
-reproduction and patching remain pending. See the [scanner README](../scanner/README.md)
+configured API profile through the same task/evidence protocol. Source-only
+evaluation follows discovery by default, with separate cases, severity reasoning,
+and bounded follow-up tasks. `tasks.py` shares task/evidence enforcement between
+policy discovery and evaluation. `--discovery-only` skips evaluation and preserves
+model-free SAST discovery; default standalone scans require API readiness.
+Runtime reproduction and patching remain pending. See the [scanner README](../scanner/README.md)
 for configuration, evidence limits, provenance, and usage-accounting limitations.
 
 `src/` and `scanner/` are authoritative source trees. The plugin manifest,

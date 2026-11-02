@@ -5,8 +5,10 @@ engine; a real-model quality benchmark has not been established. It extends the 
 
 The goal is an independent AI discovery path that can identify violations of
 security invariants, including authorization mistakes that produce no CodeQL
-alert. Outputs remain candidate signals with `evaluation: not_run`. Formal
-confirmation/refutation, runtime reproduction, and patching remain separate work.
+alert. Outputs remain candidate signals with `evaluation: not_run`. The scanner
+now evaluates those candidates automatically in separate source-only cases.
+Discovery tasks still cannot assign verdicts. Runtime reproduction and patching
+remain separate work. See [evaluation behavior](../scanner/README.md#automatic-evaluation).
 
 ## Design principles
 
@@ -138,12 +140,12 @@ Python remains responsible for executing policy semantics and task preparation.
 
 ## Contracts, runtime, and ownership
 
-The MVP implements the previously reserved interfaces. Its v3 contract supplies
+The discovery MVP introduced the previously reserved interfaces. The active v4 contract retains
 policy-specific provenance and a discovery work-unit identity; saved v2 SARIF
 provenance remains readable. The source evidence and task queue are shared by
 Muse and the standalone driver.
 
-One active v3 manifest defines the wire contract: detector-specific
+One active v4 manifest defines the wire contract: detector-specific
 origin variants, discovery work-unit identity, policy/context digests, task
 leases/checkpoints, discovery submissions, coverage, and reasoning usage.
 Retain a reader/adapter for saved v2 CodeQL reports; do not maintain duplicate
@@ -241,5 +243,7 @@ they do not establish that an LLM detects the vulnerability.
 Run opt-in quality reviews over withheld positive/negative fixtures using the
 actual Muse or API settings. Record detection rate, false positives, proof gaps,
 evidence quality, latency, and available usage over repeated runs. Explicitly
-record which findings/context were supplied to the model. Formal evaluation,
-dynamic probes, patching, and autonomous specialist-agent trees are deferred.
+record which findings/context were supplied to the model. Evaluation now uses
+the same bounded evidence loop; its automated tests verify orchestration, not
+real-model conclusion quality. Dynamic probes, patching, and autonomous
+specialist-agent trees are deferred.

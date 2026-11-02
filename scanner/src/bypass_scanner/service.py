@@ -7,7 +7,7 @@ from bypass_scanner.contracts import MANIFEST, PROTOCOL_VERSION, validate
 from bypass_scanner.discovery.languages import LANGUAGES
 
 _WORKFLOW = None
-IMPLEMENTED = ['capabilities', 'rules', 'policies', 'start', 'status', 'resume', 'cancel', 'report', 'signals', 'artifact', 'build_failed','next_task','evidence','submit']
+IMPLEMENTED = ['capabilities', 'rules', 'policies', 'start', 'status', 'resume', 'cancel', 'report', 'signals', 'artifact', 'build_failed','next_task','evidence','submit','evaluate']
 
 
 def workflow():
@@ -22,7 +22,7 @@ def capabilities():
     return {'protocolVersion': PROTOCOL_VERSION, 'status': 'ready', 'analysisImplemented': True,
             'independentModelRequests': 0, 'implementedOperations': IMPLEMENTED,
             'operations': list(MANIFEST['operations']), 'stages': ['discovery', 'evaluation', 'reporting'],
-            'features': {'codeqlDiscovery': True, 'aiDiscovery': True, 'evaluation': False,
+            'features': {'codeqlDiscovery': True, 'aiDiscovery': True, 'evaluation': True,
                          'codeqlReady': Path(os.environ.get('BYPASS_CODEQL_CATALOG', '/opt/bypass-codeql-catalog.json')).is_file()},
             'languages': list(LANGUAGES)}
 
@@ -33,7 +33,7 @@ def response(operation, status='ready', message='', **values):
 
 
 def unavailable(operation):
-    return response(operation, 'not_implemented', 'Formal AI evaluation is not implemented. Discovery signals remain unevaluated.', code='not_implemented')
+    return response(operation, 'not_implemented', 'The requested scanner operation is unavailable.', code='not_implemented')
 
 
 def invoke(operation, arguments, engine=None):
@@ -52,15 +52,15 @@ def invoke(operation, arguments, engine=None):
             query=arguments.get('query','').lower()
             result=response(operation,policies=[p for p in items if query in (p['id']+' '+p['title']).lower()])
         elif operation in ('next_task','evidence','submit'):
-            policy=engine.policy_engine()
+            tasks=engine.task_engine(arguments['run'], arguments.get('task'))
             if operation=='next_task':
-                run,task=policy.next_task(arguments['run'])
+                run,task=tasks.next_task(arguments['run'])
                 result=response(operation,run['status'],run['message'],run=run,**({'task':task} if task else {}))
             elif operation=='evidence':
-                run,evidence=policy.evidence(arguments['run'],arguments['task'],arguments['operation'],arguments.get('arguments',{}))
+                run,evidence=tasks.evidence(arguments['run'],arguments['task'],arguments['operation'],arguments.get('arguments',{}))
                 result=response(operation,run['status'],run['message'],run=run,evidence=evidence)
             else:
-                run=policy.submit(arguments['run'],arguments['task'],arguments['sourceRevision'],arguments['result'])
+                run=tasks.submit(arguments['run'],arguments['task'],arguments['sourceRevision'],arguments['result'])
                 result=response(operation,run['status'],run['message'],run=run)
         elif operation == 'rules':
             items = engine.catalog()['rules']
@@ -71,7 +71,7 @@ def invoke(operation, arguments, engine=None):
             cursor, limit = arguments.get('cursor', 0), arguments.get('limit', 50)
             page = [{k: v for k, v in item.items() if k != 'path'} for item in items[cursor:cursor + limit]]
             result = response(operation, rules=page, nextCursor=cursor + len(page) if cursor + len(page) < len(items) else -1)
-        elif operation in ('start', 'resume', 'status', 'cancel', 'build_failed'):
+        elif operation in ('start', 'resume', 'status', 'cancel', 'build_failed', 'evaluate'):
             if operation == 'start':
                 run = engine.start(arguments)
             elif operation == 'build_failed':
@@ -92,9 +92,15 @@ def invoke(operation, arguments, engine=None):
             items = json.loads(path.read_text()) if path.is_file() else []
             cursor, limit = arguments.get('cursor', 0), arguments.get('limit', 50)
             page = []
+            cases_path = engine.directory(arguments['run'])/'evaluation/cases.json'
+            cases = json.loads(cases_path.read_text()) if cases_path.is_file() else []
+            evaluations = {identity:case for case in cases for identity in case['signalIds']}
             for item in items[cursor:cursor + limit]:
                 page.append({key: item[key] for key in ('id', 'ruleId', 'language', 'origin', 'evaluation', 'detectorSeverity')})
                 page[-1].update(suspectedIssue=item['suspectedIssue'][:2000], locations=item['locations'][:20], detailArtifact='signals.json')
+                if item['id'] in evaluations:
+                    case = evaluations[item['id']]
+                    page[-1].update(caseId=case['id'],evaluationOutcome=case['outcome'],evaluationArtifact='evaluation/cases.json')
             result = response(operation, run['status'], run['message'], run=run, signals=page,
                               nextCursor=cursor + len(page) if cursor + len(page) < len(items) else -1)
         else:

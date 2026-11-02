@@ -1,5 +1,5 @@
 {
-  "protocolVersion": "bypass-scanner.v3",
+  "protocolVersion": "bypass-scanner.v4",
   "resourceDefaults": {
     "threads": 2,
     "ramMb": 4096,
@@ -277,7 +277,9 @@
           "type": "string",
           "enum": [
             "mapping",
-            "policy"
+            "policy",
+            "evaluation",
+            "deep_investigation"
           ]
         }
       },
@@ -342,70 +344,58 @@
     "evaluation": {
       "type": "object",
       "properties": {
-        "caseId": {
+        "counterevidence": {
+          "$ref": "#/schemas/evaluationResult/properties/counterevidence"
+        },
+        "followUpQuestions": {
+          "$ref": "#/schemas/evaluationResult/properties/followUpQuestions"
+        },
+        "sourceRevision": {
           "type": "string",
           "minLength": 1,
           "maxLength": 160
         },
-        "outcome": {
+        "basis": {
           "type": "string",
           "enum": [
-            "confirmed",
-            "refuted",
-            "needs_review"
+            "source_only"
           ]
+        },
+        "runtimeReproduced": {
+          "type": "boolean",
+          "enum": [
+            false
+          ]
+        },
+        "caseId": {
+          "$ref": "#/schemas/evaluationResult/properties/caseId"
+        },
+        "outcome": {
+          "$ref": "#/schemas/evaluationResult/properties/outcome"
         },
         "rationale": {
-          "type": "string",
-          "minLength": 1,
-          "maxLength": 32000
+          "$ref": "#/schemas/evaluationResult/properties/rationale"
         },
         "severity": {
-          "type": "string",
-          "enum": [
-            "critical",
-            "high",
-            "medium",
-            "low",
-            "informational",
-            "unknown"
-          ]
+          "$ref": "#/schemas/evaluationResult/properties/severity"
         },
         "severityRationale": {
-          "type": "string",
-          "minLength": 1,
-          "maxLength": 2000
+          "$ref": "#/schemas/evaluationResult/properties/severityRationale"
         },
         "evidence": {
           "$ref": "#/schemas/evidenceList"
         },
         "prerequisites": {
-          "type": "array",
-          "items": {
-            "type": "string",
-            "minLength": 1,
-            "maxLength": 2000
-          },
-          "maxItems": 1000
+          "$ref": "#/schemas/evaluationResult/properties/prerequisites"
         },
         "impact": {
-          "type": "string",
-          "minLength": 1,
-          "maxLength": 2000
+          "$ref": "#/schemas/evaluationResult/properties/impact"
         },
         "openQuestions": {
-          "type": "array",
-          "items": {
-            "type": "string",
-            "minLength": 1,
-            "maxLength": 2000
-          },
-          "maxItems": 1000
+          "$ref": "#/schemas/evaluationResult/properties/openQuestions"
         },
         "nextAction": {
-          "type": "string",
-          "minLength": 1,
-          "maxLength": 2000
+          "$ref": "#/schemas/evaluationResult/properties/nextAction"
         }
       },
       "required": [
@@ -428,7 +418,7 @@
         "protocolVersion": {
           "type": "string",
           "enum": [
-            "bypass-scanner.v3"
+            "bypass-scanner.v4"
           ]
         },
         "status": {
@@ -559,7 +549,9 @@
         "stage": {
           "type": "string",
           "enum": [
-            "discovery"
+            "discovery",
+            "evaluation",
+            "reporting"
           ]
         },
         "phase": {
@@ -616,8 +608,16 @@
         "evaluation": {
           "type": "string",
           "enum": [
-            "not_run"
+            "not_run",
+            "running",
+            "completed",
+            "incomplete"
           ]
+        },
+        "evaluationSummary": {
+          "type": "object",
+          "properties": {},
+          "additionalProperties": true
         },
         "message": {
           "type": "string",
@@ -857,6 +857,16 @@
         },
         "policyLimits": {
           "$ref": "#/schemas/policyLimits"
+        },
+        "evaluation": {
+          "type": "string",
+          "enum": [
+            "auto",
+            "off"
+          ]
+        },
+        "evaluationLimits": {
+          "$ref": "#/schemas/policyLimits"
         }
       },
       "required": [],
@@ -868,7 +878,7 @@
         "protocolVersion": {
           "type": "string",
           "enum": [
-            "bypass-scanner.v3"
+            "bypass-scanner.v4"
           ]
         },
         "operation": {
@@ -1126,6 +1136,168 @@
         }
       },
       "required": [],
+      "additionalProperties": false
+    },
+    "evaluationCase": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 160
+        },
+        "signalIds": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 160
+          },
+          "minItems": 1,
+          "maxItems": 100
+        },
+        "outcome": {
+          "type": "string",
+          "enum": [
+            "not_run",
+            "confirmed",
+            "refuted",
+            "needs_review"
+          ]
+        },
+        "evaluation": {
+          "anyOf": [
+            {
+              "$ref": "#/schemas/evaluation"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "reason": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 2000
+        },
+        "nextAction": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 2000
+        }
+      },
+      "required": [
+        "id",
+        "signalIds",
+        "outcome",
+        "evaluation"
+      ],
+      "additionalProperties": false
+    },
+    "evaluationResult": {
+      "type": "object",
+      "properties": {
+        "caseId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 160
+        },
+        "outcome": {
+          "type": "string",
+          "enum": [
+            "confirmed",
+            "refuted",
+            "needs_review"
+          ]
+        },
+        "rationale": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 8000
+        },
+        "severity": {
+          "type": "string",
+          "enum": [
+            "critical",
+            "high",
+            "medium",
+            "low",
+            "informational",
+            "unknown"
+          ]
+        },
+        "severityRationale": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 2000
+        },
+        "evidence": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 160
+          },
+          "minItems": 1,
+          "maxItems": 100
+        },
+        "counterevidence": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 4000
+        },
+        "prerequisites": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 2000
+          },
+          "maxItems": 50
+        },
+        "impact": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 2000
+        },
+        "openQuestions": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 2000
+          },
+          "maxItems": 50
+        },
+        "nextAction": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 2000
+        },
+        "followUpQuestions": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 2000
+          },
+          "maxItems": 3
+        }
+      },
+      "required": [
+        "caseId",
+        "outcome",
+        "rationale",
+        "severity",
+        "severityRationale",
+        "evidence",
+        "counterevidence",
+        "prerequisites",
+        "impact",
+        "openQuestions",
+        "nextAction",
+        "followUpQuestions"
+      ],
       "additionalProperties": false
     },
     "policyUsage": {
@@ -1739,14 +1911,14 @@
       "responseSchema": "response"
     },
     "next_task": {
-      "description": "Lease the next durable policy discovery task.",
+      "description": "Lease the next source-only discovery or evaluation task.",
       "inputSchema": {
         "$ref": "#/schemas/runRequest"
       },
       "responseSchema": "response"
     },
     "evidence": {
-      "description": "Read bounded snapshot evidence for a leased discovery task.",
+      "description": "Read bounded snapshot evidence for a leased reasoning task.",
       "inputSchema": {
         "type": "object",
         "properties": {
@@ -1786,7 +1958,7 @@
       "responseSchema": "response"
     },
     "submit": {
-      "description": "Submit cited discovery candidates; no vulnerability verdict is accepted.",
+      "description": "Submit the leased task schema. Only evaluation tasks accept source-based verdicts.",
       "inputSchema": {
         "type": "object",
         "properties": {
@@ -1818,6 +1990,13 @@
           "result"
         ],
         "additionalProperties": false
+      },
+      "responseSchema": "response"
+    },
+    "evaluate": {
+      "description": "Evaluate a saved discovery run using bounded source-only tasks.",
+      "inputSchema": {
+        "$ref": "#/schemas/runRequest"
       },
       "responseSchema": "response"
     },

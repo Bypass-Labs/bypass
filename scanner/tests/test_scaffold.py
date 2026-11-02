@@ -26,11 +26,11 @@ class ProtocolTests(unittest.TestCase):
         self.assertEqual(resolve_manifest({'a/b':{'type':'string'},'schema':{'$ref':'#/a~1b'}})['schema'],{'type':'string'})
 
     def test_contract_and_capabilities(self):
-        self.assertEqual(MANIFEST['protocolVersion'], 'bypass-scanner.v3')
+        self.assertEqual(MANIFEST['protocolVersion'], 'bypass-scanner.v4')
         self.assertEqual(len(capabilities()['languages']), 9)
         validate(MANIFEST['schemas']['capabilities'], capabilities())
         self.assertTrue(capabilities()['features']['codeqlDiscovery'])
-        self.assertFalse(capabilities()['features']['evaluation'])
+        self.assertTrue(capabilities()['features']['evaluation'])
         self.assertEqual(capabilities()['independentModelRequests'], 0)
 
     def test_discovery_task_operations_reject_unknown_runs_without_inference(self):
@@ -69,7 +69,7 @@ class ProtocolTests(unittest.TestCase):
         self.assertEqual(request('ping')['result'], {})
         inspected = request('tools/call', {'name':'scanner_capabilities'})['result']
         self.assertFalse(inspected['isError'])
-        self.assertEqual(json.loads(inspected['content'][0]['text'])['protocolVersion'], 'bypass-scanner.v3')
+        self.assertEqual(json.loads(inspected['content'][0]['text'])['protocolVersion'], 'bypass-scanner.v4')
         self.assertEqual(request('tools/call', {'name':'scanner_next_task','arguments':{'run':'r'}})['result']['isError'], True)
         self.assertEqual(request('tools/call', {'name':'scanner_status'})['error']['code'], -32602)
         self.assertEqual(request('tools/call', {'name':[]})['error']['code'], -32602)

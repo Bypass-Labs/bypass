@@ -100,7 +100,7 @@ Muse Code owns plugin reasoning and billing. Bypass cannot verify subscription b
 
 | Workflow | In Muse Code | Standalone | Requirements |
 | --- | --- | --- | --- |
-| SAST and AI policy discovery | `/bypass:discover` → SAST / Policy / Both | `bypass discover --detector <mode>` | Source + Docker; SAST needs no model; policy uses Muse Code or a CLI API profile |
+| Whitebox discovery and evaluation | `/bypass:discover` → SAST / Policy / Both | `bypass discover --detector <mode>` | Source + Docker; reasoning uses Muse Code or a CLI API profile; SAST discovery-only needs no model |
 | AI-assisted source review | `/bypass:review` | `bypass scan --mode code` | Muse Code session; CLI needs a provider key + Docker |
 | Running-app discovery and testing | `/bypass:blackbox` | `bypass blackbox <url>` | Approved target + scope; CLI needs an API key, Meta by default |
 | Saved regression replay | `/bypass:tests` | `bypass test run --all` | Saved checks and valid target setup; no model calls |
@@ -120,7 +120,7 @@ Choose **SAST**, **Policy**, or **Both** in Muse Code:
 
 | Mode | What it checks | AI usage |
 | --- | --- | --- |
-| **SAST** | CodeQL security rules across supported languages | No model calls |
+| **SAST** | CodeQL security rules across supported languages | Discovery: no model calls; evaluation: active Muse session |
 | **Policy** | Source paths against broad policies for identity and delegation, authorization, injection, AI and protocol boundaries, data lineage, integrations, reliability, workflows, and trusted execution | Your active Muse Code session |
 | **Both** | CodeQL rules and AI policy discovery, with independent selections and evidence | Your active Muse Code session for policy tasks |
 
@@ -135,7 +135,11 @@ bypass init /path/to/app
 bypass discover --detector sast --project /path/to/app
 ```
 
-For CLI **Policy** or **Both**, first [configure an API profile](#model-configuration), then use `--detector policy` or `--detector both`. The CLI defaults to SAST when no detector is specified.
+Default scans evaluate candidates against source after discovery. For the CLI,
+first [configure an API profile](#model-configuration). Use `--discovery-only` to
+skip evaluation; SAST discovery-only requires no model profile. The CLI defaults
+to SAST when no detector is specified. `bypass discover evaluate <run-id>` evaluates
+a saved discovery run.
 
 CodeQL language detection covers C/C++, C#, Go, Java/Kotlin, JavaScript/TypeScript, Python, Ruby, Rust, and GitHub Actions. Tests, examples, fixtures, and generated/vendor copies are excluded by default.
 
@@ -162,7 +166,14 @@ Use exact CodeQL IDs from `scanner rules` and policy IDs from `scanner policies`
 
 </details>
 
-**Read the result correctly:** both detectors produce **unevaluated signals**, not confirmed live vulnerabilities. Policy tasks map source surfaces, inspect code through recorded evidence, and retain assumptions, counterevidence, and deferred work. Muse Code continues the task queue until it finishes, reaches a limit, or is blocked. Formal evaluation, runtime reproduction, and patching remain unimplemented in this scanner. [Scanner usage](scanner/README.md) · [Policy workflow, custom policies, and limits](docs/POLICY_SIGNAL_DISCOVERY.md).
+**Read the result correctly:** original detector signals remain unchanged.
+Separate evaluation cases record `confirmed`, `refuted`, or `needs_review`,
+with cited evidence, severity reasoning, prerequisites, and open questions.
+**Confirmed means source-supported, not runtime-reproduced.** Muse Code continues
+the bounded discovery/evaluation queue until completion or a blocker. Unresolved
+cases remain visible; completion does not prove exhaustive coverage. Runtime
+reproduction and patching remain unimplemented in this scanner.
+[Scanner usage and limits](scanner/README.md) · [Policy workflow](docs/POLICY_SIGNAL_DISCOVERY.md).
 
 ### Investigate source with Muse Code
 

@@ -2,7 +2,7 @@
 
 The Muse plugin is the primary experience. Use ordinary requests or its slash commands; Muse calls these tools for you. You do not need to learn MCP syntax or leave Muse for project operations.
 
-Standalone model setup has a deliberate mode boundary: plugin model tools explain host ownership and cannot configure or invoke API inference. This reference is generated from the CLI catalog and plugin definitions. CI checks all 111 public CLI commands and their options; there are 112 typed tools. Regenerate with `node scripts/check-plugin-parity.mjs --write` after intentionally changing the catalog.
+Standalone model setup has a deliberate mode boundary: plugin model tools explain host ownership and cannot configure or invoke API inference. This reference is generated from the CLI catalog and plugin definitions. CI checks all 112 public CLI commands and their options; there are 113 typed tools. Regenerate with `node scripts/check-plugin-parity.mjs --write` after intentionally changing the catalog.
 
 ## Start inside Muse
 
@@ -33,9 +33,10 @@ CLI global `--project` maps to the selected repository; `--json` maps to structu
 | `blackbox verify` | `bypass_blackbox_verify` | Re-execute generated proofs and check ledger integrity. |
 | `blackbox export` | `bypass_blackbox_export` | Write Node regression tests for confirmed findings. |
 | `blackbox resume` | `bypass_blackbox_resume` | Continue saved Muse research in a fresh scoped audit. |
-| `discover` | `bypass_discover` | Choose sast, policy, or both. SAST and policy rule filters are independent; signals remain unevaluated. |
+| `discover` | `bypass_discover` | Discover SAST/policy signals and evaluate them against source by default. |
+| `discover evaluate` | `bypass_discover_evaluate` | Evaluate saved detector signals against their source snapshot; no runtime reproduction. |
 | `discover status` | `bypass_discover_status` | Read durable SAST/policy progress and coverage. |
-| `discover resume` | `bypass_discover_resume` | Resume discovery after identity checks; standalone policy reasoning requires an API profile. |
+| `discover resume` | `bypass_discover_resume` | Resume discovery/evaluation after identity checks; standalone reasoning requires an API profile. |
 | `discover cancel` | `bypass_discover_cancel` | Cancel discovery and retain accepted artifacts. |
 | `discover report` | `bypass_discover_report` | Write a discovery report and return its artifact reference. |
 | `discover signals` | `bypass_discover_signals` | Read a bounded page of unevaluated SAST/policy signals. |
