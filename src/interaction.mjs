@@ -59,7 +59,10 @@ export const credentialTypes=[
   {value:'header',label:'Custom header',description:'An app-specific authentication header'}
 ];
 export const verificationChoices=target=>target.environment==='local'?[{value:'local',label:'Confirm local ownership'}]:[{value:'dns',label:'DNS TXT record'},{value:'http',label:'HTTPS verification file'}];
-export const scopeSuggestions=target=>[
-  {value:target?.authorization?.paths.join(',')||'/api',label:target?.authorization?'Keep saved paths':'API routes (/api)',description:target?.authorization?target.authorization.paths.join(', '):'A common prefix; choose custom paths if your app differs.'},
-  {value:'/',label:'Entire app (/)',description:'Includes every path on this origin; requires explicit permission.'}
-];
+export const scopeSuggestions=target=>{
+  const all={value:'/',label:'Entire app (/)',description:'Includes every path on this origin for the most complete review; requires explicit permission.'};
+  if(!target?.authorization)return [all,
+    {value:'/api',label:'API routes only (/api)',description:'Limits testing to a common API prefix; choose custom paths if your app differs.'}];
+  const saved={value:target.authorization.paths.join(','),label:'Keep saved paths',description:target.authorization.paths.join(', ')};
+  return saved.value==='/'?[saved]:[saved,all];
+};

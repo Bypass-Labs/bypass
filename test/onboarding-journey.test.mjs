@@ -153,6 +153,7 @@ test('authorized app-only CLI setup immediately hands off to the audit without a
     ask:async(label,fallback)=>{prompts.push(label);if(label==='App URL')return 'http://127.0.0.1:4317';return fallback||'';}});
   const target=read(result.root).targets[0];
   assert.deepEqual(result.startReview,{id:'blackbox'});assert.equal(result.openDashboard,true);assert.ok(target.authorization);
+  assert.deepEqual(target.authorization.paths,['/'],'the recommended fresh-app boundary should cover the entire origin');
   assert.equal(prompts.filter(label=>label==='App URL').length,1);
   assert.equal(prompts.some(label=>/Open my project|Maximum requests per second|Start black-box audit/.test(label)),false);
   assert.doesNotMatch(output.join('\n'),/Use \/blackbox|Press Enter.*blackbox|choose scope and request rate/i);
