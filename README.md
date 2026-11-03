@@ -290,6 +290,8 @@ For the separate guided source-review workflow, use `bypass engine use docker --
 
 For **local Muse Glimmer without authentication**, see the [complete local source-review setup](docs/AI_MODES.md#local-muse-glimmer-source-review). It covers the localhost endpoint, placeholder token, explicit model-profile selection, real Docker engine, and a 180-second per-request timeout. For slower generation, [disable the timeout explicitly](docs/AI_MODES.md#disable-the-model-timeout) with `--timeout-ms 0`; cancellation remains available. Bypass connects directly to the local model server; Muse Code is not involved.
 
+If a no-timeout review reports a connection interruption, try the [buffered-mode diagnostic](docs/AI_MODES.md#connection-interrupted-despite-no-timeout) with `--stream false`. Streaming overhead can hit the separate response-size limit; server failures can produce the same error.
+
 Run `bypass init /path/to/app` first if the application is not connected. The first-run experience supports **Meta Model API** and local OpenAI-compatible servers running **Muse Spark Open** or **Muse Glimmer**. Explicit legacy provider profiles remain available through advanced commands but are not offered during onboarding. Bypass never changes billing paths or enables Muse Spark Contributor without an explicit model selection. [Provider examples and migration](docs/AI_MODES.md).
 
 ## See the complete demo

@@ -154,6 +154,57 @@ Discovery/evaluation task leases and running-app authorization/run budgets are
 separate safeguards and are not disabled by this model setting. Other profiles
 retain their configured timeouts; the default remains 60 seconds.
 
+### Connection interrupted despite no timeout
+
+`API connection interrupted or destination rejected` is not a model-timeout
+message. The current transport reports both a broken connection and a response
+size-limit failure with this generic error, so it does not establish the cause.
+
+Bypass limits each API response to **1 MiB of received bytes**. With streaming
+enabled (the default), this includes every SSE event's JSON framing and metadata,
+not just generated text. Many small chunks can exhaust this limit before the
+default **8192 output-token** budget. Disabling the timeout does not disable
+either limit. Context capacity is separate: check your server's actual
+configuration rather than assuming the model's advertised context is available.
+A completed response reporting token truncation produces
+`Model output incomplete or filtered`; a context rejection typically produces an
+HTTP request error, though a server can also fail mid-stream.
+
+To test whether streaming overhead is responsible, create a buffered profile.
+With `APP` and `BYPASS_LOCAL_MUSE_KEY` exported as above:
+
+```bash
+curl --fail http://127.0.0.1:8080/v1/models
+
+npm start -- model add glimmer-local-buffered \
+  --provider custom \
+  --base-url http://127.0.0.1:8080/v1 \
+  --model meta-models/Muse-Glimmer-30B-GGUF:Q4_K_M \
+  --secret-env BYPASS_LOCAL_MUSE_KEY \
+  --transport chat \
+  --stream false \
+  --timeout-ms 0 \
+  --project "$APP"
+
+npm start -- model use glimmer-local-buffered --project "$APP"
+npm start -- model list --project "$APP" --json
+npm start -- model test glimmer-local-buffered --project "$APP"
+npm start -- engine use docker --project "$APP"
+npm start -- scan --mode code --project "$APP"
+```
+
+Replace the GGUF model ID with the exact `data[].id` returned by your server.
+Verify the active profile is `glimmer-local-buffered`, with `"stream": false`
+and `"timeoutMs": 0`, and restart any existing scan. Buffered mode waits for the
+complete response instead of consuming token events; waiting heartbeats and
+cancellation remain available. The 1 MiB response limit still applies, but there
+is no per-token SSE overhead.
+
+If buffered mode succeeds, that supports (but does not prove) the streaming
+overhead diagnosis. If it still fails, inspect server logs for context errors,
+generation failures, memory pressure, or disconnected clients. Do not treat
+partial evidence from an interrupted review as a completed security result.
+
 ## Migration
 
 Existing evidence and app configuration remain valid. Old `muse-code`, `local` and `endpoint` profiles remain visible but are blocked for standalone AI; Bypass never reads a coding-agent credential store or translates a subscription login into an API key. Create a new profile above, explicitly select it with `model use`, then optionally run `model test`. For a self-hosted/local server use `custom` and its API key, or the documented placeholder for a no-auth loopback server. Standalone inference always requires a nonempty credential environment variable.
