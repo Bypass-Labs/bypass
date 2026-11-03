@@ -1315,7 +1315,10 @@ test('Muse repairs a rejected sequence shape and executes the observed route', a
     include: ['/'], limits: {rps: 50}}));
   const scope = loadScope({file, origin}).scope;
   const surface = {patterns: [{pattern: route, methods: ['GET'],
-    params: {expression: []}, source: ['public-openapi']}]};
+    params: {expression: []}, source: ['public-openapi']}],
+  focus: {findingId: 'benign-expression-fixture', path: route, method: 'GET',
+    sourceSnapshotMatches: true, source: {file: 'src/expression.ts', line: 1,
+      quote: 'String.fromCharCode(...codes)'}}};
   let calls = 0;
   const infer = async (_model, messages) => {
     calls++;
@@ -1346,9 +1349,13 @@ test('Muse repairs a rejected sequence shape and executes the observed route', a
   const ledger = createLedger(dir);
   t.after(() => ledger.close());
   const requester = createRequester(scope, {ledger, allowLocal: true});
+  let revisionCalls = 0;
   const tested = await runResearchFlows(planned.leads, scope, {requester,
-    surface, ledger});
+    surface, ledger, model: 'fixture', modelCallsAvailable: 1,
+    infer: async () => {revisionCalls++; return {flows: []};}});
+  assert.equal(revisionCalls, 1);
   assert.equal(tested.results[0].verdict, 'observed');
+  assert.equal(tested.findings.some(item => item.verdict === 'confirmed'), false);
   assert.equal(tested.findings[0].severity, 'unrated');
   assert.equal(requester.stats.sent, 3);
 });

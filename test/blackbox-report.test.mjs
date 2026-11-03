@@ -22,6 +22,36 @@ test('report counts queued web checks separately from executed checks', () => {
   assert.match(report.json.summary.narrative, /1 task ran; 2 tasks remained queued/);
 });
 
+test('marker proofs count as unrated and describe response effects rather than access boundaries', () => {
+  const make = (kind, id, rule, webProof) => ({
+    id, kind, title: 'A repeated response marker', severity: 'unrated',
+    owasp: 'Unclassified response effect', cwe: 'Unclassified behavior',
+    pattern: '/api/example', url: `${ORIGIN}/api/example`, host: '127.0.0.1:4329',
+    task: null, verdict: 'confirmed', rule, evidence: [], confirmation: [],
+    mirror: {result: 'confirmed', evidence: []}, tags: ['model-proposed'],
+    reach: {observed: 1, basis: 'distinct response markers'}, dataClasses: [],
+    remediation: 'Review the operation.', foundBy: 'muse-proposed-http-sequence',
+    status: 'open', modelHypothesis: {family: 'source-grounded effect', why: 'source review'},
+    webProof, webSteps: [{identity: 'anonymous', method: 'POST',
+      url: `${ORIGIN}/api/example`, status: 200, evidence: null}],
+  });
+  const report = renderReport({run: 'bx-marker-report', scope,
+    scopeHash: 'test', surface: surfaceFixture(), results: [], findings: [
+      make('model-raw-boundary', 'f-001',
+        'confirmed/raw-boundary/fresh-positive-marker-controls',
+        {kind: 'model-raw-boundary', rawProof: {openText: 'example'}}),
+      make('model-sequence-boundary', 'f-002',
+        'confirmed/model-sequence-boundary/fresh-marker-controls',
+        {kind: 'model-sequence-boundary', oracle: 'marker-proof'}),
+    ]});
+  assert.match(report.json.summary.narrative, /2 confirmed findings \(2 unrated\)/);
+  assert.match(report.markdown, /Confirmed source-assisted response effect; security impact inferred from cited source/);
+  assert.match(report.markdown, /exact model-authored request produced a distinct response marker twice/);
+  assert.match(report.markdown, /exact model-authored sequence produced distinct response markers twice/);
+  assert.doesNotMatch(report.markdown, /request crossed the measured access boundary/);
+  assert.doesNotMatch(report.markdown, /sequence crossed a denied-status boundary/);
+});
+
 test('report preserves an audit deadline cut as coverage, not a model connection failure', () => {
   const message = 'Audit wall-clock deadline cut a Muse research call; remaining work is untested.';
   const report = renderReport({run: 'bx-deadline-cut', scope, scopeHash: 'test',
