@@ -34,6 +34,7 @@ test('method selection normalizes exact choices, permits custom methods, and pre
   const app={url:'https://app.example.com',environment:'production',ownership:{status:'verified',expiresAt:new Date(Date.now()+86400000).toISOString()}};
   assert.throws(()=>authorization(app,{paths:['/api'],methods:['POST']}),/Production/);
   app.authorization=authorization(app,{paths:['/api'],methods:['POST'],productionAcknowledged:true});
+  assert.equal(app.authorization.maxRequestsPerSecond,20);
   assert.equal(scopeReady(app),true);assert.equal(scopeReady(app,'/api/jobs','POST'),true);
   assert.throws(()=>scopeReady(app,'/api/jobs'),/Method GET/);assert.throws(()=>scopeReady(app,'/other','POST'),/Path/);
 });

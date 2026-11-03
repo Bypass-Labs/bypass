@@ -5,7 +5,7 @@ import { hostAI } from './execution-mode.mjs';
 import { read } from './store.mjs';
 import { VERSION, hash, need } from './util.mjs';
 import { workspaceInfo } from './project-selection.mjs';
-import { scopeReady, appOriginInput } from './network.mjs';
+import { scopeReady, appOriginInput, DEFAULT_REQUESTS_PER_SECOND } from './network.mjs';
 import { reviewReadiness } from './review-readiness.mjs';
 import { pluginIdentity } from './runtime-identity.mjs';
 import { credentialStatus } from './credentials.mjs';
@@ -96,7 +96,7 @@ export async function pluginOnboarding(cwd,root,{intent='real',mode,url,environm
   if(interactiveCombined&&mode==='combined'&&target&&(owned||skipVerification)&&
     (!requestedOrigin||requestedOrigin===target.url)&&['scope','review'].includes(nextAction.id)){
     const savedMethods=target.authorization?.methods||['GET','HEAD','POST'];
-    const savedRate=target.authorization?.maxRequestsPerSecond||2;
+    const savedRate=target.authorization?.maxRequestsPerSecond||DEFAULT_REQUESTS_PER_SECOND;
     if(methods==null)nextAction={id:'methods',tool:'bypass_onboarding',question:'Which HTTP methods may this combined audit use?',
       input:choiceInput('methods',[
         {id:'current',label:target.authorization?'Keep saved methods':'Default methods',description:savedMethods.join(', '),arguments:{methods:savedMethods.join(',')}},
@@ -128,7 +128,7 @@ export async function pluginOnboarding(cwd,root,{intent='real',mode,url,environm
   if(nextAction.id==='scope'){
     const scope={url:target.url,environment:target.environment,paths:target.authorization?.paths||['/'],
       methods:methods==null?target.authorization?.methods||['GET','HEAD','POST']:httpMethods(methods),
-      maxRequestsPerSecond:rps??target.authorization?.maxRequestsPerSecond??2,
+      maxRequestsPerSecond:rps??target.authorization?.maxRequestsPerSecond??DEFAULT_REQUESTS_PER_SECOND,
       expiresAt:target.authorization?.expiresAt||new Date(Date.now()+7*86400000).toISOString(),
       publicConfigDiscovery:target.authorization?.publicConfigDiscovery??true};
     const input=testingApproval(target,scope);

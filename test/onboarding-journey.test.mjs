@@ -102,13 +102,13 @@ test('app-only packaged wizard starts blackbox with a fresh or saved scope',asyn
   const workspace=await c.call('bypass_workspace');assert.equal(workspace.selectedRepository,null);assert.equal(workspace.repository,null);assert.equal(workspace.selectionRequired,false);
   assert.equal((await c.call('bypass_dashboard')).done[0],'App profile connected; source not selected');
   await c.call('bypass_verify_target',{name:'local',method:'local'});
-  await c.call('bypass_authorize_target',{name:'local',accept:true,methods:['GET'],paths:'/'});
+  await c.call('bypass_authorize_target',{name:'local',accept:true,methods:['GET'],paths:'/',rps:20});
   fs.writeFileSync(path.join(profile.root,'blackbox.scope.json'),JSON.stringify({target:{origin:'https://another-app.example'}}));
   setup=await c.call('bypass_onboarding');assert.equal(setup.ready.source,false);
   assert.equal(setup.nextAction.tool,'bypass_blackbox_setup');
   assert.match(setup.nextAction.arguments.out,/^blackbox\.[a-f0-9]{12}\.scope\.json$/);
   const {out,...scopeArgs}=setup.nextAction.arguments;
-  assert.deepEqual(scopeArgs,{url,include:'/',methods:'GET',rps:2,environment:'local'});
+  assert.deepEqual(scopeArgs,{url,include:'/',methods:'GET',rps:20,environment:'local'});
   const limits={'model-calls':6,'max-tasks':2,'max-urls':10,minutes:1};
   const fresh=await c.call(setup.nextAction.tool,{...setup.nextAction.arguments,...limits});
   assert.equal(fresh.ready,true);assert.equal(fresh.created,true);
@@ -154,6 +154,7 @@ test('authorized app-only CLI setup immediately hands off to the audit without a
   const target=read(result.root).targets[0];
   assert.deepEqual(result.startReview,{id:'blackbox'});assert.equal(result.openDashboard,true);assert.ok(target.authorization);
   assert.deepEqual(target.authorization.paths,['/'],'the recommended fresh-app boundary should cover the entire origin');
+  assert.equal(target.authorization.maxRequestsPerSecond,20,'fresh app audits should start with the fast default rate');
   assert.equal(prompts.filter(label=>label==='App URL').length,1);
   assert.equal(prompts.some(label=>/Open my project|Maximum requests per second|Start black-box audit/.test(label)),false);
   assert.doesNotMatch(output.join('\n'),/Use \/blackbox|Press Enter.*blackbox|choose scope and request rate/i);

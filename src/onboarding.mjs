@@ -8,7 +8,7 @@ import { connectProject } from './onboarding-repository.mjs';
 import { guidedDemo } from './guided-demo.mjs';
 import { reviewSummary } from './experience.mjs';
 import { read, change } from './store.mjs';
-import { scopeReady, loopback, appOriginInput } from './network.mjs';
+import { scopeReady, loopback, appOriginInput, DEFAULT_REQUESTS_PER_SECOND } from './network.mjs';
 import { appAddressQuestion, appAddressHelp, appEnvironmentQuestion, appEnvironmentChoices } from './app-connection.mjs';
 import { promptMethods, mayChangeData } from './http-methods.mjs';
 import { cleanText, redact, Fault, need, outcome } from './util.mjs';
@@ -219,14 +219,14 @@ export async function onboard(options={}, args=[], io={}) {
     await recover(async()=>{
       const paths=await suggested('Paths to test (comma-separated)',scopeSuggestions(target));
       const methods=await promptMethods(ask,say);
-      say(`${methods.join(', ')} checks on ${target.url}\nPaths: ${paths}\nMaximum 2 requests/second · permission expires in 7 days.`);
+      say(`${methods.join(', ')} checks on ${target.url}\nPaths: ${paths}\nMaximum ${DEFAULT_REQUESTS_PER_SECOND} requests/second · permission expires in 7 days.`);
       say('Also read public pages and scripts on this app to discover sign-in configuration (anonymous GET only).');
       if(mayChangeData(methods))say('Selected methods can create/change/delete test data or start jobs. Bypass sends only explicitly configured requests.');
       if(!await yes('Do you authorize these checks?')){say('Scope not authorized. Live testing stays blocked.');return;}
       let production=false;
       if(target.environment==='production')production=await confirmChoice(ask,'Confirm testing on this production app',{yes:'Authorize the displayed production scope',no:'Keep production testing disabled',write:say});
       if(target.environment==='production'&&!production){say('Production scope not authorized.');return;}
-      await call(root,'target authorize',[target.name],{accept:true,paths,methods,production,'public-config':true});
+      await call(root,'target authorize',[target.name],{accept:true,paths,methods,rps:DEFAULT_REQUESTS_PER_SECOND,production,'public-config':true});
       say('✓ Testing scope authorized.');
     });
   }
