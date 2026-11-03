@@ -15,6 +15,7 @@ import {executeResearchFlow, planResearchFlows, protectedReadBoundaryFacts,
   researchFlowInventory, runResearchFlows,
   validateResearchFlow} from '../src/blackbox/research-flow.mjs';
 import {execFile} from '../src/util.mjs';
+import {validateJSON} from '../src/schema.mjs';
 
 test('a proved request context remaps new scripts and lets Muse prove a second boundary', async t => {
   const gatePath = randomPath('entry');
@@ -1416,6 +1417,74 @@ test('Muse repairs a rejected revision and executes the corrected sequence', asy
   assert.equal(run.investigations[0].stopReason, 'model-stopped');
 });
 
+test('a truncated HTTP sequence revision retries once and recovers without failing the model stage',
+  async () => {
+    const origin = 'http://127.0.0.1:4329';
+    const scope = loadScope({origin, overrides: {acceptLocal: true}}).scope;
+    const route = randomPath('revision-output-retry');
+    const surface = {patterns: [{pattern: route, methods: ['GET'], params: {q: ['plain']}}]};
+    const lead = {family: 'reviewed-response', why: 'Compare an observed query input',
+      priority: 5, as: 'anonymous', oracle: 'observation', prelude: [], observe: [],
+      subject: {method: 'GET', path: route, placement: 'query', key: 'q',
+        fixedFields: [], bodyTemplate: '', headers: []},
+      controlValue: 'plain', firstValue: 'alpha', secondValue: 'beta',
+      marker: '', secondMarker: '',
+      assertion: {step: 'subject', index: 0, location: 'body', name: ''}};
+    let calls = 0;
+    const run = await runResearchFlows([lead], scope, {surface, model: 'fixture',
+      modelCallsAvailable: 2,
+      requester: async () => ({status: 200, type: 'application/json', body: '{"value":"fixed"}',
+        headers: {'cache-control': 'no-store'}, evidenceId: 'ev-output-retry'}),
+      infer: async () => {
+        calls++;
+        if (calls === 1) {
+          const error = new Error(
+            'Provider response incomplete (max_output_tokens); no action executed.');
+          error.details = {reason: 'incomplete_output'};
+          throw error;
+        }
+        return {flows: []};
+      }});
+    assert.equal(calls, 2);
+    assert.equal(run.modelError, null);
+    assert.equal(run.decisions[0].outputRetry, true);
+    assert.equal(run.decisions[0].outputRetryRecovered, true);
+    assert.equal(run.decisions[0].reason, 'model-stopped');
+  });
+
+test('a persistently truncated HTTP sequence revision is accounted without failing the run-wide model stage',
+  async () => {
+    const origin = 'http://127.0.0.1:4329';
+    const scope = loadScope({origin, overrides: {acceptLocal: true}}).scope;
+    const route = randomPath('revision-output-failure');
+    const surface = {patterns: [{pattern: route, methods: ['GET'], params: {q: ['plain']}}]};
+    const lead = {family: 'reviewed-response', why: 'Compare an observed query input',
+      priority: 5, as: 'anonymous', oracle: 'observation', prelude: [], observe: [],
+      subject: {method: 'GET', path: route, placement: 'query', key: 'q',
+        fixedFields: [], bodyTemplate: '', headers: []},
+      controlValue: 'plain', firstValue: 'alpha', secondValue: 'beta',
+      marker: '', secondMarker: '',
+      assertion: {step: 'subject', index: 0, location: 'body', name: ''}};
+    let calls = 0;
+    const run = await runResearchFlows([lead], scope, {surface, model: 'fixture',
+      modelCallsAvailable: 2,
+      requester: async () => ({status: 200, type: 'application/json', body: '{"value":"fixed"}',
+        headers: {'cache-control': 'no-store'}, evidenceId: 'ev-output-failure'}),
+      infer: async () => {
+        calls++;
+        const error = new Error(
+          'Provider response incomplete (max_output_tokens); no action executed.');
+        error.details = {reason: 'incomplete_output'};
+        throw error;
+      }});
+    assert.equal(calls, 2);
+    assert.equal(run.modelError, null);
+    assert.equal(run.decisions[0].outputRetry, true);
+    assert.equal(run.decisions[0].outputRetryRecovered, false);
+    assert.equal(run.decisions[0].outputFailed, true);
+    assert.equal(run.deferredLeads.length, 0);
+  });
+
 test('Muse can execute a model-authored query value without a syntax veto',
   async () => {
     const origin = 'http://127.0.0.1:4329';
@@ -1515,6 +1584,110 @@ test('a timed-out Muse sequence page retries once with smaller observed context 
     assert.equal(capped.coverage.timeoutRetries, 0);
     assert.match(capped.modelError, /did not finish within/);
   } finally {fs.rmSync(dir, {recursive: true, force: true});}
+});
+
+test('HTTP sequence planning accepts one validated flow object without discarding the route page', async () => {
+  const origin = 'http://127.0.0.1:4329';
+  const {scope} = loadScope({origin, overrides: {acceptLocal: true}});
+  const route = randomPath('single-flow');
+  const surface = {patterns: [{pattern: route, methods: ['GET'], params: {value: []}}]};
+  const planned = await planResearchFlows(surface, scope, {model: 'fixture',
+    budget: 1, modelCallsAvailable: 1, infer: async (_model, messages, options) => {
+      const context = JSON.parse(messages[1].content);
+      return validateJSON(options.schema, {flows: {
+        family: 'response-observation', why: 'Compare one observed query input',
+        priority: 5, as: 'anonymous', oracle: 'observation', prelude: [],
+        subject: {method: 'GET', path: route, placement: 'query', key: 'value',
+          fixedFields: [], bodyTemplate: '', headers: []}, observe: [],
+        controlValue: 'plain', firstValue: 'alpha', secondValue: 'beta',
+        marker: context.marker, secondMarker: context.secondMarker,
+        assertion: {step: 'subject', index: 0, location: 'body', name: ''},
+        modelNote: 'This harmless annotation must not invalidate or enter the plan'}},
+      'security_action');
+    }});
+  assert.equal(planned.modelError, null);
+  assert.equal(planned.coverage.sent, 1);
+  assert.equal(planned.coverage.accepted, 1);
+  assert.equal(planned.leads.length, 1);
+  assert.equal(planned.leads[0].modelNote, undefined);
+});
+
+for (const failure of ['malformed', 'unknown', 'incomplete']) {
+  test(`HTTP sequence planning retries a ${failure} route page without hiding later routes`, async () => {
+    const origin = 'http://127.0.0.1:4329';
+    const {scope} = loadScope({origin, overrides: {acceptLocal: true}});
+    const surface = {patterns: Array.from({length: 12}, (_, index) => ({
+      pattern: `/api/retry-${failure}-${index}`, methods: ['GET'], params: {value: []}}))};
+    const pages = [];
+    const planned = await planResearchFlows(surface, scope, {model: 'fixture',
+      budget: 1, modelCallsAvailable: 8, infer: async (_model, messages) => {
+        const routes = JSON.parse(messages[1].content).routes;
+        pages.push(routes.map(item => item.path));
+        if (pages.length === 1) {
+          const error = new Error(failure === 'malformed' ?
+            'Invalid type for security_action.flows.' : failure === 'unknown' ?
+              'Unknown security_action.flows field.' :
+              'Provider response incomplete (max_output_tokens); no action executed.');
+          if (failure === 'incomplete') error.details = {reason: 'incomplete_output'};
+          throw error;
+        }
+        return {flows: []};
+      }});
+    assert.deepEqual(pages.map(page => page.length), [8, 4, 4, 4]);
+    assert.equal(planned.coverage.outputRetries, 1);
+    assert.equal(planned.coverage.outputFailedRoutes, 0);
+    assert.equal(planned.coverage.sent, 12);
+    assert.equal(planned.coverage.nextRouteOffset, 12);
+    assert.equal(planned.modelError, null);
+  });
+}
+
+test('a first-page-only HTTP sequence pass still retries an incomplete first page', async () => {
+  const origin = 'http://127.0.0.1:4329';
+  const {scope} = loadScope({origin, overrides: {acceptLocal: true}});
+  const surface = {patterns: Array.from({length: 8}, (_, index) => ({
+    pattern: `/api/first-page-retry-${index}`, methods: ['GET'], params: {value: []}}))};
+  let calls = 0;
+  const planned = await planResearchFlows(surface, scope, {model: 'fixture',
+    budget: 1, modelCallsAvailable: 3, firstPageOnly: true,
+    infer: async () => {
+      if (++calls === 1) {
+        const error = new Error('Provider response incomplete (max_output_tokens); no action executed.');
+        error.details = {reason: 'incomplete_output'};
+        throw error;
+      }
+      return {flows: []};
+    }});
+  assert.equal(calls, 2);
+  assert.equal(planned.coverage.outputRetries, 1);
+  assert.equal(planned.coverage.sent, 4);
+  assert.equal(planned.coverage.nextRouteOffset, 4);
+  assert.equal(planned.modelError, null);
+});
+
+test('one persistently incomplete HTTP sequence route does not hide later routes', async () => {
+  const origin = 'http://127.0.0.1:4329';
+  const {scope} = loadScope({origin, overrides: {acceptLocal: true}});
+  const surface = {patterns: Array.from({length: 9}, (_, index) => ({
+    pattern: `/api/persistent-${index}`, methods: ['GET'], params: {value: []}}))};
+  const reviewed = new Set();
+  const planned = await planResearchFlows(surface, scope, {model: 'fixture',
+    budget: 1, modelCallsAvailable: 8, infer: async (_model, messages) => {
+      const routes = JSON.parse(messages[1].content).routes;
+      if (routes.some(item => item.path === '/api/persistent-0')) {
+        const error = new Error('Provider response incomplete (max_output_tokens); no action executed.');
+        error.details = {reason: 'incomplete_output'};
+        throw error;
+      }
+      routes.forEach(item => reviewed.add(item.path));
+      return {flows: []};
+    }});
+  assert.equal(planned.coverage.outputRetries, 3);
+  assert.equal(planned.coverage.outputFailedRoutes, 1);
+  assert.equal(planned.coverage.sent, 8);
+  assert.equal(planned.coverage.nextRouteOffset, 9);
+  assert.ok(reviewed.has('/api/persistent-8'));
+  assert.match(planned.modelError, /incomplete/);
 });
 
 test('HTTP sequence route pages record the unsent tail when only seven model calls remain', async () => {

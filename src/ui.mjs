@@ -14,13 +14,13 @@ import { onboard } from './onboarding.mjs';
 import { checkModelConnection } from './model-check.mjs';
 import { guidedDemo } from './guided-demo.mjs';
 import { homeActions, previewRun, quickCommands, reviewSummary } from './experience.mjs';
-import { appOriginInput, loopback } from './network.mjs';
+import { appOriginInput, loopback, DEFAULT_REQUESTS_PER_SECOND } from './network.mjs';
 import { isBypassSource } from './project-selection.mjs';
 import { createTerminalSession } from './terminal-session.mjs';
 import { summaryText as blackboxSummary } from './blackbox/report.mjs';
 import { progressLine as blackboxProgressLine } from './blackbox/progress.mjs';
 import { createTheme, brandHeading } from './terminal-theme.mjs';
-import { promptMethods, mayChangeData } from './http-methods.mjs';
+import { promptMethods, mayChangeData, recommendedMethods } from './http-methods.mjs';
 
 const theme=createTheme();
 const color=!!process.stdout.isTTY&&!process.env.NO_COLOR;
@@ -197,13 +197,13 @@ async function authorizeWizard(ask,root,name){
   const target=read(root).targets.find(t=>t.name===name);console.log(`\nAuthorize testing on ${target?.url} only. This expires in seven days.`);
   const paths=await promptValue(ask,'Allowed path prefixes, comma-separated',scopeSuggestions(target));
   const methods=await promptMethods(ask,console.log,target?.authorization?.methods);
-  console.log(`Methods: ${methods.join(', ')} · Paths: ${paths} · Limit: 2 requests/second`);
+  console.log(`Methods: ${methods.join(', ')} · Paths: ${paths} · Limit: ${DEFAULT_REQUESTS_PER_SECOND} requests/second`);
   console.log('Also read public app pages/scripts for sign-in setup (anonymous GET only).');
   if(mayChangeData(methods))console.log('These methods can change test data or start jobs. Only explicitly configured requests will run.');
   if(!await confirmChoice(ask,verificationDisabled(target)?'Confirm you control this app and authorize these methods and paths?':'Do you authorize these methods and paths?',{yes:'Authorize the displayed scope',no:'Keep testing disabled'}))return;
   let production=false;if(target?.environment==='production')production=await confirmChoice(ask,'Confirm testing on this production app',{yes:'Authorize the displayed production scope',no:'Keep production testing disabled'});
   if(target?.environment==='production'&&!production)return;
-  printResult(await execute('target authorize',[name],{project:root,paths,methods,accept:true,production,'public-config':true}));
+  printResult(await execute('target authorize',[name],{project:root,paths,methods,rps:DEFAULT_REQUESTS_PER_SECOND,accept:true,production,'public-config':true}));
 }
 function dashboard(root){
   console.log('\n'+brandHeading('Security that stays with your code.')+'\n');
@@ -367,7 +367,7 @@ export async function terminal(options={},io){
             prompt.write?.(`Starting app audit · ${url} · ${include} · ${methods} · ${rps} requests/second`);
           }else{
             const input=await promptValue(ask,'App URL',selected?[{value:selected.url,label:selected.url}]:[]);
-            url=appOriginInput(input);const local=loopback(new URL(url).hostname),saved=selected?.url===url?selected.authorization:null;
+            url=appOriginInput(input);const saved=selected?.url===url?selected.authorization:null;
             include=await promptValue(ask,'Allowed path prefixes',[
               {value:saved?.paths?.join(',')||'/',label:saved?`Saved scope (${saved.paths.join(', ')})`:'Entire app (/)'},
               ...(saved&&saved.paths.join(',')!=='/'?[{value:'/',label:'Entire app (/)' }]:[])],
@@ -375,9 +375,9 @@ export async function terminal(options={},io){
             const savedMethods=saved?.methods?.join(',');
             methods=await promptValue(ask,'Allowed HTTP methods',[
               ...(savedMethods?[{value:savedMethods,label:`Saved authorization (${savedMethods})`}]:[]),
-              ...(!savedMethods||savedMethods!=='GET,HEAD,POST,PATCH,DELETE'?[{value:'GET,HEAD,POST,PATCH,DELETE',label:'GET, HEAD, POST, PATCH, DELETE'}]:[])],
+              ...(!savedMethods||savedMethods!==recommendedMethods.join(',')?[{value:recommendedMethods.join(','),label:recommendedMethods.join(', ')}]:[])],
             {write:message=>prompt.write?.(message)});
-            const rates=[...new Set([saved?.maxRequestsPerSecond,local?5:2,1,10,32].filter(value=>value!=null).map(String))];
+            const rates=[...new Set([saved?.maxRequestsPerSecond,DEFAULT_REQUESTS_PER_SECOND,10,5,1,32].filter(value=>value!=null).map(String))];
             rps=await promptValue(ask,'Maximum requests per second',rates.map(value=>({value,label:`${value} request${value==='1'?'':'s'} per second`})),
             {write:message=>prompt.write?.(message)});
             environment=selected?.url===url?selected.environment:undefined;

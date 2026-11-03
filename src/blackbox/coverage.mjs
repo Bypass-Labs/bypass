@@ -17,6 +17,7 @@ const FAMILIES = [
   ['path-file', 'Path traversal and file handling'],
   ['upload', 'File upload and content handling'],
   ['session-account', 'Session takeover and account flows'],
+  ['rate-limit', 'Authentication and access-gate throttling'],
   ['jwt-auth', 'Unsigned JWT acceptance on private JSON reads'],
   ['csrf', 'Cross-site request forgery'],
   ['cors', 'Cross-origin resource sharing'],
@@ -122,6 +123,7 @@ export function coverageFor({results = [], surface = null, web = null, ownerRead
     !['untested', 'blocked'].includes(item.verdict)).length;
   const publicSession = webResults.filter(item => item.kind === 'public-session-token').length;
   const authLogin = webResults.filter(item => item.kind === 'model-auth-login').length;
+  const authRateLimit = webResults.filter(item => item.kind === 'rate-limit-auth-gate').length;
   const cookieAccess = webResults.filter(item => item.kind === 'model-cookie-access').length;
   const rawBoundary = webResults.filter(item => item.kind === 'model-raw-boundary').length;
   const assetFiles = (surface?.mined?.files?.length ?? 0) +
@@ -142,7 +144,8 @@ export function coverageFor({results = [], surface = null, web = null, ownerRead
     cors, ssrf, xxe, xss: xss + htmlInjection, ssti, 'secret-exposure': privateKeys + publicCredentials,
     'anonymous-credential-data': anonymousCredentials,
     dependency: advisories?.records?.length ?? 0, 'model-directed': modelDirected,
-    'session-account': publicSession + authLogin + cookieAccess};
+    'session-account': publicSession + authLogin + cookieAccess + authRateLimit,
+    'rate-limit': authRateLimit};
   const nosqlDone = webResults.filter(item => item.kind === 'nosql-operator-bypass' && decisive.has(item.verdict)).length;
   const completed = {'access-control': results.filter(item => decisive.has(item.verdict)).length + nosqlDone +
     modelAccess + modelState +
@@ -180,6 +183,9 @@ export function coverageFor({results = [], surface = null, web = null, ownerRead
       (decisive.has(item.verdict) || item.verdict === 'observed')).length,
     'session-account': webResults.filter(item => ['public-session-token',
       'model-auth-login', 'model-cookie-access', 'model-raw-boundary'].includes(item.kind) &&
+      decisive.has(item.verdict)).length + webResults.filter(item =>
+      item.kind === 'rate-limit-auth-gate' && decisive.has(item.verdict)).length,
+    'rate-limit': webResults.filter(item => item.kind === 'rate-limit-auth-gate' &&
       decisive.has(item.verdict)).length};
   const rows = FAMILIES.map(([family, description]) => {
     const observed = attempts[family] ?? 0;
@@ -189,6 +195,7 @@ export function coverageFor({results = [], surface = null, web = null, ownerRead
       observed > done ? 'partial' :
       (['ssrf', 'xxe', 'xss', 'ssti', 'sql-nosql-injection', 'command-injection', 'path-file', 'secret-exposure',
         'anonymous-credential-data', 'dependency', 'model-directed', 'session-account',
+        'rate-limit',
         'response-header-injection', 'host-header-redirect', 'jwt-auth', 'parameter-pollution'].includes(family) ||
         family === 'access-control' && !credentialsReady) && observed > 0 ? 'partial' :
       family === 'exposed-paths' ? (exposed > 0 ?
@@ -209,7 +216,9 @@ export function coverageFor({results = [], surface = null, web = null, ownerRead
       family === 'dependency' && observed > 0 ?
         'OSV matched detected client-library names and versions; bundling, vulnerable-code reachability and exploitability were not verified.' :
       family === 'session-account' && observed > 0 ?
-        'Only public session-token replay or a Muse-proposed synthetic invalid-password login against a protected GET was checked; password-reset, MFA and other account flows were not tested.' :
+        'Only public session-token replay, a Muse-proposed synthetic invalid-password login against a protected GET, or bounded invalid-attempt throttling was checked; password-reset, MFA and other account flows were not tested.' :
+      family === 'rate-limit' && observed > 0 ?
+        'Only observed login or access-gate POST contracts were checked with 20 synthetic invalid attempts at an authorized rate; registration and distributed-source behavior were not tested.' :
       family === 'open-redirect' && !redirect ? 'No observed redirect parameter was reachable within the budget.' :
       family === 'host-header-redirect' && !scope?.probes?.hostHeaderRedirect ?
         'Disabled by the reviewed scope (probes.hostHeaderRedirect=false).' :
@@ -274,6 +283,8 @@ export function coverageFor({results = [], surface = null, web = null, ownerRead
   const modelStateClass = {attempts: modelState, completed: modelState,
     reason: 'Only an anonymous change to an owner-only disposable record, followed by an owner read and restoration, was checked.'};
   const authLoginClass = webClass('model-auth-login');
+  const authRateLimitClass = {...webClass('rate-limit-auth-gate'),
+    reason: 'Only an observed login or access-gate POST contract was checked with 20 synthetic invalid attempts at an authorized rate; registration, valid-account lockout and distributed-source behavior were not tested.'};
   const cookieAccessClass = webClass('model-cookie-access');
   const rawBoundaryClass = webClass('model-raw-boundary');
   const sequenceBoundaryClass = webClass('model-sequence-boundary');
@@ -379,6 +390,7 @@ export function coverageFor({results = [], surface = null, web = null, ownerRead
       completed: anonymousApiKeyClass.completed + publicCredentialExposure.completed,
       reason: publicCredentialExposure.attempts ? publicCredentialExposure.reason :
         anonymousApiKeyClass.attempts ? anonymousApiKeyClass.reason : keyScan.reason}],
+    ['API Rate Limit Bypass', authRateLimitClass],
     ['Secret Leakage', {attempts: privateKeyExposure.attempts + publicCredentialExposure.attempts + anonymousCredentialClass.attempts,
       completed: privateKeyExposure.completed + publicCredentialExposure.completed + anonymousCredentialClass.completed,
       reason: publicCredentialExposure.attempts ? publicCredentialExposure.reason :

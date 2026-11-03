@@ -18,6 +18,7 @@ import {HOST_HEADER_CANARIES, commandOutputCanary, commandOutputOracle, crlfCana
   hostsTraversalCanary, hostsTraversalOracle, renderCapturedHtml, responseCached,
   xxeHostsCanaries, xxeHostsOracle, xxeLiteralControl,
   hostHeaderRedirectMatch, hostHeaderRedirectOracle, jwtUnsignedCanaries, jwtUnsignedOracle,
+  authRateLimitOutcome,
   modelAuthBearer, modelAuthLoginRejection,
   validModelJsonPointer,
   nosqlEqUrl, nosqlOperatorOracle, redirectPollutionUrl, redirectPollutionOracle,
@@ -37,6 +38,13 @@ const NOSQL_PARAM = /^(?:id|_id|uid|uuid|filter|lookup|[A-Za-z_][A-Za-z0-9_]*(?:
 const SAFE_PROBE_PARAM = /^[A-Za-z_][A-Za-z0-9_.-]{0,79}$/;
 const XSS_STYLES = ['html-double', 'html-single', 'script-close'];
 const AUDIT_HEADER = 'x-bypass-audit';
+const RATE_LIMIT_ATTEMPTS = 20;
+const RATE_LIMIT_FIELD = /^(?:code|otp|pin|passcode|inviteCode|invitationCode|accessCode|betaCode)$/i;
+const LOGIN_USER_FIELD = /^(?:email|username|user|login|identifier)$/i;
+const LOGIN_SECRET_FIELD = /^(?:password|pass|passcode)$/i;
+const REGISTRATION_SEMANTICS = /(?:^|[\/_\s-])(?:register|registration|signup|sign-up|create[-_]?account|enroll)(?=$|[\/_\s.-])/i;
+const ACCESS_GATE_SEMANTICS = /(?:^|[\/_\s-])(?:unlock|beta|invite|invitation|redeem|access[-_]?code)(?=$|[\/_\s.-])/i;
+const LOGIN_SEMANTICS = /(?:^|[\/_\s-])(?:login|signin|sign-in|session|authenticate|authentication)(?=$|[\/_\s.-])/i;
 
 const independentResearchRead = lead => lead?.as === 'anonymous' &&
   ['GET', 'HEAD'].includes(lead.subject?.method) &&
@@ -242,6 +250,82 @@ function anonymousCredentialLeads(surface, scope, budget) {
       source: record.source ?? [], basis: 'documented-account-route'});
   }
   return {leads: leads.slice(0, Math.min(8, budget)), cut: Math.max(0, leads.length - Math.min(8, budget))};
+}
+
+function rateLimitLeads(surface, scope, budget) {
+  if ((scope.limits?.rps ?? 0) < 10) return {leads: [], cut: 0};
+  const operations = [
+    ...(surface?.jsonBodyOperations ?? []).map(item => ({...item, placement: 'json'})),
+    ...(surface?.formBodyOperations ?? []).map(item => ({...item, placement: 'form'})),
+    ...(surface?.authBodyOperations ?? []).map(item => ({...item, placement: 'auth'})),
+  ];
+  const leads = [], seen = new Set();
+  for (const operation of operations) {
+    if (operation.method !== 'POST' || typeof operation.path !== 'string' ||
+        operation.path.includes('{')) continue;
+    const fields = [...new Set((operation.fields ?? []).filter(field =>
+      typeof field === 'string'))];
+    const semantics = `${operation.path} ${operation.purpose ?? ''}`;
+    // Repeated registration requests can create accounts or send messages.
+    // They require operator-supplied disposable fixtures and are never inferred
+    // from a public contract.
+    if (REGISTRATION_SEMANTICS.test(semantics)) continue;
+    const codeField = fields.find(field => RATE_LIMIT_FIELD.test(field));
+    const userField = operation.usernameField ?? fields.find(field => LOGIN_USER_FIELD.test(field));
+    const secretField = operation.passwordField ?? fields.find(field => LOGIN_SECRET_FIELD.test(field));
+    const mode = ACCESS_GATE_SEMANTICS.test(semantics) && codeField && fields.length === 1 ?
+      'access-gate' : LOGIN_SEMANTICS.test(semantics) && userField && secretField ?
+        'login' : null;
+    if (!mode) continue;
+    // A local login does not exercise the deployed throttling layer and the
+    // repeated failures can interfere with fixture accounts used by deeper
+    // authenticated checks. Deployed login contracts remain eligible.
+    if (mode === 'login' && scope.target.environment === 'local') continue;
+    const selectedFields = mode === 'access-gate' ? [codeField] : [userField, secretField];
+    if ((operation.requiredFields ?? []).some(field => !selectedFields.includes(field))) continue;
+    const purpose = operation.placement === 'form' ? 'form-body' :
+      operation.placement === 'auth' ? 'auth-body' : 'json-body';
+    const checked = validateUrl(scope, operation.path,
+      {identity: 'anonymous', method: 'POST', purpose});
+    if (!checked.ok) continue;
+    const key = `${operation.path} ${operation.placement} ${mode}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    leads.push({path: new URL(checked.url).pathname, parameter: mode === 'access-gate' ?
+      codeField : secretField, field: mode === 'access-gate' ? codeField : secretField,
+    userField: mode === 'login' ? userField : null, fields: selectedFields, mode,
+    placement: operation.placement, contentType: operation.placement === 'form' ?
+      'application/x-www-form-urlencoded' : 'application/json', purpose,
+    source: operation.source ?? null, basis: 'observed-auth-gate-contract'});
+  }
+  return {leads: leads.slice(0, budget), cut: Math.max(0, leads.length - budget)};
+}
+
+function rateLimitFinding(lead, scope, responses, outcome, elapsedMs) {
+  const url = new URL(lead.path, scope.target.origin);
+  const evidence = responses.map(item => item.evidenceId).filter(Boolean);
+  return {kind: 'rate-limit-auth-gate',
+    title: `No effective throttling after ${responses.length} rapid invalid ${lead.mode === 'login' ?
+      'login' : 'access-code'} attempts: ${lead.path}`,
+    severity: 'medium', owasp: 'A07 Identification and Authentication Failures', cwe: 'CWE-307',
+    pattern: lead.path, url: url.href, host: url.host, task: null, verdict: 'confirmed',
+    rule: `confirmed/rate-limit-auth-gate/${responses.length}-rapid-invalid-attempts-no-throttle`,
+    evidence: evidence.slice(0, Math.ceil(evidence.length / 2)),
+    confirmation: evidence.slice(Math.ceil(evidence.length / 2)),
+    mirror: {result: 'unverified', evidence: [], reason: 'distributed-source and valid-account lockout behavior were not tested'},
+    tags: ['authentication', 'rate-limit', 'synthetic-invalid-attempts'],
+    reach: {observed: 1, basis: `${responses.length} explicit denials completed at ${outcome.achievedRps.toFixed(1)} requests per second without 429, Retry-After, or an exhausted rate-limit header`},
+    dataClasses: [], remediation: 'Throttle repeated failures per source and credential target, add progressive delays or temporary lockouts, and return 429 with Retry-After when the limit is reached.',
+    foundBy: 'bounded-auth-rate-limit-probe', status: 'open',
+    webProof: {kind: 'rate-limit-auth-gate', request: {method: 'POST', url: url.href,
+      as: 'anonymous'}, mode: lead.mode, placement: lead.placement, field: lead.field,
+      userField: lead.userField, fields: lead.fields, contentType: lead.contentType,
+      attemptCount: responses.length, minimumRps: Math.min(10,
+        Math.max(5, (scope.limits?.rps ?? 10) / 2))},
+    webSteps: [{identity: 'anonymous', method: 'POST', url: url.href,
+      status: responses[0]?.status, evidence: evidence[0]},
+    {identity: 'anonymous', method: 'POST', url: url.href,
+      status: responses.at(-1)?.status, evidence: evidence.at(-1), elapsedMs}]};
 }
 
 function parameterInterpretations(surface, path, parameter) {
@@ -1598,6 +1682,8 @@ export async function planWebLeads(surface, scope, {budget = 20, infer = null, m
     return /json|\+json/i.test(response.type ?? '') && record?.publicIds?.length ? 6 : 5;
   };
   const baselineCandidates = [
+    ...rateLimitLeads(surface, scope, Number.MAX_SAFE_INTEGER).leads.map(lead =>
+      ({kind: 'rate-limit-auth-gate', lead, priority: 10})),
     ...anonymousCredentialLeads(surface, scope, Number.MAX_SAFE_INTEGER).leads.map(lead =>
       ({kind: 'anonymous-credential-data', lead, priority: 7})),
     ...redirectLeads(surface, scope, {budget: Number.MAX_SAFE_INTEGER}).leads.map(lead => ({kind: 'open-redirect', lead, priority: 6})),
@@ -1645,7 +1731,10 @@ export async function planWebLeads(surface, scope, {budget = 20, infer = null, m
   // Selection and model review have different cursors: a lead reviewed on the
   // first page but not selected still belongs in the later execution queue.
   const alreadyReviewed = new Set(skipReviewKeys);
+  // The rate-limit verifier is deterministic and intentionally performs
+  // bounded POSTs. Do not ask Muse's read-only web planner to re-rank it.
   const pages = webModelPages(candidates.filter(item =>
+    item.kind !== 'rate-limit-auth-gate' &&
     !alreadyReviewed.has(webLeadKey(item.kind, item.lead))), surface);
   const catalogReference = researchCatalogIndex();
   const modelCoverage = {pagesAvailable: pages.length, pagesSent: 0,
@@ -3717,7 +3806,7 @@ export async function runWebProbes(surface, scope, {requester, ledger = null, bu
   // Keep each verifier's control sequence intact. Independent anonymous reads
   // can overlap, while their results are committed in ranked lead order.
   const independentWebKinds = new Set([
-    'anonymous-credential-data', 'open-redirect', 'host-header-redirect',
+    'rate-limit-auth-gate', 'anonymous-credential-data', 'open-redirect', 'host-header-redirect',
     'jwt-unsigned', 'http-parameter-pollution', 'cors-reflection',
     'ssrf-loopback', 'xss-dom-fragment', 'xss-reflected', 'html-injection',
     'ssti-arithmetic', 'sql-boolean', 'nosql-operator-bypass',
@@ -3745,6 +3834,45 @@ export async function runWebProbes(surface, scope, {requester, ledger = null, bu
     // proved. Serial checks receive the committed findings seen so far.
     const findings = [...priorFindings];
     const recordResult = result => recordedResults.push(result);
+    if (item.kind === 'rate-limit-auth-gate') for (const {lead} of [item]) {
+      const minimumRps = Math.min(10, Math.max(5, (scope.limits?.rps ?? 10) / 2));
+      const syntheticUser = `bypass-audit-${randomBytes(8).toString('hex')}@example.invalid`;
+      const attempted = [];
+      const send = async index => {
+        const invalid = `bypass-audit-invalid-${randomBytes(12).toString('hex')}`;
+        const payload = lead.mode === 'login' ?
+          {[lead.userField]: syntheticUser, [lead.field]: invalid} : {[lead.field]: invalid};
+        const body = lead.placement === 'form' ?
+          new URLSearchParams(payload).toString() : JSON.stringify(payload);
+        const authBody = lead.placement === 'auth';
+        const response = await requester({url: lead.path, identity: 'anonymous', method: 'POST',
+          purpose: lead.purpose, body, step: index < RATE_LIMIT_ATTEMPTS / 2 ? 'task' : 'reverify',
+          noCache: true, omitExcerpt: authBody, rawForAuthProof: authBody,
+          headers: {'content-type': lead.contentType, 'cache-control': 'no-cache'},
+          redactValues: [invalid, syntheticUser]});
+        return authBody ? {...response, body: response.rawBody ?? ''} : response;
+      };
+      const started = performance.now();
+      attempted.push(...await Promise.all(Array.from({length: RATE_LIMIT_ATTEMPTS},
+        (_, index) => send(index))));
+      // A synthetic invalid request has no intended side effect. Replace at most
+      // two transport failures with fresh values; scope refusals and HTTP errors
+      // remain decisive evidence and are not retried.
+      while (attempted.filter(response => !response.blocked).length < RATE_LIMIT_ATTEMPTS &&
+          attempted.length < RATE_LIMIT_ATTEMPTS + 2)
+        attempted.push(await send(attempted.length));
+      const responses = attempted.filter(response => !response.blocked)
+        .slice(0, RATE_LIMIT_ATTEMPTS);
+      const elapsedMs = Math.max(1, Math.round(performance.now() - started));
+      const outcome = authRateLimitOutcome(responses,
+        {elapsedMs, minimumRps, attemptCount: RATE_LIMIT_ATTEMPTS});
+      const evidence = attempted.map(item => item.evidenceId).filter(Boolean);
+      recordResult({lead, kind: 'rate-limit-auth-gate', verdict: outcome.verdict,
+        reason: outcome.reason, attempts: responses.length,
+        achievedRps: outcome.achievedRps ?? null, evidence});
+      if (outcome.verdict === 'confirmed')
+        findings.push(rateLimitFinding(lead, scope, responses, outcome, elapsedMs));
+    }
   if (item.kind === 'anonymous-credential-data') for (const {lead} of [item]) {
     const call = (step) => requester({url: lead.path, identity: 'anonymous', method: 'GET',
       step, noCache: true, maxBytes: MODEL_RESPONSE_BYTES,

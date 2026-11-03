@@ -3,7 +3,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import {DEFAULT_SCOPE, validateScopeTemplate} from './scope.mjs';
-import {appOriginInput, loopback, makeChallenge, pathAllowed, targetURL} from '../network.mjs';
+import {appOriginInput, loopback, makeChallenge, pathAllowed, targetURL, DEFAULT_REQUESTS_PER_SECOND} from '../network.mjs';
 import {httpMethods} from '../http-methods.mjs';
 import {atomic, change, initStore, rootFrom, read} from '../store.mjs';
 import {repositoryInfo} from '../repository.mjs';
@@ -99,7 +99,7 @@ export function prepareScopeTemplate(working, rawUrl, options = {}, {reuse = fal
     credentialOrigins(origin, options['credential-origins']) : [origin];
   for (const credentialOrigin of scope.credentialOrigins) targetURL(credentialOrigin, environment);
   if (!local) {
-    scope.limits.rps = 2;
+    scope.limits.rps = DEFAULT_REQUESTS_PER_SECOND;
     scope.limits.minutes = 30;
     scope.harvest.thirdParty = 'count-only';
     scope.harvest.sequentialNeighbors = 0;

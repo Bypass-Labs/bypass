@@ -145,3 +145,16 @@ test('an outsider write to an owner-only record counts the cross-account object 
     'Horizontal Privilege Escalation'])
     assert.equal(report.requestedClasses.find(row => row.name === name).status, 'partial');
 });
+
+test('a completed auth-gate burst records bounded API rate-limit coverage', () => {
+  const report = coverageFor({web: {results: [{kind: 'rate-limit-auth-gate',
+    verdict: 'confirmed'}]}});
+  const family = report.rows.find(row => row.family === 'rate-limit');
+  assert.equal(family.status, 'partial');
+  assert.equal(family.attempts, 1);
+  assert.match(family.reason, /20 synthetic invalid attempts/);
+  const requested = report.requestedClasses.find(row =>
+    row.name === 'API Rate Limit Bypass');
+  assert.equal(requested.status, 'partial');
+  assert.equal(requested.attempts, 1);
+});

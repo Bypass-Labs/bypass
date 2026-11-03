@@ -36,7 +36,7 @@ test('packaged app-only setup reaches one approval picker without DNS, repositor
   assert.equal(approved.nextAction.tool,'bypass_blackbox_setup');assert.equal(approved.onboarding.stage,'ready');
   assert.equal(approved.nextAction.arguments.url,'https://ux-demo.example.com');
   const saved=read(connected.root).targets[0];assert.equal(saved.ownership.status,'acknowledged');assert.equal(sharedOwnership(saved.url),null);
-  assert.equal(scopeReady(saved,'/api/owned','POST'),true);assert.throws(()=>scopeReady(saved,'/api/owned','DELETE'),/outside/);
+  assert.equal(scopeReady(saved,'/api/owned','POST'),true);assert.equal(scopeReady(saved,'/api/owned','DELETE'),true);
   assert.equal(read(connected.root).runs.length,0,'setup does not start an assessment');
   const custom=await c.call('bypass_onboarding',{reviewScope:true});
   await c.call(custom.nextAction.tool,{...custom.nextAction.arguments,accept:true,production:true,rps:0.5,paths:'/api',methods:['GET']});

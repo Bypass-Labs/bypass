@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { choiceInput, promptValue, confirmChoice, accountInput } from '../src/interaction.mjs';
+import { choiceInput, promptValue, confirmChoice, accountInput, scopeSuggestions } from '../src/interaction.mjs';
 import { museModelChoices, promptAPIProfile, promptMuseProfile } from '../src/provider-setup.mjs';
 import { reviewInput } from '../src/application-setup.mjs';
 import { appConnection } from '../src/app-connection.mjs';
@@ -25,6 +25,12 @@ test('plain terminal picks defaults and numbered options while preserving direct
   assert.match(output.join('\n'),/recommended/);assert.match(output.join('\n'),/custom value/);
   assert.equal(await confirmChoice(async()=> '2','Accept?',{write}),false);
   assert.equal(await confirmChoice(async()=> '1','Accept?',{write}),true);
+});
+
+test('new app scope defaults to the entire origin while existing grants remain unchanged',()=>{
+  assert.deepEqual(scopeSuggestions({authorization:null}).map(item=>item.value),['/','/api']);
+  assert.deepEqual(scopeSuggestions({authorization:{paths:['/v1','/public']}}).map(item=>item.value),['/v1,/public','/']);
+  assert.deepEqual(scopeSuggestions({authorization:{paths:['/']}}).map(item=>item.value),['/']);
 });
 
 test('provider suggestions and custom values travel to the profile unchanged; secrets are never requested',async()=>{

@@ -81,7 +81,7 @@ test('permission pickers default to defer and custom text cannot grant consent',
 });
 
 test('HTTP method picker toggles multiple choices with real keys, supports custom input and remains visible on resize',async t=>{
-  const tty=terminal(t);let answer=promptMethods(tty.ui.ask,tty.ui.write);
+  const tty=terminal(t);let answer=promptMethods(tty.ui.ask,tty.ui.write,['GET','HEAD']);
   tty.type('\x1b[B\x1b[B ');assert.deepEqual(tty.ui.state.pending.values,['GET','HEAD','POST']);
   for(const [columns,rows] of [[100,30],[80,24],[40,15]]){
     const view=frame(tty.ui.state,columns,rows),text=view.lines.map(x=>x.text).join('\n');

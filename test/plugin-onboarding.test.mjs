@@ -10,6 +10,7 @@ import { prepareBlackboxSetup } from '../src/blackbox/setup.mjs';
 import { rememberSelection, savedSelection, sessionHint, monitorSummary } from '../src/plugin-context.mjs';
 import { VERSION } from '../src/util.mjs';
 import { mcpClient } from './mcp-client.mjs';
+import { recommendedMethods } from '../src/http-methods.mjs';
 
 const dockerReady=async()=>({available:true,message:'Docker ready (test dependency).'});
 const checklist=(host,root,options={})=>pluginOnboarding(host,root,{mode:'combined',checkDocker:dockerReady,...options});
@@ -69,6 +70,7 @@ test('local onboarding permits optional accounts and retains per-probe validatio
   const root=await sourceReady(),o={project:root};await execute('target add',['app'],{...o,url:'http://127.0.0.1:3456',environment:'local'});
   let status=await checklist(root,root);assert.equal(status.nextAction.challenge.method,'local');assert.match(status.nextAction.question,/on this computer/);
   await execute('target verify',['app'],{...o,method:'local'});status=await checklist(root,root);assert.equal(status.stage,'scope');assert.equal(status.ready.live,false);
+  assert.deepEqual(status.nextAction.scope.methods,recommendedMethods);
   assert.deepEqual(status.nextAction.custom.methods.singleSelectFallback.choices.find(choice=>choice.label==='All methods').methods,
     ['GET','HEAD','POST','PUT','PATCH','DELETE','OPTIONS']);
   await execute('target authorize',['app'],{...o,paths:'/api',accept:true});status=await checklist(root,root);assert.equal(status.stage,'ready');assert.equal(status.steps.find(s=>s.id==='accounts').status,'optional');

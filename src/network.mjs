@@ -8,6 +8,7 @@ import { ownershipReady, authorizationRevoked } from './ownership-store.mjs';
 import { httpMethods } from './http-methods.mjs';
 
 export const loopback = h => ['localhost','127.0.0.1','::1','[::1]'].includes(h.toLowerCase());
+export const DEFAULT_REQUESTS_PER_SECOND = 20;
 export function appOriginInput(value) {
   const text=value.trim().replace(/^\[[^\]\n]*\]\(([^)\n]+)\)$/,'$1');
   const candidate=/^[a-z][a-z0-9+.-]*:\/\//i.test(text)?text:`${/^(localhost|127\.0\.0\.1|\[::1\])(?::\d+)?(?:\/|$)/i.test(text)?'http':'https'}://${text}`;
@@ -136,7 +137,7 @@ export function authorization(target, scope, acceptedBy = 'local operator') {
       !item.path.split('/').some(segment=>segment==='.'||segment==='..') &&
       pathAllowed(item.path,scope.paths)),
     'writeOperations must list at most 100 exact method, path, and placement contracts inside the authorized paths.');
-  const rps=scope.maxRequestsPerSecond ?? 2;
+  const rps=scope.maxRequestsPerSecond ?? DEFAULT_REQUESTS_PER_SECOND;
   need(Number.isFinite(rps)&&rps>0&&rps<=32,'maxRequestsPerSecond must be between 0 and 32.');
   const expiresAt=scope.expiresAt ?? new Date(Date.now()+7*86400000).toISOString();
   need(Date.parse(expiresAt)>Date.now() && Date.parse(expiresAt)<=Date.now()+30*86400000, 'Authorization expiry must be within 30 days.');

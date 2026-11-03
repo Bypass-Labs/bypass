@@ -12,6 +12,85 @@ import {domXssFragment, nosqlEqUrl, nosqlOperatorOracle, redirectPollutionUrl,
   redirectPollutionOracle, sqlBooleanCanary, sqlBooleanOracle,
   renderCapturedHtml, xssPayload} from '../src/blackbox/poc-runtime.mjs';
 
+test('observed access-code endpoints are checked for effective throttling without Muse', async () => {
+  const {scope} = loadScope({origin: 'http://127.0.0.1:4329',
+    overrides: {acceptLocal: true, rps: 20}});
+  const surface = {patterns: [], jsonBodyOperations: [{path: '/api/beta/unlock',
+    method: 'POST', contentType: 'application/json', fields: ['code'],
+    requiredFields: [], source: 'public-js',
+    purpose: 'Beta unlock API called with an access code.'}]};
+  const requests = [];
+  const requester = async options => {
+    requests.push(options);
+    const body = JSON.stringify({ok: false});
+    return {status: 200, type: 'application/json', body, bytes: body.length,
+      headers: {'content-type': 'application/json', 'cache-control': 'no-store'},
+      evidenceId: `ev-${String(requests.length).padStart(4, '0')}`};
+  };
+  const run = await runWebProbes(surface, scope, {requester, budget: 1});
+  const result = run.results.find(item => item.kind === 'rate-limit-auth-gate');
+  const finding = run.findings.find(item => item.kind === 'rate-limit-auth-gate');
+  assert.equal(result?.verdict, 'confirmed', JSON.stringify(result));
+  assert.equal(requests.length, 20);
+  assert.ok(requests.every(item => item.method === 'POST' && item.purpose === 'json-body'));
+  assert.ok(requests.every(item => JSON.parse(item.body).code.startsWith('bypass-audit-invalid-')));
+  assert.equal(finding?.cwe, 'CWE-307');
+  assert.equal(finding?.webProof.attemptCount, 20);
+});
+
+test('an access-gate burst replaces one transport failure without exceeding its cap', async () => {
+  const {scope} = loadScope({origin: 'http://127.0.0.1:4329',
+    overrides: {acceptLocal: true, rps: 20}});
+  const surface = {patterns: [], jsonBodyOperations: [{path: '/api/beta/unlock',
+    method: 'POST', contentType: 'application/json', fields: ['code'],
+    requiredFields: [], source: 'public-js', purpose: 'Beta unlock access code.'}]};
+  let requests = 0;
+  const run = await runWebProbes(surface, scope, {budget: 1, requester: async () => {
+    requests++;
+    if (requests === 7) return {blocked: true, reason: 'Request failed: ECONNRESET',
+      evidenceId: `ev-${requests}`};
+    return {status: 200, type: 'application/json', body: '{"ok":false}',
+      headers: {'content-type': 'application/json'}, evidenceId: `ev-${requests}`};
+  }});
+  assert.equal(run.results.find(item => item.kind === 'rate-limit-auth-gate')?.verdict,
+    'confirmed');
+  assert.equal(requests, 21);
+});
+
+test('an explicit throttle prevents an authentication rate-limit finding', async () => {
+  const loaded = loadScope({origin: 'http://127.0.0.1:4329',
+    overrides: {acceptLocal: true, rps: 20}});
+  const scope = structuredClone(loaded.scope);
+  scope.target.environment = 'production';
+  scope.authorizedOrigins = {[scope.target.origin]: {authorization: {
+    methods: ['GET', 'HEAD', 'POST']}}};
+  const surface = {patterns: [], jsonBodyOperations: [{path: '/api/login',
+    method: 'POST', contentType: 'application/json', fields: ['email', 'password'],
+    requiredFields: ['email', 'password'], source: 'public-openapi', purpose: 'User login.'}]};
+  let requests = 0;
+  const run = await runWebProbes(surface, scope, {budget: 1, requester: async () => {
+    requests++;
+    const throttled = requests >= 6;
+    const body = JSON.stringify({ok: false});
+    return {status: throttled ? 429 : 401, type: 'application/json', body,
+      bytes: body.length, headers: throttled ? {'retry-after': '30'} : {},
+      evidenceId: `ev-${requests}`};
+  }});
+  assert.equal(run.results.find(item => item.kind === 'rate-limit-auth-gate')?.verdict,
+    'not_reproduced');
+  assert.ok(!run.findings.some(item => item.kind === 'rate-limit-auth-gate'));
+});
+
+test('registration contracts are never selected for automatic rate-limit attempts', async () => {
+  const {scope} = loadScope({origin: 'http://127.0.0.1:4329',
+    overrides: {acceptLocal: true, rps: 20}});
+  const surface = {patterns: [], jsonBodyOperations: [{path: '/api/register',
+    method: 'POST', contentType: 'application/json', fields: ['email', 'password'],
+    requiredFields: ['email', 'password'], source: 'public-openapi', purpose: 'Create account.'}]};
+  const planned = await planWebLeads(surface, scope, {budget: 10});
+  assert.ok(!planned.leads.some(item => item.kind === 'rate-limit-auth-gate'));
+});
+
 test('web audit executes each Muse HTTP page before the next page and does not repeat it', async () => {
   const {scope} = loadScope({origin: 'http://127.0.0.1:4329',
     overrides: {acceptLocal: true}});
