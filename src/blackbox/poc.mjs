@@ -27,7 +27,7 @@ const WEB_PROOF_KINDS = new Set(['open-redirect', 'host-header-redirect', 'jwt-u
   'crlf-header', 'public-private-key', 'public-api-credential', 'model-differential',
   'model-json-differential', 'model-http-sequence', 'model-sequence-boundary',
   'model-cookie-access',
-  'model-raw-boundary',
+  'model-raw-boundary', 'model-anonymous-json-disclosure',
   'model-browser-execution', 'model-access-boundary',
   'model-state-change', 'xss-stored',
   'public-session-token', 'model-auth-login']);
@@ -155,12 +155,15 @@ export async function proveFindings(findings, results, {runDir, surface, scope, 
         log({stage: 'poc', message: `${finding.id} downgraded: ${result.reason}`});
       } else {
         if (WEB_PROOF_KINDS.has(finding.kind)) {
-          const lead = web?.results?.find(item => item.lead.path === finding.pattern &&
+          const resultPath = finding.kind === 'model-anonymous-json-disclosure' ?
+            finding.webProof.rawRequests?.[0]?.path : finding.pattern;
+          const lead = web?.results?.find(item => item.lead.path === resultPath &&
             item.origin === webOrigin &&
             (['model-http-sequence', 'model-sequence-boundary',
               'model-cookie-access', 'model-raw-boundary',
+              'model-anonymous-json-disclosure',
               'model-browser-execution'].includes(finding.kind) ?
-              item.kind === finding.kind && item.lead.path === finding.pattern :
+              item.kind === finding.kind && item.lead.path === resultPath :
             finding.kind === 'model-access-boundary' ?
               item.kind === finding.kind &&
                 item.lead.path === finding.webProof.subject?.path :

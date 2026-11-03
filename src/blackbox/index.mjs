@@ -580,15 +580,21 @@ export async function runAudit({url, root = process.cwd(), scopeFile = null, ove
     phase('done', 1, 'Scope and host discovery');
     phase('doing', 2, 'Recon: assets and source');
     if (focus) {
-      const response = await anonymousRequester({url: focus.path, identity: 'anonymous',
-        method: 'GET', step: 'recon', purpose: 'task'});
-      observedRoutes = {routes: [{path: new URL(focus.path, scope.target.origin).pathname,
-        method: 'GET', sources: [{source: 'source-finding', findingId: focus.findingId}],
+      const readMethod = ['GET', 'HEAD'].includes(focus.method) ? focus.method :
+        focus.method === 'UNKNOWN' && scope.methods.includes('GET') ? 'GET' : null;
+      const response = readMethod ? await anonymousRequester({url: focus.path,
+        identity: 'anonymous', method: readMethod, step: 'recon', purpose: 'task',
+        omitExcerpt: true}) : null;
+      const observedRead = response && (focus.method !== 'UNKNOWN' ||
+        response.status >= 200 && response.status < 400);
+      observedRoutes = {routes: observedRead ? [{path: new URL(focus.path, scope.target.origin).pathname,
+        method: readMethod, sources: [{source: 'source-finding', findingId: focus.findingId}],
         status: response.status ?? null, type: response.type ?? null,
         hash: response.hash ?? null, evidenceId: response.evidenceId ?? null,
-        links: 0, listing: false}], exposures: [],
-        assetPages: /html/i.test(response.type ?? '') ? [focus.path] : [],
-        stats: {routes: 1, requested: 1, listings: 0, filesChecked: 0,
+        links: 0, listing: false}] : [], exposures: [],
+        assetPages: observedRead && readMethod === 'GET' && /html/i.test(response.type ?? '') ? [focus.path] : [],
+        stats: {routes: observedRead ? 1 : 0, requested: response ? 1 : 0,
+          listings: 0, filesChecked: 0,
           filesUnfetched: 0, exposures: 0, queued: 0, cuts: {}}};
       say({stage: 'recon', message: `Focused source finding ${focus.findingId}: ${focus.path}`});
     } else observedRoutes = await reconObservedRoutes(scope, anonymousRequester,
@@ -597,10 +603,16 @@ export async function runAudit({url, root = process.cwd(), scopeFile = null, ove
       ...scope.discover.filter(item => item === '/' || /html?|docs/i.test(item))])];
     observedRoutes.stats.cuts.minedPages = Math.max(0, miningPages.length - 30);
     atomic(path.join(runDir, 'observed-routes.json'), observedRoutes);
+    let assetPages = miningPages.slice(0, 30);
+    if (focus) {
+      assetPages = observedRoutes.routes[0]?.method === 'GET' ? [focus.path] : [];
+      if (!assetPages.length && validateUrl(scope, '/',
+        {purpose: 'task', identity: 'anonymous', method: 'GET'}).ok) assetPages = ['/'];
+    }
     mined = await mineOrigin(scope.target.origin, {requester: anonymousRequester, assetHosts: scope.discovery.assetHosts,
       workers: scope.limits.agents,
       crawlPaths: focus ? [] : scope.include,
-      pages: focus ? [focus.path] : miningPages.slice(0, 30),
+      pages: assetPages,
       ...(focus ? {maxPages: 1} : {}), log: say});
     if (focus) {
       const focusedPathname = new URL(focus.path, scope.target.origin).pathname;
@@ -610,15 +622,15 @@ export async function runAudit({url, root = process.cwd(), scopeFile = null, ove
       });
     }
     if (focus && !mined.endpoints.some(item => item.path === focus.path))
-      mined.endpoints.push({path: focus.path, method: 'GET', params: [],
-        source: 'source-finding', evidenceId: observedRoutes.routes[0].evidenceId});
+      mined.endpoints.push({path: focus.path, method: focus.method, params: [],
+        source: 'source-finding', evidenceId: observedRoutes.routes[0]?.evidenceId ?? null});
     const knownEndpoints = new Set(mined.endpoints.map(item => `${item.method} ${item.path}`));
     for (const item of observedRoutes.routes.filter(item =>
       (item.status === 200 && (/html|json|xml/i.test(item.type ?? '') || item.listing)) ||
       [301, 302, 307, 308, 401, 403].includes(item.status))) {
-      if (knownEndpoints.has(`GET ${item.path}`)) continue;
-      knownEndpoints.add(`GET ${item.path}`);
-      mined.endpoints.push({path: item.path, method: 'GET', params: [],
+      if (knownEndpoints.has(`${item.method} ${item.path}`)) continue;
+      knownEndpoints.add(`${item.method} ${item.path}`);
+      mined.endpoints.push({path: item.path, method: item.method, params: [],
         source: item.sources.map(source => source.source).join(', '),
         observedStatus: item.status, evidenceId: item.evidenceId});
     }

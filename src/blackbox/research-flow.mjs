@@ -13,7 +13,8 @@ import {responseCached, modelExperimentReason, stateChangeCanaries,
   validModelHeaders, sequencePointerType, validSequencePointer,
   captureSequenceScalar, uniqueJsonStringField,
   boundSequencePath, renderCapturedHtml, xssPayload, sequenceJsonBody,
-  rawBoundaryOutcome, createSequenceCookies} from './poc-runtime.mjs';
+  rawBoundaryOutcome, createSequenceCookies,
+  responseMarkerFingerprint, jsonDisclosureOutcome} from './poc-runtime.mjs';
 import {MODEL_RESPONSE_BYTES, requestFailureVerdict, responseSizeLimited, responseSizeReason} from './response-size.mjs';
 
 const marker = () => `bx${randomBytes(6).toString('hex')}`;
@@ -384,37 +385,41 @@ function observedHeaders(headers) {
 }
 
 function reviewedSequenceStep(step, inventory, scope, as, markers, env,
-  derivedAvailable = false, allowWrite = false) {
-  if (typeof step?.path !== 'string') return false;
+  derivedAvailable = false, allowWrite = false, onFailure = () => {}) {
+  const reject = reason => {onFailure(reason); return null;};
+  if (typeof step?.path !== 'string') return reject('path-shape');
   const readPath = step.path.split('?')[0];
-  if (!concrete(readPath)) return null;
-  if (step.as !== undefined && !['anonymous', 'owner', 'outsider', 'derived'].includes(step.as)) return false;
+  if (!concrete(readPath)) return reject('path-shape');
+  if (step.as !== undefined && !['anonymous', 'owner', 'outsider', 'derived'].includes(step.as)) return reject('identity-shape');
   const identity = readIdentity(step, as);
-  if (!safeReadIdentity(identity, scope, env, derivedAvailable)) return null;
+  if (!safeReadIdentity(identity, scope, env, derivedAvailable)) return reject('identity-unavailable');
   if (!['GET', 'HEAD'].includes(step.method)) {
-    if (!allowWrite || !scope.methods.includes(step.method)) return null;
+    if (!allowWrite || !scope.methods.includes(step.method)) return reject('method-scope');
     const operation = inventory.writeOperations.get(
       `${step.method} ${step.placement} ${step.path}`);
-    if (!operation || !operation.fields.length ||
-        !safeHeaders(step.headers ?? [], markers) ||
-        !validateUrl(scope, step.path, {purpose: purposeFor(step.placement) ??
+    if (!operation || !operation.fields.length) return reject('write-contract');
+    if (!safeHeaders(step.headers ?? [], markers)) return reject('headers-shape');
+    if (!validateUrl(scope, step.path, {purpose: purposeFor(step.placement) ??
           'reviewed-method', method: step.method,
-          identity: identity === 'derived' ? 'anonymous' : identity}).ok) return null;
+          identity: identity === 'derived' ? 'anonymous' : identity}).ok)
+      return reject('route-scope');
     const bodyTemplate = step.bodyTemplate ?? '';
-    if (!bodyTemplate && (typeof step.key !== 'string' ||
-        typeof step.value !== 'string') ||
-        bodyTemplate.includes('{{input}}') && typeof step.value !== 'string')
-      return null;
+    if (!bodyTemplate && typeof step.key !== 'string')
+      return reject('input-shape');
+    if (step.value != null && typeof step.value !== 'string')
+      return reject('input-shape');
+    if (step.value == null && step.valueEncoding === 'json')
+      return reject('input-value');
     const key = step.key ?? operation.fields[0];
-    if (!operation.fields.includes(key)) return null;
+    if (!operation.fields.includes(key)) return reject('input-field');
     const value = step.value ?? '';
     const harmless = value => validModelFixedFields(
       [{field: key, value}], '__bx_unused', markers);
     if (!harmless(value) || !validModelFixedFields(step.fixedFields ?? [], key,
-      markers, operation.fields)) return null;
+      markers, operation.fields)) return reject('input-values');
     const fixed = [...(step.fixedFields ?? [])];
     if (step.placement === 'xml' &&
-        !validXmlTemplate(bodyTemplate, operation, key, markers)) return null;
+        !validXmlTemplate(bodyTemplate, operation, key, markers)) return reject('xml-template');
     return {...step, as: identity, key, value,
       placement: operation.placement, fixedFields: fixed,
       bodyTemplate, headers: step.headers ?? [],
@@ -429,10 +434,10 @@ function reviewedSequenceStep(step, inventory, scope, as, markers, env,
       !route?.methods.has(step.method) ||
       !groundedQuery || !url.search && step.path !== url.pathname ||
       !safeHeaders(step.headers ?? [], markers) ||
-      !observedHeaders(step.headers ?? [], route.headers)) return null;
+      !observedHeaders(step.headers ?? [], route.headers)) return reject('read-contract');
   return validateUrl(scope, step.path, {method: step.method,
     identity: identity === 'derived' ? 'anonymous' : identity}).ok ?
-    {...step, as: identity, headers: step.headers ?? []} : null;
+    {...step, as: identity, headers: step.headers ?? []} : reject('route-scope');
 }
 
 const bindingPlaceholder = binding => binding && typeof binding === 'object' &&
@@ -681,13 +686,14 @@ export function validateResearchFlow(spec, surface, scope, {env = {}, inventory 
   // scoped request as an unclassified observation, then let Muse choose an
   // executable verifier from the response feedback. Never report its named
   // impact on the strength of a response difference alone.
-  const knownOracles = ['marker', 'protected-body', 'protected-json-field',
+  const knownOracles = ['marker', 'marker-proof', 'protected-body', 'protected-json-field',
     'observation', 'status-boundary', 'local-callback', 'remote-content-use', 'state-change',
-    'browser-execution', 'cookie-access', 'raw-observation', 'raw-proof'];
+    'browser-execution', 'cookie-access', 'raw-observation', 'raw-proof',
+    'anonymous-json-disclosure'];
   const oracle = spec.oracle === undefined ?
     (spec.rawProof ? 'raw-proof' : spec.rawRequests ? 'raw-observation' : 'marker') :
     knownOracles.includes(spec.oracle) ? spec.oracle : 'observation';
-  if (oracle === 'raw-observation' || oracle === 'raw-proof') {
+  if (['raw-observation', 'raw-proof', 'anonymous-json-disclosure'].includes(oracle)) {
     const secretEntries = operatorSecretEntries(scope, env);
     const reviewRequests = requests => {
       if (!Array.isArray(requests) || !requests.length)
@@ -723,13 +729,46 @@ export function validateResearchFlow(spec, surface, scope, {env = {}, inventory 
     if (candidate.error)
       return fail('raw-request-shape', {component: candidate.error});
     const reviewed = candidate.reviewed;
+    if (oracle === 'anonymous-json-disclosure') {
+      const focus = surface?.focus;
+      const pointers = spec.jsonPointers;
+      if (!focus?.findingId ||
+          reviewed.length !== 2 ||
+          reviewed.some(item => item.method !== 'GET' || item.as !== 'anonymous' ||
+            item.headers.length || item.body) ||
+          reviewed[0].path === reviewed[1].path ||
+          !Array.isArray(pointers) || !pointers.length ||
+          pointers.some(pointer => typeof pointer !== 'string' ||
+            !pointer.startsWith('/') || pointer.includes('\u0000')))
+        return fail('anonymous-json-disclosure-shape');
+      return {ok: true, lead: {family, why: safeModelText(spec.why, scope, env, 300),
+        priority: Math.max(0, Math.min(10, spec.priority)), as: 'anonymous',
+        oracle, rawRequests: reviewed, jsonPointers: [...new Set(pointers)],
+        sourcePath: focus.path, sourceClaim: `${focus.hypothesis ?? ''} ${focus.source?.quote ?? ''}`,
+        prelude: [], observe: [],
+        subject: {method: 'GET', path: reviewed[0].path,
+          placement: 'request', key: 'request', headers: []},
+        controlValue: '', firstValue: '', secondValue: '',
+        marker: '', secondMarker: '', assertion: {step: 'subject', index: 0,
+          location: 'body', name: ''}, basis: 'model-http-sequence'}};
+    }
     const baseline = oracle === 'raw-proof' ? reviewRequests(spec.rawProof?.baseline) : null;
     const negative = oracle === 'raw-proof' ? reviewRequests(spec.rawProof?.negative) : null;
     // A malformed proof does not discard the executable candidate. Return its
     // observations to Muse so it can repair the controls on the next turn.
     const proofGap = baseline?.error || negative?.error;
     const last = reviewed.at(-1);
-    return {ok: true, lead: {family, why: safeModelText(spec.why, scope, env, 300),
+    const openText = typeof spec.rawProof?.openText === 'string' ?
+      spec.rawProof.openText : '';
+    const maskOpenText = value => openText ? String(value ?? '').replaceAll(openText,
+      '[response marker]') : String(value ?? '');
+    const openFingerprint = openText ? responseMarkerFingerprint(openText) :
+      spec.rawProof?.openTextHash ? {
+        openTextHash: spec.rawProof.openTextHash,
+        openTextLength: spec.rawProof.openTextLength,
+        openTextRolling: spec.rawProof.openTextRolling} : {};
+    return {ok: true, lead: {family: modelFamily(maskOpenText(spec.family)),
+      why: safeModelText(maskOpenText(spec.why), scope, env, 300),
       priority: Math.max(0, Math.min(10, spec.priority)), as: spec.as,
       oracle: oracle === 'raw-proof' && !proofGap ? 'raw-proof' : 'raw-observation',
       ...(proofGap ? {proofGap} : {}), prelude: [], observe: [],
@@ -739,9 +778,8 @@ export function validateResearchFlow(spec, surface, scope, {env = {}, inventory 
       ...(oracle === 'raw-proof' && !proofGap ? {rawProof: {
         baseline: baseline.reviewed, negative: negative.reviewed,
         closedText: typeof spec.rawProof?.closedText === 'string' ?
-          spec.rawProof.closedText : '',
-        openText: typeof spec.rawProof?.openText === 'string' ?
-          spec.rawProof.openText : ''}} : {}),
+          maskOpenText(spec.rawProof.closedText) : '',
+        ...openFingerprint}} : {}),
       marker: '', secondMarker: '', assertion: {step: 'subject', index: 0,
         location: 'body', name: ''}, basis: 'model-http-sequence'}};
   }
@@ -837,12 +875,20 @@ export function validateResearchFlow(spec, surface, scope, {env = {}, inventory 
   const proposals = proposedWriteOperations(spec, inventory, scope);
   inventory = proposals.inventory;
   const rawBindings = proposedBindings(spec);
-  const reviewedPrelude = spec.prelude.map(step => reviewedSequenceStep(step,
-    inventory, scope, spec.as, markers, env, derivedAvailable, true));
-  const reviewedObserve = spec.observe.map(step => reviewedSequenceStep(step,
-    inventory, scope, spec.as, markers, env, derivedAvailable, true));
+  const stepFailures = [];
+  const reviewStep = (step, component, index) => reviewedSequenceStep(step,
+    inventory, scope, spec.as, markers, env, derivedAvailable, true,
+    reason => stepFailures.push({component, index, valueReason: reason,
+      method: typeof step?.method === 'string' ? step.method : null,
+      placement: typeof step?.placement === 'string' ? step.placement : null,
+      hasKey: typeof step?.key === 'string',
+      hasValue: typeof step?.value === 'string'}));
+  const reviewedPrelude = spec.prelude.map((step, index) =>
+    reviewStep(step, 'prelude-step', index));
+  const reviewedObserve = spec.observe.map((step, index) =>
+    reviewStep(step, 'observe-step', index));
   if ([...reviewedPrelude, ...reviewedObserve].some(step => !step))
-    return fail('unobserved-read-step');
+    return fail('unobserved-read-step', stepFailures[0]);
   spec = {...spec, prelude: reviewedPrelude, observe: reviewedObserve};
   const assertion = spec.assertion;
   if (!assertion || !['subject', 'observe'].includes(assertion.step) ||
@@ -953,7 +999,8 @@ export function validateResearchFlow(spec, surface, scope, {env = {}, inventory 
     family, why: safeModelText(spec.why, scope, env, 300),
     priority: Math.max(0, Math.min(10, spec.priority)), as: spec.as,
     ...(queryKeySource ? {queryKeySource} : {}),
-    oracle: protectedBody || localCallback || statusBoundary || oracle === 'state-change' ||
+    oracle: protectedBody || localCallback || statusBoundary || oracle === 'marker-proof' ||
+      oracle === 'state-change' ||
       oracle === 'browser-execution' ?
       oracle : observationOnly ? 'observation' : 'marker',
     ...(protectedBody || oracle === 'state-change' ?
@@ -1013,6 +1060,7 @@ const FLOW_SCHEMA = {type: 'object', properties: {
   priority: {type: 'integer'}, as: {type: 'string', enum: ['anonymous', 'owner', 'outsider', 'derived']},
   oracle: {type: 'string', maxLength: 80},
   rawRequests: {type: 'array', items: RAW_REQUEST_SCHEMA},
+  jsonPointers: {type: 'array', items: {type: 'string'}},
   rawProof: {type: 'object', properties: {
     baseline: {type: 'array', items: RAW_REQUEST_SCHEMA},
     negative: {type: 'array', items: RAW_REQUEST_SCHEMA},
@@ -1366,10 +1414,17 @@ export async function planResearchFlows(surface, scope, {infer = null, model = n
     const firstDecision = result.decisions.length;
     for (const proposal of answerFlows(answer)) {
       result.coverage.proposals++;
+      const proposedOpenText = typeof proposal?.rawProof?.openText === 'string' ?
+        proposal.rawProof.openText : '';
+      const safeProposalText = (value, size) => {
+        const masked = proposedOpenText ? String(value ?? '').replaceAll(proposedOpenText,
+          '[response marker]') : value;
+        return safeModelText(masked, scope, env, size);
+      };
       const decision = {mode, proposal: true,
         path: safeModelText(proposal?.subject?.path, scope, env),
-        family: safeModelText(proposal?.family, scope, env, 80),
-        hypothesis: safeModelText(proposal?.why, scope, env),
+        family: safeProposalText(proposal?.family, 80),
+        hypothesis: safeProposalText(proposal?.why, 300),
         requestShape: {method: safeModelText(proposal?.subject?.method, scope, env, 12),
           placement: safeModelText(proposal?.subject?.placement, scope, env, 12),
           key: safeModelText(proposal?.subject?.key, scope, env, 80),
@@ -1633,12 +1688,13 @@ export async function planResearchFlows(surface, scope, {infer = null, model = n
         'For one dependency use binding:{from:preludeIndex,pointer:"/field",to:"subject" or "observe",index:0,key:targetField}. For a chain use bindings:[...] in execution order; to:"prelude" and index:laterPreludeIndex binds one setup response into a later setup step. A later setup may supply a second scalar to the subject. Set placement:"header" or placement:"cookie" to send the captured value in that location. For a path binding use placement:"path", key and segment from pathSlots. In a nonempty JSON/form bodyTemplate, use {{binding:FIELD}} for a bound value and {{input}} for the controlled value. Use binding:null or bindings:[] when unnecessary. ' +
         'For GET/HEAD query subjects, fixedFields may contain up to three other observed query keys with harmless values and bodyTemplate must be empty. For header subjects, fixedFields and bodyTemplate must be empty. Keep all fixed fields harmless and observed. ' +
         'Use oracle "marker" for a response transformation: provide a plain control and two distinct short submitted values. The first should cause the server to emit marker and ' +
-        'the second should cause it to emit secondMarker, while neither complete marker appears anywhere in submitted values. ' +
+        'the second should cause it to emit secondMarker, while neither complete marker appears anywhere in submitted values. A marker observation alone is unclassified. When a matching sourceFinding includes an impact hypothesis, Bypass freshly replays the exact typed sequence and controls to corroborate that hypothesis. Otherwise use an independent impact oracle before treating the response effect as a vulnerability. ' +
         'Use oracle "observation" to investigate a grounded status, redirect, content type or response shape hypothesis when no marker or owner-only body oracle fits. Choose three distinct harmless inputs for the same observed field, use empty marker strings, and choose the response to compare with assertion. The harness repeats all three inputs and returns only stable differences for revision; this oracle cannot report a vulnerability by itself. ' +
         'Use oracle "status-boundary" when a source-grounded or response-grounded hypothesis predicts that one exact input crosses a denied 401/403/404 boundary while an ordinary control and a distinct negative input stay denied. Supply the actual controlValue, firstValue and secondValue, and any concise prelude with bindings from fresh JSON responses. Bypass sends every sequence twice and independently replays a positive result; empty marker strings are correct. ' +
         'If credentialReferences is present, use its exact {{env:NAME}} strings for configured login fields in a prelude. Never put the credential values in the plan. These references are resolved only when sending the request and replaying proof. ' +
         'For any exact scoped HTTP experiment use oracle "raw-observation" with rawRequests: an ordered list of requests. Each request needs method and path; include headers as name/value pairs and body when needed, and optional as identity. Supply the exact query, header, cookie, form, JSON, XML or raw-body values you want tested. The requests run in order under the configured scope and rate; response status, type, shape, HTML title and hash return for revision. A negative result for one value does not rule out a different evidence-based value. This form needs no typed subject, control values or assertion. ' +
-        'When an exact request appears to cross an access boundary, use oracle "raw-proof" with rawRequests holding the candidate sequence and rawProof containing baseline and negative sequences of complete requests. Bypass replays each sequence twice. For a 200-to-200 page gate, set rawProof.closedText and rawProof.openText to distinct short text observed in the respective responses; for a denied-status-to-success boundary they may be empty. The candidate and control values are Muse-authored and preserved. Other effects remain observations until an appropriate independent verifier proves their impact. ' +
+        'When an exact request has a measurable effect, use oracle "raw-proof" with rawRequests holding the candidate sequence and rawProof containing baseline and negative sequences of complete requests. Bypass replays each sequence twice. For a 200-to-200 page gate, set rawProof.closedText and rawProof.openText to distinct short text observed in the respective responses; when controls have different bodies but neither contains a unique positive response marker, set only rawProof.openText. For a denied-status-to-success boundary both markers may be empty. The candidate and control values are Muse-authored and preserved. A response effect alone does not establish a particular vulnerability class. ' +
+        'For a sourceFinding that identifies private JSON returned anonymously, you may use oracle "anonymous-json-disclosure": supply rawRequests with two exact anonymous GET record URLs and jsonPointers naming the fields you judged private from source and response evidence. Bypass freshly reads each URL twice, verifies stable distinct field values without saving them, and replays the proof. Choose the fields yourself; there is no built-in sensitive-field name list for this oracle. This proves anonymous delivery of those source-identified fields, not a separate account ownership boundary. ' +
         'For suspected XSS through an observed GET input or reviewed write followed by an observed HTML GET, use oracle "browser-execution". Choose the route and optional read steps; set firstValue and secondValue to html-double, html-single or script-close style hints, controlValue to plain, and marker strings empty. Bypass generates fresh inert script canaries, renders only captured HTML in isolated Chrome, and proves two executions with a fresh replay. Arbitrary model-authored script is never sent. ' +
         'If another plausible hypothesis lacks a listed impact verifier, you may name its oracle; Bypass runs it as an observation and requires later independent proof. ' +
         'For an authorized local target, use oracle "local-callback" when an observed query, JSON, form or XML field appears to make the server fetch a URL. Select the exact observed route, method and URL field; set all value and marker strings empty. Bypass supplies fresh audit-owned 127.0.0.1 callback URLs, a plain control, repeats, and a separate proof. Never provide a callback URL yourself. This oracle is unavailable for a deployed target without an audit-owned callback reachable from that target. ' +
@@ -1940,6 +1996,7 @@ async function onePhase(lead, requester, value, index, onRequest = null,
   resolveValue = value => value, origin = 'http://sequence.invalid') {
   const step = index === 0 ? 'control' : index === 1 ? 'task' : 'reverify';
   const cookies = createSequenceCookies();
+  let markerSubmitted = false;
   const execute = async (item, as, bound = []) => {
     try {
       const request = requestFor(item, item === lead.subject ? value :
@@ -1952,6 +2009,15 @@ async function onePhase(lead, requester, value, index, onRequest = null,
       const headers = Object.fromEntries(Object.entries(request.headers).filter(
         ([name]) => name.toLowerCase() !== 'cookie'));
       if (cookie) headers.cookie = cookie;
+      if (lead.oracle === 'marker-proof') {
+        const requestText = JSON.stringify({url: request.url,
+          method: request.method, headers, body: request.body ?? ''}).toLowerCase();
+        let decoded = requestText;
+        try {decoded = decodeURIComponent(requestText);} catch {}
+        if ([lead.marker, lead.secondMarker].some(marker => marker &&
+            [requestText, decoded].some(text => text.includes(marker.toLowerCase()))))
+          markerSubmitted = true;
+      }
       const response = await requester({...request, headers, step, noCache: true,
         omitExcerpt: true, maxBytes: MODEL_RESPONSE_BYTES,
         captureSetCookie: true,
@@ -2009,7 +2075,8 @@ async function onePhase(lead, requester, value, index, onRequest = null,
           response.status >= 500 || responseCached(response)) break;
     }
   }
-  return {prelude, subject, observe, captures, capture: captures[0] ?? null};
+  return {prelude, subject, observe, captures,
+    capture: captures[0] ?? null, markerSubmitted};
 }
 
 const allResponses = phase => [...phase.prelude, phase.subject, ...phase.observe].filter(Boolean);
@@ -2227,10 +2294,34 @@ async function executeRawProof(lead, requester, scope, env) {
   }
   const outcome = {...rawBoundaryOutcome(finalResponses, lead.rawProof, lead.rawRequests),
     evidence, controls, facts};
-  if (outcome.verdict === 'confirmed') Object.defineProperty(outcome, 'accessContext', {
+  if (outcome.verdict === 'confirmed' &&
+      outcome.proofMode !== 'positive-marker') Object.defineProperty(outcome, 'accessContext', {
     value: {requests: lead.rawRequests,
       setCookies: candidateResponses.flatMap(response => response.rawSetCookie ?? [])}});
   return outcome;
+}
+
+async function executeAnonymousJsonDisclosure(lead, requester, scope, env) {
+  const evidence = [], controls = [], responses = [], facts = [];
+  for (const label of ['first', 'fresh']) {
+    const run = await executeRawRequests(lead.rawRequests, requester, scope, env,
+      label, label === 'first' ? 'task' : 'reverify');
+    evidence.push(...run.evidence);
+    controls.push(...run.controls);
+    responses.push(...run.responses);
+    facts.push({prelude: [], subject: {status: run.responses[0]?.status ?? null,
+      hash: run.responses[0]?.hash ?? null},
+    observe: [{status: run.responses[1]?.status ?? null,
+      hash: run.responses[1]?.hash ?? null}]});
+    if (!run.complete) return {verdict: 'inconclusive',
+      reason: run.error ?? 'anonymous JSON read did not complete',
+      evidence, controls, facts};
+  }
+  // The outcome inspects transient response bodies; only statuses and hashes
+  // enter checkpoints, findings, and Muse feedback.
+  return {...jsonDisclosureOutcome(responses, lead.rawRequests, lead.jsonPointers,
+    {sourcePath: lead.sourcePath, sourceClaim: lead.sourceClaim}),
+    evidence, controls, facts};
 }
 
 /** Compare repeated, uncached phases. Observation mode records signals, never impact. */
@@ -2238,9 +2329,11 @@ export async function executeResearchFlow(lead, requester,
   {resolveValue = value => value, origin = 'http://sequence.invalid'} = {}) {
   const phases = [];
   const statusBoundary = lead.oracle === 'status-boundary';
+  const markerProof = lead.oracle === 'marker-proof';
   const observationOnly = lead.oracle === 'observation' || statusBoundary;
   const values = [lead.controlValue, lead.firstValue, lead.secondValue];
-  for (const [index, value] of (observationOnly ? [...values, ...values] : values).entries()) {
+  for (const [index, value] of (observationOnly || markerProof ?
+    [...values, ...values] : values).entries()) {
     phases.push(await onePhase(lead, requester, value, index, null,
       resolveValue, origin));
     const phase = phases.at(-1);
@@ -2253,7 +2346,7 @@ export async function executeResearchFlow(lead, requester,
     allResponses(phase).map(item => item.evidenceId)));
   const blocked = phases.some(phase => allResponses(phase)
     .some(item => item.refused || item.blocked));
-  const unstable = phases.length !== (observationOnly ? 6 : 3) || phases.some(phase =>
+  const unstable = phases.length !== (observationOnly || markerProof ? 6 : 3) || phases.some(phase =>
     !phase.subject || phase.observe.length !== lead.observe.length ||
     allResponses(phase).some(item => item.status == null || item.status >= 500 ||
       item.status === 429 || responseCached(item)));
@@ -2322,17 +2415,25 @@ export async function executeResearchFlow(lead, requester,
       comparison: {stable, differences, reflectionOnly: reflected,
         repeatCount: stable ? 2 : phases.length > 3 ? 2 : 1}};
   }
-  const clean = texts.length === 3 && texts.every((item, index) =>
-    index === 0 ? !item.includes(lead.marker) && !item.includes(lead.secondMarker) : true);
-  const first = clean && selected[1]?.status < 500 && texts[1].includes(lead.marker) &&
-    !texts[1].includes(lead.secondMarker);
-  const second = clean && selected[2]?.status < 500 && texts[2].includes(lead.secondMarker) &&
-    !texts[2].includes(lead.marker);
-  const verdict = blocked ? failureVerdict : unstable || !clean || first !== second ?
-    'inconclusive' : first && second ? 'observed' : 'not_reproduced';
-  return {verdict, reason: verdict === 'observed' ?
-    'two distinct unsubmitted canaries appeared only in their corresponding response phases; impact unclassified' :
+  const clean = texts.length === (markerProof ? 6 : 3) &&
+    [0, ...(markerProof ? [3] : [])].every(index =>
+      !texts[index].includes(lead.marker) && !texts[index].includes(lead.secondMarker));
+  const first = clean && [1, ...(markerProof ? [4] : [])].every(index =>
+    selected[index]?.status < 500 && texts[index].includes(lead.marker) &&
+      !texts[index].includes(lead.secondMarker));
+  const second = clean && [2, ...(markerProof ? [5] : [])].every(index =>
+    selected[index]?.status < 500 && texts[index].includes(lead.secondMarker) &&
+      !texts[index].includes(lead.marker));
+  const submitted = markerProof && phases.some(phase => phase.markerSubmitted);
+  const verdict = blocked ? failureVerdict : unstable || submitted || !clean || first !== second ?
+    'inconclusive' : first && second ? markerProof ? 'confirmed' : 'observed' :
+      'not_reproduced';
+  return {verdict, reason: verdict === 'confirmed' ?
+    'two distinct unsubmitted canaries appeared only in their matching response phases on fresh replay' :
+    verdict === 'observed' ?
+      'two distinct unsubmitted canaries appeared only in their corresponding response phases; fresh proof required' :
     blocked ? blockedReason :
+      submitted ? 'the proof marker was sent in a request and could be reflected' :
       phases.some(phase => phase.captureError) ? 'sequence capture was unavailable or unsafe' :
       unstable ? 'sequence did not complete cleanly' :
       'independent canaries did not reproduce', evidence, phases, facts};
@@ -2727,24 +2828,79 @@ async function executeStateChange(lead, requester, scope, surface, env) {
       stateChanged: controls.find(item => item.label === 'second-owner-read')?.fieldMatches ?? false}]}]};
 }
 
+function matchingSourceFocus(surface, lead, scope) {
+  const focus = surface?.focus;
+  if (!focus?.findingId || focus.sourceSnapshotMatches !== true ||
+      focus.revision?.status === 'mismatched' ||
+      typeof focus.category !== 'string' || !focus.category.trim() ||
+      typeof focus.hypothesis !== 'string' || !focus.hypothesis.trim() ||
+      typeof lead.family !== 'string' || !lead.family.trim() ||
+      typeof lead.why !== 'string' || !lead.why.trim() ||
+      typeof focus.source?.file !== 'string' ||
+      !Number.isInteger(focus.source?.line)) return null;
+  try {
+    const focused = new URL(focus.path, scope.target.origin);
+    const tested = new URL(lead.subject.path, scope.target.origin);
+    return focused.origin === tested.origin && focused.pathname === tested.pathname &&
+      (focus.method === 'UNKNOWN' || focus.method === lead.subject.method) ? focus : null;
+  } catch {return null;}
+}
+
 function rawBoundaryFinding(lead, scope, attempt, derivedLogin = null) {
   const url = new URL(lead.subject.path, scope.target.origin);
+  const positiveMarker = attempt.proofMode === 'positive-marker';
   return {kind: 'model-raw-boundary',
-    title: `Model-authored request crossed an access boundary: ${lead.subject.path}`,
-    severity: 'medium', owasp: 'A07 Identification and Authentication Failures',
-    cwe: 'CWE-287', pattern: lead.subject.path, url: url.href, host: url.host,
-    task: null, verdict: 'confirmed', rule: 'confirmed/raw-boundary/fresh-controls',
+    title: positiveMarker ?
+      `Nonliteral response marker repeated through ${lead.subject.path}` :
+      `Model-authored request crossed an access boundary: ${lead.subject.path}`,
+    severity: positiveMarker ? 'unrated' : 'medium',
+    owasp: positiveMarker ? 'Unclassified response effect' :
+      'A07 Identification and Authentication Failures',
+    cwe: positiveMarker ? 'Unclassified behavior' : 'CWE-287',
+    pattern: lead.subject.path, url: url.href, host: url.host,
+    task: null, verdict: 'confirmed', rule: positiveMarker ?
+      'confirmed/raw-boundary/fresh-positive-marker-controls' :
+      'confirmed/raw-boundary/fresh-controls',
     evidence: attempt.evidence, confirmation: attempt.evidence,
     mirror: {result: 'unverified', evidence: [], reason: 'fresh proof replay is required'},
-    tags: ['muse-proposed', 'exact-http-requests', 'independent-controls'],
+    tags: ['muse-proposed', 'exact-http-requests', positiveMarker ?
+      'independent-marker-controls' : 'independent-controls'],
     reach: {observed: 1, basis: attempt.reason}, dataClasses: [],
-    remediation: 'Enforce the intended access boundary using server-validated authorization state.',
+    remediation: positiveMarker ?
+      'Review the server-side operation that produced the response marker and limit untrusted input at that operation.' :
+      'Enforce the intended access boundary using server-validated authorization state.',
     foundBy: 'muse-proposed-http-sequence', status: 'open',
     modelHypothesis: {family: lead.family, why: lead.why},
     webProof: {kind: 'model-raw-boundary', as: lead.as,
       rawRequests: lead.rawRequests, rawProof: lead.rawProof,
       ...(derivedLogin ? {derivedLogin} : {})},
     webSteps: attempt.controls.map(item => ({identity: lead.as,
+      method: item.method, url: new URL(item.path, scope.target.origin).href,
+      status: item.status, evidence: item.evidenceId, probe: item.label}))};
+}
+
+function anonymousJsonDisclosureFinding(lead, scope, surface, attempt) {
+  const focus = surface.focus;
+  const url = new URL(lead.rawRequests[0].path, scope.target.origin);
+  return {kind: 'model-anonymous-json-disclosure',
+    title: focus.title, severity: 'medium',
+    owasp: 'A01 Broken Access Control', cwe: 'CWE-862',
+    pattern: url.pathname, url: url.href, host: url.host, task: null,
+    verdict: 'confirmed', rule: 'confirmed/source-focused-anonymous-json-disclosure',
+    evidence: attempt.evidence, confirmation: attempt.evidence,
+    mirror: {result: 'unverified', evidence: [], reason: 'fresh proof replay is required'},
+    tags: ['source-focused', 'muse-proposed', 'anonymous-json-disclosure'],
+    reach: {observed: 2, basis: attempt.reason},
+    dataClasses: lead.jsonPointers,
+    remediation: 'Require server-side authorization before returning the source-identified private record fields.',
+    foundBy: 'muse-proposed-http-sequence', status: 'open',
+    modelHypothesis: {family: lead.family, why: lead.why},
+    sourceFinding: {id: focus.findingId, source: focus.source,
+      hypothesis: focus.hypothesis},
+    webProof: {kind: 'model-anonymous-json-disclosure', as: 'anonymous',
+      rawRequests: lead.rawRequests, jsonPointers: lead.jsonPointers,
+      sourcePath: lead.sourcePath, sourceClaim: lead.sourceClaim},
+    webSteps: attempt.controls.map(item => ({identity: 'anonymous',
       method: item.method, url: new URL(item.path, scope.target.origin).href,
       status: item.status, evidence: item.evidenceId, probe: item.label}))};
 }
@@ -2868,11 +3024,14 @@ function observation(lead, scope, attempt, derivedLogin = null) {
 
 function sequenceBoundaryFinding(lead, scope, attempt, derivedLogin = null) {
   const url = new URL(lead.subject.path, scope.target.origin);
-  const webProof = {kind: 'model-sequence-boundary', oracle: 'status-boundary',
+  const markerProof = lead.oracle === 'marker-proof';
+  const webProof = {kind: 'model-sequence-boundary', oracle: lead.oracle,
     as: lead.as, prelude: lead.prelude, subject: lead.subject,
     observe: lead.observe, ...bindingProof(lead),
     controlValue: lead.controlValue, firstValue: lead.firstValue,
-    secondValue: lead.secondValue, marker: '', secondMarker: '',
+    secondValue: lead.secondValue,
+    marker: markerProof ? lead.marker : '',
+    secondMarker: markerProof ? lead.secondMarker : '',
     assertion: lead.assertion,
     ...(lead.proposedOperations?.length ?
       {proposedOperations: lead.proposedOperations} : {}),
@@ -2880,7 +3039,8 @@ function sequenceBoundaryFinding(lead, scope, attempt, derivedLogin = null) {
       .some(step => step.as === 'derived')) && derivedLogin ?
       {derivedLogin} : {})};
   const webSteps = attempt.phases.flatMap((phase, index) => {
-    const label = ['control', 'candidate', 'negative'][index % 3];
+    const label = (markerProof ? ['control', 'first-canary', 'second-canary'] :
+      ['control', 'candidate', 'negative'])[index % 3];
     const repeat = index >= 3 ? '-repeat' : '';
     return [...phase.prelude.map((response, at) => ({
       identity: readIdentity(lead.prelude[at], lead.as),
@@ -2898,18 +3058,31 @@ function sequenceBoundaryFinding(lead, scope, attempt, derivedLogin = null) {
       status: response.status, evidence: response.evidenceId,
       probe: `${label}${repeat}-observe`}))];
   });
+  const firstEvidence = attempt.phases.slice(0, 3).flatMap(phase =>
+    allResponses(phase).map(response => response.evidenceId).filter(Boolean));
+  const repeatEvidence = attempt.phases.slice(3).flatMap(phase =>
+    allResponses(phase).map(response => response.evidenceId).filter(Boolean));
   return {kind: 'model-sequence-boundary',
-    title: `Access-status boundary crossed through ${lead.subject.path}`,
-    severity: 'medium', owasp: 'A01 Broken Access Control', cwe: 'CWE-284',
+    title: markerProof ?
+      `Nonliteral response markers repeated through ${lead.subject.path}` :
+      `Access-status boundary crossed through ${lead.subject.path}`,
+    severity: markerProof ? 'unrated' : 'medium',
+    owasp: markerProof ? 'Unclassified response effect' : 'A01 Broken Access Control',
+    cwe: markerProof ? 'Unclassified behavior' : 'CWE-284',
     pattern: lead.subject.path, url: url.href, host: url.host, task: null,
-    verdict: 'confirmed', rule: 'confirmed/model-sequence-boundary/fresh-denied-controls',
-    evidence: attempt.evidence.slice(0, 3),
-    confirmation: attempt.evidence.slice(3),
-    mirror: {result: 'confirmed', evidence: attempt.evidence.slice(3),
+    verdict: 'confirmed', rule: markerProof ?
+      'confirmed/model-sequence-boundary/fresh-marker-controls' :
+      'confirmed/model-sequence-boundary/fresh-denied-controls',
+    evidence: firstEvidence,
+    confirmation: repeatEvidence,
+    mirror: {result: 'confirmed', evidence: repeatEvidence,
       reason: attempt.reason},
-    tags: ['model-proposed', 'fresh-sequence-binding', 'independent-status-controls'],
+    tags: ['model-proposed', 'fresh-sequence-binding', markerProof ?
+      'independent-marker-controls' : 'independent-status-controls'],
     reach: {observed: 1, basis: attempt.reason}, dataClasses: [],
-    remediation: 'Apply the intended authorization policy to the complete request sequence.',
+    remediation: markerProof ?
+      'Review the server-side transformation and prevent untrusted input from controlling privileged operations.' :
+      'Apply the intended authorization policy to the complete request sequence.',
     foundBy: 'muse-proposed-http-sequence', status: 'open',
     modelHypothesis: {family: lead.family, why: lead.why}, webProof, webSteps};
 }
@@ -2971,6 +3144,8 @@ function protectedBodyFinding(lead, scope, attempt, protectedAs = 'owner',
 const signature = lead => JSON.stringify([lead.oracle, lead.protectedPath ?? null,
   lead.as, lead.prelude, lead.subject, lead.observe,
   lead.rawRequests ?? null, lead.rawProof ?? null,
+  ...(lead.oracle === 'anonymous-json-disclosure' ?
+    [lead.jsonPointers ?? null, lead.sourcePath ?? null] : []),
   lead.bindings ?? lead.binding ?? null,
   lead.controlValue, lead.firstValue, lead.secondValue,
   lead.assertion]);
@@ -3099,8 +3274,28 @@ export async function runResearchFlows(leads, scope, {requester, infer = null, m
         ledger?.append({step: 'investigation', kind: 'model-local-callback-attempt', ...entry});
         log({stage: 'progress', type: 'research-attempt'});
         if (attempted.verdict === 'confirmed') {stopReason = 'confirmed'; break;}
+      } else if (lead.oracle === 'anonymous-json-disclosure') {
+        attempted = await executeAnonymousJsonDisclosure(lead,
+          requestForIdentity, scope, env);
+        attempted.evidence.forEach(item => evidence.add(item));
+        const entry = {attempt: history.length + 1, path: lead.subject.path,
+          placement: 'request', field: lead.jsonPointers.join(', '), as: 'anonymous',
+          family: lead.family, oracle: lead.oracle, verdict: attempted.verdict,
+          reason: attempted.reason, evidence: attempted.evidence,
+          controls: attempted.controls, responses: attempted.facts};
+        history.push(entry);
+        ledger?.append({step: 'investigation', kind: 'model-anonymous-json-disclosure-attempt',
+          ...entry});
+        log({stage: 'progress', type: 'research-attempt'});
+        if (attempted.verdict === 'confirmed') {stopReason = 'confirmed'; break;}
       } else if (lead.oracle === 'raw-proof') {
         attempted = await executeRawProof(lead, requestForIdentity, scope, env);
+        if (attempted.verdict === 'confirmed' &&
+            attempted.proofMode === 'positive-marker' &&
+            !matchingSourceFocus(surface, lead, scope)) {
+          attempted.verdict = 'observed';
+          attempted.reason += '; security impact needs source or another independent oracle';
+        }
         attempted.evidence.forEach(item => evidence.add(item));
         const entry = {attempt: history.length + 1, path: lead.subject.path,
           placement: 'request', field: 'request', as: lead.as,
@@ -3268,8 +3463,13 @@ export async function runResearchFlows(leads, scope, {requester, infer = null, m
       } else {
         attempted = await executeResearchFlow(lead, requestForIdentity,
           {origin: scope.target.origin,
-            ...(lead.oracle === 'status-boundary' ?
+            ...(['status-boundary', 'marker', 'marker-proof'].includes(lead.oracle) ?
               {resolveValue: resolveCredentialRefs} : {})});
+        if (lead.oracle === 'marker-proof' && attempted.verdict === 'confirmed' &&
+            !matchingSourceFocus(surface, lead, scope)) {
+          attempted.verdict = 'observed';
+          attempted.reason += '; security impact needs source or another independent oracle';
+        }
         attempted.evidence.forEach(item => evidence.add(item));
         const entry = {attempt: history.length + 1, path: lead.subject.path,
           placement: lead.subject.placement, field: lead.subject.key, as: lead.as,
@@ -3297,8 +3497,25 @@ export async function runResearchFlows(leads, scope, {requester, infer = null, m
           checkpoint(cursor, active('pending'));
           continue;
         }
-        if (lead.oracle === 'marker' && attempted.verdict === 'observed' &&
-            !observedCandidate) observedCandidate = {lead, attempted};
+        if (lead.oracle === 'marker' && attempted.verdict === 'observed') {
+          observedCandidate ??= {lead, attempted};
+          if (matchingSourceFocus(surface, lead, scope)) {
+            lead = {...lead, oracle: 'marker-proof'};
+            const decision = {mode: 'source-observation-to-marker-proof',
+              path: lead.subject.path, accepted: true,
+              reason: 'source-grounded impact hypothesis and isolated canaries require fresh proof'};
+            decisions.push(decision);
+            ledger?.append({step: 'investigation', kind: 'model-http-sequence-decision',
+              ...decision, evidence: attempted.evidence});
+            checkpoint(cursor, active('pending'));
+            continue;
+          }
+        }
+        if (lead.oracle === 'marker-proof' && attempted.verdict === 'confirmed') {
+          observedCandidate = null;
+          stopReason = 'confirmed';
+          break;
+        }
       }
       checkpoint(cursor, active('attempted'));
       const responseFingerprint = item => {
@@ -3373,7 +3590,9 @@ export async function runResearchFlows(leads, scope, {requester, infer = null, m
           baseline: rawFeedback(lead.rawProof.baseline),
           negative: rawFeedback(lead.rawProof.negative),
           closedText: safeModelText(lead.rawProof.closedText, scope, env, 160),
-          openText: safeModelText(lead.rawProof.openText, scope, env, 160)}} : {}),
+          ...(lead.rawProof.openTextHash ? {
+            openTextHash: lead.rawProof.openTextHash,
+            openTextLength: lead.rawProof.openTextLength} : {})}} : {}),
         validatedPrelude: lead.prelude.slice(0, 4).map((step, index) => ({
           index, path: safeModelText(step.path, scope, env, 300),
           method: step.method, placement: step.placement ?? null,
@@ -3470,8 +3689,9 @@ export async function runResearchFlows(leads, scope, {requester, infer = null, m
           'For marker experiments use the fresh marker pair without either whole marker in submitted requests. ' +
           'If protected-body controls show owner 200 and anonymous denial but exact-body comparison is unstable or differs, inspect the supplied JSON shapes. When an owner-only JSON document declares private material that may appear inside a different candidate wrapper, switch to oracle "protected-json-field" with fresh public controls. An owner-authenticated prelude cannot by itself prove an anonymous disclosure. ' +
           'If a protected-content attempt says its ordinary control or reset also returned the owner material, choose a different observed public control input whose JSON shape omits that field. Do not repeat the same leaky control or use an owner-authenticated prelude to establish the claimed anonymous disclosure. ' +
-          'For observation experiments set marker strings empty; a stable status, redirect, content type or body-shape difference is unclassified evidence, not a finding. Use it to pivot toward an independent impact oracle when the observed route contract supports one. A marker observation is also unclassified: seek an independent security-boundary oracle instead of repeating the same canary transformation. ' +
-          'lastRawRequests and lastRawProof summarize the prior complete candidate and control requests; operator credentials are redacted. Revise oracle "raw-observation" with exact rawRequests for any supported request shape when the evidence suggests another test. A failed value only disproves that value; consider a different evidence-based candidate. If a candidate crosses a measured access boundary, use oracle "raw-proof" with rawProof.baseline and rawProof.negative request sequences plus exact closedText/openText response markers for a 200-to-200 page gate. The harness independently replays the exact candidate and controls before reporting. ' +
+          'For observation experiments set marker strings empty; a stable status, redirect, content type or body-shape difference is unclassified evidence, not a finding. Use it to pivot toward an independent impact oracle when the observed route contract supports one. A marker observation with a matching sourceFinding impact hypothesis receives an automatic fresh typed replay. If its proof remains inconclusive, revise the exact candidate or choose another impact oracle; otherwise stop when no meaningful distinct test follows. ' +
+          'lastRawRequests and lastRawProof summarize the prior complete candidate and control requests; operator credentials are redacted. Revise oracle "raw-observation" with exact rawRequests for any supported request shape when the evidence suggests another test. A failed value only disproves that value; consider a different evidence-based candidate. If a candidate has a unique positive response marker, use oracle "raw-proof" with baseline and negative request sequences and rawProof.openText; include closedText only when both controls share a measured closed page. The harness independently replays the exact candidate and controls before reporting. ' +
+          'For source-identified private JSON disclosed without a session, oracle "anonymous-json-disclosure" accepts two exact anonymous GET record URLs in rawRequests and your chosen jsonPointers. Fresh reads and proof replay compare the selected values without storing them. ' +
           'If the reviewed subject and selected HTML response support browser execution, switch to oracle "browser-execution" with the same observed steps, firstValue and secondValue as html-double, html-single or script-close style hints, and empty markers. Bypass supplies fresh inert script canaries and replays two isolated Chrome executions. Arbitrary model-authored script is never sent. ' +
           'If a plausible hypothesis has no named impact verifier, you may name its oracle; Bypass executes it as observation and requires later independent proof. ' +
           'For an observed URL field on a local target, switch to oracle "local-callback" with empty values and markers; Bypass inserts audit-owned callback URLs and verifies them independently. Never submit an external callback URL. ' +
@@ -3684,11 +3904,14 @@ export async function runResearchFlows(leads, scope, {requester, infer = null, m
       ...(lead.oracle === 'browser-execution' ?
         {assertionStep: lead.assertion.step} : {}),
       ...(lead.queryKeySource ? {queryKeySource: lead.queryKeySource} : {})},
-    kind: lead.oracle === 'raw-proof' ? 'model-raw-boundary' :
+    kind: lead.oracle === 'anonymous-json-disclosure' ?
+      'model-anonymous-json-disclosure' :
+      lead.oracle === 'raw-proof' ? 'model-raw-boundary' :
       lead.oracle === 'raw-observation' ? 'model-raw-observation' :
       lead.oracle === 'browser-execution' ? 'model-browser-execution' :
       lead.oracle === 'state-change' ? 'model-state-change' :
-      lead.oracle === 'status-boundary' ? 'model-sequence-boundary' :
+      ['status-boundary', 'marker-proof'].includes(lead.oracle) ?
+      'model-sequence-boundary' :
       ['protected-body', 'protected-json-field'].includes(lead.oracle) ?
       'model-access-boundary' :
       lead.oracle === 'observation' ? 'model-http-observation' : 'model-http-sequence',
@@ -3714,7 +3937,8 @@ export async function runResearchFlows(leads, scope, {requester, infer = null, m
         derivedAvailable ? derivedSession.loginProof : null));
     if (lead.oracle === 'state-change' && attempted?.verdict === 'confirmed')
       findings.push(stateChangeFinding(lead, scope, attempted));
-    if (lead.oracle === 'status-boundary' && attempted?.verdict === 'confirmed')
+    if (['status-boundary', 'marker-proof'].includes(lead.oracle) &&
+        attempted?.verdict === 'confirmed')
       findings.push(sequenceBoundaryFinding(lead, scope, attempted,
         derivedAvailable ? derivedSession.loginProof : null));
     if (lead.oracle === 'browser-execution' && attempted?.verdict === 'confirmed')
@@ -3727,6 +3951,9 @@ export async function runResearchFlows(leads, scope, {requester, infer = null, m
       if (attempted.accessContext && typeof onConfirmedAccess === 'function')
         onConfirmedAccess({lead, finding, context: attempted.accessContext});
     }
+    if (lead.oracle === 'anonymous-json-disclosure' &&
+        attempted?.verdict === 'confirmed')
+      findings.push(anonymousJsonDisclosureFinding(lead, scope, surface, attempted));
     investigations.push({...(initial.proposalId ? {proposalId: initial.proposalId} : {}),
       initial: {path: initial.subject.path, field: initial.subject.key,
       family: initial.family}, final: {path: lead.subject.path, field: lead.subject.key,
@@ -3741,11 +3968,14 @@ export async function runResearchFlows(leads, scope, {requester, infer = null, m
           ...(item.oracle === 'browser-execution' ?
             {assertionStep: item.assertion?.step} : {}),
           ...(item.queryKeySource ? {queryKeySource: item.queryKeySource} : {})},
-        kind: item.oracle === 'raw-proof' ? 'model-raw-boundary' :
+        kind: item.oracle === 'anonymous-json-disclosure' ?
+          'model-anonymous-json-disclosure' :
+          item.oracle === 'raw-proof' ? 'model-raw-boundary' :
           item.oracle === 'raw-observation' ? 'model-raw-observation' :
           item.oracle === 'browser-execution' ? 'model-browser-execution' :
           item.oracle === 'state-change' ? 'model-state-change' :
-          item.oracle === 'status-boundary' ? 'model-sequence-boundary' :
+          ['status-boundary', 'marker-proof'].includes(item.oracle) ?
+          'model-sequence-boundary' :
           ['protected-body', 'protected-json-field'].includes(item.oracle) ?
           'model-access-boundary' :
           item.oracle === 'observation' ? 'model-http-observation' : 'model-http-sequence',

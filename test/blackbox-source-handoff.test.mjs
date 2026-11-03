@@ -8,12 +8,34 @@ import {randomBytes} from 'node:crypto';
 import {runAudit} from '../src/blackbox/index.mjs';
 import {checkLiveRevision} from '../src/blackbox/focus.mjs';
 import {verifyRun} from '../src/blackbox/poc.mjs';
+import {jsonDisclosureOutcome} from '../src/blackbox/poc-runtime.mjs';
 import {initStore, change} from '../src/store.mjs';
 
 const blank = schema => schema?.type === 'object' ?
   Object.fromEntries((schema.required ?? []).map(key => [key, blank(schema.properties?.[key])])) :
   schema?.type === 'array' ? [] : schema?.type === 'integer' || schema?.type === 'number' ? 0 :
   schema?.type === 'boolean' ? false : schema?.enum?.[0] ?? '';
+
+test('anonymous JSON proof ignores reflected IDs and unstable selected values', () => {
+  const requests = [{path: '/records/7'}, {path: '/records/8'}];
+  const response = body => ({status: 200, type: 'application/json',
+    headers: {}, body: JSON.stringify(body)});
+  assert.equal(jsonDisclosureOutcome([
+    response({id: 7}), response({id: 8}),
+    response({id: 7}), response({id: 8})], requests, ['/id'],
+  {sourcePath: '/records/7', sourceClaim: 'id'}).verdict,
+  'not_reproduced');
+  assert.equal(jsonDisclosureOutcome([
+    response({detail: 'alpha'}), response({detail: 'bravo'}),
+    response({detail: 'changed'}), response({detail: 'bravo'})],
+  requests, ['/detail'],
+  {sourcePath: '/records/7', sourceClaim: 'detail'}).verdict, 'inconclusive');
+  assert.equal(jsonDisclosureOutcome([
+    response({detail: 'alpha'}), response({detail: 'bravo'}),
+    response({detail: 'alpha'}), response({detail: 'bravo'})],
+  [{path: '/public/7'}, {path: '/public/8'}], ['/detail'],
+  {sourcePath: '/private/7', sourceClaim: 'detail'}).verdict, 'inconclusive');
+});
 
 test('a saved source hypothesis reaches focused Muse planning and independent live proof',
   {timeout: 90000}, async t => {
@@ -70,7 +92,10 @@ test('a saved source hypothesis reaches focused Muse planning and independent li
     assert.ok(audit.findings.some(item => item.kind === 'model-raw-boundary'),
       JSON.stringify(audit.findings));
     assert.ok(!requests.includes('/robots.txt') && !requests.includes('/sitemap.xml'));
-    assert.ok(requests.every(item => item === route), requests.join(', '));
+    assert.ok(requests.every(item => item === route || item === '/'), requests.join(', '));
+    const observed = JSON.parse(fs.readFileSync(path.join(audit.runDir,
+      'observed-routes.json'), 'utf8'));
+    assert.ok(!observed.routes.some(item => item.path === route && item.method === 'GET'));
     assert.equal(fs.existsSync(path.join(audit.runDir, 'confirmed-access-recon.json')), false);
     assert.equal(JSON.parse(fs.readFileSync(path.join(audit.runDir, 'run.json'), 'utf8'))
       .focus.findingId, 'finding_fixture');
@@ -86,6 +111,126 @@ test('a saved source hypothesis reaches focused Muse planning and independent li
       overrides: {acceptLocal: true, rps: 80, modelCalls: 40,
         maxTasks: 0, minutes: 2}});
     assert.ok(!fixed.findings.some(item => item.kind === 'model-raw-boundary'));
+  });
+
+test('source-focused anonymous JSON disclosure gets a fresh proof and stops after the fix',
+  {timeout: 90000}, async t => {
+    const suffix = randomBytes(4).toString('hex');
+    const base = `/api/dossier-${suffix}`;
+    const routes = [`${base}/1`, `${base}/2`];
+    const field = `private_${suffix}`;
+    const values = routes.map(() => `secret_${randomBytes(12).toString('hex')}`);
+    const requests = [];
+    let vulnerable = true;
+    const server = http.createServer((request, response) => {
+      const pathname = new URL(request.url, 'http://fixture.invalid').pathname;
+      requests.push({method: request.method, path: pathname,
+        authorization: request.headers.authorization ?? null,
+        cookie: request.headers.cookie ?? null});
+      const index = routes.indexOf(pathname);
+      const opened = vulnerable && request.method === 'GET' && index !== -1;
+      response.writeHead(opened ? 200 : 401,
+        {'content-type': 'application/json', 'cache-control': 'no-store'});
+      response.end(JSON.stringify(opened ? {id: index + 1, [field]: values[index]} :
+        {error: 'authentication required'}));
+    });
+    await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+    t.after(() => new Promise(resolve => server.close(resolve)));
+    const origin = `http://127.0.0.1:${server.address().port}`;
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'bypass-source-disclosure-'));
+    t.after(() => fs.rmSync(root, {recursive: true, force: true}));
+    initStore(root, root, 'fixture');
+    await change(root, state => state.findings.push({id: 'finding_disclosure',
+      title: 'Private dossier records are readable without a session',
+      category: 'missing-authentication',
+      hypothesis: `GET ${base}/:id returns a private ${field} field without a session.`,
+      resourcePath: routes[0], method: 'GET',
+      sourceEvidence: {kind: 'source', file: 'src/server.ts', line: 42,
+        quote: `sendJson(res, 200, {id, ${field}: privateRecord.${field}});`},
+      status: 'unproven'}));
+    let focusedPrompt = false;
+    const infer = async (_profile, messages, options) => {
+      if (messages[0].content.startsWith('You are planning bounded, authorized HTTP research.')) {
+        const context = JSON.parse(messages[1].content);
+        if (!context.sourceFinding) return {flows: []};
+        focusedPrompt = context.sourceFinding.id === 'finding_disclosure' &&
+          context.sourceFinding.hypothesis.includes(field);
+        return {flows: [{family: 'source-backed anonymous record disclosure',
+          why: 'Read two distinct private records without a session', priority: 9,
+          as: 'anonymous', oracle: 'anonymous-json-disclosure',
+          rawRequests: routes.map(route => ({method: 'GET', path: route})),
+          jsonPointers: [`/${field}`]}]};
+      }
+      return blank(options.schema);
+    };
+    const options = {url: origin, root, findingId: 'finding_disclosure',
+      infer, env: {}, offline: true,
+      modelProfileOverride: {provider: 'fixture', model: 'fixture'},
+      overrides: {acceptLocal: true, rps: 80, modelCalls: 40,
+        maxTasks: 0, minutes: 2}};
+    const audit = await runAudit(options);
+    assert.equal(focusedPrompt, true);
+    const finding = audit.findings.find(item =>
+      item.kind === 'model-anonymous-json-disclosure' && item.verdict === 'confirmed');
+    assert.ok(finding, JSON.stringify({findings: audit.findings,
+      focus: JSON.parse(fs.readFileSync(path.join(audit.runDir,
+        'focus.json'), 'utf8')),
+      web: JSON.parse(fs.readFileSync(path.join(audit.runDir,
+        'web-probes.json'), 'utf8'))}));
+    assert.ok(requests.length >= 4);
+    assert.ok(requests.every(item => item.method === 'GET' &&
+      routes.includes(item.path) && !item.authorization && !item.cookie));
+    const replay = await verifyRun(root, audit.run, {env: {}});
+    assert.ok(replay.proofs.some(item => item.id === finding.id &&
+      item.verdict === 'confirmed'), JSON.stringify(replay.proofs));
+    const savedFiles = fs.readdirSync(audit.runDir, {recursive: true, withFileTypes: true})
+      .filter(item => item.isFile())
+      .map(item => ({file: path.join(item.parentPath, item.name),
+        text: fs.readFileSync(path.join(item.parentPath, item.name), 'utf8')}));
+    const leaked = savedFiles.filter(item => values.some(value => item.text.includes(value)))
+      .map(item => path.relative(audit.runDir, item.file));
+    assert.deepEqual(leaked, [], JSON.stringify({message: 'private response values must not appear',
+      evidence: fs.readFileSync(path.join(audit.runDir, 'evidence.jsonl'), 'utf8')
+        .split('\n').filter(line => values.some(value => line.includes(value)))
+        .map(line => {const entry = JSON.parse(line); return {step: entry.step,
+          kind: entry.kind, hasExcerpt: !!entry.excerpt};})}));
+    vulnerable = false;
+    const fixed = await runAudit(options);
+    assert.ok(!fixed.findings.some(item =>
+      item.kind === 'model-anonymous-json-disclosure' && item.verdict === 'confirmed'));
+  });
+
+test('focused POST hypothesis does not invent an observed GET route',
+  {timeout: 90000}, async t => {
+    const route = `/api/verify-${randomBytes(4).toString('hex')}`;
+    const server = http.createServer((request, response) => {
+      response.writeHead(request.url === '/' ? 200 : 401,
+        {'content-type': request.url === '/' ? 'text/html' : 'application/json'});
+      response.end(request.url === '/' ? '<html><body>App</body></html>' : '{}');
+    });
+    await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+    t.after(() => new Promise(resolve => server.close(resolve)));
+    const origin = `http://127.0.0.1:${server.address().port}`;
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'bypass-source-post-'));
+    t.after(() => fs.rmSync(root, {recursive: true, force: true}));
+    initStore(root, root, 'fixture');
+    await change(root, state => state.findings.push({id: 'finding_post',
+      title: 'Second step accepts an invalid code', category: 'authentication-bypass',
+      hypothesis: 'A prior step returns a fresh challenge used by this POST route.',
+      resourcePath: route, method: 'UNKNOWN',
+      sourceEvidence: {kind: 'source', file: 'src/server.ts', line: 1,
+        quote: 'if (body.flag) return session;'}, status: 'unproven'}));
+    const audit = await runAudit({url: origin, root, findingId: 'finding_post',
+      infer: async (_profile, _messages, options) => blank(options.schema),
+      env: {}, offline: true,
+      modelProfileOverride: {provider: 'fixture', model: 'fixture'},
+      overrides: {acceptLocal: true, rps: 80, modelCalls: 8,
+        maxTasks: 0, minutes: 2}});
+    const observed = JSON.parse(fs.readFileSync(path.join(audit.runDir,
+      'observed-routes.json'), 'utf8'));
+    assert.equal(observed.routes.some(item => item.path === route && item.method === 'GET'), false);
+    const assets = JSON.parse(fs.readFileSync(path.join(audit.runDir, 'assets.json'), 'utf8'));
+    assert.ok(assets.endpoints.some(item => item.path === route && item.method === 'UNKNOWN'));
   });
 
 test('focused Muse research proves a source-backed two-POST boundary with fresh response bindings',

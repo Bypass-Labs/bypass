@@ -15,6 +15,36 @@ import {contentBoundaryShapeReason, requestSuppliesPrivateMaterial,
   verifyContentBoundary} from './content-boundary.mjs';
 
 const sha = text => createHash('sha256').update(text).digest('hex');
+const MARKER_BASE = 257;
+const rollingMarker = text => {
+  let value = 0;
+  for (let index = 0; index < text.length; index++)
+    value = (Math.imul(value, MARKER_BASE) + text.charCodeAt(index)) >>> 0;
+  return value;
+};
+// Save a response marker's fingerprint rather than its potentially private text.
+export const responseMarkerFingerprint = text => ({openTextHash: sha(text),
+  openTextLength: text.length, openTextRolling: rollingMarker(text)});
+const validMarkerFingerprint = marker => /^[0-9a-f]{64}$/.test(marker?.openTextHash ?? '') &&
+  Number.isSafeInteger(marker?.openTextLength) && marker.openTextLength > 0 &&
+  Number.isInteger(marker?.openTextRolling) && marker.openTextRolling >= 0 &&
+  marker.openTextRolling <= 0xffffffff;
+function containsResponseMarker(text, marker) {
+  if (typeof marker === 'string') return text.includes(marker);
+  if (!validMarkerFingerprint(marker) || marker.openTextLength > text.length) return false;
+  const length = marker.openTextLength;
+  let power = 1;
+  for (let index = 1; index < length; index++) power = Math.imul(power, MARKER_BASE) >>> 0;
+  let rolling = rollingMarker(text.slice(0, length));
+  for (let start = 0; start <= text.length - length; start++) {
+    if (rolling === marker.openTextRolling &&
+        sha(text.slice(start, start + length)) === marker.openTextHash) return true;
+    if (start < text.length - length)
+      rolling = (Math.imul((rolling - Math.imul(text.charCodeAt(start), power)) >>> 0,
+        MARKER_BASE) + text.charCodeAt(start + length)) >>> 0;
+  }
+  return false;
+}
 const denied = status => [401, 403, 404].includes(status);
 const cleanDenied = response => denied(response?.status) &&
   response.headers?.['retry-after'] == null && response.headers?.['x-ratelimit-remaining'] !== '0';
@@ -246,6 +276,83 @@ export function modelJsonPointer(body, pointer) {
     value = value[key];
   }
   return typeof value === 'string' && /^[\x21-\x7e]{16,4096}$/.test(value) ? value : null;
+}
+/** Read a Muse-selected JSON scalar without assigning meaning to its field name. */
+export function jsonDisclosureScalar(body, pointer) {
+  if (typeof body !== 'string' || Buffer.byteLength(body) > MODEL_RESPONSE_BYTES ||
+      typeof pointer !== 'string' || !pointer.startsWith('/')) return null;
+  let value;
+  try {value = JSON.parse(body);} catch {return null;}
+  for (const part of pointer.slice(1).split('/')) {
+    const key = part.replace(/~1/g, '/').replace(/~0/g, '~');
+    if (!value || typeof value !== 'object' || !Object.hasOwn(value, key)) return null;
+    value = value[key];
+  }
+  return (typeof value === 'string' && value.length ||
+    typeof value === 'number' && Number.isFinite(value) ||
+    typeof value === 'boolean') ? String(value) : null;
+}
+
+/** Fresh anonymous JSON reads establish delivery of Muse-selected source data. */
+export function jsonDisclosureOutcome(responses, requests, pointers,
+  {sourcePath, sourceClaim} = {}) {
+  if (!Array.isArray(responses) || responses.length !== 4 ||
+      !Array.isArray(requests) || requests.length !== 2 ||
+      !Array.isArray(pointers) || !pointers.length)
+    return {verdict: 'inconclusive', reason: 'JSON disclosure proof is incomplete'};
+  const route = raw => {
+    try {return new URL(raw, 'https://proof.invalid');} catch {return null;}
+  };
+  const source = route(sourcePath), firstRoute = route(requests[0].path),
+    secondRoute = route(requests[1].path);
+  const parts = value => value?.pathname.split('/').slice(1) ?? [];
+  const a = parts(firstRoute), b = parts(secondRoute), s = parts(source);
+  const changed = a.flatMap((part, index) => part === b[index] ? [] : [index]);
+  const sameResource = source && firstRoute && secondRoute &&
+    a.length === b.length && a.length === s.length &&
+    changed.length <= 1 &&
+    a.every((part, index) => changed.includes(index) || part === s[index]) &&
+    (changed.length || firstRoute.search !== secondRoute.search);
+  const fieldNamedInSource = pointer => {
+    const name = pointer.split('/').at(-1)?.replace(/~1/g, '/').replace(/~0/g, '~');
+    return name && new RegExp(`(^|[^a-z0-9])${name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}($|[^a-z0-9])`, 'i')
+      .test(sourceClaim ?? '');
+  };
+  if (!sameResource || pointers.some(pointer => !fieldNamedInSource(pointer)))
+    return {verdict: 'inconclusive',
+      reason: 'selected JSON fields or record routes were not tied to the source finding'};
+  if (responses.some(item => !item || item.refused || item.blocked ||
+      !Number.isInteger(item.status) || item.status === 429 ||
+      item.status >= 500 || responseCached(item)))
+    return {verdict: 'inconclusive', reason: 'anonymous JSON response was unavailable or cached'};
+  if (responses.every(item => [401, 403, 404].includes(item.status)))
+    return {verdict: 'not_reproduced', reason: 'both anonymous reads were denied'};
+  if (responses.some(item => item.status !== 200 ||
+      !/(?:json|\+json)/i.test(item.type ?? '')))
+    return {verdict: 'inconclusive', reason: 'anonymous JSON reads did not complete consistently'};
+  const reflected = (value, request) => {
+    const url = new URL(request.path, 'https://proof.invalid');
+    const decode = part => {
+      try {return decodeURIComponent(part);} catch {return part;}
+    };
+    return url.pathname.split('/').some(part => decode(part) === value) ||
+      [...url.searchParams.values()].includes(value);
+  };
+  let distinctFields = 0;
+  for (const pointer of pointers) {
+    const values = responses.map(item => jsonDisclosureScalar(item.body, pointer));
+    if (values.every(value => value === null)) continue;
+    if (values.some(value => value === null))
+      return {verdict: 'inconclusive', reason: 'selected JSON field was unstable'};
+    if (values[0] !== values[2] || values[1] !== values[3])
+      return {verdict: 'inconclusive', reason: 'selected JSON values changed on fresh reads'};
+    if (values[0] !== values[1] &&
+        !reflected(values[0], requests[0]) && !reflected(values[1], requests[1]))
+      distinctFields++;
+  }
+  return distinctFields ? {verdict: 'confirmed',
+    reason: `${distinctFields} Muse-selected JSON field(s) held distinct stable values in two fresh anonymous records`} :
+    {verdict: 'not_reproduced', reason: 'selected distinct record data was absent'};
 }
 const PEM_PRIVATE_KEY = /-----BEGIN ((?:RSA |EC |DSA )?PRIVATE KEY)-----[\s\S]{1,8192}?-----END \1-----/g;
 
@@ -594,6 +701,18 @@ export function cookieAccessOutcome(responses) {
     reason: 'fresh arbitrary values for the named cookie repeatedly opened a distinct response; missing and wrong-name controls stayed closed'};
 }
 
+function requestSuppliesMarker(material, marker) {
+  const submitted = typeof material === 'string' ? material : JSON.stringify(material);
+  let decoded = submitted;
+  while (true) {
+    if (containsResponseMarker(decoded, marker)) return true;
+    const next = decoded.replace(/%([0-9a-f]{2})/gi, (_match, byte) =>
+      String.fromCharCode(Number.parseInt(byte, 16)));
+    if (next === decoded) return false;
+    decoded = next;
+  }
+}
+
 /** Replay model-authored requests and compare an access boundary, never a label alone. */
 export function rawBoundaryOutcome(responses, proof, candidateRequests = []) {
   if (!Array.isArray(responses) || responses.length !== 6)
@@ -614,12 +733,19 @@ export function rawBoundaryOutcome(responses, proof, candidateRequests = []) {
   const controls = [baselineA, negativeA, negativeB, baselineB];
   const candidates = [candidateA, candidateB];
   const closedText = proof?.closedText ?? '';
-  const openText = proof?.openText ?? '';
+  if (proof?.openTextHash && !validMarkerFingerprint(proof))
+    return {verdict: 'inconclusive', reason: 'the saved response marker fingerprint is invalid'};
+  const openMarker = proof?.openText || (validMarkerFingerprint(proof) ? proof : null);
+  const hasOpen = item => openMarker !== null &&
+    containsResponseMarker(String(item.body ?? ''), openMarker);
   const closed = item => String(item.body ?? '').includes(closedText) &&
-    !String(item.body ?? '').includes(openText);
+    !hasOpen(item);
   const signature = item => JSON.stringify([item.status, item.type,
     item.hash ?? `sha256:${sha(item.body ?? '')}`]);
   const contentType = item => String(item.type ?? item.headers?.['content-type'] ?? '');
+  const baselineAvailable = [baselineA, baselineB].every(item =>
+    item.status >= 200 && item.status < 400);
+  const closedControls = Boolean(closedText) && controls.every(closed);
   if (candidates.every(item => item.status === 403 && /html/i.test(contentType(item))) &&
       controls.every(item => item.status >= 200 && item.status < 300 &&
         /json/i.test(contentType(item))))
@@ -631,14 +757,34 @@ export function rawBoundaryOutcome(responses, proof, candidateRequests = []) {
     return {verdict: 'inconclusive', reason: 'candidate received an HTML access block'};
   if (controls.every(item => signature(item) === signature(candidateA)) &&
       signature(candidateA) === signature(candidateB) &&
-      (!(closedText && openText) || controls.every(closed)))
+      (!(closedText && openMarker) || closedControls) &&
+      (!openMarker || closedControls || baselineAvailable))
     return {verdict: 'not_reproduced', reason: 'candidate and controls returned the same response'};
-  if (closedText && openText) {
-    if (closedText === openText || JSON.stringify(candidateRequests).includes(openText))
-      return {verdict: 'inconclusive',
-        reason: 'the positive marker is ambiguous or supplied by the request itself'};
+  if (openMarker && (closedText && containsResponseMarker(closedText, openMarker) ||
+      requestSuppliesMarker(candidateRequests, openMarker)))
+    return {verdict: 'inconclusive',
+      reason: 'the positive marker is ambiguous or supplied by the request itself'};
+  // An in-band effect can have different public and negative-control bodies.
+  // The positive marker still proves the effect if only fresh candidates show it.
+  if (openMarker && (!closedText || !controls.every(closed))) {
+    if (controls.every(item => !hasOpen(item)) &&
+        candidates.every(item => item.status >= 200 && item.status < 300 &&
+          hasOpen(item)))
+      return {verdict: 'confirmed', proofMode: 'positive-marker',
+        reason: 'positive response marker repeated in fresh candidates and was absent from both controls'};
+    if (baselineAvailable && controls.every(item => !hasOpen(item)) &&
+        candidates.every(item => !hasOpen(item)) &&
+        signature(baselineA) === signature(baselineB) &&
+        signature(negativeA) === signature(negativeB) &&
+        signature(candidateA) === signature(candidateB))
+      return {verdict: 'not_reproduced',
+        reason: 'positive response marker was absent from stable candidate and control replays'};
+    return {verdict: 'inconclusive',
+      reason: 'positive response marker did not repeat only in candidates'};
+  }
+  if (closedText && openMarker) {
     const opened = item => item.status >= 200 && item.status < 300 &&
-      String(item.body ?? '').includes(openText) &&
+      hasOpen(item) &&
       !String(item.body ?? '').includes(closedText);
     if (controls.every(closed) && candidates.every(opened))
       return {verdict: 'confirmed',
@@ -647,12 +793,12 @@ export function rawBoundaryOutcome(responses, proof, candidateRequests = []) {
       return {verdict: 'not_reproduced', reason: 'candidate stayed on the same gated page as the controls'};
     if (controls.every(closed) && signature(candidateA) === signature(candidateB) &&
         candidates.every(item => [400, 401, 403, 404, 422].includes(item.status) &&
-          !/html/i.test(contentType(item)) && !String(item.body ?? '').includes(openText)))
+          !/html/i.test(contentType(item)) && !hasOpen(item)))
       return {verdict: 'not_reproduced',
         reason: 'the application consistently rejected the candidate while controls remained available'};
     return {verdict: 'inconclusive', reason: 'page boundary markers were unstable across controls'};
   }
-  if (closedText || openText)
+  if (closedText || openMarker)
     return {verdict: 'inconclusive', reason: 'both closed and open response markers are needed'};
   const denied = item => [401, 403, 404].includes(item.status);
   const opened = item => item.status >= 200 && item.status < 300 &&
@@ -1089,6 +1235,25 @@ async function checkModelRawBoundary(spec, env) {
       hash: `sha256:${sha(last.body)}`});
   }
   return {...rawBoundaryOutcome(responses, spec.rawProof, spec.rawRequests), controls};
+}
+
+async function checkAnonymousJsonDisclosure(spec, env) {
+  if (!Array.isArray(spec.rawRequests) || spec.rawRequests.length !== 2 ||
+      !Array.isArray(spec.jsonPointers) || !spec.jsonPointers.length ||
+      spec.rawRequests.some(item => item.method !== 'GET' ||
+        item.as !== 'anonymous' || item.headers?.length || item.body))
+    return {verdict: 'inconclusive', reason: 'anonymous JSON proof requests are incomplete'};
+  const responses = [], controls = [];
+  for (const label of ['first', 'fresh']) for (const request of spec.rawRequests) {
+    const response = await read(spec, request.path, 'anonymous', env,
+      {'cache-control': 'no-cache'});
+    responses.push(response);
+    controls.push({label, path: request.path, status: response.status,
+      hash: response.hash});
+  }
+  return {...jsonDisclosureOutcome(responses, spec.rawRequests, spec.jsonPointers,
+    {sourcePath: spec.sourcePath, sourceClaim: spec.sourceClaim}),
+    controls};
 }
 
 const LOGIN_TOKEN = /^[\x21-\x7e]{1,8192}$/;
@@ -1781,6 +1946,9 @@ export function validModelHttpSequence(spec) {
   const browserSequence = spec?.kind === 'model-browser-execution';
   const statusBoundary = spec?.kind === 'model-sequence-boundary' &&
     spec.oracle === 'status-boundary';
+  const markerProof = spec?.kind === 'model-sequence-boundary' &&
+    spec.oracle === 'marker-proof';
+  const repeatedBoundary = statusBoundary || markerProof;
   const contentSequence = spec?.kind === 'model-access-boundary' &&
     ['sequence-exact-body', 'sequence-json-field'].includes(spec.comparison);
   const markers = contentSequence || browserSequence || statusBoundary ? [] :
@@ -1789,7 +1957,7 @@ export function validModelHttpSequence(spec) {
     !value.startsWith('//') && value.length <= 512 &&
     !/[\\;%#{}]/.test(value.split('?')[0]) &&
     !/(?:^|\/)\.{1,2}(?:\/|$)/.test(value.split('?')[0]);
-  if (spec?.kind !== 'model-http-sequence' && !statusBoundary &&
+  if (spec?.kind !== 'model-http-sequence' && !repeatedBoundary &&
       !contentSequence && !browserSequence ||
       !['anonymous', 'owner', 'outsider', 'derived'].includes(spec.as) ||
       !object(subject) || !object(assertion) ||
@@ -1805,7 +1973,7 @@ export function validModelHttpSequence(spec) {
       assertion.location === 'header' && !['location', 'content-type', 'link',
         'www-authenticate'].includes(assertion.name?.toLowerCase()) ||
       assertion.location === 'body' && assertion.name != null && assertion.name !== '' ||
-      statusBoundary && (!Array.isArray(spec.methods) ||
+      repeatedBoundary && (!Array.isArray(spec.methods) ||
         [subject, ...spec.prelude, ...spec.observe]
           .some(step => !spec.methods.includes(step.method))))
     return false;
@@ -1967,7 +2135,12 @@ async function checkModelHttpSequence(spec, env) {
         reason: 'Anonymous and invalid-bearer controls did not establish the protected route', controls};
   }
   const browserSequence = spec.kind === 'model-browser-execution';
-  const statusBoundary = spec.kind === 'model-sequence-boundary';
+  const statusBoundary = spec.kind === 'model-sequence-boundary' &&
+    spec.oracle === 'status-boundary';
+  const markerProof = spec.kind === 'model-sequence-boundary' &&
+    spec.oracle === 'marker-proof';
+  const repeatedBoundary = statusBoundary || markerProof;
+  let markerSubmitted = false;
   const browserStyle = value => XSS_STYLES.has(value) ? value :
     /script-close|<\/script/i.test(String(value)) ? 'script-close' :
       /html-single|^'/.test(String(value)) ? 'html-single' : 'html-double';
@@ -1976,10 +2149,10 @@ async function checkModelHttpSequence(spec, env) {
   const values = browserSequence ? [spec.controlValue,
     xssPayload(browserStyle(spec.firstValue), browserMarkers[0]),
     xssPayload(browserStyle(spec.secondValue), browserMarkers[1])] :
-    statusBoundary ? [spec.controlValue, spec.firstValue, spec.secondValue,
+    repeatedBoundary ? [spec.controlValue, spec.firstValue, spec.secondValue,
       spec.controlValue, spec.firstValue, spec.secondValue] :
       [spec.controlValue, spec.firstValue, spec.secondValue];
-  const labels = statusBoundary ? ['control-a', 'candidate-a', 'negative-a',
+  const labels = repeatedBoundary ? ['control-a', 'candidate-a', 'negative-a',
     'control-b', 'candidate-b', 'negative-b'] :
     ['control', 'probe-one', 'probe-two'];
   const credentialEnvNames = new Set(spec.credentialEnvNames ?? []);
@@ -2065,6 +2238,9 @@ async function checkModelHttpSequence(spec, env) {
       if (Buffer.byteLength(body) > 4096)
         throw Error('Model sequence request body exceeds its byte limit.');
     }
+    if (markerProof && [spec.marker, spec.secondMarker].some(marker =>
+      requestSuppliesMarker({method: step.method, url: url.href, headers, body}, marker)))
+      markerSubmitted = true;
     await pace(spec);
     const response = await guardedRequest(url, {method: step.method, headers, body,
       allowRemoteHttp: spec.allowRemoteHttp === true && identity === 'anonymous',
@@ -2135,6 +2311,30 @@ async function checkModelHttpSequence(spec, env) {
   const extract = response => spec.assertion.location === 'body' ? response.body :
     String(response.headers[spec.assertion.name.toLowerCase()] ?? '');
   const outputs = observed.map(extract);
+  if (markerProof) {
+    const hasFirst = output => output.includes(spec.marker);
+    const hasSecond = output => output.includes(spec.secondMarker);
+    controls.push(...observed.map((response, index) => ({
+      label: `${labels[index]}-assertion`, status: response.status,
+      marker: hasFirst(outputs[index]), secondMarker: hasSecond(outputs[index])})));
+    if (markerSubmitted) return {verdict: 'inconclusive',
+      reason: 'a candidate marker was supplied by a resolved request', controls};
+    if ([0, 3].some(index => hasFirst(outputs[index]) || hasSecond(outputs[index])))
+      return {verdict: 'inconclusive',
+        reason: 'fresh control response contained a candidate marker', controls};
+    const first = [1, 4].every(index => observed[index].status >= 200 &&
+      observed[index].status < 300 && hasFirst(outputs[index]) &&
+      !hasSecond(outputs[index]));
+    const second = [2, 5].every(index => observed[index].status >= 200 &&
+      observed[index].status < 300 && hasSecond(outputs[index]) &&
+      !hasFirst(outputs[index]));
+    if (first && second) return {verdict: 'confirmed',
+      reason: 'two distinct candidate markers repeated in their matching responses with fresh controls', controls};
+    const absent = [1, 2, 4, 5].every(index =>
+      !hasFirst(outputs[index]) && !hasSecond(outputs[index]));
+    return {verdict: absent ? 'not_reproduced' : 'inconclusive',
+      reason: 'candidate markers did not repeat in the matching response phases', controls};
+  }
   if (browserSequence) {
     const path = spec.assertion.step === 'subject' ? spec.subject.path :
       spec.observe[spec.assertion.index]?.path;
@@ -3794,6 +3994,8 @@ async function checkWithinBudget(spec, env, replay) {
     if (spec.kind === 'model-json-differential') return await checkModelJsonDifferential(spec, env);
     if (spec.kind === 'model-cookie-access') return await checkModelCookieAccess(spec);
     if (spec.kind === 'model-raw-boundary') return await checkModelRawBoundary(spec, env);
+    if (spec.kind === 'model-anonymous-json-disclosure')
+      return await checkAnonymousJsonDisclosure(spec, env);
     if (['model-http-sequence', 'model-sequence-boundary',
       'model-browser-execution'].includes(spec.kind))
       return await checkModelHttpSequence(spec, env);

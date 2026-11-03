@@ -1316,7 +1316,10 @@ test('Muse repairs a rejected sequence shape and executes the observed route', a
     include: ['/'], limits: {rps: 50}}));
   const scope = loadScope({file, origin}).scope;
   const surface = {patterns: [{pattern: route, methods: ['GET'],
-    params: {expression: []}, source: ['public-openapi']}]};
+    params: {expression: []}, source: ['public-openapi']}],
+  focus: {findingId: 'benign-expression-fixture', path: route, method: 'GET',
+    sourceSnapshotMatches: true, source: {file: 'src/expression.ts', line: 1,
+      quote: 'String.fromCharCode(...codes)'}}};
   let calls = 0;
   const infer = async (_model, messages) => {
     calls++;
@@ -1347,9 +1350,13 @@ test('Muse repairs a rejected sequence shape and executes the observed route', a
   const ledger = createLedger(dir);
   t.after(() => ledger.close());
   const requester = createRequester(scope, {ledger, allowLocal: true});
+  let revisionCalls = 0;
   const tested = await runResearchFlows(planned.leads, scope, {requester,
-    surface, ledger});
+    surface, ledger, model: 'fixture', modelCallsAvailable: 1,
+    infer: async () => {revisionCalls++; return {flows: []};}});
+  assert.equal(revisionCalls, 1);
   assert.equal(tested.results[0].verdict, 'observed');
+  assert.equal(tested.findings.some(item => item.verdict === 'confirmed'), false);
   assert.equal(tested.findings[0].severity, 'unrated');
   assert.equal(requester.stats.sent, 3);
 });
@@ -2161,6 +2168,91 @@ test('a source-grounded two-write plan may omit an empty observe list and bind a
   assert.ok(seen.some(item => item.path === verify && item.body[flag] === true));
   assert.equal(seen.filter(item => item.path === login).length,
     seen.filter(item => item.path === verify).length);
+});
+
+test('a bound POST prelude needs no separate value before an authenticated POST subject', async () => {
+  const origin = 'http://127.0.0.1:4334';
+  const {scope} = loadScope({origin, overrides: {acceptLocal: true}});
+  const suffix = randomBytes(4).toString('hex');
+  const login = `/api/${suffix}/begin`;
+  const verify = `/api/${suffix}/confirm`;
+  const submit = `/api/${suffix}/submit`;
+  const userField = `user_${suffix}`;
+  const challengeField = `challenge_${suffix}`;
+  const codeField = `code_${suffix}`;
+  const flagField = `flag_${suffix}`;
+  const cookieName = `session_${suffix}`;
+  const proposal = {family: 'fresh staged session',
+    why: 'A fresh response supplies the next write and its session reaches the final write',
+    priority: 8, as: 'anonymous', oracle: 'status-boundary',
+    prelude: [
+      {method: 'POST', path: login, placement: 'json', key: userField,
+        value: 'fixture-user', fixedFields: [], bodyTemplate: '', headers: []},
+      {method: 'POST', path: verify, placement: 'json', key: challengeField,
+        fixedFields: [{field: codeField, value: '000000'}],
+        bodyTemplate: '', headers: []},
+    ],
+    subject: {method: 'POST', path: submit, placement: 'json', key: flagField,
+      valueEncoding: 'json', fixedFields: [], bodyTemplate: '', headers: []},
+    bindings: [{from: 0, pointer: `/${challengeField}`,
+      to: 'prelude', index: 1, key: challengeField}],
+    controlValue: 'false', firstValue: 'true', secondValue: 'null',
+    marker: '', secondMarker: '',
+    assertion: {step: 'subject', index: 0, location: 'body', name: ''}};
+  const reviewed = validateResearchFlow(proposal, {}, scope);
+  assert.equal(reviewed.ok, true, JSON.stringify(reviewed));
+  assert.equal(reviewed.lead.prelude[1].value, '');
+  assert.deepEqual(reviewed.lead.proposedOperations.map(item => item.path),
+    [login, verify, submit]);
+  const unavailableIdentity = validateResearchFlow({...proposal, prelude: [
+    proposal.prelude[0], {...proposal.prelude[1], as: 'owner'}]}, {}, scope);
+  assert.equal(unavailableIdentity.reason, 'unobserved-read-step');
+  assert.deepEqual(unavailableIdentity.diagnostic, {component: 'prelude-step',
+    index: 1, valueReason: 'identity-unavailable', method: 'POST',
+    placement: 'json', hasKey: true, hasValue: false});
+  const unboundJson = validateResearchFlow({...proposal, bindings: [],
+    prelude: [proposal.prelude[0],
+      {...proposal.prelude[1], valueEncoding: 'json'}]}, {}, scope);
+  assert.equal(unboundJson.reason, 'unobserved-read-step');
+  assert.equal(unboundJson.diagnostic.valueReason, 'input-value');
+
+  const issued = new Set(), sessions = new Set(), seen = [];
+  const response = (status, body, evidenceId, rawSetCookie = []) => ({
+    status, type: 'application/json', headers: {'cache-control': 'no-store'},
+    body: JSON.stringify(body), evidenceId, rawSetCookie});
+  const attempt = await executeResearchFlow(reviewed.lead, async request => {
+    const body = JSON.parse(request.body);
+    seen.push(request.url);
+    if (request.url === login) {
+      assert.equal(body[userField], 'fixture-user');
+      assert.equal(request.headers.cookie, undefined,
+        'each control starts without another session');
+      const challenge = randomBytes(24).toString('hex');
+      issued.add(challenge);
+      return response(200, {[challengeField]: challenge}, `begin-${seen.length}`);
+    }
+    if (request.url === verify) {
+      assert.equal(issued.delete(body[challengeField]), true,
+        'verification must consume a fresh challenge');
+      assert.equal(body[codeField], '000000');
+      const session = randomBytes(16).toString('hex');
+      sessions.add(session);
+      return response(200, {verified: true}, `confirm-${seen.length}`,
+        [`${cookieName}=${session}; Path=/api; HttpOnly`]);
+    }
+    assert.equal(request.url, submit);
+    const session = request.headers.cookie?.split(';').map(part => part.trim())
+      .find(part => part.startsWith(`${cookieName}=`))?.slice(cookieName.length + 1);
+    assert.equal(sessions.delete(session), true,
+      'the final POST must receive only the session from its own verification');
+    return response(body[flagField] === true ? 200 : 401,
+      {accepted: body[flagField] === true}, `submit-${seen.length}`);
+  }, {origin});
+  assert.equal(attempt.verdict, 'confirmed', attempt.reason);
+  assert.equal(seen.filter(path => path === login).length,
+    seen.filter(path => path === verify).length);
+  assert.equal(seen.filter(path => path === verify).length,
+    seen.filter(path => path === submit).length);
 });
 
 test('research preserves Muse request bytes and binds each fresh scalar into headers and cookies', async () => {
