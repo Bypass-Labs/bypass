@@ -221,14 +221,12 @@ function authorizationFile(file, target, scope, {primary, credentialed}) {
 
 /** One setup command prepares scope and target challenges; the operator performs DNS and authorization steps. */
 export async function prepareBlackboxSetup(working, rawUrl, options = {}) {
-  // The picker starts from the selected app's recorded limits when it has no
-  // black-box scope yet. Return those same inputs for the approved setup call.
-  if(options.plan){
-    const root=rootFrom(working,false),file=path.resolve(root,options.out||'blackbox.scope.json');
-    if(!fs.existsSync(file)&&fs.existsSync(path.join(root,'.bypass/state.json'))){
-      const target=read(root).targets.find(t=>t.url===appOriginInput(rawUrl)),auth=target?.authorization;
-      if(target)options={environment:target.environment,...(auth?{include:auth.paths.join(','),methods:auth.methods.join(','),rps:auth.maxRequestsPerSecond}:{}),...options};
-    }
+  // A connected app is the source of truth for environment and approved
+  // boundaries. This keeps both preview and execution on the same saved plan.
+  const savedRoot=rootFrom(working,false),savedFile=path.resolve(savedRoot,options.out||'blackbox.scope.json');
+  if(!fs.existsSync(savedFile)&&fs.existsSync(path.join(savedRoot,'.bypass/state.json'))){
+    const target=read(savedRoot).targets.find(t=>t.url===appOriginInput(rawUrl)),auth=target?.authorization;
+    if(target)options={environment:target.environment,...(auth?{include:auth.paths.join(','),methods:auth.methods.join(','),rps:auth.maxRequestsPerSecond}:{}),...options};
   }
   const prepared = prepareScopeTemplate(working, rawUrl, options, {reuse: true});
   const {root, origin, file, scope} = prepared;

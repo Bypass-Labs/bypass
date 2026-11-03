@@ -68,7 +68,7 @@ recommendations. Do not edit application code.
 
 Setup offers **Code only**, **Code + running app**, or **Running app only**. Supply a local source folder or Git URL for code; supply an app URL for live testing. To return later, use `/bypass:start`.
 
-For a running app, supply its URL and choose its environment if unknown. Bypass shows one compact testing plan with **Approve**, **Decline**, and **Custom instructions**. Approve confirms that you control the app and authorize the displayed paths, methods, request rate and expiry. Custom instructions lets you change the plan before approval. Accounts are optional for anonymous checks; authenticated checks need usable test identities.
+For a running app, supply its URL and choose its environment if unknown. Bypass shows one compact testing plan with **Approve**, **Decline**, and **Custom instructions**. Approve confirms that you control the app and authorize the displayed paths, methods, request rate and expiry. The audit then starts immediately with that exact plan and shows live progress; there is no second scope questionnaire or start confirmation. Custom instructions lets you change the plan before approval. Accounts are optional for anonymous checks; authenticated checks need usable test identities.
 
 <details>
 <summary>Project setting: domain ownership verification</summary>
@@ -197,11 +197,11 @@ Replace the URL with your app and provide the five run settings together:
 /bypass:blackbox Audit https://app.example.com; allow /; use 2 rps, 120 Muse Code calls, 30 minutes.
 ```
 
-Muse Code connects the app, completes missing ownership/scope setup, and drives the black-box engine in the active session. Bypass discovers public pages, scripts, and API leads, executes permitted tests, records evidence, and independently checks supported proofs. No separate API key or Docker is needed for this path. Browser-based proof families need Chrome/Chromium; missing prerequisites are reported as coverage gaps.
+Muse Code connects the app, completes missing ownership/scope setup, and drives the black-box engine in the active session. Once the testing plan is approved, it uses the default bounded budgets and begins without another question. Bypass discovers public pages, scripts, and API leads, executes permitted tests, records evidence, and independently checks supported proofs. No separate API key or Docker is needed for this path. Browser-based proof families need Chrome/Chromium; missing prerequisites are reported as coverage gaps.
 
 The URL and paths are run inputs, not permission by themselves. Review the exact scope before testing. The request rate, engine-decision cap, and time limit bound the audit; the displayed “Muse calls” cap does not include every surrounding host turn.
 
-**Current entry-point distinction:** use `/bypass:blackbox` explicitly for app-only discovery. Generic “Start review” or `/bypass:review` can enter the configured-probe workflow and finish with zero probes; it does not automatically launch this engine.
+Running-app-only onboarding launches this engine automatically after scope approval. `/bypass:blackbox` remains available when you explicitly want to start another audit later.
 
 ### From the CLI
 
@@ -266,7 +266,7 @@ The installer includes Node and configures PATH. On macOS/Linux, open a new term
 bypass
 ```
 
-Choose **Connect my application**, or **See the full local walkthrough**. In one first step, onboarding asks where Muse inference runs. Selecting **Meta Model API** immediately opens a masked API-key prompt, discovers the Muse models available to your team, recommends Muse Wonder for the deepest reviews, and verifies one synthetic request before continuing. The key is retained only in the running process; project state stores its environment-variable name, never its value. Type `/` to browse commands; **Ctrl+O** opens activity details and **Ctrl+T** toggles tasks. `bypass onboard` opens setup directly. Use `NO_COLOR=1` to disable color or `BYPASS_PLAIN=1` for a scrolling interface.
+Choose **Connect my application**, or **See the full local walkthrough**. In one first step, onboarding asks where Muse inference runs. Selecting **Meta Model API** immediately opens a masked API-key prompt, discovers the Muse models available to your team, recommends Muse Wonder for the deepest reviews, and verifies one synthetic request before continuing. For a running-app-only review, approving the displayed testing boundaries immediately starts the audit and streams progress—there is no `/blackbox` handoff or repeated URL, path, method, rate, or start prompt. The key is retained only in the running process; project state stores its environment-variable name, never its value. Type `/` to browse commands; **Ctrl+O** opens activity details and **Ctrl+T** toggles tasks. `bypass onboard` opens setup directly. Use `NO_COLOR=1` to disable color or `BYPASS_PLAIN=1` for a scrolling interface.
 
 Run `bypass onboard` from your application folder, or enter the folder when prompted. Domain verification is optional: the default flow confirms app control together with explicit testing permissions, while DNS TXT and HTTPS-file proof remain configurable under **Settings → Domain ownership verification**.
 

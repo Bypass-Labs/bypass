@@ -162,7 +162,7 @@ export async function initWizard(options={},args=[]){
       prompt.write(error.message);prompt.stopTasks();
       result={root:prompt.state.context.repo,interactive:true,openDashboard:!!prompt.state.context.repo,exitCode:0};
     }
-    if(prompt.rich&&result.openDashboard){await terminal({project:result.root},prompt);return {...result,openDashboard:false};}
+    if(prompt.rich&&result.openDashboard){await terminal({project:result.root,startReview:result.startReview},prompt);return {...result,openDashboard:false};}
     if(prompt.rich){prompt.setNext('Evidence saved. Press Enter to close this session.');await prompt.ask(result.completed?'Walkthrough complete — Enter to finish':'Enter to finish');}
     return result;
   }finally{prompt.close();}
@@ -304,6 +304,7 @@ export async function terminal(options={},io){
     }
   };
   try{
+    let queuedStart=options.startReview;
     updateWorkspace(prompt,root);
     if(prompt.rich){const info=readiness(root);console.log(`\nProject ready · ${info.findings.total} saved result(s) · ${info.checks.enabled} regression test(s)\n${info.latestRun?`Last run: ${info.latestRun.kind} · ${info.latestRun.status}. `:''}Use /history for saved activity, /status for review scope.`);}
     if(isBypassSource(root)){
@@ -311,11 +312,13 @@ export async function terminal(options={},io){
       const action=await choose(ask,[{id:'repo',label:'Choose my application repository (recommended)'},{id:'demo',label:'Run the separate local walkthrough'},{id:'tool',label:'Intentionally review Bypass tooling itself'}],'What do you want to review?');
       if(!action)return;
       if(action.id==='demo'){await tour();if(prompt.rich)await ask('Walkthrough finished — Enter to close');return;}
-      if(action.id==='repo'){const result=await onboard({flow:'quickstart'},[],{...prompt,inDashboard:true});root=result.root;}
+      if(action.id==='repo'){const result=await onboard({flow:'quickstart'},[],{...prompt,inDashboard:true});root=result.root;queuedStart=result.startReview;}
     }
     while(true){
+      const starting=queuedStart;queuedStart=null;
       let choice;
-      if(advanced&&prompt.rich){
+      if(starting)choice=starting.id;
+      else if(advanced&&prompt.rich){
         const action=await choose(ask,[{id:'1',label:'Resume setup'},{id:'2',label:'App ownership & test accounts'},{id:'3',label:'Models & privacy'},{id:'6',label:'Saved tests'},{id:'7',label:'Monitoring'},{id:'8',label:'Session context'},{id:'9',label:'Manual fixture controls'},{id:'10',label:'Muse plugin'},{id:'11',label:'Domain ownership verification'}],'Settings');
         advanced=false;if(!action)continue;choice=action.id;
       }else if(advanced){
@@ -354,38 +357,44 @@ export async function terminal(options={},io){
         if(choice==='blackbox'){
           const state=read(root);
           const selected=state.targets.find(target=>target.name===state.activeTarget);
-          const input=await promptValue(ask,'App URL',selected?[{value:selected.url,label:selected.url}]:[]);
-          const url=appOriginInput(input),local=loopback(new URL(url).hostname);
-          const savedPaths=selected?.url===url?selected.authorization?.paths?.join(','):null;
-          const include=await promptValue(ask,'Allowed path prefixes',[
-            {value:savedPaths||'/',label:savedPaths?`Saved scope (${savedPaths})`:'Entire app (/)'},
-            ...(savedPaths&&savedPaths!=='/'?[{value:'/',label:'Entire app (/)' }]:[])],
-          {write:message=>prompt.write?.(message)});
-          const methods=await promptValue(ask,'Allowed HTTP methods',[
-            {value:'GET,HEAD,POST,PATCH,DELETE',label:'GET, HEAD, POST, PATCH, DELETE'},
-            ...(selected?.url===url&&selected.authorization?.methods?.length ?
-              [{value:selected.authorization.methods.join(','),
-                label:`Saved authorization (${selected.authorization.methods.join(', ')})`}] : [])],
-          {write:message=>prompt.write?.(message)});
-          const defaultRps=local?'5':'2';
-          const rps=await promptValue(ask,'Maximum requests per second',[
-            {value:defaultRps,label:`${defaultRps} requests per second`},
-            {value:'1',label:'1 request per second'},
-            {value:'10',label:'10 requests per second'},
-            {value:'32',label:'32 requests per second'}],
-          {write:message=>prompt.write?.(message)});
+          const automatic=starting?.id==='blackbox';
+          let url,include,methods,rps,environment,out,force=false;
+          if(automatic){
+            if(!selected?.authorization)throw new Fault('The approved app boundaries are unavailable. Resume app setup before testing.',3);
+            url=selected.url;include=selected.authorization.paths.join(',');methods=selected.authorization.methods.join(',');
+            rps=String(selected.authorization.maxRequestsPerSecond);environment=selected.environment;
+            out='blackbox.onboarding.scope.json';force=true;
+            prompt.write?.(`Starting app audit · ${url} · ${include} · ${methods} · ${rps} requests/second`);
+          }else{
+            const input=await promptValue(ask,'App URL',selected?[{value:selected.url,label:selected.url}]:[]);
+            url=appOriginInput(input);const local=loopback(new URL(url).hostname),saved=selected?.url===url?selected.authorization:null;
+            include=await promptValue(ask,'Allowed path prefixes',[
+              {value:saved?.paths?.join(',')||'/',label:saved?`Saved scope (${saved.paths.join(', ')})`:'Entire app (/)'},
+              ...(saved&&saved.paths.join(',')!=='/'?[{value:'/',label:'Entire app (/)' }]:[])],
+            {write:message=>prompt.write?.(message)});
+            const savedMethods=saved?.methods?.join(',');
+            methods=await promptValue(ask,'Allowed HTTP methods',[
+              ...(savedMethods?[{value:savedMethods,label:`Saved authorization (${savedMethods})`}]:[]),
+              ...(!savedMethods||savedMethods!=='GET,HEAD,POST,PATCH,DELETE'?[{value:'GET,HEAD,POST,PATCH,DELETE',label:'GET, HEAD, POST, PATCH, DELETE'}]:[])],
+            {write:message=>prompt.write?.(message)});
+            const rates=[...new Set([saved?.maxRequestsPerSecond,local?5:2,1,10,32].filter(value=>value!=null).map(String))];
+            rps=await promptValue(ask,'Maximum requests per second',rates.map(value=>({value,label:`${value} request${value==='1'?'':'s'} per second`})),
+            {write:message=>prompt.write?.(message)});
+            environment=selected?.url===url?selected.environment:undefined;
+          }
+          const local=loopback(new URL(url).hostname);
           const limits={agents:options.agents,'http-workers':options['http-workers'],
             'model-calls':options['model-calls'],'max-urls':options['max-urls'],
             'max-tasks':options['max-tasks'],minutes:options.minutes,
             'dom-script-bytes':options['dom-script-bytes']};
-          const setup=await run('blackbox setup',[url],{include,methods,rps,...limits});
-          if(!setup.ready){prompt.setNext?.('Complete the displayed ownership and scope steps, then use /blackbox again');continue;}
+          const setup=await run('blackbox setup',[url],{include,methods,rps,environment,out,force,...limits});
+          if(!setup.ready){prompt.setNext?.('Complete the displayed ownership and scope steps, then start the audit again');continue;}
           if(prompt.rich)console.log(`Scope: ${path.relative(root,setup.scopeFile)} · ${setup.created?'created':'reused'} · includes ${include}`);
           const profile=state.models.find(model=>model.name===state.activeModel);
           console.log(options['no-model']?'Model: code-only audit':profile?
             `Model: ${profile.provider} · ${profile.model} · ${profile.baseUrl} · key variable ${profile.secretEnv} · ${profile.lastAttempt?.status||profile.lastTest?.status||'not tested'}`:
             'Model: Meta default · muse-spark-1.3 · https://api.meta.ai/v1 · key variable LLM_KEY, META_API_KEY or MODEL_API_KEY');
-          if(!await confirmChoice(ask,`Start black-box audit of ${url} within ${include} at ${rps} rps?`,
+          if(!automatic&&!await confirmChoice(ask,`Start black-box audit of ${url} within ${include} at ${rps} rps?`,
             {yes:'Start audit',no:'Return to project',write:message=>prompt.write?.(message)}))continue;
           const result=await run('blackbox',[url],{scope:setup.scopeFile,rps,...limits,
             'accept-local':local,'no-model':!!options['no-model'],
@@ -412,7 +421,7 @@ export async function terminal(options={},io){
         if(choice==='engine'){await engineWizard(ask,root,run);continue;}
         if(choice==='poc'){const result=await run('poc start',[],{project:root});root=result.root;updateWorkspace(prompt,root);continue;}
         if(choice==='demo'||choice==='walkthrough'){await tour();continue;}
-        if(choice==='repo'){const result=await onboard({flow:'quickstart'},[],{...prompt,inDashboard:true});root=result.root;continue;}
+        if(choice==='repo'){const result=await onboard({flow:'quickstart'},[],{...prompt,inDashboard:true});root=result.root;queuedStart=result.startReview;continue;}
         if(choice==='app'){
           const info=readiness(root),state=read(root);let target=state.targets.find(t=>t.name===state.activeTarget);
           if(!target){await targetWizard(ask,root);continue;}
@@ -437,7 +446,7 @@ export async function terminal(options={},io){
           const selected=await choose(ask,[{id:'off',label:'Off: acknowledge control when approving scope'},{id:'dns',label:'Require DNS TXT verification'},{id:'http',label:'Require an HTTPS verification file'}],`Domain verification: ${current}. Changing it clears testing permission.`);
           if(selected)await run('config set',['ownershipVerification',selected.id]);
         }
-        else if(choice==='1'){const result=await onboard({project:root,flow:'quickstart'},[],{...prompt,inDashboard:true});root=result.root;}
+        else if(choice==='1'){const result=await onboard({project:root,flow:'quickstart'},[],{...prompt,inDashboard:true});root=result.root;queuedStart=result.startReview;}
         else if(choice==='2'){
           const state=read(root);const action=await choose(ask,[{label:'Add a target',id:'add'},{label:'Show targets / ownership challenges',id:'show'},{label:'Verify ownership',id:'verify'},{label:'Authorize testing scope',id:'authorize'},{label:'Select active target',id:'use'},{label:'Add test identity',id:'identity'},{label:'Test identity connection',id:'identity-test'},{label:'Revoke testing',id:'revoke'}],'Targets & identities');
           if(action?.id==='add')await targetWizard(ask,root);

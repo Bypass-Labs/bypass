@@ -94,6 +94,7 @@ test('running-app-only wizard hands fresh and saved scopes to blackbox',async()=
   assert.equal(first.stage,'ready');
   assert.equal(first.nextAction.tool,'bypass_blackbox_setup');
   assert.deepEqual(first.nextAction.arguments,{url,include:'/api,/public',methods:'GET,HEAD,POST,PATCH',rps:7,environment:'local'});
+  assert.match(first.nextAction.message,/start the blackbox audit immediately/i);assert.match(first.nextAction.message,/Do not ask another setup question/i);
   assert.equal(read(root).runs.length,0);
 
   const options={...first.nextAction.arguments,'model-calls':12,minutes:1};

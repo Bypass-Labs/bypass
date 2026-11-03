@@ -169,8 +169,9 @@ export async function onboard(options={}, args=[], io={}) {
       }
       say('These are environment references for CLI/CI. To connect accounts without shell exports, use identity import; Muse imports known private account files itself. Test connections in Targets & identities.');
     });
-  }else say((mode==='live'
-    ? 'App-only review selected. Use /blackbox to choose its scope and run the audit.'
+  }else if(mode==='live'&&target&&authorized(target))say('App and testing boundaries are ready. Starting the first audit now. Accounts are optional and can be added later for signed-in checks.');
+  else say((mode==='live'
+    ? 'App-only setup is saved. Testing starts as soon as the app boundaries are authorized.'
     : 'You can review source now. Use /engine for account-boundary probes.')+
     ' Accounts are optional; add two test accounts for cross-account checks.');
   if(advanced&&await yes('Connect the Muse Code plugin now?'))try{
@@ -232,17 +233,19 @@ export async function onboard(options={}, args=[], io={}) {
   async function finish(){
     rememberSelection(options.project||process.cwd(),root);
     const info=readiness(root);
+    const startReview=mode==='live'&&info.ready.liveTesting?{id:'blackbox'}:null;
     io.setContext?.({model:info.model?`${info.model.name} · ${info.model.provider} · ${info.model.connection}`:'not configured',app:info.target?`${info.target.url} · ${info.target.authorized?'authorized':info.target.ownership==='verified'||info.target.ownershipVerification==='off'?'scope required':'verification pending'}`:'not connected · source review available'});
-    io.task?.(3,'done');io.setNext?.(mode==='live'?'Run /blackbox; type / to see commands':'Run /review; type / to see commands');
+    io.task?.(3,'done');io.setNext?.(startReview?'Starting your first app audit':mode==='live'?'Authorize app boundaries to start testing':'Run /review; type / to see commands');
     say('\nSetup saved\n');
     say(`  ${mode==='live'?'App profile   ':'Repository    '}${root}\n  Model         ${info.model?`${info.model.name} · ${info.model.connection}`:'add later'}\n  App           ${info.target?`${info.target.url} · ${info.target.authorized?'authorized':info.target.ownership==='verified'||info.target.ownershipVerification==='off'?'scope required':'verification pending'}`:'add later; code-only review available'}\n  Test accounts ${read(root).identities.length} references\n  Muse plugin   ${museInstalled?'installed; approve in Muse':'optional'}`);
-    if(mode==='live')say('\nUse /blackbox to audit the running app. The selected API model runs without Docker; check its connection in /models.');
+    if(startReview)say(`\nStarting the audit now with the approved boundaries: ${target.authorization.paths.join(', ')} · ${target.authorization.methods.join(', ')} · ${target.authorization.maxRequestsPerSecond} requests/second.`);
+    else if(mode==='live')say('\nThe selected API model runs without Docker. Authorize app testing boundaries to start the audit.');
     else say(info.engine.mode==='docker'?'\nReal AI selected. The first review checks your model connection before sending source.':'\nYour saved offline-preview choice is retained. Use /engine to switch to real AI.');
     say('\nYour review\n'+reviewSummary(info.review));
     say(mode==='live'
-      ? 'Press Enter to open the project, then use /blackbox. It asks for target, scope and request rate. /models checks the API connection.'
+      ? startReview?'No additional audit setup is required. Progress and coverage will appear next.':'Open the project to finish testing permission; the audit starts immediately after approval.'
       : 'Press Enter on the next screen to review source. Live checks need verified app scope. Accounts are optional; add them for cross-account checks or authorize registration testing.\nType / for commands; /app resumes DNS and /models changes the model.');
-    const openDashboard=io.inDashboard||io.rich||await yes('Open my project?','y');
-    return outcome({root,interactive:true,openDashboard,readiness:info});
+    const openDashboard=!!startReview||io.inDashboard||io.rich||await yes('Open my project?','y');
+    return outcome({root,interactive:true,openDashboard,readiness:info,...(startReview?{startReview}:{})});
   }
 }
