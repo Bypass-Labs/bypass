@@ -1064,6 +1064,8 @@ const answerFlows = answer => (Array.isArray(answer?.flows) ?
   answer.flows.slice(0, FLOWS_PER_MODEL_PAGE) :
   answer?.flows && typeof answer.flows === 'object' ? [answer.flows] : [])
   .map(knownFlow);
+const isModelOutputFailure = error => error?.details?.reason === 'incomplete_output' ||
+  /^(?:Invalid type for|Unknown) security_action\.flows(?: field)?\./.test(error?.message ?? '');
 const SAMPLE_SCHEMA = {type: 'object', properties: {samples: {type: 'array', maxItems: 1,
   items: {type: 'object', properties: {
     subject: FLOW_SCHEMA.properties.subject,
@@ -1814,8 +1816,7 @@ export async function planResearchFlows(surface, scope, {infer = null, model = n
           path: sample.subject.path, accepted: false, reason: 'model-stopped',
           evidence: facts.evidenceId});
     } catch (error) {
-      const outputFailure = error.details?.reason === 'incomplete_output' ||
-        /^(?:Invalid type for|Unknown) security_action\.flows(?: field)?\./.test(error.message);
+      const outputFailure = isModelOutputFailure(error);
       const pageUncommitted = result.coverage.nextRouteOffset === completedBeforePage;
       if (outputFailure && pageUncommitted && page.length > 1 && callsLeft() > 0) {
         offset -= page.length;
@@ -3503,14 +3504,32 @@ export async function runResearchFlows(leads, scope, {requester, infer = null, m
         if (context.nextUnexploredInputs?.length)
           decision.nextUnexploredInputsSent = context.nextUnexploredInputs.map(item => item.field);
         let proposed = [], inferFailed = false, flowAccepted = false;
+        let outputRetryUsed = false;
         try {
-          modelCalls++; localCalls++;
-          const answer = await infer(model, [{role: 'system', content: revisionPrompt +
-            (repair ? ' The previous revision could not run. Repair its supplied reason and request shape, or return empty flows when no safe correction is supported.' : '') +
-            (stopReviewPending ? ` ${stopReviewPrompt}` : '')},
-            {role: 'user', content: JSON.stringify(repair ? {...context, rejected: repair} :
-              stopReviewPending ? {...context, stopReview: true} : context)}],
-          {schema: ANSWER_SCHEMA});
+          const revisionContext = repair ? {...context, rejected: repair} :
+            stopReviewPending ? {...context, stopReview: true} : context;
+          const requestRevision = async extraPrompt => {
+            modelCalls++; localCalls++;
+            return infer(model, [{role: 'system', content: revisionPrompt +
+              (repair ? ' The previous revision could not run. Repair its supplied reason and request shape, or return empty flows when no safe correction is supported.' : '') +
+              (stopReviewPending ? ` ${stopReviewPrompt}` : '') +
+              (extraPrompt ?? '')},
+              {role: 'user', content: JSON.stringify(revisionContext)}],
+            {schema: ANSWER_SCHEMA});
+          };
+          let answer;
+          try {
+            answer = await requestRevision();
+          } catch (error) {
+            if (!isModelOutputFailure(error) || callsLeft() < 1 ||
+                localCalls >= (scope.limits.researchCallsPerHypothesis ?? 100)) throw error;
+            outputRetryUsed = true;
+            decision.outputRetry = true;
+            decision.outputRetryReason = safeModelText(error.message, scope, env);
+            answer = await requestRevision(
+              ' Your previous response was truncated or malformed. Return at most one concise flow or empty flows. Do not include prose or extra fields.');
+            decision.outputRetryRecovered = true;
+          }
           stopReviewPending = false;
           context.observedRoutes.forEach(item => revisionRouteSeen.add(`${item.kind} ${item.path}`));
           context.protectedReadRoutes.forEach(item => revisionProtectedReadSeen.add(item));
@@ -3575,9 +3594,14 @@ export async function runResearchFlows(leads, scope, {requester, infer = null, m
           }
         } catch (error) {
           inferFailed = true;
-          modelCallFailed = true;
           decision.reason = safeModelText(error.message, scope, env);
-          modelError = `Muse HTTP sequence revision failed: ${decision.reason}`;
+          if (isModelOutputFailure(error)) {
+            decision.outputFailed = true;
+            if (outputRetryUsed) decision.outputRetryRecovered = false;
+          } else {
+            modelCallFailed = true;
+            modelError = `Muse HTTP sequence revision failed: ${decision.reason}`;
+          }
         }
         const needsStopReview = !proposed.length && !inferFailed && !repair &&
           !acceptedHandoff &&

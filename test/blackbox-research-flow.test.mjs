@@ -1417,6 +1417,74 @@ test('Muse repairs a rejected revision and executes the corrected sequence', asy
   assert.equal(run.investigations[0].stopReason, 'model-stopped');
 });
 
+test('a truncated HTTP sequence revision retries once and recovers without failing the model stage',
+  async () => {
+    const origin = 'http://127.0.0.1:4329';
+    const scope = loadScope({origin, overrides: {acceptLocal: true}}).scope;
+    const route = randomPath('revision-output-retry');
+    const surface = {patterns: [{pattern: route, methods: ['GET'], params: {q: ['plain']}}]};
+    const lead = {family: 'reviewed-response', why: 'Compare an observed query input',
+      priority: 5, as: 'anonymous', oracle: 'observation', prelude: [], observe: [],
+      subject: {method: 'GET', path: route, placement: 'query', key: 'q',
+        fixedFields: [], bodyTemplate: '', headers: []},
+      controlValue: 'plain', firstValue: 'alpha', secondValue: 'beta',
+      marker: '', secondMarker: '',
+      assertion: {step: 'subject', index: 0, location: 'body', name: ''}};
+    let calls = 0;
+    const run = await runResearchFlows([lead], scope, {surface, model: 'fixture',
+      modelCallsAvailable: 2,
+      requester: async () => ({status: 200, type: 'application/json', body: '{"value":"fixed"}',
+        headers: {'cache-control': 'no-store'}, evidenceId: 'ev-output-retry'}),
+      infer: async () => {
+        calls++;
+        if (calls === 1) {
+          const error = new Error(
+            'Provider response incomplete (max_output_tokens); no action executed.');
+          error.details = {reason: 'incomplete_output'};
+          throw error;
+        }
+        return {flows: []};
+      }});
+    assert.equal(calls, 2);
+    assert.equal(run.modelError, null);
+    assert.equal(run.decisions[0].outputRetry, true);
+    assert.equal(run.decisions[0].outputRetryRecovered, true);
+    assert.equal(run.decisions[0].reason, 'model-stopped');
+  });
+
+test('a persistently truncated HTTP sequence revision is accounted without failing the run-wide model stage',
+  async () => {
+    const origin = 'http://127.0.0.1:4329';
+    const scope = loadScope({origin, overrides: {acceptLocal: true}}).scope;
+    const route = randomPath('revision-output-failure');
+    const surface = {patterns: [{pattern: route, methods: ['GET'], params: {q: ['plain']}}]};
+    const lead = {family: 'reviewed-response', why: 'Compare an observed query input',
+      priority: 5, as: 'anonymous', oracle: 'observation', prelude: [], observe: [],
+      subject: {method: 'GET', path: route, placement: 'query', key: 'q',
+        fixedFields: [], bodyTemplate: '', headers: []},
+      controlValue: 'plain', firstValue: 'alpha', secondValue: 'beta',
+      marker: '', secondMarker: '',
+      assertion: {step: 'subject', index: 0, location: 'body', name: ''}};
+    let calls = 0;
+    const run = await runResearchFlows([lead], scope, {surface, model: 'fixture',
+      modelCallsAvailable: 2,
+      requester: async () => ({status: 200, type: 'application/json', body: '{"value":"fixed"}',
+        headers: {'cache-control': 'no-store'}, evidenceId: 'ev-output-failure'}),
+      infer: async () => {
+        calls++;
+        const error = new Error(
+          'Provider response incomplete (max_output_tokens); no action executed.');
+        error.details = {reason: 'incomplete_output'};
+        throw error;
+      }});
+    assert.equal(calls, 2);
+    assert.equal(run.modelError, null);
+    assert.equal(run.decisions[0].outputRetry, true);
+    assert.equal(run.decisions[0].outputRetryRecovered, false);
+    assert.equal(run.decisions[0].outputFailed, true);
+    assert.equal(run.deferredLeads.length, 0);
+  });
+
 test('Muse can execute a model-authored query value without a syntax veto',
   async () => {
     const origin = 'http://127.0.0.1:4329';
