@@ -145,6 +145,20 @@ test('CLI mode and environment use selectors; app-only creates a profile without
   assert.deepEqual(selections[0].ids,['code','combined','live']);assert.ok(selections.some(s=>s.ids.join(',')==='production,staging,preview,local'));assert.ok(!prompts.some(p=>p.includes('Repository')));
 });
 
+test('authorized app-only CLI setup immediately hands off to the audit without another questionnaire',async t=>{
+  const options=isolated(t),old=process.env.BYPASS_PLUGIN_STATE_DIR;process.env.BYPASS_PLUGIN_STATE_DIR=options.stateDir;t.after(()=>{process.env.BYPASS_PLUGIN_STATE_DIR=old;});
+  const host=temp(),meta=await metaModelFixture(t),output=[],prompts=[];
+  const result=await onboard({flow:'quickstart',project:host,mode:'live'},[],{rich:true,metaBaseUrl:meta.baseUrl,
+    write:value=>output.push(value),select:async(_title,items)=>items.find(item=>item.id==='yes')||items.find(item=>item.id==='meta')||items[0],
+    ask:async(label,fallback)=>{prompts.push(label);if(label==='App URL')return 'http://127.0.0.1:4317';return fallback||'';}});
+  const target=read(result.root).targets[0];
+  assert.deepEqual(result.startReview,{id:'blackbox'});assert.equal(result.openDashboard,true);assert.ok(target.authorization);
+  assert.equal(prompts.filter(label=>label==='App URL').length,1);
+  assert.equal(prompts.some(label=>/Open my project|Maximum requests per second|Start black-box audit/.test(label)),false);
+  assert.doesNotMatch(output.join('\n'),/Use \/blackbox|Press Enter.*blackbox|choose scope and request rate/i);
+  assert.match(output.join('\n'),/Starting the audit now with the approved boundaries/);
+});
+
 test('switching to a different app URL never carries the previous app or its scope',async t=>{
   const options=isolated(t),host=source(),other=source();await execute('init',[host]);
   await execute('target add',['local'],{project:host,url:'http://127.0.0.1:4567',environment:'local'});await execute('target verify',['local'],{project:host,method:'local'});await execute('target authorize',['local'],{project:host,accept:true,paths:'/api'});

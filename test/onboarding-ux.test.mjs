@@ -120,3 +120,12 @@ test('read-only blackbox plan preserves scope and prepares the same bounded audi
   assert.equal(observedMethodAuthorized(scope,'POST'),false,'revocation applies to existing scope snapshots');
   assert.throws(()=>loadScope({origin:url,file:setup.scopeFile,targets:read(root).targets}),/ownership|authorization/);
 });
+
+test('blackbox setup inherits the connected production environment and exact authorization',async t=>{
+  const root=await project(t),url='https://production-scope.example.com',o={project:root};
+  await execute('target add',['production'],{...o,url,environment:'production'});
+  await execute('target authorize',['production'],{...o,accept:true,production:true,paths:'/api',methods:'GET,HEAD',rps:2});
+  const setup=await execute('blackbox setup',[url],o),scope=JSON.parse(fs.readFileSync(setup.scopeFile,'utf8'));
+  assert.equal(setup.ready,true);assert.equal(scope.target.environment,'production');
+  assert.deepEqual(scope.include,['/api']);assert.deepEqual(scope.methods,['GET','HEAD']);assert.equal(scope.limits.rps,2);
+});

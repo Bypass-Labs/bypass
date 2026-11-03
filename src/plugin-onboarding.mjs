@@ -70,7 +70,7 @@ export async function pluginOnboarding(cwd,root,{intent='real',mode,url,environm
   const next=steps.find(s=>s.status==='needed');
   let nextAction=next?{id:next.id,tool:next.tool,...(next.id==='ownership'?{question:target.ownershipVerification==='http'?'Publish the HTTPS verification file, then check it.':'Publish the TXT record, then check DNS.',challenge:next.challenge}:{})}:mode==='live'?{
     id:'review',tool:'bypass_blackbox_setup',arguments:{url:target.url,include:target.authorization.paths.join(','),methods:target.authorization.methods.join(','),rps:target.authorization.maxRequestsPerSecond,environment:target.environment,...blackboxScopeOutput(root,target.url)},
-    message:'Reuse this app and authorized scope. Ask only for Muse calls (default 120) and minutes (default 30), then set up and start the blackbox audit in this Muse session.'
+    message:'Reuse this app and authorized scope, apply the default bounded budgets, and start the blackbox audit immediately. Do not ask another setup question before showing progress.'
   }:{id:'review',tool:'bypass_scan',arguments:{mode},message:'Show the selected source/app and scope, then start the requested review.'};
   if(mode==='code'){
     nextAction={id:'review',tool:'bypass_scan',arguments:{mode:'code'},message:'Review the code now. Do not ask for app URL, DNS, scope or accounts.'};

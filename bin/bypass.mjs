@@ -28,7 +28,7 @@ try{
       result=key==='poc'&&interactive?{...(await execute('poc start',[],options)),interactive:true,openDashboard:true}:['init','onboard','demo'].includes(key)&&interactive?await initWizard({...options,...(key==='init'?{flow:'quickstart'}:key==='demo'?{flow:'demo'}:{})},args):modelFeedback?await modelTestWizard(options.project||process.cwd(),args[0],{interactive}):await execute(key,args,options,{onProgress:json?undefined:progress});
     } finally { progress.finish?.(); }
     if(result?.root&&['init','repo connect','app connect'].includes(key))rememberSelection(process.cwd(),result.root);
-    if(result?.interactive){if(result.openDashboard)await terminal({project:result.root});process.exitCode=result.exitCode||0;}
+    if(result?.interactive){if(result.openDashboard)await terminal({project:result.root,startReview:result.startReview});process.exitCode=result.exitCode||0;}
     else if(result){if(json)console.log(JSON.stringify(redact(result)));else if(!modelFeedback)printResult(result);process.exitCode=result.skipped?130:result.exitCode||0;}
   }
 }catch(e){

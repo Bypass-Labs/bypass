@@ -41,6 +41,28 @@ test('/blackbox asks for scope and rate, runs, and presents report actions', asy
   assert.ok(fs.existsSync(path.join(root,'.bypass/runs',runs[0],'report.md')));
 });
 
+test('onboarding handoff starts the approved audit immediately and streams progress', async t => {
+  const app=createServer((_request,response)=>{response.writeHead(200,{'content-type':'text/html'});response.end('<html><body>Approved app</body></html>');});
+  await new Promise(resolve=>app.listen(0,'127.0.0.1',resolve));t.after(()=>app.close());
+  const url=`http://127.0.0.1:${app.address().port}`,root=temp();
+  fs.writeFileSync(path.join(root,'app.mjs'),'export const app = true;\n');
+  await execute('init',[root]);
+  await execute('target add',['local'],{project:root,url,environment:'local'});
+  await execute('target verify',['local'],{project:root,method:'local'});
+  await execute('target authorize',['local'],{project:root,accept:true,paths:'/',methods:'GET,HEAD',rps:32});
+  const answers=['q'],questions=[],stages=[],output=[];
+  const ask=async question=>{questions.push(question);assert.ok(answers.length,`unexpected prompt: ${question}`);return answers.shift();};
+  await terminal({project:root,startReview:{id:'blackbox'},'no-model':true,'max-tasks':1,'max-urls':10,minutes:1},{ask,rich:false,signal:new AbortController().signal,
+    setTasks:(_title,items)=>stages.push(...items),task:(index,state)=>output.push(`${index}:${state}`),
+    setNext:message=>output.push(message),write:message=>output.push(message),close:()=>{}});
+  assert.equal(answers.length,0);assert.equal(questions.some(question=>/App URL|Allowed path|Allowed HTTP|Maximum requests|Start black-box/.test(question)),false);
+  assert.ok(output.some(item=>item.includes('Starting app audit')));assert.ok(output.some(item=>/\d+ HTTP · \d+ Muse/.test(item)));
+  assert.ok(stages.includes('Routes and responses'));
+  const scope=JSON.parse(fs.readFileSync(path.join(root,'blackbox.onboarding.scope.json'),'utf8'));
+  assert.equal(scope.target.environment,'local');assert.deepEqual(scope.methods,['GET','HEAD']);assert.equal(scope.limits.rps,32);
+  assert.equal(fs.readdirSync(path.join(root,'.bypass/runs')).filter(item=>item.startsWith('bx-')).length,1);
+});
+
 test('terminal model setup selects the Meta profile with its official key variable', async t => {
   const root=temp();
   t.after(()=>fs.rmSync(root,{recursive:true,force:true}));

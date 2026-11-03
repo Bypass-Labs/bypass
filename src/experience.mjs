@@ -13,7 +13,7 @@ export function homeActions(state) {
 }
 export function previewRun(run) {return run?.kind==='scan'&&run.result?.simulation===true&&!!run.result.inventory;}
 export function reviewSummary(plan){
-  if(plan.repository.kind==='app')return `Source review: not selected (running app only)\nApp: ${plan.app?.url||'not connected'}\nBlack-box audit: use /blackbox to choose scope and request rate, then inspect its coverage report.`;
+  if(plan.repository.kind==='app')return `Source review: not selected (running app only)\nApp: ${plan.app?.url||'not connected'}\nBlack-box audit: runs with the approved app boundaries and shows live progress plus a coverage report.`;
   const repository=`Repository: ${plan.repository.path}${plan.repository.branch?` (${plan.repository.branch})`:''}\nGit remote: ${plan.repository.remote||'local folder; no remote configured'}`;
   return `${repository}\nApp: ${plan.app?.url||'not connected; code preview is available'}\nWhite-box / code: ${plan.whiteBox.status}\nBlack-box / live app: ${plan.blackBox.status}\n${plan.blackBox.description}`;
 }
