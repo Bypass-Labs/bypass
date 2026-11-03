@@ -148,6 +148,8 @@ bypass target authorize app --paths /api/runs,/api/me --methods GET,HEAD,POST --
 
 Omitted methods default to GET/HEAD. Scope files can specify `methods` as an array. CONNECT tunnels and HTTP/2 prefaces are not supported.
 
+Fresh onboarding recommends GET, HEAD, POST, PUT, PATCH, DELETE and OPTIONS so Muse can review complete observed workflows. The full set is displayed before approval, write-capable methods are called out, and production still requires an additional explicit confirmation. Existing grants are preserved instead of being widened automatically; the GET/HEAD fallback above applies to direct commands that omit `--methods`.
+
 ## request
 
 Send one request within current ownership, method and path permissions. For example, after authorizing POST and connecting the owner account:

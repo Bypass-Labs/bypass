@@ -9,6 +9,7 @@ export const methodChoices=[
   {id:'DELETE',label:'DELETE',description:'Delete test data'},
   {id:'OPTIONS',label:'OPTIONS',description:'Inspect supported operations'}
 ];
+export const recommendedMethods=Object.freeze(methodChoices.map(choice=>choice.id));
 export function httpMethod(value){
   need(typeof value==='string','Provide an HTTP method.');
   const method=value.trim().toUpperCase();
@@ -28,7 +29,7 @@ export function httpMethods(value=['GET','HEAD']){
   return [...new Set(items.map(httpMethod))];
 }
 export const mayChangeData=methods=>methods.some(method=>!['GET','HEAD','OPTIONS'].includes(method));
-export function methodInput(current=['GET','HEAD']){
+export function methodInput(current=recommendedMethods){
   return {kind:'multiselect',field:'methods',question:'Which HTTP methods may Bypass use?',choices:methodChoices,selected:current,allowCustom:true,hostControl:'request_user_input',customInput:{kind:'value',label:'Custom methods or instructions'},
     singleSelectFallback:{tool:'request_user_input',question:'Which HTTP methods may Bypass use?',choices:[
       {label:'Read',recommended:current.join(',')==='GET,HEAD',description:'Allow GET and HEAD.',methods:['GET','HEAD']},
@@ -37,7 +38,7 @@ export function methodInput(current=['GET','HEAD']){
     ],instruction:'Use the host interactive question tool when available. If it only supports one selection, render these three choices. For Custom methods use the attached note or one follow-up text input. Do not substitute a printed list when the question tool is available. Wait for the answer before saving; opening the picker is not consent.'},
     help:'Select individual methods or enter a comma-separated list, including custom methods. POST can create data or start jobs; PUT/PATCH change data and DELETE removes it. Only the selected methods and approved paths are allowed.'};
 }
-export async function promptMethods(ask,say=console.log,current=['GET','HEAD']){
+export async function promptMethods(ask,say=console.log,current=recommendedMethods){
   while(true){
     const value=ask.multiselect?await ask.multiselect('Which HTTP methods may Bypass use?',methodChoices,{selected:current,allowCustom:true}):await (async()=>{
       say(methodChoices.map((m,i)=>`  ${i+1}  ${m.label} — ${m.description}`).join('\n'));

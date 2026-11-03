@@ -1044,10 +1044,26 @@ const FLOW_SCHEMA = {type: 'object', properties: {
     location: {type: 'string', enum: ['body', 'header']}, name: {type: 'string'}},
   required: ['step', 'index', 'location', 'name'], additionalProperties: false}},
 required: ['family', 'why', 'priority', 'as'],
-additionalProperties: false};
+// Muse may attach explanatory metadata to a proposal. Executable fields are
+// still schema-validated, and answerFlows drops every unknown top-level field
+// before validation or request planning can consume the proposal.
+additionalProperties: true};
 const FLOWS_PER_MODEL_PAGE = 8;
-const ANSWER_SCHEMA = {type: 'object', properties: {flows: {type: 'array', maxItems: FLOWS_PER_MODEL_PAGE,
-  items: FLOW_SCHEMA}, verifierId: {type: 'string'}}, required: ['flows'], additionalProperties: false};
+const FLOW_LIST_SCHEMA = {type: 'array', maxItems: FLOWS_PER_MODEL_PAGE,
+  items: FLOW_SCHEMA};
+const ANSWER_SCHEMA = {type: 'object', properties: {flows: {
+  // Keep items visible to schema-aware hosts while accepting Muse's common
+  // single-flow object shorthand through the validated anyOf branches.
+  items: FLOW_SCHEMA, maxItems: FLOWS_PER_MODEL_PAGE,
+  anyOf: [FLOW_LIST_SCHEMA, FLOW_SCHEMA]}, verifierId: {type: 'string'}},
+required: ['flows'], additionalProperties: false};
+const flowFields = new Set(Object.keys(FLOW_SCHEMA.properties));
+const knownFlow = flow => Object.fromEntries(Object.entries(flow)
+  .filter(([key]) => flowFields.has(key)));
+const answerFlows = answer => (Array.isArray(answer?.flows) ?
+  answer.flows.slice(0, FLOWS_PER_MODEL_PAGE) :
+  answer?.flows && typeof answer.flows === 'object' ? [answer.flows] : [])
+  .map(knownFlow);
 const SAMPLE_SCHEMA = {type: 'object', properties: {samples: {type: 'array', maxItems: 1,
   items: {type: 'object', properties: {
     subject: FLOW_SCHEMA.properties.subject,
@@ -1218,6 +1234,7 @@ export async function planResearchFlows(surface, scope, {infer = null, model = n
       sampleOpportunities: 0, samplesProposed: 0, samplesSent: 0,
       samplesBlocked: 0, samplesUseful: 0, samplesBudgetCut: 0,
       timeoutRetries: 0, timeoutRecovered: 0, retryReadRoutesCut: 0,
+      outputRetries: 0, outputFailedRoutes: 0,
       repairCalls: 0, repairAccepted: 0, repairStalled: 0}};
   // Keep accepted overflow request bytes only in this process. The caller can
   // carry these exact plans into its later protected pass without persisting
@@ -1345,7 +1362,7 @@ export async function planResearchFlows(surface, scope, {infer = null, model = n
   const acceptFlows = (answer, markers, mode) => {
     let accepted = 0;
     const firstDecision = result.decisions.length;
-    for (const proposal of Array.isArray(answer?.flows) ? answer.flows.slice(0, FLOWS_PER_MODEL_PAGE) : []) {
+    for (const proposal of answerFlows(answer)) {
       result.coverage.proposals++;
       const decision = {mode, proposal: true,
         path: safeModelText(proposal?.subject?.path, scope, env),
@@ -1492,6 +1509,7 @@ export async function planResearchFlows(surface, scope, {infer = null, model = n
       pathSlots: item.pathSlots ?? [],
       responseShapes: item.responseShapes}));
   const protectedReadSet = new Set(protectedReads);
+  let routePageLimit = FLOWS_PER_MODEL_PAGE;
   for (let offset = result.coverage.nextRouteOffset, pageNumber = 0;
       offset < routes.length && (!firstPageOnly || pageNumber === 0) && callsLeft() > 0 &&
       result.leads.length < budget; pageNumber++) {
@@ -1502,7 +1520,7 @@ export async function planResearchFlows(surface, scope, {infer = null, model = n
     // Every route on this page must have room for one Muse proposal in the
     // response schema; otherwise later routes are marked reviewed but cannot
     // receive a hypothesis even when model calls remain.
-    while (offset + page.length < routes.length && page.length < FLOWS_PER_MODEL_PAGE) {
+    while (offset + page.length < routes.length && page.length < routePageLimit) {
       const next = routes[offset + page.length];
       if (page.length && Buffer.byteLength(JSON.stringify([...page, next])) > 11000) break;
       page.push(next);
@@ -1796,8 +1814,33 @@ export async function planResearchFlows(surface, scope, {infer = null, model = n
           path: sample.subject.path, accepted: false, reason: 'model-stopped',
           evidence: facts.evidenceId});
     } catch (error) {
-      result.modelError = safeModelText(error.message, scope, env);
-      log({stage: 'web-plan', message: `Muse HTTP sequence planning failed: ${result.modelError}`});
+      const outputFailure = error.details?.reason === 'incomplete_output' ||
+        /^(?:Invalid type for|Unknown) security_action\.flows(?: field)?\./.test(error.message);
+      const pageUncommitted = result.coverage.nextRouteOffset === completedBeforePage;
+      if (outputFailure && pageUncommitted && page.length > 1 && callsLeft() > 0) {
+        offset -= page.length;
+        routePageLimit = Math.max(1, Math.ceil(page.length / 2));
+        result.coverage.outputRetries++;
+        log({stage: 'web-plan', message:
+          `Muse HTTP sequence output was incomplete; retrying ${page.length} routes in smaller pages`});
+        pageNumber--;
+        continue;
+      }
+      if (outputFailure && pageUncommitted && callsLeft() < 1) {
+        result.modelError ??= safeModelText(error.message, scope, env);
+        log({stage: 'web-plan', message: `Muse HTTP sequence planning failed: ${result.modelError}`});
+        break;
+      }
+      result.modelError ??= safeModelText(error.message, scope, env);
+      log({stage: 'web-plan', message: `Muse HTTP sequence planning failed: ${safeModelText(error.message, scope, env)}`});
+      if (outputFailure) {
+        if (pageUncommitted) {
+          result.coverage.outputFailedRoutes += page.length;
+          result.coverage.nextRouteOffset = offset;
+          routePageLimit = FLOWS_PER_MODEL_PAGE;
+        }
+        continue;
+      }
       break;
     } finally {
       if (onPageCheckpoint && result.coverage.nextRouteOffset > completedBeforePage)
@@ -3492,7 +3535,7 @@ export async function runResearchFlows(leads, scope, {requester, infer = null, m
             acceptedHandoff = true;
             stopReason = 'verifier-handoff';
           }
-          proposed = Array.isArray(answer?.flows) ? answer.flows.slice(0, FLOWS_PER_MODEL_PAGE) : [];
+          proposed = answerFlows(answer);
           if (!acceptedHandoff) decision.reason = 'model-stopped';
           for (const proposal of proposed) {
               const normalized = executableProposal(proposal, inventory, surface, scope, env,

@@ -20,7 +20,7 @@ import { createTerminalSession } from './terminal-session.mjs';
 import { summaryText as blackboxSummary } from './blackbox/report.mjs';
 import { progressLine as blackboxProgressLine } from './blackbox/progress.mjs';
 import { createTheme, brandHeading } from './terminal-theme.mjs';
-import { promptMethods, mayChangeData } from './http-methods.mjs';
+import { promptMethods, mayChangeData, recommendedMethods } from './http-methods.mjs';
 
 const theme=createTheme();
 const color=!!process.stdout.isTTY&&!process.env.NO_COLOR;
@@ -375,7 +375,7 @@ export async function terminal(options={},io){
             const savedMethods=saved?.methods?.join(',');
             methods=await promptValue(ask,'Allowed HTTP methods',[
               ...(savedMethods?[{value:savedMethods,label:`Saved authorization (${savedMethods})`}]:[]),
-              ...(!savedMethods||savedMethods!=='GET,HEAD,POST,PATCH,DELETE'?[{value:'GET,HEAD,POST,PATCH,DELETE',label:'GET, HEAD, POST, PATCH, DELETE'}]:[])],
+              ...(!savedMethods||savedMethods!==recommendedMethods.join(',')?[{value:recommendedMethods.join(','),label:recommendedMethods.join(', ')}]:[])],
             {write:message=>prompt.write?.(message)});
             const rates=[...new Set([saved?.maxRequestsPerSecond,DEFAULT_REQUESTS_PER_SECOND,10,5,1,32].filter(value=>value!=null).map(String))];
             rps=await promptValue(ask,'Maximum requests per second',rates.map(value=>({value,label:`${value} request${value==='1'?'':'s'} per second`})),

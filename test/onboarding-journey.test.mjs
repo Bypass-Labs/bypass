@@ -16,6 +16,7 @@ import { execFile } from '../src/util.mjs';
 import { CLI } from '../src/demo.mjs';
 import { carryAppSetup } from '../src/application-setup.mjs';
 import { reviewSummary } from '../src/experience.mjs';
+import { recommendedMethods } from '../src/http-methods.mjs';
 
 const source=()=>{const root=temp();fs.writeFileSync(path.join(root,'app.mjs'),'throw new Error("source must not execute");\n');return root;};
 function isolated(t){const state=temp(),ownership=path.join(state,'ownership'),old=process.env.BYPASS_OWNERSHIP_DIR;process.env.BYPASS_OWNERSHIP_DIR=ownership;t.after(()=>{process.env.BYPASS_OWNERSHIP_DIR=old;});return {stateDir:state,packaged:true,env:{BYPASS_OWNERSHIP_DIR:ownership}};}
@@ -154,6 +155,8 @@ test('authorized app-only CLI setup immediately hands off to the audit without a
   const target=read(result.root).targets[0];
   assert.deepEqual(result.startReview,{id:'blackbox'});assert.equal(result.openDashboard,true);assert.ok(target.authorization);
   assert.deepEqual(target.authorization.paths,['/'],'the recommended fresh-app boundary should cover the entire origin');
+  assert.deepEqual(target.authorization.methods,recommendedMethods,
+    'fresh app onboarding should recommend all standard HTTP methods');
   assert.equal(target.authorization.maxRequestsPerSecond,20,'fresh app audits should start with the fast default rate');
   assert.equal(prompts.filter(label=>label==='App URL').length,1);
   assert.equal(prompts.some(label=>/Open my project|Maximum requests per second|Start black-box audit/.test(label)),false);

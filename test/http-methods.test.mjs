@@ -5,7 +5,7 @@ import path from 'node:path';
 import http from 'node:http';
 import { spawn } from 'node:child_process';
 import { CLI } from '../src/demo.mjs';
-import { httpMethods, promptMethods } from '../src/http-methods.mjs';
+import { httpMethods, promptMethods, recommendedMethods } from '../src/http-methods.mjs';
 import { authorization, scopeReady } from '../src/network.mjs';
 import { scopedRequest } from '../src/scoped-request.mjs';
 import { execute } from '../src/service.mjs';
@@ -31,6 +31,8 @@ test('method selection normalizes exact choices, permits custom methods, and pre
   for(const value of [[],null,'*','POST\r\nHost:evil','CONNECT','PRI','GET /api','[]','["POST",null]','["POST",{}]','["POST",["GET"]]','["POST", "*"]','["POST"','["POST\\r\\nHost:evil"]'])assert.throws(()=>httpMethods(value));
   const answers=['*','1,3,PROPFIND'];let errors=0;
   assert.deepEqual(await promptMethods(async()=>answers.shift(),()=>errors++),['GET','POST','PROPFIND']);assert.ok(errors>0);
+  assert.deepEqual(await promptMethods(async(_label,fallback)=>fallback),recommendedMethods,
+    'fresh onboarding should recommend the complete standard method set');
   const app={url:'https://app.example.com',environment:'production',ownership:{status:'verified',expiresAt:new Date(Date.now()+86400000).toISOString()}};
   assert.throws(()=>authorization(app,{paths:['/api'],methods:['POST']}),/Production/);
   app.authorization=authorization(app,{paths:['/api'],methods:['POST'],productionAcknowledged:true});

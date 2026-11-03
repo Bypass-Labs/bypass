@@ -11,7 +11,7 @@ import { pluginIdentity } from './runtime-identity.mjs';
 import { credentialStatus } from './credentials.mjs';
 import { registrationStatus } from './registration.mjs';
 import { appConnection } from './app-connection.mjs';
-import { httpMethods, methodChoices, methodInput } from './http-methods.mjs';
+import { httpMethods, methodChoices, methodInput, recommendedMethods } from './http-methods.mjs';
 import { reviewQuestion, reviewInput, sourceStatus, repositoryAction } from './application-setup.mjs';
 import { ownershipReady, verificationDisabled, sharedOwnership } from './ownership-store.mjs';
 
@@ -95,7 +95,7 @@ export async function pluginOnboarding(cwd,root,{intent='real',mode,url,environm
   }
   if(interactiveCombined&&mode==='combined'&&target&&(owned||skipVerification)&&
     (!requestedOrigin||requestedOrigin===target.url)&&['scope','review'].includes(nextAction.id)){
-    const savedMethods=target.authorization?.methods||['GET','HEAD','POST'];
+    const savedMethods=target.authorization?.methods||recommendedMethods;
     const savedRate=target.authorization?.maxRequestsPerSecond||DEFAULT_REQUESTS_PER_SECOND;
     if(methods==null)nextAction={id:'methods',tool:'bypass_onboarding',question:'Which HTTP methods may this combined audit use?',
       input:choiceInput('methods',[
@@ -127,7 +127,7 @@ export async function pluginOnboarding(cwd,root,{intent='real',mode,url,environm
   }
   if(nextAction.id==='scope'){
     const scope={url:target.url,environment:target.environment,paths:target.authorization?.paths||['/'],
-      methods:methods==null?target.authorization?.methods||['GET','HEAD','POST']:httpMethods(methods),
+      methods:methods==null?target.authorization?.methods||recommendedMethods:httpMethods(methods),
       maxRequestsPerSecond:rps??target.authorization?.maxRequestsPerSecond??DEFAULT_REQUESTS_PER_SECOND,
       expiresAt:target.authorization?.expiresAt||new Date(Date.now()+7*86400000).toISOString(),
       publicConfigDiscovery:target.authorization?.publicConfigDiscovery??true};
