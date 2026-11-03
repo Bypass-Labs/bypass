@@ -53,7 +53,7 @@ test('plain CLI shows audit milestones, replay commands, and an honest coverage 
   assert.doesNotMatch(run.stderr, /none of OWNER_TOKEN|No test accounts:|0 schemas, 0 root fields|0 public private-key candidates|off-origin script not fetched/);
   assert.match(run.stdout, /Findings: 1 confirmed/);
   assert.match(run.stdout, /Class coverage\s+\d+ of \d+ partly tested · \d+ not tested/);
-  assert.match(run.stdout, /Report groups\s+\d+ exercised · \d+ partial · \d+ not tested \(23 broad groups\)/);
+  assert.match(run.stdout, /Report groups\s+\d+ exercised · \d+ partial · \d+ not tested \(24 broad groups\)/);
   assert.match(run.stdout, /bypass blackbox verify/);
   assert.match(run.stdout, /bypass blackbox export/);
   assert.match(run.stdout, /Exit 1/);

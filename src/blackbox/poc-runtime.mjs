@@ -527,6 +527,48 @@ export function responseCached(value) {
   return value?.headers?.age != null || /HIT/i.test(value?.headers?.['x-cache'] ?? '');
 }
 
+const rateLimitSignal = response => response?.status === 429 ||
+  response?.headers?.['retry-after'] != null ||
+  String(response?.headers?.['x-ratelimit-remaining'] ?? '') === '0';
+
+function explicitInvalidAttempt(response) {
+  if ([400, 401, 403].includes(response?.status)) return true;
+  if (response?.status !== 200 || !/json|\+json/i.test(response?.type ??
+      response?.headers?.['content-type'] ?? '')) return false;
+  let body;
+  try {body = JSON.parse(response.body);} catch {return false;}
+  if (!object(body)) return false;
+  return ['ok', 'success', 'valid', 'authenticated', 'authorized', 'unlocked', 'accepted']
+    .some(key => body[key] === false);
+}
+
+/** A bounded authentication/gate burst is a finding only when every attempt is
+ * explicitly rejected, the requested rate is actually sustained, and no
+ * response communicates throttling. */
+export function authRateLimitOutcome(responses, {elapsedMs, minimumRps = 10,
+  attemptCount = 20} = {}) {
+  const controls = responses.map((response, index) => ({label: `invalid-${index + 1}`,
+    status: response?.status ?? null,
+    throttled: rateLimitSignal(response),
+    rejected: explicitInvalidAttempt(response)}));
+  if (responses.length !== attemptCount)
+    return {verdict: 'inconclusive', reason: `only ${responses.length} of ${attemptCount} invalid attempts completed`, controls};
+  if (responses.some(response => response?.blocked || response?.refused ||
+      response?.status == null || response.status >= 500 || responseCached(response)))
+    return {verdict: 'inconclusive', reason: 'an invalid-attempt response was unavailable or cached', controls};
+  if (responses.some(rateLimitSignal))
+    return {verdict: 'not_reproduced', reason: 'the endpoint returned an explicit throttling signal', controls};
+  if (!responses.every(explicitInvalidAttempt))
+    return {verdict: 'inconclusive', reason: 'not every synthetic attempt produced an explicit invalid-credential denial', controls};
+  const achievedRps = elapsedMs > 0 ? responses.length * 1000 / elapsedMs : Infinity;
+  if (achievedRps < minimumRps)
+    return {verdict: 'not_reproduced', reason: `the endpoint sustained only ${achievedRps.toFixed(1)} requests per second`,
+      achievedRps, controls};
+  return {verdict: 'confirmed',
+    reason: `${responses.length} rapid invalid attempts were processed without throttling`,
+    achievedRps, controls};
+}
+
 /** An arbitrary value for one named cookie must repeatedly cross the same access boundary. */
 export function cookieAccessOutcome(responses) {
   if (!Array.isArray(responses) || responses.length !== 8)
@@ -3010,6 +3052,55 @@ async function checkHostHeaderRedirect(spec, env) {
     'confirmed' : 'inconclusive', controls};
 }
 
+async function checkAuthRateLimit(spec) {
+  if (spec.request?.method !== 'POST' || spec.request?.as !== 'anonymous' ||
+      !['access-gate', 'login'].includes(spec.mode) ||
+      !['json', 'form', 'auth'].includes(spec.placement) ||
+      !Number.isInteger(spec.attemptCount) || spec.attemptCount !== 20 ||
+      !Number.isFinite(spec.minimumRps) || spec.minimumRps < 5 ||
+      typeof spec.field !== 'string' || !Array.isArray(spec.fields) ||
+      !spec.fields.includes(spec.field))
+    return {verdict: 'inconclusive', reason: 'rate-limit proof controls are incomplete'};
+  if (spec.mode === 'login' && (typeof spec.userField !== 'string' ||
+      !spec.fields.includes(spec.userField)))
+    return {verdict: 'inconclusive', reason: 'login rate-limit fields are incomplete'};
+  let url;
+  try {url = checkedUrl(spec, spec.request.url);} catch (error) {
+    return {verdict: 'inconclusive', reason: error.message};
+  }
+  if (!reviewedPostOrigin(spec) || url.search || url.pathname !== new URL(spec.request.url).pathname)
+    return {verdict: 'inconclusive', reason: 'rate-limit proof origin or path is not eligible'};
+  const reviewed = (spec.reviewedRateLimitOperations ?? []).some(operation =>
+    operation.method === 'POST' && operation.path === url.pathname &&
+    operation.placement === spec.placement &&
+    spec.fields.every(field => operation.fields?.includes(field)));
+  if (!reviewed)
+    return {verdict: 'inconclusive', reason: 'the observed authentication/gate contract is unavailable'};
+  const syntheticUser = `bypass-audit-${randomBytes(8).toString('hex')}@example.invalid`;
+  const responses = [];
+  const send = async () => {
+    const invalid = `bypass-audit-invalid-${randomBytes(12).toString('hex')}`;
+    const payload = spec.mode === 'login' ?
+      {[spec.userField]: syntheticUser, [spec.field]: invalid} : {[spec.field]: invalid};
+    const body = spec.placement === 'form' ?
+      new URLSearchParams(payload).toString() : JSON.stringify(payload);
+    await pace(spec);
+    const response = await guardedRequest(url, {method: 'POST', body,
+      headers: {'content-type': spec.contentType, 'cache-control': 'no-cache'},
+      allowRemoteHttp: spec.allowRemoteHttp === true,
+      maxBodyBytes: MODEL_RESPONSE_BYTES});
+    return {...response, type: response.headers['content-type'] ?? ''};
+  };
+  const started = performance.now();
+  const settled = await Promise.allSettled(Array.from({length: spec.attemptCount}, send));
+  responses.push(...settled.filter(item => item.status === 'fulfilled').map(item => item.value));
+  for (let replacement = 0; responses.length < spec.attemptCount && replacement < 2; replacement++)
+    try {responses.push(await send());} catch { /* bounded transport replacement */ }
+  return authRateLimitOutcome(responses, {elapsedMs: Math.max(1,
+    Math.round(performance.now() - started)), minimumRps: spec.minimumRps,
+  attemptCount: spec.attemptCount});
+}
+
 async function checkJwtUnsigned(spec, env) {
   if (spec.enabled !== true || spec.auth !== 'bearer' || spec.request?.as !== 'owner' ||
       spec.request?.method !== 'GET')
@@ -3690,6 +3781,7 @@ async function checkWithinBudget(spec, env, replay) {
       return await checkSsrfLoopback(spec, env);
     if (spec.kind === 'public-private-key') return await checkPublicPrivateKey(spec, env);
     if (spec.kind === 'public-api-credential') return await checkPublicCredential(spec, env);
+    if (spec.kind === 'rate-limit-auth-gate') return await checkAuthRateLimit(spec);
     if (spec.kind === 'host-header-redirect') return await checkHostHeaderRedirect(spec, env);
     if (spec.kind === 'jwt-unsigned') return await checkJwtUnsigned(spec, env);
     if (spec.kind === 'crlf-header') return await checkCrlfHeader(spec, env);

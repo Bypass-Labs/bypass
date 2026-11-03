@@ -18,6 +18,7 @@ const distinctOperations = operations => operations.filter((item, index) =>
     other.path === item.path && other.placement === item.placement) === index);
 
 const WEB_PROOF_KINDS = new Set(['open-redirect', 'host-header-redirect', 'jwt-unsigned',
+  'rate-limit-auth-gate',
   'anonymous-credential-data', 'derived-private-read',
   'http-parameter-pollution', 'cors-reflection', 'ssrf-loopback', 'remote-content-use',
   'xss-reflected', 'html-injection',
@@ -31,6 +32,7 @@ const WEB_PROOF_KINDS = new Set(['open-redirect', 'host-header-redirect', 'jwt-u
   'model-state-change', 'xss-stored',
   'public-session-token', 'model-auth-login']);
 const PARAMETER_PROOF_KINDS = new Set(['host-header-redirect', 'jwt-unsigned',
+  'rate-limit-auth-gate',
   'anonymous-credential-data',
   'http-parameter-pollution', 'ssrf-loopback', 'remote-content-use', 'xss-reflected',
   'html-injection', 'xss-dom-fragment',
@@ -227,6 +229,18 @@ export async function proveFindings(findings, results, {runDir, surface, scope, 
               context.env[name].length > 0)} : {}),
         ...(finding.kind === 'xss-dom-fragment' ? {
           domScriptBytes: context.scope.limits.domScriptBytes,
+        } : {}),
+        ...(finding.kind === 'rate-limit-auth-gate' ? {
+          targetEnvironment: context.scope.target.environment,
+          reviewedRateLimitOperations: [
+            ...(proofSurface?.jsonBodyOperations ?? []).map(item => ({...item, placement: 'json'})),
+            ...(proofSurface?.formBodyOperations ?? []).map(item => ({...item, placement: 'form'})),
+            ...(proofSurface?.authBodyOperations ?? []).map(item => ({...item, placement: 'auth',
+              fields: item.fields ?? [item.usernameField, item.passwordField].filter(Boolean)})),
+          ].filter(item => item.method === 'POST' && item.path === finding.pattern &&
+            item.placement === finding.webProof.placement)
+            .map(item => ({method: item.method, path: item.path,
+              placement: item.placement, fields: item.fields ?? []})),
         } : {}),
         ...(finding.kind === 'model-access-boundary' ? {
           reviewedPostFields: (proofSurface?.jsonBodyOperations ?? [])

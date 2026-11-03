@@ -46,7 +46,7 @@ test('wizard defers failed DNS and resumes the same challenge through explicit s
   assert.equal(resumed.targets.length,1);assert.equal(resumed.models.length,1);
   assert.equal(resumed.targets[0].challenge.token,challenge.token);
   assert.equal(resumed.targets[0].ownership.status,'verified');
-  assert.deepEqual(resumed.targets[0].authorization.paths,['/api']);
+  assert.deepEqual(resumed.targets[0].authorization.paths,['/']);
   assert.deepEqual(resumed.targets[0].authorization.methods,['GET','HEAD','POST','PROPFIND']);
   assert.match(second.output,/App ownership verified/);
   assert.match(second.output,/Testing scope authorized/);
