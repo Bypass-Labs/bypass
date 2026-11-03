@@ -7,7 +7,7 @@ import path from 'node:path';
 import { VERSION } from '../util.mjs';
 import {safeAssetHint} from './asset-interpret.mjs';
 
-const SEVERITIES = ['critical', 'high', 'medium', 'low', 'info'];
+const SEVERITIES = ['critical', 'high', 'medium', 'low', 'info', 'unrated'];
 const RESOLVED = new Set(['confirmed', 'not_reproduced', 'shared', 'public']);
 const OPEN = new Set(['inconclusive', 'blocked']);
 // The generic canary oracle proves a response transformation, not a security boundary.
@@ -975,13 +975,16 @@ function markdownFinding(finding) {
   return [
     '', `### ${finding.id} · ${finding.title}`, '',
     `- Host: ${finding.host}`,
-    `- Verdict: ${researchBehavior(finding) ? 'Observed response transformation; security impact unverified' : 'Confirmed security finding'}`,
+    `- Verdict: ${researchBehavior(finding) ? 'Observed response transformation; security impact unverified' :
+      /fresh-(?:positive-)?marker-controls/.test(finding.rule ?? '') ?
+        'Confirmed source-assisted response effect; security impact inferred from cited source' :
+        'Confirmed security finding'}`,
     `- Severity: ${researchBehavior(finding) ? 'unrated' : finding.severity} · ${researchBehavior(finding) ? 'Security impact has not been established' : finding.rationale}`,
     `- Classification: ${finding.owasp ?? 'none'} · ${finding.cwe ?? 'none'}`,
     `- Pattern: ${code(finding.pattern)} · URL: ${code(finding.url)}`,
     `- Found by: ${finding.foundBy} · task ${finding.task ?? 'none'} · status ${finding.status}`,
     `- Tags: ${finding.tags.length ? finding.tags.join(', ') : 'none'}`,
-    ...(finding.modelHypothesis ? [`- Muse hypothesis: ${code(finding.modelHypothesis.family)} · ${code(finding.modelHypothesis.why ?? 'no rationale supplied')}. ${finding.kind === 'public-session-token' ? 'The public owner-token replay is proved; the broader family label remains a hypothesis.' : finding.kind === 'model-access-boundary' ? 'The owner-only record disclosure is independently proved; the proposed mechanism remains a hypothesis.' : finding.kind === 'model-cookie-access' ? 'Fresh arbitrary cookie values crossed the measured page gate; the broader family label remains a hypothesis.' : finding.kind === 'model-raw-boundary' ? 'The exact model-authored request crossed the measured access boundary under fresh controls; the broader mechanism remains a hypothesis.' : finding.kind === 'model-sequence-boundary' ? 'The exact model-authored sequence crossed a denied-status boundary twice with fresh controls; the broader mechanism remains a hypothesis.' : 'The response behavior below is observed; this hypothesis and its security impact are not established by the generic canary check.'}`] : []),
+    ...(finding.modelHypothesis ? [`- Muse hypothesis: ${code(finding.modelHypothesis.family)} · ${code(finding.modelHypothesis.why ?? 'no rationale supplied')}. ${finding.kind === 'public-session-token' ? 'The public owner-token replay is proved; the broader family label remains a hypothesis.' : finding.kind === 'model-access-boundary' ? 'The owner-only record disclosure is independently proved; the proposed mechanism remains a hypothesis.' : finding.kind === 'model-cookie-access' ? 'Fresh arbitrary cookie values crossed the measured page gate; the broader family label remains a hypothesis.' : finding.kind === 'model-raw-boundary' ? finding.rule?.includes('fresh-positive-marker-controls') ? 'The exact model-authored request produced a distinct response marker twice under fresh controls; the proposed security impact remains a hypothesis.' : 'The exact model-authored request crossed the measured access boundary under fresh controls; the broader mechanism remains a hypothesis.' : finding.kind === 'model-sequence-boundary' ? finding.webProof?.oracle === 'marker-proof' ? 'The exact model-authored sequence produced distinct response markers twice under fresh controls; the proposed security impact remains a hypothesis.' : 'The exact model-authored sequence crossed a denied-status boundary twice with fresh controls; the broader mechanism remains a hypothesis.' : 'The response behavior below is observed; this hypothesis and its security impact are not established by the generic canary check.'}`] : []),
     ...(finding.kind === 'model-differential' && finding.webProof?.prelude?.length ?
       [`- Muse-selected read-only prelude: ${finding.webProof.prelude.map(code).join(', ')}. The proof repeats these requests before each control and probe.`] : []),
     ...(finding.kind === 'public-session-token' ? [`- Replay input: extract ${code(finding.webProof.tokenPointer)} from the public JSON response into ${code('$PUBLIC_SESSION_TOKEN')}; the proof does this in memory and stores no token value.`] : []),

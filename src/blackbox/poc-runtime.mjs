@@ -594,6 +594,18 @@ export function cookieAccessOutcome(responses) {
     reason: 'fresh arbitrary values for the named cookie repeatedly opened a distinct response; missing and wrong-name controls stayed closed'};
 }
 
+function requestSuppliesMarker(material, marker) {
+  const submitted = typeof material === 'string' ? material : JSON.stringify(material);
+  let decoded = submitted;
+  while (true) {
+    if (decoded.includes(marker)) return true;
+    const next = decoded.replace(/%([0-9a-f]{2})/gi, (_match, byte) =>
+      String.fromCharCode(Number.parseInt(byte, 16)));
+    if (next === decoded) return false;
+    decoded = next;
+  }
+}
+
 /** Replay model-authored requests and compare an access boundary, never a label alone. */
 export function rawBoundaryOutcome(responses, proof, candidateRequests = []) {
   if (!Array.isArray(responses) || responses.length !== 6)
@@ -633,10 +645,30 @@ export function rawBoundaryOutcome(responses, proof, candidateRequests = []) {
       signature(candidateA) === signature(candidateB) &&
       (!(closedText && openText) || controls.every(closed)))
     return {verdict: 'not_reproduced', reason: 'candidate and controls returned the same response'};
+  if (openText && (closedText === openText ||
+      requestSuppliesMarker(candidateRequests, openText)))
+    return {verdict: 'inconclusive',
+      reason: 'the positive marker is ambiguous or supplied by the request itself'};
+  // An in-band effect can have different public and negative-control bodies.
+  // The positive marker still proves the effect if only fresh candidates show it.
+  if (openText && (!closedText || !controls.every(closed))) {
+    const hasMarker = item => String(item.body ?? '').includes(openText);
+    if (controls.every(item => !hasMarker(item)) &&
+        candidates.every(item => item.status >= 200 && item.status < 300 &&
+          hasMarker(item)))
+      return {verdict: 'confirmed', proofMode: 'positive-marker',
+        reason: 'positive response marker repeated in fresh candidates and was absent from both controls'};
+    if (controls.every(item => !hasMarker(item)) &&
+        candidates.every(item => !hasMarker(item)) &&
+        signature(baselineA) === signature(baselineB) &&
+        signature(negativeA) === signature(negativeB) &&
+        signature(candidateA) === signature(candidateB))
+      return {verdict: 'not_reproduced',
+        reason: 'positive response marker was absent from stable candidate and control replays'};
+    return {verdict: 'inconclusive',
+      reason: 'positive response marker did not repeat only in candidates'};
+  }
   if (closedText && openText) {
-    if (closedText === openText || JSON.stringify(candidateRequests).includes(openText))
-      return {verdict: 'inconclusive',
-        reason: 'the positive marker is ambiguous or supplied by the request itself'};
     const opened = item => item.status >= 200 && item.status < 300 &&
       String(item.body ?? '').includes(openText) &&
       !String(item.body ?? '').includes(closedText);
@@ -1781,6 +1813,9 @@ export function validModelHttpSequence(spec) {
   const browserSequence = spec?.kind === 'model-browser-execution';
   const statusBoundary = spec?.kind === 'model-sequence-boundary' &&
     spec.oracle === 'status-boundary';
+  const markerProof = spec?.kind === 'model-sequence-boundary' &&
+    spec.oracle === 'marker-proof';
+  const repeatedBoundary = statusBoundary || markerProof;
   const contentSequence = spec?.kind === 'model-access-boundary' &&
     ['sequence-exact-body', 'sequence-json-field'].includes(spec.comparison);
   const markers = contentSequence || browserSequence || statusBoundary ? [] :
@@ -1789,7 +1824,7 @@ export function validModelHttpSequence(spec) {
     !value.startsWith('//') && value.length <= 512 &&
     !/[\\;%#{}]/.test(value.split('?')[0]) &&
     !/(?:^|\/)\.{1,2}(?:\/|$)/.test(value.split('?')[0]);
-  if (spec?.kind !== 'model-http-sequence' && !statusBoundary &&
+  if (spec?.kind !== 'model-http-sequence' && !repeatedBoundary &&
       !contentSequence && !browserSequence ||
       !['anonymous', 'owner', 'outsider', 'derived'].includes(spec.as) ||
       !object(subject) || !object(assertion) ||
@@ -1805,7 +1840,7 @@ export function validModelHttpSequence(spec) {
       assertion.location === 'header' && !['location', 'content-type', 'link',
         'www-authenticate'].includes(assertion.name?.toLowerCase()) ||
       assertion.location === 'body' && assertion.name != null && assertion.name !== '' ||
-      statusBoundary && (!Array.isArray(spec.methods) ||
+      repeatedBoundary && (!Array.isArray(spec.methods) ||
         [subject, ...spec.prelude, ...spec.observe]
           .some(step => !spec.methods.includes(step.method))))
     return false;
@@ -1967,7 +2002,12 @@ async function checkModelHttpSequence(spec, env) {
         reason: 'Anonymous and invalid-bearer controls did not establish the protected route', controls};
   }
   const browserSequence = spec.kind === 'model-browser-execution';
-  const statusBoundary = spec.kind === 'model-sequence-boundary';
+  const statusBoundary = spec.kind === 'model-sequence-boundary' &&
+    spec.oracle === 'status-boundary';
+  const markerProof = spec.kind === 'model-sequence-boundary' &&
+    spec.oracle === 'marker-proof';
+  const repeatedBoundary = statusBoundary || markerProof;
+  let markerSubmitted = false;
   const browserStyle = value => XSS_STYLES.has(value) ? value :
     /script-close|<\/script/i.test(String(value)) ? 'script-close' :
       /html-single|^'/.test(String(value)) ? 'html-single' : 'html-double';
@@ -1976,10 +2016,10 @@ async function checkModelHttpSequence(spec, env) {
   const values = browserSequence ? [spec.controlValue,
     xssPayload(browserStyle(spec.firstValue), browserMarkers[0]),
     xssPayload(browserStyle(spec.secondValue), browserMarkers[1])] :
-    statusBoundary ? [spec.controlValue, spec.firstValue, spec.secondValue,
+    repeatedBoundary ? [spec.controlValue, spec.firstValue, spec.secondValue,
       spec.controlValue, spec.firstValue, spec.secondValue] :
       [spec.controlValue, spec.firstValue, spec.secondValue];
-  const labels = statusBoundary ? ['control-a', 'candidate-a', 'negative-a',
+  const labels = repeatedBoundary ? ['control-a', 'candidate-a', 'negative-a',
     'control-b', 'candidate-b', 'negative-b'] :
     ['control', 'probe-one', 'probe-two'];
   const credentialEnvNames = new Set(spec.credentialEnvNames ?? []);
@@ -2065,6 +2105,9 @@ async function checkModelHttpSequence(spec, env) {
       if (Buffer.byteLength(body) > 4096)
         throw Error('Model sequence request body exceeds its byte limit.');
     }
+    if (markerProof && [spec.marker, spec.secondMarker].some(marker =>
+      requestSuppliesMarker({method: step.method, url: url.href, headers, body}, marker)))
+      markerSubmitted = true;
     await pace(spec);
     const response = await guardedRequest(url, {method: step.method, headers, body,
       allowRemoteHttp: spec.allowRemoteHttp === true && identity === 'anonymous',
@@ -2135,6 +2178,30 @@ async function checkModelHttpSequence(spec, env) {
   const extract = response => spec.assertion.location === 'body' ? response.body :
     String(response.headers[spec.assertion.name.toLowerCase()] ?? '');
   const outputs = observed.map(extract);
+  if (markerProof) {
+    const hasFirst = output => output.includes(spec.marker);
+    const hasSecond = output => output.includes(spec.secondMarker);
+    controls.push(...observed.map((response, index) => ({
+      label: `${labels[index]}-assertion`, status: response.status,
+      marker: hasFirst(outputs[index]), secondMarker: hasSecond(outputs[index])})));
+    if (markerSubmitted) return {verdict: 'inconclusive',
+      reason: 'a candidate marker was supplied by a resolved request', controls};
+    if ([0, 3].some(index => hasFirst(outputs[index]) || hasSecond(outputs[index])))
+      return {verdict: 'inconclusive',
+        reason: 'fresh control response contained a candidate marker', controls};
+    const first = [1, 4].every(index => observed[index].status >= 200 &&
+      observed[index].status < 300 && hasFirst(outputs[index]) &&
+      !hasSecond(outputs[index]));
+    const second = [2, 5].every(index => observed[index].status >= 200 &&
+      observed[index].status < 300 && hasSecond(outputs[index]) &&
+      !hasFirst(outputs[index]));
+    if (first && second) return {verdict: 'confirmed',
+      reason: 'two distinct candidate markers repeated in their matching responses with fresh controls', controls};
+    const absent = [1, 2, 4, 5].every(index =>
+      !hasFirst(outputs[index]) && !hasSecond(outputs[index]));
+    return {verdict: absent ? 'not_reproduced' : 'inconclusive',
+      reason: 'candidate markers did not repeat in the matching response phases', controls};
+  }
   if (browserSequence) {
     const path = spec.assertion.step === 'subject' ? spec.subject.path :
       spec.observe[spec.assertion.index]?.path;
