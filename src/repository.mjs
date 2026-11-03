@@ -28,7 +28,7 @@ const sourcePattern=/\.(?:[cm]?[jt]sx?|py|go|rb|rs|java|kt|kts|php|c|cc|cpp|cxx|
 const actionSource=file=>/\.ya?ml$/.test(file)&&(file.startsWith('.github/workflows/')||/(?:^|\/)action\.ya?ml$/.test(file));
 function ignored(file,patterns) {
   const pieces=file.split('/');
-  if(file.startsWith('tests/security/bypass/')||/^(?:check_[a-z0-9_-]+\.test|bypass-regression-runtime)\.mjs$/.test(pieces.at(-1)))return true;
+  if(file.startsWith('tests/security/bypass/')||/^tests\/security\/blackbox(?:-[^/]+)?\//.test(file)||/^(?:check_[a-z0-9_-]+\.test|bypass-regression-runtime)\.mjs$/.test(pieces.at(-1)))return true;
   if(pieces.some(p=>['.git','.bypass','node_modules','.next','dist','build','coverage','.venv'].includes(p)))return true;
   if(pieces.some(p=>/^\.env(?:\.|$)/.test(p)||/\.(?:pem|key|p12)$/.test(p)))return true;
   return patterns.some(p=>p.endsWith('/') ? file.includes(p) : p.includes('*') ? new RegExp('(^|/)'+p.split('*').map(s=>s.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')).join('.*')+'$').test(file) : pieces.includes(p)||file===p);

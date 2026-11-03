@@ -1,7 +1,6 @@
 import { need, hash } from './util.mjs';
 
 export const GITHUB_POLICY_PATH='.github/bypass.json';
-export const SOURCE_CATEGORIES=['cross-account-access','missing-authentication','injection','ssrf','sensitive-data-exposure','path-traversal','unsafe-deserialization','security-configuration'];
 export const sha=value=>typeof value==='string'&&/^[a-f0-9]{40}$/.test(value);
 export const sourcePath=value=>typeof value==='string'&&value.length<500&&!value.startsWith('/')&&!value.includes('\\')&&!value.split('/').some(p=>!p||p==='.'||p==='..')&&!value.split('/').some(p=>/^\.env(?:\.|$)|^(?:node_modules|vendor|dist|build|\.git|\.bypass)$/.test(p))&&/\.(?:[cm]?[jt]sx?|py|go|rb|rs|java|php)$/.test(value);
 const object=value=>value&&typeof value==='object'&&!Array.isArray(value);

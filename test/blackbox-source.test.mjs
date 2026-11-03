@@ -3,8 +3,38 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import http from 'node:http';
 import path from 'node:path';
+import {randomBytes} from 'node:crypto';
 import {temp, cli} from './helpers.mjs';
 import {reviewSource} from '../src/blackbox/source.mjs';
+
+test('source-assisted review keeps methods and body fields from literal JavaScript route guards', async t => {
+  const root = temp();
+  t.after(() => fs.rmSync(root, {recursive: true, force: true}));
+  const suffix = randomBytes(5).toString('hex');
+  const first = `/api/start-${suffix}`, second = `/api/finish-${suffix}`,
+    third = `/api/plain-${suffix}`;
+  const firstField = `request${suffix}`, secondField = `ticket${suffix}`;
+  fs.writeFileSync(path.join(root, 'server.ts'),
+    `if (method === 'POST' && path === '${first}') {\n` +
+    `  const body = await readJson(req);\n  use(body.${firstField});\n}\n` +
+    `if (path === '${second}' && method === 'PATCH') {\n` +
+    `  const body = JSON.parse(await readBody(req));\n  use(body['${secondField}']);\n}\n` +
+    `if (method === 'DELETE' && path === '${third}') {\n` +
+    `  use(req.body.${firstField});\n}\n`);
+  const result = await reviewSource(root);
+  assert.ok(result.endpoints.some(item => item.path === first &&
+    item.method === 'POST' && item.bodyFields?.includes(firstField) &&
+    item.bodyEncoding === 'json'),
+  JSON.stringify(result.endpoints));
+  assert.ok(result.endpoints.some(item => item.path === second &&
+    item.method === 'PATCH' && item.bodyFields?.includes(secondField) &&
+    item.bodyEncoding === 'json'),
+  JSON.stringify(result.endpoints));
+  assert.ok(result.endpoints.some(item => item.path === third &&
+    item.method === 'DELETE' && item.bodyEncoding === undefined));
+  assert.ok(!result.endpoints.some(item => [first, second, third].includes(item.path) &&
+    item.method === 'UNKNOWN'));
+});
 
 test('source-assisted review extracts routes and sends only redacted excerpts to Muse', async t => {
   const root = temp();

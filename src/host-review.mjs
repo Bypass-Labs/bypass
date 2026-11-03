@@ -16,6 +16,89 @@ import { id, now, named, need, outcome, hash, abortFault, redact } from './util.
 const HOST_SOURCE_BYTES=2000000;
 const hostReader=(root,inv)=>sourceReader(root,inv,{maxBytes:HOST_SOURCE_BYTES});
 
+function focusedValidationRuns(root, sourceRun, origin) {
+  const dir=path.join(root,'.bypass','runs');
+  const latest=new Map(),all=[];
+  if(!fs.existsSync(dir))return {latest,all};
+  for(const entry of fs.readdirSync(dir)){
+    if(!entry.startsWith('bx-'))continue;
+    try{
+      const saved=JSON.parse(fs.readFileSync(path.join(dir,entry,'run.json'),'utf8'));
+      if(!saved.focus?.findingId||saved.scope?.target?.origin!==origin||
+        !sourceRun.result?.findings?.includes(saved.focus.findingId)||
+        Date.parse(saved.startedAt)<Date.parse(sourceRun.startedAt))continue;
+      saved.sealedFindings=focusedProofs(path.join(dir,entry),saved);
+      all.push(saved);
+      const previous=latest.get(saved.focus.findingId);
+      if(!previous||Date.parse(saved.startedAt)>Date.parse(previous.startedAt))latest.set(saved.focus.findingId,saved);
+    }catch{ /* Ignore unrelated or unfinished run folders. */ }
+  }
+  return {latest,all};
+}
+
+function focusedProofs(runDir, saved) {
+  let findings;
+  try {findings=JSON.parse(fs.readFileSync(path.join(runDir,'findings.json'),'utf8'));}
+  catch {return [];}
+  if(!Array.isArray(findings))return [];
+  const origin=saved.scope.target.origin;
+  const focusPath=new URL(saved.focus.path,origin).pathname;
+  const proofRoot=path.resolve(runDir,'poc')+path.sep;
+  return findings.filter(finding=>{
+    if(finding.verdict!=='confirmed'||typeof finding.proof!=='string')return false;
+    const proof=path.resolve(finding.proof);
+    const specFile=path.join(path.dirname(proof),'spec.json');
+    if(!proof.startsWith(proofRoot)||path.basename(proof)!=='poc.mjs'||
+      !fs.existsSync(proof)||!fs.existsSync(specFile))return false;
+    let spec;
+    try {spec=JSON.parse(fs.readFileSync(specFile,'utf8'));}
+    catch {return false;}
+    const steps=[spec.request,spec.subject,...(Array.isArray(spec.prelude)?spec.prelude:[]),
+      ...(Array.isArray(spec.observe)?spec.observe:[]),
+      ...(Array.isArray(spec.rawRequests)?spec.rawRequests:[])];
+    return [finding.url,finding.pattern,...steps.map(step=>
+      typeof step==='string'?step:step?.path??step?.url)].some(value=>{
+      if(typeof value!=='string')return false;
+      try {const url=new URL(value,origin);return url.origin===origin&&url.pathname===focusPath;}
+      catch {return false;}
+    });
+  });
+}
+
+function budgetForRun(run, focusedRuns) {
+  const {modelCalls,minutes}=run.options??{};
+  if(modelCalls==null||minutes==null)return null;
+  const modelCallsUsed=focusedRuns.reduce((sum,saved)=>sum+(saved.stats?.modelCalls??0),0);
+  const modelCallsRemaining=Math.max(0,modelCalls-modelCallsUsed);
+  const minutesRemaining=Math.max(0,(Date.parse(run.startedAt)+minutes*60000-Date.now())/60000);
+  return {modelCalls,minutes,modelCallsUsed,modelCallsRemaining,minutesRemaining,
+    exhausted:modelCallsRemaining===0||minutesRemaining===0};
+}
+
+export function combinedFocusBudget(root, findingId) {
+  const state=read(root);
+  const run=state.runs.filter(item=>item.executionMode==='muse-host'&&item.host?.mode==='combined'&&
+    item.result?.findings?.includes(findingId))
+    .sort((a,b)=>Date.parse(b.startedAt)-Date.parse(a.startedAt))[0];
+  if(!run||run.options?.modelCalls==null||run.options?.minutes==null)return null;
+  const target=state.targets.find(item=>item.name===run.host.target);
+  if(!target?.url)return null;
+  return {...budgetForRun(run,focusedValidationRuns(root,run,target.url).all),
+    rps:run.host.scope?.maxRequestsPerSecond,reviewRunId:run.id};
+}
+
+function focusedOutcome(saved) {
+  if(!saved)return {status:'pending'};
+  const counts=saved.stats??{};
+  const status=!saved.finishedAt?'running':saved.sealedFindings.length?'confirmed':
+    counts.confirmed>0||counts.inconclusive>0?'inconclusive':counts.blocked>0?'blocked':
+    counts.notReproduced>0?'not-reproduced':'untested';
+  return {status,runId:saved.run,proofs:saved.sealedFindings.map(item=>item.id),
+    counts:{confirmed:counts.confirmed??0,
+    notReproduced:counts.notReproduced??0,inconclusive:counts.inconclusive??0,
+    blocked:counts.blocked??0,tasks:counts.tasks??0}};
+}
+
 export function hostPlan(state, options={}) {
   const mode=options.mode||state.settings.reviewMode||'combined';need(['code','live','combined'].includes(mode),'Invalid review mode.');
   need(!(options.base&&options.full),'Choose base or full, not both.');
@@ -28,15 +111,70 @@ export function hostPlan(state, options={}) {
     dataFlow:{source:'Returned to the active Muse session on request',inference:'Muse host only; plugin API calls disabled',evidence:'Local .bypass/runs'},
     message:'Bounded authentication and account-boundary POC; source hypotheses alone are not confirmed vulnerabilities.'};
 }
-const receipt=(root,run)=>{const work=workProgress(run,read(root));return ({runId:run.id,status:run.status,executionMode:'muse-host',pluginModelCalls:0,simulation:false,coverageComplete:false,
+const receipt=(root,run)=>{const state=read(root),work=workProgress(run,state);
+  const target=state.targets.find(item=>item.name===run.host?.target);
+  const approved=run.host?.scope;
+  const setup=approved&&target?.url?{url:target.url,include:approved.paths.join(','),
+    methods:approved.methods.join(','),rps:approved.maxRequestsPerSecond,
+    environment:target.environment,
+    out:`blackbox.focus.${hash({url:target.url,scope:approved}).slice(0,12)}.scope.json`}:null;
+  const focused=target?.url?focusedValidationRuns(root,run,target.url):{latest:new Map(),all:[]};
+  const combinedBudget=run.host?.mode==='combined'?budgetForRun(run,focused.all):null;
+  const runLimits=combinedBudget&&!combinedBudget.exhausted?
+    {'model-calls':combinedBudget.modelCallsRemaining,minutes:combinedBudget.minutesRemaining}:null;
+  if(runLimits&&setup)Object.assign(setup,runLimits);
+  const hostConfirmed=new Set(run.result?.confirmed??[]);
+  const liveValidation=run.host?.mode==='combined'&&target?.url?
+    (run.result?.findings??[]).map(id=>state.findings.find(item=>item.id===id))
+      .filter(item=>item?.sourceEvidence?.kind==='source')
+      .map(item=>({finding:item.id,title:item.title,path:item.resourcePath,
+        source:item.sourceEvidence,tool:'bypass_blackbox_start',url:target.url,
+        setup:setup&&item.resourcePath?{tool:'bypass_blackbox_setup',arguments:setup}:null,
+        runLimits,
+        ...(hostConfirmed.has(item.id)?{status:'confirmed',runId:run.id,proofSource:'host-probe'}:
+          !item.resourcePath?{status:'blocked',reason:'No concrete application path was supplied for focused validation.'}:
+            focusedOutcome(focused.latest.get(item.id))),
+        message:item.resourcePath?'Use the exact approved setup, then start with finding set to this ID. Record its terminal outcome and continue the remaining findings.':
+          'Record this source lead as blocked until a concrete application path is observed or supplied.'})) : [];
+  const pendingValidation=liveValidation.filter(item=>item.status==='pending');
+  const runningValidation=liveValidation.find(item=>item.status==='running');
+  const confirmedValidation=liveValidation.filter(item=>item.status==='confirmed')
+    .map(item=>({finding:item.finding,title:item.title,runId:item.runId,
+      ...(item.proofs?{proofs:item.proofs}:{}),
+      ...(item.proofSource?{proofSource:item.proofSource}:{})}));
+  for(const id of hostConfirmed){
+    if(confirmedValidation.some(item=>item.finding===id))continue;
+    const finding=state.findings.find(item=>item.id===id);
+    if(finding)confirmedValidation.push({finding:id,title:finding.title,runId:run.id,proofSource:'host-probe'});
+  }
+  const remediation=['completed','incomplete'].includes(run.status)&&
+    !runningValidation&&(!pendingValidation.length||combinedBudget?.exhausted)&&confirmedValidation.length?
+    {confirmed:confirmedValidation,untested:pendingValidation.map(item=>item.finding),
+    message:`Offer to fix all confirmed issues and open a PR. Application edits require the user to select that remediation action.${pendingValidation.length?` ${pendingValidation.length} source leads remain untested due the combined audit limit.`:''}`}:null;
+  return ({runId:run.id,status:run.status,executionMode:'muse-host',pluginModelCalls:0,simulation:false,coverageComplete:false,
   assessmentPolicy,work,continueRequired:run.status==='awaiting_host'&&work.pending>0,
   progress:{stage:run.stage,work,lastCompleted:run.steps.at(-1)||null,elapsedSeconds:Math.floor((Date.now()-Date.parse(run.startedAt))/1000),waitingSeconds:Math.floor((Date.now()-Date.parse(run.steps.at(-1)?.at||run.startedAt))/1000),waitingFor:run.status==='awaiting_host'?'Muse reasoning; no internal worker':null,resume:{tool:'bypass_review_step',arguments:{id:run.id,action:run.status==='cancelled'?'resume':'status'}},cancel:{tool:'bypass_stop_run',arguments:{id:run.id}}},
-  evidence:`${root}/.bypass/runs/${run.id}.json`,findings:run.result?.findings||[],probes:run.result?.probes||[],registration:run.result?.registration,coverageGaps:run.result?.coverageGaps||[],
+  evidence:`${root}/.bypass/runs/${run.id}.json`,findings:run.result?.findings||[],liveValidation,combinedBudget,remediation,
+  liveValidationProgress:{total:liveValidation.length,completed:liveValidation.length-pendingValidation.length-Number(!!runningValidation),pending:pendingValidation.length,running:runningValidation?.finding??null},
+  probes:run.result?.probes||[],registration:run.result?.registration,coverageGaps:run.result?.coverageGaps||[],
   outcomes:{confirmed:run.result?.confirmed||[],notRun:run.result?.notRun||null,executionFailures:run.result?.probes?.filter(p=>p.status==='blocked').map(p=>({resource:p.resource,reason:p.reason}))||[]},
-  nextAction:['completed','incomplete'].includes(run.status)?{tool:run.result?.findings?.length?'bypass_findings':'bypass_run',arguments:run.result?.findings?.length?{run:run.id}:{id:run.id}}:{tool:'bypass_review_step',arguments:{id:run.id,action:work.next.action,...work.next.arguments},message:work.next.message},
-  guidance:'Continue the assessment until the recorded worklist has no actionable pending work. A finding is an interim update, not permission to stop or fix code. Show Done / Now / Next, elapsed time, counts, and the honest estimate or uncertainty. Read source, configure supported probes, refresh, execute controls, and record specific blockers for remaining routes. Do not edit application source or configuration. Generate recommendations and regression artifacts. A separate explicit remediation request is required for fixes.'});};
+  nextAction:['completed','incomplete'].includes(run.status)?
+    (runningValidation?{tool:'bypass_blackbox_next',message:`Continue the focused validation of ${runningValidation.finding} in this Muse session.`}:
+      pendingValidation.length&&combinedBudget?.exhausted?{tool:'bypass_findings',arguments:{run:run.id},
+        message:`Combined audit limit reached. ${pendingValidation.length} source findings remain untested live; report them explicitly.${remediation?` ${remediation.message}`:''}`}:
+      pendingValidation.length&&setup?{tool:'bypass_blackbox_setup',arguments:setup,
+        finding:pendingValidation[0].finding,message:`Validate ${pendingValidation[0].finding}, then refresh this source run's status for the next finding. Do not stop after one.`}:
+        {tool:run.result?.findings?.length?'bypass_findings':'bypass_run',arguments:run.result?.findings?.length?{run:run.id}:{id:run.id},
+          ...(remediation?{message:remediation.message}:{})}):
+    {tool:'bypass_review_step',arguments:{id:run.id,action:work.next.action,...work.next.arguments},message:work.next.message},
+  guidance:remediation?'Present the proposed fixes and saved regressions for every confirmed issue, then offer the remediation choice. Only a separate explicit user selection authorizes application edits and a PR.':
+    'Continue the assessment until the recorded worklist has no actionable pending work. A finding is an interim update, not permission to stop or fix code. Show Done / Now / Next, elapsed time, counts, and the honest estimate or uncertainty. Read source, configure supported probes, refresh, execute controls, and record specific blockers for remaining routes. Do not edit application source or configuration. Generate recommendations and regression artifacts. A separate explicit remediation request is required for fixes.'});};
 export async function beginHostReview(root,options={},context={}) {
   const initial=read(root),plan=hostPlan(initial,options);need(!plan.blockers.length,plan.blockers.join(' '),3);
+  if(options.modelCalls!=null)need(Number.isSafeInteger(options.modelCalls)&&options.modelCalls>0,
+    'Muse decision-call limit must be a positive whole number.');
+  if(options.minutes!=null)need(Number.isFinite(options.minutes)&&options.minutes>0,
+    'Combined audit time limit must be a positive number of minutes.');
   if(plan.mode!=='live')await requireSource(root);
   const run={id:id('run'),kind:'scan',options,status:'awaiting_host',stage:'planning',createdAt:now(),startedAt:now(),steps:[],simulation:false,executionMode:'muse-host',modelCalls:0,
     host:{mode:plan.mode,target:plan.target,reads:[],sourceSubmitted:false,visited:[],operations:0},result:{engine:'host',simulation:false,modelCalls:0,findings:[],probes:[],coverageComplete:false}};

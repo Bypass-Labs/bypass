@@ -6,7 +6,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { runAgent } from '../agents/worker.mjs';
 import { containerArgs } from '../src/agent-runtime.mjs';
-import { parseModelJSON } from '../src/inference.mjs';
+import { parseModelJSON, modelResponseSchema } from '../src/inference.mjs';
 import { sourceReader, groundCandidates, executeRealScan } from '../src/real-engine.mjs';
 import { createRun, verifyFinding, executeRun } from '../src/engine.mjs';
 import { execute } from '../src/service.mjs';
@@ -75,7 +75,9 @@ test('source citations cannot invent files or lines, and source reads cannot fol
   reader.read(['app.mjs']);
   const candidate={category:'cross-account-access',file:'app.mjs',line:1,quote:'made up',title:'A',hypothesis:'B',recommendation:'C'};
   assert.throws(()=>groundCandidates([candidate],reader,inv),/did not match/);
-  candidate.quote='const actual = true;';assert.equal(groundCandidates([candidate],reader,inv).length,1);
+  candidate.quote='const actual = true;';candidate.category='command-injection';
+  assert.equal(groundCandidates([candidate],reader,inv)[0].category,'command-injection');
+  assert.equal(modelResponseSchema('white-box').properties.candidates.items.properties.category.enum,undefined);
 });
 
 test('large application files are paged and only delivered lines can support a hypothesis',async()=>{

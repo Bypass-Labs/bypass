@@ -12,7 +12,7 @@ import { mineOrigin, maskSecrets } from './assets.mjs';
 import {interpretAssets, applyAssetProposals} from './asset-interpret.mjs';
 import {discover} from './discovery.mjs';
 import {interpretDiscovery} from './discovery-interpret.mjs';
-import { establishIdentities } from './auth.mjs';
+import { establishIdentities, credentialNames } from './auth.mjs';
 import { recon, sensitivePathMatches, scanSensitivePaths } from './recon.mjs';
 import {anonymousSurface, deriveLocalPostScope} from './anonymous.mjs';
 import {reconObservedRoutes, observedExposureMatches} from './robots-directory.mjs';
@@ -36,6 +36,7 @@ import {planGraphqlBola} from './graphql-bola.mjs';
 import {followupInconclusive} from './followup.mjs';
 import {auditPublicPrivateKeys, auditPublicCredentials} from './secret-exposure.mjs';
 import {lookupAdvisories} from './advisories.mjs';
+import {sourceFindingFocus, checkLiveRevision} from './focus.mjs';
 
 const RESEARCH_KINDS = new Set(['model-differential', 'model-json-differential', 'model-http-sequence']);
 const ACCEPTED_RESEARCH_CHECKPOINT = /^(?:json-experiment|access-boundary)(?:-derived-[0-9a-f]{12})?(?:-queue-[0-9a-f]{12})?-checkpoint\.json$/;
@@ -249,7 +250,9 @@ function selectedModel(root, name, env = process.env) {
 export async function runAudit({url, root = process.cwd(), scopeFile = null, overrides = {}, env = process.env,
   noModel = false, dryRun = false, noDiscovery = false, offline = false, modelName = null, infer = modelInfer,
   modelProfileOverride = null,
-  resolve = null, ct = null, connectTls = null, osvQuery = null, sourcePath = null, log = () => {}, out = null,
+  resolve = null, ct = null, connectTls = null, osvQuery = null, sourcePath = null,
+  findingId = null, focusPath = null, revisionPath = null, revisionField = null,
+  log = () => {}, out = null,
   signal = null,
   resumeFrom = null} = {}) {
   need(url, 'Provide a target origin URL: bypass blackbox <url>.');
@@ -265,6 +268,11 @@ export async function runAudit({url, root = process.cwd(), scopeFile = null, ove
     path.join(priorDir, 'run.json') : path.join(priorDir, 'run-start.json'));
   const prior = metadataFile && fs.existsSync(metadataFile) ?
     JSON.parse(fs.readFileSync(metadataFile, 'utf8')) : null;
+  const focus = findingId || prior?.focus?.findingId ?
+    await sourceFindingFocus(projectRoot, findingId ?? prior.focus.findingId,
+      focusPath ?? prior?.focus?.path ?? null) : null;
+  const effectiveRevisionPath = revisionPath ?? prior?.revisionPath ?? null;
+  const effectiveRevisionField = revisionField ?? prior?.revisionField ?? 'revision';
   const effectiveOverrides = {...overrides, testResolver: !!resolve};
   const savedLimits = prior?.effectiveLimits ?? prior?.scope?.limits;
   for (const [flag, limit] of [['rps', 'rps'],
@@ -398,7 +406,9 @@ export async function runAudit({url, root = process.cwd(), scopeFile = null, ove
   atomic(path.join(runDir, 'run-start.json'), {run, status: 'running', scopeHash,
     origin: scope.target.origin, scopeFile: file ? path.resolve(file) : null,
     rps: scope.limits.rps, effectiveLimits: scope.limits,
-    startedAt, resumedFrom: resumeFrom});
+    startedAt, resumedFrom: resumeFrom,
+    ...(focus ? {focus, revisionPath: effectiveRevisionPath,
+      revisionField: effectiveRevisionField} : {})});
   const deadline = started + scope.limits.minutes * 60000;
   // Reserve enough time to execute and replay accepted work after Muse planning.
   const researchReserve = researchReportReserveMs(deadline - started);
@@ -408,8 +418,8 @@ export async function runAudit({url, root = process.cwd(), scopeFile = null, ove
   const protectedEarlyDeadline = started + Math.floor((researchDeadline - started) * 0.4);
   const primaryAfterSessionDeadline = started + Math.floor((researchDeadline - started) * 0.7);
   const secrets = [scope.identities.owner.env, scope.identities.outsider.env,
-    scope.identities.owner.login?.usernameEnv, scope.identities.owner.login?.passwordEnv,
-    scope.identities.outsider.login?.usernameEnv, scope.identities.outsider.login?.passwordEnv]
+    ...['owner', 'outsider'].flatMap(identity =>
+      Object.values(credentialNames(scope, identity)))]
     .filter(Boolean).map(name => env[name]).filter(Boolean);
   // Copy every accepted queue into the new ledger before executing any of
   // them. A deadline or interruption leaves the unstarted work resumable.
@@ -440,6 +450,10 @@ export async function runAudit({url, root = process.cwd(), scopeFile = null, ove
     }
   }
   const ledger = createLedger(runDir, {run, redactFields: scope.harvest.redactFields, secrets});
+  if (focus) ledger.append({step: 'recon', kind: 'source-finding-handoff',
+    findingId: focus.findingId, path: focus.path, method: focus.method,
+    source: focus.source, sourceSnapshotMatches: focus.sourceSnapshotMatches,
+    sourceRevision: focus.sourceRevision});
   const events = [];
   const say = item => { events.push({at: now(), ...item}); log(item); };
   let liveRequests = 0, liveModelCalls = 0;
@@ -554,7 +568,7 @@ export async function runAudit({url, root = process.cwd(), scopeFile = null, ove
     const auditLimiter = createLimiter(scope.limits.rps);
     const anonymousRequester = createRequester(scope, {ledger, limiter: auditLimiter,
       env: {}, allowLocal, log: say, run, signal, deadline});
-    if (scope.domains.length && !noDiscovery) {
+    if (scope.domains.length && !noDiscovery && !focus) {
       discovery = await discover(scope, {requester: anonymousRequester, ledger, ...(resolve ? {resolve} : {}),
         ...(ct ? {ct} : {}), ...(connectTls ? {connectTls} : {}),
         infer: model ? invokeModel : null, model, offline, log: say});
@@ -565,15 +579,39 @@ export async function runAudit({url, root = process.cwd(), scopeFile = null, ove
     }
     phase('done', 1, 'Scope and host discovery');
     phase('doing', 2, 'Recon: assets and source');
-    observedRoutes = await reconObservedRoutes(scope, anonymousRequester, {deadline, log: say});
+    if (focus) {
+      const response = await anonymousRequester({url: focus.path, identity: 'anonymous',
+        method: 'GET', step: 'recon', purpose: 'task'});
+      observedRoutes = {routes: [{path: new URL(focus.path, scope.target.origin).pathname,
+        method: 'GET', sources: [{source: 'source-finding', findingId: focus.findingId}],
+        status: response.status ?? null, type: response.type ?? null,
+        hash: response.hash ?? null, evidenceId: response.evidenceId ?? null,
+        links: 0, listing: false}], exposures: [],
+        assetPages: /html/i.test(response.type ?? '') ? [focus.path] : [],
+        stats: {routes: 1, requested: 1, listings: 0, filesChecked: 0,
+          filesUnfetched: 0, exposures: 0, queued: 0, cuts: {}}};
+      say({stage: 'recon', message: `Focused source finding ${focus.findingId}: ${focus.path}`});
+    } else observedRoutes = await reconObservedRoutes(scope, anonymousRequester,
+      {deadline, log: say});
     const miningPages = [...new Set([...observedRoutes.assetPages,
       ...scope.discover.filter(item => item === '/' || /html?|docs/i.test(item))])];
     observedRoutes.stats.cuts.minedPages = Math.max(0, miningPages.length - 30);
     atomic(path.join(runDir, 'observed-routes.json'), observedRoutes);
     mined = await mineOrigin(scope.target.origin, {requester: anonymousRequester, assetHosts: scope.discovery.assetHosts,
       workers: scope.limits.agents,
-      crawlPaths: scope.include,
-      pages: miningPages.slice(0, 30), log: say});
+      crawlPaths: focus ? [] : scope.include,
+      pages: focus ? [focus.path] : miningPages.slice(0, 30),
+      ...(focus ? {maxPages: 1} : {}), log: say});
+    if (focus) {
+      const focusedPathname = new URL(focus.path, scope.target.origin).pathname;
+      mined.endpoints = mined.endpoints.filter(item => {
+        try {return new URL(item.path, scope.target.origin).pathname === focusedPathname;}
+        catch {return false;}
+      });
+    }
+    if (focus && !mined.endpoints.some(item => item.path === focus.path))
+      mined.endpoints.push({path: focus.path, method: 'GET', params: [],
+        source: 'source-finding', evidenceId: observedRoutes.routes[0].evidenceId});
     const knownEndpoints = new Set(mined.endpoints.map(item => `${item.method} ${item.path}`));
     for (const item of observedRoutes.routes.filter(item =>
       (item.status === 200 && (/html|json|xml/i.test(item.type ?? '') || item.listing)) ||
@@ -590,17 +628,21 @@ export async function runAudit({url, root = process.cwd(), scopeFile = null, ove
       const available = Math.max(0, scope.limits.modelCalls - modelInvocations - reserve);
       return Math.min(available, Math.ceil(available / 4));
     };
-    if (sourcePath) {
-      sourceReview = await reviewSource(sourcePath, {infer: model ? invokeModel : null, model,
+    if (sourcePath || focus && fs.existsSync(path.join(projectRoot, focus.source.file))) {
+      sourceReview = await reviewSource(sourcePath ?? projectRoot, {
+        infer: !focus && model ? invokeModel : null, model,
         origin: scope.target.origin,
         maxModelPages: reconModelPages(10), log: say});
       stats.modelCalls += sourceReview.modelCalls;
       modelError = modelError ?? sourceReview.modelError;
-      mined.endpoints.push(...sourceReview.endpoints, ...sourceReview.proposals.map(path => ({path, method: 'GET',
-        params: [], source: 'model:source'})));
+      mined.endpoints.push(...(focus ? sourceReview.endpoints.filter(item =>
+        item.file === focus.source.file || item.path === focus.path) :
+        sourceReview.endpoints),
+      ...(!focus ? sourceReview.proposals.map(path => ({path, method: 'GET',
+        params: [], source: 'model:source'})) : []));
       atomic(path.join(runDir, 'source.json'), sourceReview);
     }
-    if (model) {
+    if (model && !focus) {
       const assetHosts = (discovery?.hosts ?? []).filter(host => host.assets?.files?.length);
       assetAnalysis = await interpretAssets([mined, ...assetHosts.map(host => host.assets)],
         {infer: invokeModel, model,
@@ -630,7 +672,8 @@ export async function runAudit({url, root = process.cwd(), scopeFile = null, ove
     atomic(path.join(runDir, 'assets.json'), mined);
     phase('done', 2, 'Recon: assets and source');
     phase('doing', 3, 'Recon: routes and responses');
-    const localPosts = await deriveLocalPostScope(scope, mined, anonymousRequester);
+    const localPosts = await deriveLocalPostScope(focus ? {...scope, discover: []} : scope,
+      mined, anonymousRequester);
     if (localPosts.admitted.length || localPosts.authAdmitted.length || localPosts.skipped.length) {
       atomic(path.join(runDir, 'local-post-contracts.json'), {admitted: localPosts.admitted,
         authAdmitted: localPosts.authAdmitted, skipped: localPosts.skipped});
@@ -638,6 +681,11 @@ export async function runAudit({url, root = process.cwd(), scopeFile = null, ove
     }
     const sessions = await establishIdentities(localPosts.scope, {mined, requester: anonymousRequester,
       env, ledger, allowLocal, log: say});
+    // Keep configured login values available only in the audit's private
+    // execution environment; plans and proofs refer to their env names.
+    for (const identity of ['owner', 'outsider'])
+      for (const name of Object.values(credentialNames(sessions.scope, identity)))
+        if (typeof env[name] === 'string' && env[name]) sessions.env[name] = env[name];
     const requester = createRequester(sessions.scope, {ledger, limiter: auditLimiter,
       env: sessions.env, allowLocal, log: say, run, signal, deadline});
     const ownerSecret = sessions.env[sessions.scope.identities.owner.env];
@@ -715,8 +763,9 @@ export async function runAudit({url, root = process.cwd(), scopeFile = null, ove
       say({stage: 'identity', message: 'Two distinct, usable credentials with the same declared role are needed for the current account-boundary runner.'});
       const [mappedResult, exposureResult] = await Promise.allSettled([
         anonymousSurface(sessions.scope, requester, mined),
-        scanSensitivePaths(sessions.scope, requester,
-          {mined, routes: observedRoutes.routes, modelNotes: assetAnalysis?.notes ?? []}),
+        focus ? Promise.resolve({exposures: [], stats: {}, selection: null}) :
+          scanSensitivePaths(sessions.scope, requester,
+            {mined, routes: observedRoutes.routes, modelNotes: assetAnalysis?.notes ?? []}),
       ]);
       if (mappedResult.status === 'rejected') throw mappedResult.reason;
       if (exposureResult.status === 'rejected') throw exposureResult.reason;
@@ -741,7 +790,9 @@ export async function runAudit({url, root = process.cwd(), scopeFile = null, ove
           {files: sourceReview.files, notes: sourceReview.notes, secretLeads: sourceReview.secretLeads,
             stats: sourceReview.stats,
             modelCoverage: model ? sourceReview.modelCoverage : null} : null};
-      const followup = await followupResponseHints(scope.target.origin, sessions.scope, surface.patterns,
+      const followup = focus ? {patterns: [], coverage: {routesAvailable: 0,
+        routesReviewed: 0, pagesAvailable: 0, pagesSent: 0}, modelCalls: 0,
+        modelError: null} : await followupResponseHints(scope.target.origin, sessions.scope, surface.patterns,
         {requester, infer: model ? invokeModel : null, model,
           // Leave at least half of the remaining calls for hypothesis planning,
           // execution feedback and proof assessment after recursive recon.
@@ -756,6 +807,15 @@ export async function runAudit({url, root = process.cwd(), scopeFile = null, ove
       atomic(path.join(runDir, 'tasks.json'), plan);
     }
     surface.routeRecon = observedRoutes;
+    if (focus) {
+      surface.focus = {...focus,
+        revision: await checkLiveRevision(focus, requester,
+          effectiveRevisionPath, effectiveRevisionField)};
+      surface.modelNotes ??= [];
+      surface.modelNotes.unshift({path: focus.path, methods: [focus.method],
+        parameters: [], purpose: focus.title, why: focus.hypothesis});
+      atomic(path.join(runDir, 'focus.json'), surface.focus);
+    }
     surface.exposures.push(...observedRoutes.exposures);
     for (const record of surface.patterns ?? []) {
       const observed = observedRoutes.routes.find(item => item.path === record.pattern);
@@ -764,7 +824,9 @@ export async function runAudit({url, root = process.cwd(), scopeFile = null, ove
           hash: observed.hash ?? null, evidenceId: observed.evidenceId, shape: null};
     }
     surface.authBodyOperations ??= Object.values(sessions.scope.localAuthPostContracts ?? {});
-    surface.graphql = await inspectGraphql(sessions.scope, {requester,
+    surface.graphql = focus ? {attempts: [], operations: [], modelCalls: 0,
+      coverage: {pagesAvailable: 0, pagesSent: 0, fieldsCut: 0, pathsCut: 0}} :
+      await inspectGraphql(sessions.scope, {requester,
       observed: [...(mined.endpoints ?? []), ...(surface.patterns ?? []), ...(surface.exposures ?? [])],
       allowOwner: ownerReady,
       infer: model ? invokeModel : null, model,
@@ -798,7 +860,7 @@ export async function runAudit({url, root = process.cwd(), scopeFile = null, ove
     }
     atomic(path.join(runDir, 'graphql.json'), surface.graphql);
     atomic(path.join(runDir, 'surface.json'), surface);
-    credentialAudits = await auditCredentialOrigins(scope, {discovery, env, primary: sessions, ledger,
+    credentialAudits = focus ? [] : await auditCredentialOrigins(scope, {discovery, env, primary: sessions, ledger,
       infer: model ? invokeModel : null, model, dryRun, run, deadline,
       taskBudget: Math.max(0, taskLimit - plan.tasks.length),
       remainingModelCalls: () => scope.limits.modelCalls - modelInvocations - 2, log: say});
@@ -1112,7 +1174,7 @@ export async function runAudit({url, root = process.cwd(), scopeFile = null, ove
         return used;
       };
       const captureProvedAccess = item => provedAccessQueue.push(item);
-      Object.defineProperty(surface, 'onConfirmedAccess',
+      if (!focus) Object.defineProperty(surface, 'onConfirmedAccess',
         {value: captureProvedAccess, configurable: true});
       const onConfirmedSession = async ({lead, loginProof, principalFingerprint,
         requestAuthenticated, derivedBearer, derivedCookie}) => {
@@ -1337,7 +1399,7 @@ export async function runAudit({url, root = process.cwd(), scopeFile = null, ove
             researchDeadline) : researchDeadline,
         maxModelPages: webModelShare(activeHosts + credentialAudits.length + 1),
         remainingModelCalls: primaryModelCallsLeft,
-        onConfirmedSession,
+        onConfirmedSession: focus ? null : onConfirmedSession,
         onFlowPageCheckpoint: onFlowPageCheckpoint('primary'),
         flowPagePass: 'primary',
         resumeResearch: resumeFlowDerived ? null : resumeResearch,
@@ -1814,7 +1876,7 @@ export async function runAudit({url, root = process.cwd(), scopeFile = null, ove
           scopeHash, origin: scope.target.origin, resumedFrom: resumeFrom,
           updatedAt: now(), pending: paths});
       };
-      let feedbackPending = [...resumeFeedback.map(path => ({path, evidenceId: null})),
+      let feedbackPending = focus ? [] : [...resumeFeedback.map(path => ({path, evidenceId: null})),
         ...[primaryWeb, ...derivedWeb].flatMap(item => item.responsePathHints ?? [])]
         .filter(item => !feedbackSeen.has(item.path));
       checkpointFeedback(feedbackPending);
@@ -2153,6 +2215,11 @@ export async function runAudit({url, root = process.cwd(), scopeFile = null, ove
     const oneAccountStatus = oneAccountChecks ? `${oneAccountChecks} bounded anonymous missing-authentication checks ran` :
       'no one-account access-control check ran because no configured identity route or verified owner-bound sensitive item was reached';
     const limitations = [
+        ...(focus ? [`Focused validation of source finding ${focus.findingId}; routes outside this finding were not independently audited.`,
+          ...(focus.sourceSnapshotMatches === false ?
+            ['The source checkout changed after this finding was recorded; its cited source hypothesis may be stale.'] : []),
+          ...(surface.focus?.revision?.status !== 'matched' ?
+            [`Source and live build revision ${surface.focus?.revision?.status ?? 'unverified'}; a live proof establishes behavior on the target, not that this checkout produced it.`] : [])] : []),
         ...(assessmentModelCut ? ['Muse assessed ' + assessment.modelCoverage.findingsSent +
           ' of ' + assessment.modelCoverage.findingsAvailable + ' independently proved findings in ' +
           assessment.modelCoverage.pagesSent + ' of ' + assessment.modelCoverage.pagesAvailable +
@@ -2355,6 +2422,8 @@ export async function runAudit({url, root = process.cwd(), scopeFile = null, ove
     } : null;
     const runState = {run, status: dryRun ? 'dry-run' : exitCode === 3 ? 'incomplete' : 'partial', scopeHash,
       resumedFrom: resumeFrom, scopeFile: file ? path.resolve(file) : null,
+      ...(focus ? {focus, revisionPath: effectiveRevisionPath,
+        revisionField: effectiveRevisionField} : {}),
       rps: scope.limits.rps,
       scope: sessions.scope, effectiveScopeHash: hash(JSON.stringify(sessions.scope)),
       localPostContracts: localPosts.admitted.length,

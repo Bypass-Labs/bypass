@@ -1050,6 +1050,24 @@ test('requester sends credential-named inputs while redacting their values', asy
   assert.ok(!post.body.includes(bodyValue));
 });
 
+test('short captured values are hidden in saved URLs without changing HTTP responses', async t => {
+  const {api, ledger, request} = await requesterFixture(t);
+  const read = await request({url: '/api/items/inv-101?ticket=1&view=all',
+    step: 'task', noCache: true, omitExcerpt: true, redactValues: ['1']});
+  assert.equal(read.status, 200);
+  assert.equal(JSON.parse(read.body).id, 'inv-101');
+  assert.equal(JSON.parse(read.body).total, 120);
+  const pathRead = await request({url: '/api/1?ticket=1', step: 'task',
+    noCache: true, omitExcerpt: true, redactValues: ['1']});
+  assert.equal(pathRead.status, 404);
+  assert.equal(api.hits['/api/1'], 1);
+  const records = ledgerLines(ledger).map(line => JSON.parse(line));
+  assert.equal(records[0].request.url,
+    `${api.origin}/api/items/inv-101?ticket=[REDACTED]&view=all`);
+  assert.equal(records[1].request.url,
+    `${api.origin}/api/[REDACTED]?ticket=[REDACTED]`);
+});
+
 test('requester: a timeout is recorded as blocked, not retried and not cached', async t => {
   const {api, ledger, request} = await requesterFixture(t);
   const started = performance.now();

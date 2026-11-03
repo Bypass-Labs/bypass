@@ -15,7 +15,8 @@ test('app connection asks for one missing input; never infers a remote environme
   assert.equal(missing.input.choices,undefined);assert.equal(missing.arguments,undefined);
   for(const url of ['https://staging.example.com','https://production.example.com']){
     const remote=appConnection({url});assert.equal(remote.id,'environment');assert.equal(remote.url,url);
-    assert.deepEqual(remote.input.choices.map(c=>c.id),['production','staging','preview','local']);
+    assert.deepEqual(remote.input.choices.map(c=>c.id),['production','staging','preview']);
+    assert.ok(remote.input.choices.length<=3,'native environment picker accepts at most three choices');
     assert.equal(remote.input.default,undefined);assert.equal(remote.automatic,undefined);
   }
   for(const url of ['localhost:4173','127.0.0.1:4173','http://[::1]:4173']){

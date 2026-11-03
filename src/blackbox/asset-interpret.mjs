@@ -9,8 +9,8 @@ const ROUTES_PER_UNIT = 16;
 const HINTS_PER_UNIT = 4;
 const HINTS_PER_FILE = 32;
 const UNITS_PER_PAGE = 4;
-const MAX_CONTEXT_BYTES = 24000;
-const SOURCE_CHARS_PER_UNIT = 3800;
+const MAX_CONTEXT_BYTES = 96 * 1024;
+const SOURCE_CHARS_PER_UNIT = 16 * 1024;
 const SOURCE_OVERLAP = 120;
 
 const clean = (value, limit = 300) => maskExcerpt(maskSecrets(String(value ?? '')))

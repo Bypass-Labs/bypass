@@ -403,6 +403,7 @@ function summarySection(findings, results, web) {
 function scopeSection(scope, surface, stats, dropped, recheck) {
   const identity = surface?.identity ?? {};
   return {
+    focus: surface?.focus ?? null,
     domains: scope.domains ?? [], auditDomains: scope.discovery?.auditDomains ?? [],
     include: scope.include ?? [], never: scope.never ?? [], limits: scope.limits ?? {},
     credentialOrigins: scope.credentialOrigins ?? [scope.target.origin],
@@ -561,6 +562,7 @@ function findingSection(finding, result, scope, ledger) {
     rationale: `${classes} · ${finding.reach.basis}`,
     reproduction: steps,
     curl: (['xss-dom-fragment', 'jwt-unsigned', 'model-json-differential', 'model-http-sequence',
+      'model-sequence-boundary',
       'model-cookie-access', 'model-raw-boundary',
       'model-browser-execution',
       'model-access-boundary', 'xss-stored'].includes(finding.kind) ||
@@ -774,6 +776,9 @@ function markdownScope(scope) {
     `- Domains: ${list(scope.domains)}`,
     `- Active descendant audit domains: ${list(scope.auditDomains)}`,
     `- Include: ${list(scope.include)}`,
+    ...(scope.focus ? [`- Focused source finding: ${code(scope.focus.findingId)} — ${scope.focus.title} (${code(scope.focus.path)})`,
+      `- Source citation snapshot: ${scope.focus.sourceSnapshotMatches === true ? 'matches current checkout' : scope.focus.sourceSnapshotMatches === false ? 'changed since source review' : 'unverified'}`,
+      `- Source/live revision: ${scope.focus.revision?.status ?? 'unverified'}${scope.focus.revision?.sourceRevision ? ` · source ${code(scope.focus.revision.sourceRevision)}` : ''}${scope.focus.revision?.liveRevision ? ` · live ${code(scope.focus.revision.liveRevision)}` : ''}`] : []),
     `- Never: ${list(scope.never)}`,
     `- Limits: ${Object.entries(scope.limits).map(([name, value]) => `${name} ${value}`).join(' · ') || 'defaults'}`,
     `- Credential origins: ${list(scope.credentialOrigins)}`,
@@ -976,7 +981,7 @@ function markdownFinding(finding) {
     `- Pattern: ${code(finding.pattern)} · URL: ${code(finding.url)}`,
     `- Found by: ${finding.foundBy} · task ${finding.task ?? 'none'} · status ${finding.status}`,
     `- Tags: ${finding.tags.length ? finding.tags.join(', ') : 'none'}`,
-    ...(finding.modelHypothesis ? [`- Muse hypothesis: ${code(finding.modelHypothesis.family)} · ${code(finding.modelHypothesis.why ?? 'no rationale supplied')}. ${finding.kind === 'public-session-token' ? 'The public owner-token replay is proved; the broader family label remains a hypothesis.' : finding.kind === 'model-access-boundary' ? 'The owner-only record disclosure is independently proved; the proposed mechanism remains a hypothesis.' : finding.kind === 'model-cookie-access' ? 'Fresh arbitrary cookie values crossed the measured page gate; the broader family label remains a hypothesis.' : finding.kind === 'model-raw-boundary' ? 'The exact model-authored request crossed the measured access boundary under fresh controls; the broader mechanism remains a hypothesis.' : 'The response behavior below is observed; this hypothesis and its security impact are not established by the generic canary check.'}`] : []),
+    ...(finding.modelHypothesis ? [`- Muse hypothesis: ${code(finding.modelHypothesis.family)} · ${code(finding.modelHypothesis.why ?? 'no rationale supplied')}. ${finding.kind === 'public-session-token' ? 'The public owner-token replay is proved; the broader family label remains a hypothesis.' : finding.kind === 'model-access-boundary' ? 'The owner-only record disclosure is independently proved; the proposed mechanism remains a hypothesis.' : finding.kind === 'model-cookie-access' ? 'Fresh arbitrary cookie values crossed the measured page gate; the broader family label remains a hypothesis.' : finding.kind === 'model-raw-boundary' ? 'The exact model-authored request crossed the measured access boundary under fresh controls; the broader mechanism remains a hypothesis.' : finding.kind === 'model-sequence-boundary' ? 'The exact model-authored sequence crossed a denied-status boundary twice with fresh controls; the broader mechanism remains a hypothesis.' : 'The response behavior below is observed; this hypothesis and its security impact are not established by the generic canary check.'}`] : []),
     ...(finding.kind === 'model-differential' && finding.webProof?.prelude?.length ?
       [`- Muse-selected read-only prelude: ${finding.webProof.prelude.map(code).join(', ')}. The proof repeats these requests before each control and probe.`] : []),
     ...(finding.kind === 'public-session-token' ? [`- Replay input: extract ${code(finding.webProof.tokenPointer)} from the public JSON response into ${code('$PUBLIC_SESSION_TOKEN')}; the proof does this in memory and stores no token value.`] : []),

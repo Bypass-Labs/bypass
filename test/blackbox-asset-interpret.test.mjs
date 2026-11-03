@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import {randomBytes} from 'node:crypto';
 import {interpretAssets, applyAssetProposals} from '../src/blackbox/asset-interpret.mjs';
 import {extractFromScript} from '../src/blackbox/assets.mjs';
 
@@ -59,6 +60,45 @@ test('asset model-call cuts are counted without claiming unseen files were inter
   assert.equal(result.coverage.routesSent, 4);
   assert.equal(result.coverage.pagesWithoutAcceptedUnits, 1);
   assert.match(result.modelError, /no usable file interpretations/);
+});
+
+test('a large client asset reaches Muse in practical pages without losing late source or route facts', async () => {
+  const lateMarker = `late_${randomBytes(6).toString('hex')}`;
+  const source = 'const ordinary = 1;\n'.repeat(145000) + `// ${lateMarker}\n`;
+  const endpoint = {path: '/api/items', method: 'POST', params: [],
+    bodyEncoding: 'json', bodyFields: ['name']};
+  const file = {url: 'https://app.example.test/main.js', hash: 'sha256:large',
+    endpoints: [endpoint], modelSource: [{name: 'main.js', text: source}]};
+  const chunks = [];
+  let sawRoute = false;
+  const result = await interpretAssets({files: [file], endpoints: [endpoint]},
+    {model: {model: 'fixture'}, maxPages: 200,
+      infer: async (_model, messages) => {
+        const context = JSON.parse(messages[1].content);
+        for (const unit of context.files) {
+          if (unit.sourceText) chunks.push({offset: unit.sourceOffset, text: unit.sourceText});
+          if (unit.routes.some(route => route.path === endpoint.path && route.method === 'POST'))
+            sawRoute = true;
+        }
+        return {files: context.files.map(unit => ({id: unit.id, role: 'app',
+          why: '', authFlow: '', routes: unit.routes.map(route => ({path: route.path,
+            method: route.method, purpose: 'Observed client request', parameters: []})),
+          proposals: []}))};
+      }});
+  assert.ok(result.coverage.pagesAvailable <= 50,
+    `Large asset required ${result.coverage.pagesAvailable} Muse calls`);
+  assert.equal(result.coverage.pagesSent, result.coverage.pagesAvailable);
+  assert.equal(result.coverage.sourceChunksSent, result.coverage.sourceChunksAvailable);
+  assert.equal(sawRoute, true);
+  assert.ok(chunks.some(chunk => chunk.text.includes(lateMarker)));
+  chunks.sort((a, b) => a.offset - b.offset);
+  let end = 0;
+  for (const chunk of chunks) {
+    assert.ok(chunk.offset <= end, 'source chunks must leave no gap');
+    assert.equal(chunk.text, source.slice(chunk.offset, chunk.offset + chunk.text.length));
+    end = Math.max(end, chunk.offset + chunk.text.length);
+  }
+  assert.equal(end, source.length);
 });
 
 test('an incomplete asset page does not hide later files from Muse', async () => {

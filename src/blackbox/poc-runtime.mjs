@@ -31,6 +31,62 @@ const replayBudget = new AsyncLocalStorage();
 export const MAX_SEQUENCE_STEPS = 8;
 const MAX_PROOF_REQUESTS = 128;
 const MAX_PROOF_MS = 60000;
+// A fresh jar belongs to one control or candidate phase, never the whole proof.
+// The same helper is used during research and replay so requests behave alike.
+export function createSequenceCookies() {
+  const entries = new Map();
+  return {
+    remember(lines, requestUrl) {
+      const url = new URL(requestUrl);
+      for (const line of [lines ?? []].flat()) {
+        const [pair, ...attributes] = String(line).split(';');
+        const at = pair.indexOf('=');
+        if (at <= 0) continue;
+        const name = pair.slice(0, at).trim();
+        const value = pair.slice(at + 1).trim();
+        if (!/^[!#$%&'*+.^_`|~0-9A-Za-z-]+$/.test(name) || /[\r\n\x00]/.test(value))
+          continue;
+        const options = Object.fromEntries(attributes.map(part => {
+          const equals = part.indexOf('=');
+          return [part.slice(0, equals < 0 ? undefined : equals).trim().toLowerCase(),
+            equals < 0 ? '' : part.slice(equals + 1).trim()];
+        }));
+        const domain = String(options.domain ?? url.hostname).replace(/^\./, '').toLowerCase();
+        const hostOnly = options.domain == null;
+        if (url.hostname !== domain && (hostOnly || !url.hostname.endsWith(`.${domain}`)))
+          continue;
+        const defaultPath = url.pathname.slice(0, url.pathname.lastIndexOf('/') + 1) || '/';
+        const path = options.path?.startsWith('/') ? options.path : defaultPath;
+        const age = options['max-age'] == null ? null : Number(options['max-age']);
+        const expires = Number.isFinite(age) ? Date.now() + age * 1000 :
+          options.expires ? Date.parse(options.expires) : Infinity;
+        const key = `${name}\0${domain}\0${path}`;
+        if (expires <= Date.now()) entries.delete(key);
+        else entries.set(key, {name, value, domain, path, hostOnly,
+          secure: 'secure' in options, expires});
+      }
+    },
+    header(requestUrl, explicit = '') {
+      const url = new URL(requestUrl);
+      const names = new Set(String(explicit).split(';').map(part => {
+        const at = part.indexOf('=');
+        return at > 0 ? part.slice(0, at).trim() : '';
+      }).filter(Boolean));
+      const parts = String(explicit).trim() ? [String(explicit).trim()] : [];
+      for (const cookie of [...entries.values()].sort((a, b) => b.path.length - a.path.length)) {
+        if (names.has(cookie.name) || cookie.expires <= Date.now() ||
+            (cookie.hostOnly ? url.hostname !== cookie.domain :
+              url.hostname !== cookie.domain && !url.hostname.endsWith(`.${cookie.domain}`)) ||
+            !(url.pathname === cookie.path || url.pathname.startsWith(
+              cookie.path.endsWith('/') ? cookie.path : `${cookie.path}/`)) ||
+            cookie.secure && url.protocol !== 'https:') continue;
+        parts.push(`${cookie.name}=${cookie.value}`);
+        names.add(cookie.name);
+      }
+      return parts.join('; ');
+    },
+  };
+}
 const domScriptLimit = value => Number.isSafeInteger(value) && value > 0 &&
   value <= 16 * 1024 * 1024 ? value : DOM_SCRIPT_BYTES;
 export const HTML_INJECTION_STYLES = Object.freeze(['plain', 'double-quote', 'single-quote',
@@ -117,11 +173,9 @@ export function validModelFixedFields(fields, parameter, markers = [], observedF
 }
 const SEQUENCE_POINTER = /^(?:\/[A-Za-z_][A-Za-z0-9_-]{0,63}){1,3}$/;
 const SEQUENCE_SECRET_FIELD = /(?:auth|bearer|cookie|credential|csrf|key|otp|pass|pin|secret|session|token)/i;
-const SEQUENCE_VALUE = /^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$/;
 export const validSequencePointer = pointer => typeof pointer === 'string' &&
-  SEQUENCE_POINTER.test(pointer) &&
-  !pointer.slice(1).split('/').some(name => SEQUENCE_SECRET_FIELD.test(name));
-/** A binding reads only a short, non-credential JSON scalar; its value is never in a proof spec. */
+  SEQUENCE_POINTER.test(pointer);
+/** A binding reads a JSON scalar; its value stays transient and out of proof specs. */
 export function sequencePointerType(shape, pointer) {
   if (!validSequencePointer(pointer)) return null;
   let current = shape;
@@ -142,9 +196,7 @@ export function captureSequenceScalar(body, pointer) {
   }
   const value = typeof current === 'number' && Number.isSafeInteger(current) && current >= 0 ?
     String(current) : typeof current === 'string' ? current : null;
-  if (!value || !SEQUENCE_VALUE.test(value) ||
-      value.length >= 24 && !/^\d{1,18}$/.test(value) &&
-      !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(value))
+  if (!value)
     return null;
   return value;
 }
@@ -174,13 +226,12 @@ export function uniqueJsonStringField(body, key) {
 export function boundSequencePath(path, binding, captured) {
   if (binding?.placement !== 'path') return path;
   if (typeof path !== 'string' || !Number.isInteger(binding.segment) ||
-      binding.segment < 0 || typeof captured !== 'string' ||
-      !SEQUENCE_VALUE.test(captured)) return null;
+      binding.segment < 0 || typeof captured !== 'string' || !captured) return null;
   let url;
   try {url = new URL(path, 'http://placeholder.invalid');} catch {return null;}
   const parts = url.pathname.split('/').slice(1);
   if (!parts[binding.segment]) return null;
-  parts[binding.segment] = captured;
+  parts[binding.segment] = encodeURIComponent(captured);
   return `/${parts.join('/')}${url.search}`;
 }
 export const validModelJsonPointer = pointer => typeof pointer === 'string' &&
@@ -522,17 +573,28 @@ export function rawBoundaryOutcome(responses, proof, candidateRequests = []) {
   const candidates = [candidateA, candidateB];
   const closedText = proof?.closedText ?? '';
   const openText = proof?.openText ?? '';
+  const closed = item => String(item.body ?? '').includes(closedText) &&
+    !String(item.body ?? '').includes(openText);
   const signature = item => JSON.stringify([item.status, item.type,
     item.hash ?? `sha256:${sha(item.body ?? '')}`]);
+  const contentType = item => String(item.type ?? item.headers?.['content-type'] ?? '');
+  if (candidates.every(item => item.status === 403 && /html/i.test(contentType(item))) &&
+      controls.every(item => item.status >= 200 && item.status < 300 &&
+        /json/i.test(contentType(item))))
+    return {verdict: 'inconclusive',
+      reason: 'candidate received 403 HTML while JSON controls succeeded; origin behavior was not proved'};
+  // A uniform HTML 403 can be an edge block, not evidence that the application
+  // rejected the candidate. Keep it inconclusive even when all six match.
+  if (candidates.every(item => item.status === 403 && /html/i.test(contentType(item))))
+    return {verdict: 'inconclusive', reason: 'candidate received an HTML access block'};
   if (controls.every(item => signature(item) === signature(candidateA)) &&
-      signature(candidateA) === signature(candidateB))
+      signature(candidateA) === signature(candidateB) &&
+      (!(closedText && openText) || controls.every(closed)))
     return {verdict: 'not_reproduced', reason: 'candidate and controls returned the same response'};
   if (closedText && openText) {
     if (closedText === openText || JSON.stringify(candidateRequests).includes(openText))
       return {verdict: 'inconclusive',
         reason: 'the positive marker is ambiguous or supplied by the request itself'};
-    const closed = item => String(item.body ?? '').includes(closedText) &&
-      !String(item.body ?? '').includes(openText);
     const opened = item => item.status >= 200 && item.status < 300 &&
       String(item.body ?? '').includes(openText) &&
       !String(item.body ?? '').includes(closedText);
@@ -541,6 +603,11 @@ export function rawBoundaryOutcome(responses, proof, candidateRequests = []) {
         reason: 'two fresh candidate replays crossed the recorded page boundary while both negative controls stayed closed'};
     if (controls.every(closed) && candidates.every(closed))
       return {verdict: 'not_reproduced', reason: 'candidate stayed on the same gated page as the controls'};
+    if (controls.every(closed) && signature(candidateA) === signature(candidateB) &&
+        candidates.every(item => [400, 401, 403, 404, 422].includes(item.status) &&
+          !/html/i.test(contentType(item)) && !String(item.body ?? '').includes(openText)))
+      return {verdict: 'not_reproduced',
+        reason: 'the application consistently rejected the candidate while controls remained available'};
     return {verdict: 'inconclusive', reason: 'page boundary markers were unstable across controls'};
   }
   if (closedText || openText)
@@ -551,6 +618,13 @@ export function rawBoundaryOutcome(responses, proof, candidateRequests = []) {
   if (controls.every(denied) && candidates.every(opened))
     return {verdict: 'confirmed',
       reason: 'two fresh candidate replays returned content from a route denied to both controls'};
+  if (controls.every(denied) && candidates.every(denied) &&
+      candidates.every(item => !/html/i.test(contentType(item))) &&
+      signature(baselineA) === signature(baselineB) &&
+      signature(negativeA) === signature(negativeB) &&
+      signature(candidateA) === signature(candidateB))
+    return {verdict: 'not_reproduced',
+      reason: 'candidate remained denied on two fresh replays while controls remained denied'};
   return {verdict: 'inconclusive',
     reason: 'the candidate did not establish a stable denied-to-allowed boundary'};
 }
@@ -860,8 +934,8 @@ function checkedUrl(spec, raw, {reviewedJsonPost = false, reviewedFlowPost = fal
   const pathOnly = (reviewedJsonPost &&
     ['model-json-differential', 'xss-stored'].includes(spec.kind) &&
     reviewedPostOrigin(spec) && url.pathname === spec.jsonPostPath &&
-    !url.search) || (reviewedFlowPost && ['model-http-sequence', 'model-access-boundary',
-      'model-state-change'].includes(spec.kind) &&
+    !url.search) || (reviewedFlowPost && ['model-http-sequence',
+      'model-sequence-boundary', 'model-access-boundary', 'model-state-change'].includes(spec.kind) &&
     reviewedPostOrigin(spec) && !url.search &&
     (['json', 'form'].some(placement =>
       spec.reviewedPostPaths?.[placement]?.includes(url.pathname)) ||
@@ -1507,10 +1581,34 @@ const sequenceTargetBindings = (spec, to, index, captures) =>
     .flatMap((binding, at) =>
     binding.to === to && binding.index === index ?
       [{binding, value: captures.get(at)}] : []);
+const sequenceDataBinding = item =>
+  !['path', 'header', 'cookie'].includes(item.binding.placement);
+const sequenceBoundHeaders = (headers, bound) => {
+  for (const {binding, value} of bound) {
+    if (binding.placement === 'header') headers[binding.key.toLowerCase()] = value;
+    if (binding.placement !== 'cookie') continue;
+    const previous = Object.entries(headers).filter(([name]) =>
+      name.toLowerCase() === 'cookie').at(-1)?.[1] ?? '';
+    for (const name of Object.keys(headers)) if (name.toLowerCase() === 'cookie')
+      delete headers[name];
+    headers.cookie = [...previous.split(';').map(part => part.trim()).filter(part =>
+      part && part.slice(0, part.indexOf('=')).trim() !== binding.key),
+    `${binding.key}=${value}`].join('; ');
+  }
+  return headers;
+};
+const sequenceBodyTemplate = (template, input, bound) =>
+  template.replaceAll('{{input}}', String(input)).replace(
+    /\{\{binding:([A-Za-z_][A-Za-z0-9_.-]*)\}\}/g, (placeholder, key) => {
+      const captured = bound.find(item => item.binding.key === key)?.value;
+      if (captured == null) throw Error('Model sequence binding was unavailable.');
+      return String(captured);
+    });
 const sequenceSuppliesField = (spec, to, index, key) =>
   Array.isArray(sequenceBindings(spec)) &&
   sequenceBindings(spec).some(binding => binding.to === to &&
-    binding.index === index && binding.key === key);
+    binding.index === index && binding.key === key &&
+    !['header', 'cookie'].includes(binding.placement));
 
 /** A sealed, model-directed sequence may prove a response transformation, not its impact. */
 function validSequenceBinding(spec) {
@@ -1530,8 +1628,7 @@ function validOneSequenceBinding(spec, binding, review) {
       binding.to === 'prelude' && (binding.index <= binding.from ||
         binding.index >= spec.prelude.length) ||
       !safeProbeParameter(binding.key) ||
-      !SEQUENCE_POINTER.test(binding.pointer ?? '') ||
-      binding.pointer.slice(1).split('/').some(name => SEQUENCE_SECRET_FIELD.test(name)))
+      !SEQUENCE_POINTER.test(binding.pointer ?? ''))
     return false;
   const source = spec.prelude[binding.from];
   const writeSource = !['GET', 'HEAD'].includes(source.method) &&
@@ -1550,7 +1647,8 @@ function validOneSequenceBinding(spec, binding, review) {
   const target = sequenceBindingTarget(spec, binding);
   if (!target || binding.to === 'subject' && binding.index !== 0 ||
       binding.to === 'observe' && !['GET', 'HEAD'].includes(target.method)) return false;
-  const placement = binding.placement === 'path' ? 'path' :
+  const placement = ['path', 'header', 'cookie'].includes(binding.placement) ?
+    binding.placement :
     binding.to === 'subject' ? target.placement : target.placement ?? 'query';
   if (placement === 'path') {
     if (!['GET', 'HEAD'].includes(target.method) ||
@@ -1568,6 +1666,13 @@ function validOneSequenceBinding(spec, binding, review) {
         /^\{[A-Za-z_][A-Za-z0-9_.-]{0,79}\}$/.test(part) ?
           Boolean(concrete[index]) : part === concrete[index]);
   }
+  if (placement === 'header' || placement === 'cookie')
+    return review.targetPath === target.path &&
+      review.targetPlacement === placement &&
+      Array.isArray(review.targetFields) &&
+      review.targetFields.includes(binding.key) &&
+      (placement === 'cookie' ||
+        validModelHeaders([{name: binding.key, value: 'captured'}]));
   const queryTarget = placement === 'query' ?
     new URL(target.path, 'http://placeholder.invalid') : null;
   const queryBindingConflict = queryTarget?.search &&
@@ -1632,14 +1737,18 @@ export function validModelHttpSequence(spec) {
   const subject = spec?.subject;
   const assertion = spec?.assertion;
   const browserSequence = spec?.kind === 'model-browser-execution';
+  const statusBoundary = spec?.kind === 'model-sequence-boundary' &&
+    spec.oracle === 'status-boundary';
   const contentSequence = spec?.kind === 'model-access-boundary' &&
     ['sequence-exact-body', 'sequence-json-field'].includes(spec.comparison);
-  const markers = contentSequence || browserSequence ? [] : [spec?.marker, spec?.secondMarker];
+  const markers = contentSequence || browserSequence || statusBoundary ? [] :
+    [spec?.marker, spec?.secondMarker];
   const safePath = value => typeof value === 'string' && value.startsWith('/') &&
     !value.startsWith('//') && value.length <= 512 &&
     !/[\\;%#{}]/.test(value.split('?')[0]) &&
     !/(?:^|\/)\.{1,2}(?:\/|$)/.test(value.split('?')[0]);
-  if (spec?.kind !== 'model-http-sequence' && !contentSequence && !browserSequence ||
+  if (spec?.kind !== 'model-http-sequence' && !statusBoundary &&
+      !contentSequence && !browserSequence ||
       !['anonymous', 'owner', 'outsider', 'derived'].includes(spec.as) ||
       !object(subject) || !object(assertion) ||
       !Array.isArray(spec.prelude) || !Array.isArray(spec.observe) ||
@@ -1653,18 +1762,21 @@ export function validModelHttpSequence(spec) {
       assertion.step === 'subject' && assertion.index != null && assertion.index !== 0 ||
       assertion.location === 'header' && !['location', 'content-type', 'link',
         'www-authenticate'].includes(assertion.name?.toLowerCase()) ||
-      assertion.location === 'body' && assertion.name != null && assertion.name !== '')
+      assertion.location === 'body' && assertion.name != null && assertion.name !== '' ||
+      statusBoundary && (!Array.isArray(spec.methods) ||
+        [subject, ...spec.prelude, ...spec.observe]
+          .some(step => !spec.methods.includes(step.method))))
     return false;
   const derivedStep = step => (step.as ?? spec.as) === 'derived';
   const stepValid = (step, to, index) => {
     if (!object(step) ||
         step.as !== undefined && !['anonymous', 'owner', 'outsider', 'derived'].includes(step.as) ||
         !safePath(step.path) ||
-        !validModelHeaders(step.headers ?? [], markers) ||
-        (step.headers ?? []).some(item => item.name.toLowerCase() === 'content-type'))
+        !validModelHeaders(step.headers ?? [], markers))
       return false;
     if (['GET', 'HEAD'].includes(step.method))
-      return step.placement == null && step.key == null && step.value == null;
+      return step.placement == null ? step.key == null && step.value == null :
+        ['query', 'header'].includes(step.placement);
     const operation = (step.method === 'POST' || SEQUENCE_WRITE_METHODS.has(step.method)) ?
       reviewedSequenceOperation(spec, step) : null;
     let typedScalar = step.valueEncoding == null || step.valueEncoding === 'string';
@@ -1693,13 +1805,12 @@ export function validModelHttpSequence(spec) {
           validModelHeaders([{name: step.key, value: step.value}], markers));
     if (step.path.includes('?')) return false;
     return step.placement === 'xml' ?
-      reviewedSequenceXmlTemplate(step, operation) : !step.bodyTemplate;
+      reviewedSequenceXmlTemplate(step, operation) : true;
   };
   if (spec.prelude.some((step, index) => !stepValid(step, 'prelude', index)) ||
       spec.observe.some((step, index) => !stepValid(step, 'observe', index)) ||
       !safePath(subject.path) ||
-      !validModelHeaders(subject.headers ?? [], markers) ||
-      (subject.headers ?? []).some(item => item.name.toLowerCase() === 'content-type')) return false;
+      !validModelHeaders(subject.headers ?? [], markers)) return false;
   const usesDerived = spec.as === 'derived' ||
     [...spec.prelude, ...spec.observe].some(derivedStep);
   if (usesDerived && (!['bearer', 'cookie'].includes(spec.auth) || !spec.derivedLogin ||
@@ -1708,7 +1819,8 @@ export function validModelHttpSequence(spec) {
         never: spec.never, targetEnvironment: spec.targetEnvironment,
         auth: spec.auth}))) return false;
   if (!(browserSequence ? true : contentSequence ? !contentBoundaryShapeReason(spec) :
-      validModelExperiment({...spec, parameter: subject.key})) ||
+      validModelExperiment({...spec, parameter: subject.key,
+        ...(statusBoundary ? {oracle: 'observation'} : {})})) ||
       !validSequenceBinding(spec)) return false;
   const staticRequests = JSON.stringify({prelude: spec.prelude, subject, observe: spec.observe});
   if (markers.some(marker =>
@@ -1735,7 +1847,6 @@ export function validModelHttpSequence(spec) {
       return false;
   } else {
     if (subject.method !== 'POST' && !reviewedWrite ||
-        (subject.headers ?? []).length ||
         subject.method === 'POST' &&
         !spec.reviewedPostPaths?.[subject.placement]?.includes(subject.path) &&
         !reviewedWrite ||
@@ -1814,6 +1925,7 @@ async function checkModelHttpSequence(spec, env) {
         reason: 'Anonymous and invalid-bearer controls did not establish the protected route', controls};
   }
   const browserSequence = spec.kind === 'model-browser-execution';
+  const statusBoundary = spec.kind === 'model-sequence-boundary';
   const browserStyle = value => XSS_STYLES.has(value) ? value :
     /script-close|<\/script/i.test(String(value)) ? 'script-close' :
       /html-single|^'/.test(String(value)) ? 'html-single' : 'html-double';
@@ -1822,20 +1934,32 @@ async function checkModelHttpSequence(spec, env) {
   const values = browserSequence ? [spec.controlValue,
     xssPayload(browserStyle(spec.firstValue), browserMarkers[0]),
     xssPayload(browserStyle(spec.secondValue), browserMarkers[1])] :
-    [spec.controlValue, spec.firstValue, spec.secondValue];
-  const labels = ['control', 'probe-one', 'probe-two'];
+    statusBoundary ? [spec.controlValue, spec.firstValue, spec.secondValue,
+      spec.controlValue, spec.firstValue, spec.secondValue] :
+      [spec.controlValue, spec.firstValue, spec.secondValue];
+  const labels = statusBoundary ? ['control-a', 'candidate-a', 'negative-a',
+    'control-b', 'candidate-b', 'negative-b'] :
+    ['control', 'probe-one', 'probe-two'];
+  const credentialEnvNames = new Set(spec.credentialEnvNames ?? []);
+  const resolveCredentialRefs = value => typeof value === 'string' ? value.replace(
+    /\{\{env:([A-Za-z_][A-Za-z0-9_]*)\}\}/g, (reference, name) => {
+      if (!credentialEnvNames.has(name) || typeof env[name] !== 'string' ||
+          !env[name]) throw Error('Configured credential reference is unavailable.');
+      return env[name];
+    }) : value;
   const fixedHeaders = step => Object.fromEntries((step.headers ?? []).map(item =>
-    [item.name.toLowerCase(), item.value]));
-  const issue = async (step, value, label, index, captures, to) => {
+    [item.name.toLowerCase(), resolveCredentialRefs(item.value)]));
+  const issue = async (step, value, label, index, captures, to, cookies) => {
     const write = step.method === 'POST' || SEQUENCE_WRITE_METHODS.has(step.method);
     const bodyWrite = write && SEQUENCE_BODY_PLACEMENTS.has(step.placement);
     const legacyPost = write && step.method === 'POST';
     const bound = sequenceTargetBindings(spec, to, index, captures);
     if (bound.some(item => item.value == null))
       throw Error('Model sequence binding was unavailable.');
-    const submittedValue = bound.find(item => item.binding.placement !== 'path' &&
-      item.binding.key === step.key)?.value ??
-      (step === spec.subject ? value : step.value);
+    const submittedValue = resolveCredentialRefs(bound.find(item =>
+      item.binding.key === step.key && (sequenceDataBinding(item) ||
+        item.binding.placement === step.placement))?.value ??
+      (step === spec.subject ? value : step.value));
     const identity = step === spec.subject ? spec.as : step.as ?? spec.as;
     const selectedPath = bound.filter(item => item.binding.placement === 'path')
       .reduce((path, item) => path && boundSequencePath(path,
@@ -1847,11 +1971,11 @@ async function checkModelHttpSequence(spec, env) {
       throw Error('Model sequence write is outside its reviewed exact path.');
     if (step.placement === 'query' && step.key) {
       for (const item of step.fixedFields ?? [])
-        url.searchParams.set(item.field, item.value);
+        url.searchParams.set(item.field, resolveCredentialRefs(item.value));
       url.searchParams.set(step.key, submittedValue);
     }
     if (!bodyWrite) for (const item of bound) {
-      if (item.binding.placement !== 'path')
+      if (sequenceDataBinding(item))
         url.searchParams.set(item.binding.key, item.value);
     }
     checkedUrl(spec, url.href, {reviewedFlowPost: legacyPost,
@@ -1865,27 +1989,36 @@ async function checkModelHttpSequence(spec, env) {
       ...fixedHeaders(step), 'cache-control': 'no-cache'};
     if (step.placement === 'header' && step.key)
       headers[step.key.toLowerCase()] = submittedValue;
+    sequenceBoundHeaders(headers, bound);
+    const explicitCookie = Object.entries(headers).filter(([name]) =>
+      name.toLowerCase() === 'cookie').at(-1)?.[1] ?? '';
+    for (const name of Object.keys(headers)) if (name.toLowerCase() === 'cookie')
+      delete headers[name];
+    const cookie = cookies.header(url, explicitCookie);
+    if (cookie) headers.cookie = cookie;
     let body = null;
     if (bodyWrite) {
       const writeContentType = legacyPost ? null :
         reviewedSequenceOperation(spec, step)?.contentType;
       if (step.placement === 'json') {
-        headers['content-type'] = writeContentType ?? 'application/json';
-        body = sequenceJsonBody({...Object.fromEntries((step.fixedFields ?? []).map(item =>
-          [item.field, item.value])), ...Object.fromEntries(bound
-          .filter(item => item.binding.placement !== 'path')
+        headers['content-type'] ??= writeContentType ?? 'application/json';
+        body = step.bodyTemplate ? sequenceBodyTemplate(step.bodyTemplate,
+          submittedValue, bound) : sequenceJsonBody({...Object.fromEntries((step.fixedFields ?? []).map(item =>
+          [item.field, resolveCredentialRefs(item.value)])), ...Object.fromEntries(bound
+          .filter(sequenceDataBinding)
           .map(item => [item.binding.key, item.value]))},
         step.key, submittedValue, step.valueEncoding);
       } else if (step.placement === 'form') {
-        headers['content-type'] = writeContentType ?? 'application/x-www-form-urlencoded';
-        body = new URLSearchParams(Object.fromEntries([
-          ...((step.fixedFields ?? []).map(item => [item.field, item.value])),
-          ...bound.filter(item => item.binding.placement !== 'path')
+        headers['content-type'] ??= writeContentType ?? 'application/x-www-form-urlencoded';
+        body = step.bodyTemplate ? sequenceBodyTemplate(step.bodyTemplate,
+          submittedValue, bound) : new URLSearchParams(Object.fromEntries([
+          ...((step.fixedFields ?? []).map(item => [item.field, resolveCredentialRefs(item.value)])),
+          ...bound.filter(sequenceDataBinding)
             .map(item => [item.binding.key, item.value]),
           [step.key, submittedValue]])).toString();
       } else {
-        headers['content-type'] = writeContentType ?? 'application/xml';
-        body = step.bodyTemplate.replace('{{input}}', submittedValue);
+        headers['content-type'] ??= writeContentType ?? 'application/xml';
+        body = sequenceBodyTemplate(step.bodyTemplate, submittedValue, bound);
       }
       if (Buffer.byteLength(body) > 4096)
         throw Error('Model sequence request body exceeds its byte limit.');
@@ -1894,6 +2027,7 @@ async function checkModelHttpSequence(spec, env) {
     const response = await guardedRequest(url, {method: step.method, headers, body,
       allowRemoteHttp: spec.allowRemoteHttp === true && identity === 'anonymous',
       maxBodyBytes: MODEL_RESPONSE_BYTES});
+    cookies.remember(response.headers?.['set-cookie'], url);
     controls.push({label: `${label}-${index}`, status: response.status,
       hash: `sha256:${sha(response.body)}`, cached: responseCached(response)});
     return response;
@@ -1902,9 +2036,10 @@ async function checkModelHttpSequence(spec, env) {
   for (const [variant, value] of values.entries()) {
     const label = labels[variant];
     const captures = new Map();
+    const cookies = createSequenceCookies();
     for (const [index, step] of spec.prelude.entries()) {
       const response = await issue(step, value, `${label}-prelude`, index,
-        captures, 'prelude');
+        captures, 'prelude', cookies);
       const setupSucceeded = ['GET', 'HEAD'].includes(step.method) ?
         response.status === 200 : response.status >= 200 && response.status < 300;
       if (!setupSucceeded || responseCached(response))
@@ -1922,14 +2057,14 @@ async function checkModelHttpSequence(spec, env) {
       }
     }
     const subject = await issue(spec.subject, value, `${label}-subject`, 0,
-      captures, 'subject');
+      captures, 'subject', cookies);
     if (subject.status == null || subject.status === 429 || subject.status >= 500 ||
         responseCached(subject)) return {verdict: 'inconclusive',
       reason: 'Model sequence subject was unavailable or cached', controls};
     const followups = [];
     for (const [index, step] of spec.observe.entries()) {
       const response = await issue(step, value, `${label}-observe`, index,
-        captures, 'observe');
+        captures, 'observe', cookies);
       if (response.status == null || response.status === 429 || response.status >= 500 ||
           responseCached(response)) return {verdict: 'inconclusive',
         reason: 'Model sequence observation was unavailable or cached', controls};
@@ -1937,6 +2072,23 @@ async function checkModelHttpSequence(spec, env) {
     }
     observed.push(spec.assertion.step === 'subject' ? subject :
       followups[spec.assertion.index]);
+  }
+  if (statusBoundary) {
+    const statuses = observed.map(item => item.status);
+    const closed = [0, 2, 3, 5].every(index => cleanDenied(observed[index]));
+    const candidateOpen = [1, 4].every(index =>
+      statuses[index] >= 200 && statuses[index] < 300);
+    controls.push(...observed.map((response, index) => ({
+      label: `${labels[index]}-assertion`, status: response.status,
+      cached: responseCached(response)})));
+    if (!closed) return {verdict: 'inconclusive',
+      reason: 'Both negative controls did not remain denied on fresh replay', controls};
+    if (candidateOpen) return {verdict: 'confirmed',
+      reason: 'Candidate crossed the status boundary twice with fresh sequence bindings',
+      controls};
+    return {verdict: [1, 4].every(index => cleanDenied(observed[index])) ?
+      'not_reproduced' : 'inconclusive',
+    reason: 'Candidate did not cross the status boundary twice', controls};
   }
   const extract = response => spec.assertion.location === 'body' ? response.body :
     String(response.headers[spec.assertion.name.toLowerCase()] ?? '');
@@ -2138,7 +2290,7 @@ async function checkModelContentSequence(spec, env) {
         'inconclusive', reason: 'Fresh derived login did not establish a session', controls};
   }
   const protectedUrl = checkedUrl(spec, spec.protectedPath);
-  const issue = async (step, value, captures, to, index, onRequest = null) => {
+  const issue = async (step, value, captures, to, index, cookies, onRequest = null) => {
     const subject = step === spec.subject;
     const write = step.method === 'POST' || SEQUENCE_WRITE_METHODS.has(step.method);
     const bodyWrite = write && SEQUENCE_BODY_PLACEMENTS.has(step.placement);
@@ -2146,8 +2298,9 @@ async function checkModelContentSequence(spec, env) {
     const bound = to ? sequenceTargetBindings(spec, to, index, captures) : [];
     if (bound.some(item => item.value == null))
       throw Error('Model sequence binding was unavailable.');
-    const submittedValue = bound.find(item => item.binding.placement !== 'path' &&
-      item.binding.key === step.key)?.value ?? (subject ? value : step.value);
+    const submittedValue = bound.find(item => item.binding.key === step.key &&
+      (sequenceDataBinding(item) || item.binding.placement === step.placement))
+      ?.value ?? (subject ? value : step.value);
     const identity = subject ? spec.as : step.as ?? spec.as;
     const selectedPath = bound.filter(item => item.binding.placement === 'path')
       .reduce((path, item) => path && boundSequencePath(path,
@@ -2164,7 +2317,7 @@ async function checkModelContentSequence(spec, env) {
       url.searchParams.set(step.key, submittedValue);
     }
     if (!bodyWrite) for (const item of bound) {
-      if (item.binding.placement !== 'path')
+      if (sequenceDataBinding(item))
         url.searchParams.set(item.binding.key, item.value);
     }
     checkedUrl(spec, url.href, {reviewedFlowPost: legacyPost,
@@ -2179,29 +2332,38 @@ async function checkModelContentSequence(spec, env) {
         [item.name.toLowerCase(), item.value])), 'cache-control': 'no-cache'};
     if (step.placement === 'header' && step.key && write)
       headers[step.key.toLowerCase()] = submittedValue;
+    sequenceBoundHeaders(headers, bound);
+    const explicitCookie = Object.entries(headers).filter(([name]) =>
+      name.toLowerCase() === 'cookie').at(-1)?.[1] ?? '';
+    for (const name of Object.keys(headers)) if (name.toLowerCase() === 'cookie')
+      delete headers[name];
+    const cookie = cookies.header(url, explicitCookie);
+    if (cookie) headers.cookie = cookie;
     let body = null;
     if (bodyWrite) {
-      headers['content-type'] = reviewedSequenceOperation(spec, step)?.contentType ??
+      headers['content-type'] ??= reviewedSequenceOperation(spec, step)?.contentType ??
         (step.placement === 'form' ? 'application/x-www-form-urlencoded' :
           step.placement === 'xml' ? 'application/xml' : 'application/json');
       const fixed = {...Object.fromEntries((step.fixedFields ?? [])
         .map(item => [item.field, item.value])),
-      ...Object.fromEntries(bound.filter(item => item.binding.placement !== 'path')
+      ...Object.fromEntries(bound.filter(sequenceDataBinding)
         .map(item => [item.binding.key, item.value]))};
-      body = step.placement === 'json' ?
+      body = step.bodyTemplate ? sequenceBodyTemplate(step.bodyTemplate,
+        submittedValue, bound) : step.placement === 'json' ?
         sequenceJsonBody(fixed, step.key, submittedValue,
           step.valueEncoding) :
         step.placement === 'form' ? new URLSearchParams({...fixed,
-          [step.key]: submittedValue}).toString() :
-          step.bodyTemplate.replace('{{input}}', submittedValue);
+          [step.key]: submittedValue}).toString() : null;
       if (Buffer.byteLength(body) > 4096)
         throw Error('Model sequence request body exceeds its byte limit.');
     }
     onRequest?.({url: url.href, headers, body});
     await pace(spec);
-    return guardedRequest(url, {method: step.method, headers, body,
+    const response = await guardedRequest(url, {method: step.method, headers, body,
       allowRemoteHttp: spec.allowRemoteHttp === true && identity === 'anonymous',
       maxBodyBytes: MODEL_RESPONSE_BYTES});
+    cookies.remember(response.headers?.['set-cookie'], url);
+    return response;
   };
   const runCandidate = async (value, options = {}) => {
     const steps = [];
@@ -2217,9 +2379,10 @@ async function checkModelContentSequence(spec, env) {
       return response;
     };
     const captures = new Map();
+    const cookies = createSequenceCookies();
     for (const [index, step] of spec.prelude.entries()) {
       const response = record(step,
-        await issue(step, value, captures, 'prelude', index, trackRequest),
+        await issue(step, value, captures, 'prelude', index, cookies, trackRequest),
         `prelude-${index}`);
       const setupSucceeded = ['GET', 'HEAD'].includes(step.method) ?
         response.status === 200 : response.status >= 200 && response.status < 300;
@@ -2235,14 +2398,14 @@ async function checkModelContentSequence(spec, env) {
       }
     }
     const subject = record(spec.subject,
-      await issue(spec.subject, value, captures, 'subject', 0, trackRequest),
+      await issue(spec.subject, value, captures, 'subject', 0, cookies, trackRequest),
       'subject');
     if (subject.status == null || subject.status === 429 || subject.status >= 500 ||
         responseCached(subject)) return incomplete();
     const observations = [];
     for (const [index, step] of spec.observe.entries()) {
       const response = record(step,
-        await issue(step, value, captures, 'observe', index, trackRequest),
+        await issue(step, value, captures, 'observe', index, cookies, trackRequest),
         `observe-${index}`);
       observations.push(response);
       if (response.status == null || response.status === 429 ||
@@ -2271,6 +2434,7 @@ async function checkModelContentSequence(spec, env) {
         const publicStep = {...boundSource, as: 'anonymous', headers: []};
         let response;
         try {response = await issue(publicStep, value, new Map(), null, 0,
+          createSequenceCookies(),
           trackRequest);} catch {
           response = {status: null, body: '', headers: {}, refused: true};
         }
@@ -3102,41 +3266,47 @@ async function checkSsrfLoopback(spec, env) {
         const headers = {...(identity === 'derived' ?
           sessionHeaders(spec.auth, derivedSession) :
           await headerFor(spec, identity, env, url)),
-          ...Object.fromEntries((step.headers ?? []).map(item => [item.name, item.value])),
+          ...Object.fromEntries((step.headers ?? []).map(item =>
+            [item.name.toLowerCase(), item.value])),
           'cache-control': 'no-cache'};
         let body;
         const write = !['GET', 'HEAD'].includes(step.method);
-        const submittedValue = bound.find(item => item.binding.placement !== 'path' &&
-          item.binding.key === step.key)?.value ??
+        const submittedValue = bound.find(item => item.binding.key === step.key &&
+          (sequenceDataBinding(item) || item.binding.placement === step.placement))
+          ?.value ??
           (step === subject ? value : step.value);
         if (step === subject || write) {
           if (step.placement === 'query') {
             for (const item of step.fixedFields ?? []) url.searchParams.set(item.field, item.value);
             url.searchParams.set(step.key, submittedValue);
-            for (const item of bound) if (item.binding.placement !== 'path')
+            for (const item of bound) if (sequenceDataBinding(item))
               url.searchParams.set(item.binding.key, item.value);
           } else if (step.placement === 'header') headers[step.key] = submittedValue;
           else {
             const fields = {...Object.fromEntries((step.fixedFields ?? []).map(item =>
               [item.field, item.value])), ...Object.fromEntries(bound
-              .filter(item => item.binding.placement !== 'path')
+              .filter(sequenceDataBinding)
               .map(item => [item.binding.key, item.value]))};
             if (step.placement === 'json') {
-              headers['content-type'] = step.contentType ?? 'application/json';
-              body = sequenceJsonBody(fields, step.key, submittedValue,
+              headers['content-type'] ??= step.contentType ?? 'application/json';
+              body = step.bodyTemplate ? sequenceBodyTemplate(step.bodyTemplate,
+                submittedValue, bound) : sequenceJsonBody(fields, step.key, submittedValue,
                 step.valueEncoding);
             } else if (step.placement === 'form') {
-              headers['content-type'] = step.contentType ?? 'application/x-www-form-urlencoded';
-              body = new URLSearchParams({...fields, [step.key]: submittedValue}).toString();
+              headers['content-type'] ??= step.contentType ?? 'application/x-www-form-urlencoded';
+              body = step.bodyTemplate ? sequenceBodyTemplate(step.bodyTemplate,
+                submittedValue, bound) : new URLSearchParams({...fields,
+                [step.key]: submittedValue}).toString();
             } else {
-              headers['content-type'] = step.contentType ?? 'application/xml';
-              body = step.bodyTemplate.replace('{{input}}', submittedValue);
+              headers['content-type'] ??= step.contentType ?? 'application/xml';
+              body = sequenceBodyTemplate(step.bodyTemplate, submittedValue, bound);
             }
           }
         } else for (const item of bound) {
-          if (item.binding.placement !== 'path')
+          if (sequenceDataBinding(item))
             url.searchParams.set(item.binding.key, item.value);
         }
+        sequenceBoundHeaders(headers, bound);
         checkedUrl(spec, url.href);
         await pace(spec);
         const response = await guardedRequest(url, {method: step.method, headers, body,
@@ -3532,7 +3702,8 @@ async function checkWithinBudget(spec, env, replay) {
     if (spec.kind === 'model-json-differential') return await checkModelJsonDifferential(spec, env);
     if (spec.kind === 'model-cookie-access') return await checkModelCookieAccess(spec);
     if (spec.kind === 'model-raw-boundary') return await checkModelRawBoundary(spec, env);
-    if (['model-http-sequence', 'model-browser-execution'].includes(spec.kind))
+    if (['model-http-sequence', 'model-sequence-boundary',
+      'model-browser-execution'].includes(spec.kind))
       return await checkModelHttpSequence(spec, env);
     if (spec.kind === 'model-state-change') return await checkModelStateChange(spec, env);
     if (spec.kind === 'model-access-boundary') return await checkModelAccessBoundary(spec, env);
