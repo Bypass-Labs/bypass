@@ -26,6 +26,50 @@ test('presets use official destinations, explicit transport and configurable mod
   assert.throws(()=>apiProfile('p',{provider:'anthropic',effort:'high'}),/Unsupported reasoning/);
   assert.throws(()=>apiProfile('p',{provider:'openai','base-url':'https://other.example/v1'}),/explicit --secret-env/);
   for(const provider of ['muse-code','local','endpoint','kimi'])assert.throws(()=>apiProfile('p',{provider}),/explicitly replaced/);
+  assert.equal(apiProfile('p',{provider:'meta','timeout-ms':'0'}).timeoutMs,0);
+  assert.equal(apiProfile('p',{provider:'meta'}).timeoutMs,60000);
+  for(const timeout of [-1,1,999,180001,'invalid'])assert.throws(()=>apiProfile('p',{provider:'meta','timeout-ms':timeout}),/Model timeout/);
+});
+
+test('no-timeout profiles retain SDK parsing without deadline or socket timers',async t=>{
+  for(const transport of ['chat','responses'])for(const stream of [false,true]){
+    await t.test(`${transport} ${stream?'streamed':'buffered'}`,async t=>{
+      const {profile}=await endpoint(t,(_req,res)=>{
+        if(!stream){
+          if(transport==='chat')chat(res,{role:'assistant',content:'BYPASS_MODEL_OK'});
+          else{res.setHeader('content-type','application/json');res.end(JSON.stringify({status:'completed',output:[{type:'message',content:[{type:'output_text',text:'BYPASS_MODEL_OK'}]}]}));}
+        }else{
+          res.writeHead(200,{'content-type':'text/event-stream'});
+          const event=transport==='chat'?{choices:[{delta:{content:'BYPASS_MODEL_OK'},finish_reason:'stop'}]}:
+            {type:'response.completed',response:{status:'completed',output:[{type:'message',content:[{type:'output_text',text:'BYPASS_MODEL_OK'}]}]}};
+          res.end(`data: ${JSON.stringify(event)}\n\ndata: [DONE]\n\n`);
+        }
+      },{transport,stream,'timeout-ms':0});
+      t.mock.method(AbortSignal,'timeout',()=>assert.fail('No model deadline expected'));
+      t.mock.method(globalThis,'setTimeout',()=>assert.fail('No SDK deadline expected'));
+      const socketTimers=[];
+      const setTimeout=http.ClientRequest.prototype.setTimeout;
+      t.mock.method(http.ClientRequest.prototype,'setTimeout',function(ms,...args){socketTimers.push(ms);return setTimeout.call(this,ms,...args);});
+      assert.equal((await testModel(profile)).status,'connected');
+      assert.deepEqual(socketTimers,[0]);
+    });
+  }
+});
+
+test('no-timeout requests remain cancellable before headers and during the body',async t=>{
+  for(const stream of [false,true])for(const headers of [false,true])await t.test(`${stream?'streamed':'buffered'} ${headers?'body':'headers'}`,async t=>{
+    const controller=new AbortController();
+    const {profile}=await endpoint(t,(_req,res)=>{
+      if(headers){res.writeHead(200,{'content-type':stream?'text/event-stream':'application/json'});res.flushHeaders();}
+      setImmediate(()=>controller.abort());
+    },{'timeout-ms':0,stream});
+    await assert.rejects(new ProviderSession(profile).turn([{role:'user',content:'x'}],{signal:controller.signal}),e=>e.code===130);
+  });
+});
+
+test('explicit per-call deadlines still bound no-timeout profiles',async t=>{
+  const {profile}=await endpoint(t,(_req,res)=>{res.writeHead(200,{'content-type':'application/json'});res.flushHeaders();},{'timeout-ms':0});
+  await assert.rejects(new ProviderSession(profile).turn([{role:'user',content:'x'}],{timeoutMs:50}),e=>e.details.reason==='model_timeout');
 });
 
 test('API key is mandatory; plugin guard wins even with inherited keys and never calls the endpoint',async t=>{
@@ -97,7 +141,7 @@ test('streamed fragmented tool calls assemble correctly; interruption and token 
 });
 
 test('synthetic connection check requires exact assistant marker and saves no credential',async t=>{
-  const {profile}=await endpoint(t,(_req,res)=>chat(res,{role:'assistant',content:'BYPASS_MODEL_OK'}));
+  const {profile}=await endpoint(t,(_req,res)=>chat(res,{role:'assistant',content:'BYPASS_MODEL_OK'}),{'timeout-ms':0});
   const result=await testModel(profile,temp());assert.equal(result.repositorySent,false);assert.equal(result.status,'connected');assert.doesNotMatch(JSON.stringify(result),/contract-test-value/);
 });
 

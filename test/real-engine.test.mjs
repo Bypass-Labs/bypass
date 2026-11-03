@@ -179,7 +179,7 @@ test('Docker worker protocol completes and cancellation removes the actual conta
   },setup);
   assert.deepEqual(repaired.result.candidates,[]);assert.equal(attempts,2);
   let name;const controller=new AbortController();
-  const running=runContainer('white-box',{files:[]},async(_method,_params,signal)=>new Promise((resolve,reject)=>{signal.addEventListener('abort',()=>reject(new Error('Cancelled')),{once:true});}),{...setup,signal:controller.signal,onProgress:p=>{name=p.message.match(/bypass-white-box-[a-f0-9]+/)[0];}});
+  const running=runContainer('white-box',{files:[]},async(_method,_params,signal)=>new Promise((resolve,reject)=>{signal.addEventListener('abort',()=>reject(new Error('Cancelled')),{once:true});}),{...setup,timeoutMs:0,signal:controller.signal,onProgress:p=>{name=p.message.match(/bypass-white-box-[a-f0-9]+/)[0];}});
   setTimeout(()=>controller.abort(),600);
   await assert.rejects(running);
   const listed=await execFile('docker',['ps','-a','--filter',`name=${name}`,'--format','{{.Names}}']);assert.equal(listed.stdout,'');

@@ -5,6 +5,7 @@ import path from 'node:path';
 import http from 'node:http';
 import { spawnSync } from 'node:child_process';
 import { execute } from '../src/service.mjs';
+import { change } from '../src/store.mjs';
 import { inExecutionMode } from '../src/execution-mode.mjs';
 import { ScannerClient } from '../src/scanner/client.mjs';
 import { scannerDirectory,scannerOutput,prepareScanner } from '../src/scanner/runtime.mjs';
@@ -104,14 +105,16 @@ test('Muse drives real Python tasks and evidence with a broken API profile and z
   }finally{await closeScannerSessions();}
 });
 
-test('standalone executes the same real tasks through its bounded provider driver',{skip:!available},async()=>{
+test('standalone retains task leases with a no-timeout provider profile',{skip:!available},async()=>{
   const root=await source();await addTestModel(root);
+  await change(root,state=>{state.models[0].timeoutMs=0;});
   let turns=0;
   const context={scannerConnect:connect,scannerSessionFactory:()=>{
     let task;
     return {turn:async(messages,options)=>{
       turns++;options.onProgress({kind:'phase',phase:'request'});
       task??=JSON.parse(messages[1].content);
+      assert.ok(options.timeoutMs>0&&options.timeoutMs<=task.expiresAt*1000-Date.now()+1000);
       const last=JSON.parse(messages.at(-1).content);
       if(!last.evidence)return {action:'evidence',operation:'read',arguments:{path:'app.py'}};
       const ref=last.evidence.reference.id;

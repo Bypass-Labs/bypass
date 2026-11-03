@@ -92,7 +92,8 @@ export async function executeRealScan(root,runId,options,{signal,report,runtime=
     need(modelCalls<18,'Shared model call budget exceeded.',3);modelCalls++;const usage={role,call:modelCalls,at:now(),status:'started'};modelUsage.push(usage);await persist();
     await report(role,`${role}: model call ${modelCalls} · ${profile.name} / ${profile.model}`);
     const started=Date.now(),progress=[];let lastPhase;
-    const heartbeat=setInterval(()=>{report(role,`${role}: waiting for ${profile.name} · ${Math.floor((Date.now()-started)/1000)}s / ${INFERENCE_TIMEOUT_MS/1000}s · cancel to stop`).catch(()=>{});},10000);
+    const timeoutLabel=profile.timeoutMs===0?'no timeout':`${(profile.timeoutMs??INFERENCE_TIMEOUT_MS)/1000}s`;
+    const heartbeat=setInterval(()=>{report(role,`${role}: waiting for ${profile.name} · ${Math.floor((Date.now()-started)/1000)}s / ${timeoutLabel} · cancel to stop`).catch(()=>{});},10000);
     try{const result=await runtime.infer(profile,messages,{signal:activeSignal,schema:modelResponseSchema(role),session:sessions.get(role),onProgress:event=>{
       if(event.kind==='model'){
         usage.resolvedModel=event.model;
@@ -118,9 +119,10 @@ export async function executeRealScan(root,runId,options,{signal,report,runtime=
   const last=profile.lastAttempt||profile.lastTest;
   if(runtime.testModel&&!(last?.status==='connected'&&Date.now()-Date.parse(last.checkedAt)<15*60*1000)){
     const started=Date.now(),usage={role:'connection',call:++modelCalls,at:now(),status:'started'};modelUsage.push(usage);await persist();
-    await report('connection','Checking the model first · one small prompt · 30s limit · no source sent');
+    const timeoutMs=profile.timeoutMs===0?0:30000;
+    await report('connection',`Checking the model first · one small prompt · ${timeoutMs===0?'no timeout':'30s limit'} · no source sent`);
     try{
-      const check=await runtime.testModel(profile,root,{signal,timeoutMs:30000});
+      const check=await runtime.testModel(profile,root,{signal,timeoutMs});
       await change(root,s=>{const m=named(s.models,profile.name,'Model');m.lastAttempt=check;m.lastTest=check;});
 
       usage.status='completed';usage.resolvedModel=check.model;
@@ -144,7 +146,7 @@ export async function executeRealScan(root,runId,options,{signal,report,runtime=
   const setup=await runtime.prepareAgents({signal,onProgress:p=>report(p.stage,p.message)});
   const runWorker=async(role,task,rpc)=>{
     const attempt={role,image:setup.image,status:'started',startedAt:now()};containers.push(attempt);await persist();
-    try{const worker=await runtime.runContainer(role,task,rpc,{...setup,signal,onProgress:p=>report(p.stage,p.message)});Object.assign(attempt,worker.container,{status:'completed'});return worker;}
+    try{const worker=await runtime.runContainer(role,task,rpc,{...setup,signal,...(profile.timeoutMs===0?{timeoutMs:0}:{}),onProgress:p=>report(p.stage,p.message)});Object.assign(attempt,worker.container,{status:'completed'});return worker;}
     catch(error){attempt.status=signal?.aborted?'cancelled':'failed';error.details={stage:role,...error.details};throw error;}
     finally{attempt.finishedAt=now();await persist();}
   };

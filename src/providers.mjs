@@ -1,4 +1,5 @@
 import OpenAI from 'openai';
+import { APIPromise } from 'openai/core/api-promise';
 import { safeRequest, loopback } from './network.mjs';
 import { requireStandaloneAPI } from './execution-mode.mjs';
 import { validateJSON } from './schema.mjs';
@@ -25,9 +26,9 @@ export function apiProfile(name, options) {
   need(preset.transports.includes(transport),`${preset.label} supports ${preset.transports.join(' or ')} transport in Bypass. No automatic protocol fallback.`,3);
   const model=options.model||preset.model;need(typeof model==='string'&&/^[\w./:-]{1,160}$/.test(model),'Supply a valid explicit model ID.',3);
   if(options.effort)need(preset.efforts.includes(options.effort),'Unsupported reasoning effort for this provider. Omit --effort to use the selected model default.',3);
-  const maxTokens=Number(options['max-output-tokens']||8192),timeoutMs=Number(options['timeout-ms']||60000);
+  const maxTokens=Number(options['max-output-tokens']||8192),timeoutMs=Number(options['timeout-ms']??60000);
   need(Number.isInteger(maxTokens)&&maxTokens>=32&&maxTokens<=32768,'Output token budget must be 32–32768.',3);
-  need(Number.isInteger(timeoutMs)&&timeoutMs>=1000&&timeoutMs<=180000,'Model timeout must be 1000–180000 ms.',3);
+  need(Number.isInteger(timeoutMs)&&(timeoutMs===0||(timeoutMs>=1000&&timeoutMs<=180000)),'Model timeout must be 0 (no timeout) or 1000–180000 ms.',3);
   need(options.stream===undefined||['true','false',true,false].includes(options.stream),'Stream must be true or false.',3);
   if(options['workspace-env'])need(options.provider==='anthropic','Workspace header is only supported for Anthropic.',3);
   return {name,provider:options.provider,executionMode:'standalone-api',baseUrl:url.href.replace(/\/$/,''),model,transport,secretEnv:envName(options['secret-env']||preset.secretEnv),
@@ -43,7 +44,7 @@ export function checkedProfile(profile) {
   registerSecret(process.env[p.secretEnv]);
   return p;
 }
-function pinnedFetch(profile, apiKey, workspace, onProgress) {
+function pinnedFetch(profile, apiKey, workspace, onProgress, timeoutMs=profile.timeoutMs) {
   return (input, init={}) => new Promise((resolve,reject)=>{
     const url=new URL(typeof input==='string'?input:input.url||String(input)),base=new URL(profile.baseUrl);
     // SDK retries, redirects, proxies and alternate origins must not move keys.
@@ -54,11 +55,22 @@ function pinnedFetch(profile, apiKey, workspace, onProgress) {
     // Only the explicitly selected credential and optional Claude workspace cross this boundary.
     const headers={accept:'application/json','content-type':'application/json',authorization:`Bearer ${apiKey}`,...(workspace?{'anthropic-workspace-id':workspace}:{})};
     safeRequest(url.href,{allowLocal:loopback(url.hostname),allowPrivate:profile.allowPrivate,method:init.method||'POST',headers,body:init.body,
-      signal:init.signal,timeout:profile.timeoutMs,maxBytes:1048576,
+      signal:init.signal,timeout:timeoutMs,maxBytes:1048576,
       onHeaders:({status,headers})=>{opened=true;onProgress?.({kind:'phase',phase:'response',message:`${profile.provider}: receiving API response`});resolve(new Response([204,205,304].includes(status)?null:stream,{status,headers:Object.fromEntries(Object.entries(headers).filter(([,v])=>typeof v==='string'))}));},
       onChunk:chunk=>{if(!closed)controller.enqueue(new Uint8Array(chunk));}
     }).then(()=>{if(!closed){closed=true;controller.close();}}).catch(()=>{const error=new Fault('API connection interrupted or destination rejected. Check the configured endpoint and network.',3,{reason:'network'});if(opened){if(!closed){closed=true;controller.error(error);}}else reject(error);});
   });
+}
+// The SDK treats zero as an immediate deadline, not as a disabled timeout.
+// Keep its request/response contracts while omitting only its timeout wrappers.
+class DeadlineFreeOpenAI extends OpenAI {
+  async fetchWithTimeout(url,init,_ms,controller) {
+    const signal=init?.signal?AbortSignal.any([init.signal,controller.signal]):controller.signal;
+    return this.fetch(url,{...init,signal});
+  }
+  async parseResponseWithTimeout(client,props) {
+    return new APIPromise(client,Promise.resolve(props));
+  }
 }
 export function providerFailure(error,provider) {
   if(error instanceof Fault)return error;
@@ -102,12 +114,14 @@ export class ProviderSession {
     const credentialDigest=hash({key:process.env[p.secretEnv],workspace:p.workspaceEnv?process.env[p.workspaceEnv]:null});need(!this.credentialDigest||this.credentialDigest===credentialDigest,'API credential or workspace changed during this run. Start a new review explicitly.',3,{reason:'credential_changed'});this.credentialDigest=credentialDigest;
     need(++this.turns<=10,'Provider session exceeded ten turns.',3);
     need(Array.isArray(messages)&&messages.length&&Buffer.byteLength(JSON.stringify(messages))<=700000,'Model input exceeds the bounded context budget.',3);
-    const deadline=AbortSignal.timeout(timeoutMs||p.timeoutMs),active=signal?AbortSignal.any([signal,deadline]):deadline;
-    if(active.aborted)throw abortFault(active);
+    const requestTimeout=timeoutMs??p.timeoutMs;
+    const deadline=requestTimeout===0?null:AbortSignal.timeout(requestTimeout),active=signal&&deadline?AbortSignal.any([signal,deadline]):signal||deadline;
+    if(active?.aborted)throw abortFault(active);
     let client;
     try {
       const workspace=p.workspaceEnv?need(process.env[p.workspaceEnv],`Set ${p.workspaceEnv} for the selected Anthropic workspace.`,3):null;
-      client=new OpenAI({apiKey:process.env[p.secretEnv],adminAPIKey:null,organization:null,project:null,webhookSecret:null,logLevel:'off',baseURL:p.baseUrl,maxRetries:0,timeout:timeoutMs||p.timeoutMs,fetch:pinnedFetch(p,process.env[p.secretEnv],workspace,onProgress)});
+      const Client=requestTimeout===0?DeadlineFreeOpenAI:OpenAI;
+      client=new Client({apiKey:process.env[p.secretEnv],adminAPIKey:null,organization:null,project:null,webhookSecret:null,logLevel:'off',baseURL:p.baseUrl,maxRetries:0,timeout:requestTimeout,fetch:pinnedFetch(p,process.env[p.secretEnv],workspace,onProgress,requestTimeout)});
       const clean=redact(messages);
       if(!this.history.length)this.history=structuredClone(clean);
       else if(this.pending){const output=clean.at(-1).content;this.history.push(p.transport==='responses'?{type:'function_call_output',call_id:this.pending,output}:{role:'tool',tool_call_id:this.pending,content:output});this.pending=null;}
@@ -147,7 +161,7 @@ export class ProviderSession {
       return validateJSON(schema,value,'security_action');
     } catch(error) {
       if(signal?.aborted)throw abortFault(signal);
-      if(deadline.aborted)throw new Fault('Model request timed out. Earlier evidence is saved; retry explicitly.',3,{reason:'model_timeout'});
+      if(deadline?.aborted)throw new Fault('Model request timed out. Earlier evidence is saved; retry explicitly.',3,{reason:'model_timeout'});
       throw providerFailure(error,p.provider);
     }
   }
