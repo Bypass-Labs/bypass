@@ -15,6 +15,36 @@ import {contentBoundaryShapeReason, requestSuppliesPrivateMaterial,
   verifyContentBoundary} from './content-boundary.mjs';
 
 const sha = text => createHash('sha256').update(text).digest('hex');
+const MARKER_BASE = 257;
+const rollingMarker = text => {
+  let value = 0;
+  for (let index = 0; index < text.length; index++)
+    value = (Math.imul(value, MARKER_BASE) + text.charCodeAt(index)) >>> 0;
+  return value;
+};
+// Save a response marker's fingerprint rather than its potentially private text.
+export const responseMarkerFingerprint = text => ({openTextHash: sha(text),
+  openTextLength: text.length, openTextRolling: rollingMarker(text)});
+const validMarkerFingerprint = marker => /^[0-9a-f]{64}$/.test(marker?.openTextHash ?? '') &&
+  Number.isSafeInteger(marker?.openTextLength) && marker.openTextLength > 0 &&
+  Number.isInteger(marker?.openTextRolling) && marker.openTextRolling >= 0 &&
+  marker.openTextRolling <= 0xffffffff;
+function containsResponseMarker(text, marker) {
+  if (typeof marker === 'string') return text.includes(marker);
+  if (!validMarkerFingerprint(marker) || marker.openTextLength > text.length) return false;
+  const length = marker.openTextLength;
+  let power = 1;
+  for (let index = 1; index < length; index++) power = Math.imul(power, MARKER_BASE) >>> 0;
+  let rolling = rollingMarker(text.slice(0, length));
+  for (let start = 0; start <= text.length - length; start++) {
+    if (rolling === marker.openTextRolling &&
+        sha(text.slice(start, start + length)) === marker.openTextHash) return true;
+    if (start < text.length - length)
+      rolling = (Math.imul((rolling - Math.imul(text.charCodeAt(start), power)) >>> 0,
+        MARKER_BASE) + text.charCodeAt(start + length)) >>> 0;
+  }
+  return false;
+}
 const denied = status => [401, 403, 404].includes(status);
 const cleanDenied = response => denied(response?.status) &&
   response.headers?.['retry-after'] == null && response.headers?.['x-ratelimit-remaining'] !== '0';
@@ -556,7 +586,7 @@ function requestSuppliesMarker(material, marker) {
   const submitted = typeof material === 'string' ? material : JSON.stringify(material);
   let decoded = submitted;
   while (true) {
-    if (decoded.includes(marker)) return true;
+    if (containsResponseMarker(decoded, marker)) return true;
     const next = decoded.replace(/%([0-9a-f]{2})/gi, (_match, byte) =>
       String.fromCharCode(Number.parseInt(byte, 16)));
     if (next === decoded) return false;
@@ -584,9 +614,13 @@ export function rawBoundaryOutcome(responses, proof, candidateRequests = []) {
   const controls = [baselineA, negativeA, negativeB, baselineB];
   const candidates = [candidateA, candidateB];
   const closedText = proof?.closedText ?? '';
-  const openText = proof?.openText ?? '';
+  if (proof?.openTextHash && !validMarkerFingerprint(proof))
+    return {verdict: 'inconclusive', reason: 'the saved response marker fingerprint is invalid'};
+  const openMarker = proof?.openText || (validMarkerFingerprint(proof) ? proof : null);
+  const hasOpen = item => openMarker !== null &&
+    containsResponseMarker(String(item.body ?? ''), openMarker);
   const closed = item => String(item.body ?? '').includes(closedText) &&
-    !String(item.body ?? '').includes(openText);
+    !hasOpen(item);
   const signature = item => JSON.stringify([item.status, item.type,
     item.hash ?? `sha256:${sha(item.body ?? '')}`]);
   const contentType = item => String(item.type ?? item.headers?.['content-type'] ?? '');
@@ -601,23 +635,22 @@ export function rawBoundaryOutcome(responses, proof, candidateRequests = []) {
     return {verdict: 'inconclusive', reason: 'candidate received an HTML access block'};
   if (controls.every(item => signature(item) === signature(candidateA)) &&
       signature(candidateA) === signature(candidateB) &&
-      (!(closedText && openText) || controls.every(closed)))
+      (!(closedText && openMarker) || controls.every(closed)))
     return {verdict: 'not_reproduced', reason: 'candidate and controls returned the same response'};
-  if (openText && (closedText === openText ||
-      requestSuppliesMarker(candidateRequests, openText)))
+  if (openMarker && (closedText && containsResponseMarker(closedText, openMarker) ||
+      requestSuppliesMarker(candidateRequests, openMarker)))
     return {verdict: 'inconclusive',
       reason: 'the positive marker is ambiguous or supplied by the request itself'};
   // An in-band effect can have different public and negative-control bodies.
   // The positive marker still proves the effect if only fresh candidates show it.
-  if (openText && (!closedText || !controls.every(closed))) {
-    const hasMarker = item => String(item.body ?? '').includes(openText);
-    if (controls.every(item => !hasMarker(item)) &&
+  if (openMarker && (!closedText || !controls.every(closed))) {
+    if (controls.every(item => !hasOpen(item)) &&
         candidates.every(item => item.status >= 200 && item.status < 300 &&
-          hasMarker(item)))
+          hasOpen(item)))
       return {verdict: 'confirmed', proofMode: 'positive-marker',
         reason: 'positive response marker repeated in fresh candidates and was absent from both controls'};
-    if (controls.every(item => !hasMarker(item)) &&
-        candidates.every(item => !hasMarker(item)) &&
+    if (controls.every(item => !hasOpen(item)) &&
+        candidates.every(item => !hasOpen(item)) &&
         signature(baselineA) === signature(baselineB) &&
         signature(negativeA) === signature(negativeB) &&
         signature(candidateA) === signature(candidateB))
@@ -626,9 +659,9 @@ export function rawBoundaryOutcome(responses, proof, candidateRequests = []) {
     return {verdict: 'inconclusive',
       reason: 'positive response marker did not repeat only in candidates'};
   }
-  if (closedText && openText) {
+  if (closedText && openMarker) {
     const opened = item => item.status >= 200 && item.status < 300 &&
-      String(item.body ?? '').includes(openText) &&
+      hasOpen(item) &&
       !String(item.body ?? '').includes(closedText);
     if (controls.every(closed) && candidates.every(opened))
       return {verdict: 'confirmed',
@@ -637,12 +670,12 @@ export function rawBoundaryOutcome(responses, proof, candidateRequests = []) {
       return {verdict: 'not_reproduced', reason: 'candidate stayed on the same gated page as the controls'};
     if (controls.every(closed) && signature(candidateA) === signature(candidateB) &&
         candidates.every(item => [400, 401, 403, 404, 422].includes(item.status) &&
-          !/html/i.test(contentType(item)) && !String(item.body ?? '').includes(openText)))
+          !/html/i.test(contentType(item)) && !hasOpen(item)))
       return {verdict: 'not_reproduced',
         reason: 'the application consistently rejected the candidate while controls remained available'};
     return {verdict: 'inconclusive', reason: 'page boundary markers were unstable across controls'};
   }
-  if (closedText || openText)
+  if (closedText || openMarker)
     return {verdict: 'inconclusive', reason: 'both closed and open response markers are needed'};
   const denied = item => [401, 403, 404].includes(item.status);
   const opened = item => item.status >= 200 && item.status < 300 &&

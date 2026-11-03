@@ -13,7 +13,8 @@ import {responseCached, modelExperimentReason, stateChangeCanaries,
   validModelHeaders, sequencePointerType, validSequencePointer,
   captureSequenceScalar, uniqueJsonStringField,
   boundSequencePath, renderCapturedHtml, xssPayload, sequenceJsonBody,
-  rawBoundaryOutcome, createSequenceCookies} from './poc-runtime.mjs';
+  rawBoundaryOutcome, createSequenceCookies,
+  responseMarkerFingerprint} from './poc-runtime.mjs';
 import {MODEL_RESPONSE_BYTES, requestFailureVerdict, responseSizeLimited, responseSizeReason} from './response-size.mjs';
 
 const marker = () => `bx${randomBytes(6).toString('hex')}`;
@@ -733,7 +734,17 @@ export function validateResearchFlow(spec, surface, scope, {env = {}, inventory 
     // observations to Muse so it can repair the controls on the next turn.
     const proofGap = baseline?.error || negative?.error;
     const last = reviewed.at(-1);
-    return {ok: true, lead: {family, why: safeModelText(spec.why, scope, env, 300),
+    const openText = typeof spec.rawProof?.openText === 'string' ?
+      spec.rawProof.openText : '';
+    const maskOpenText = value => openText ? String(value ?? '').replaceAll(openText,
+      '[response marker]') : String(value ?? '');
+    const openFingerprint = openText ? responseMarkerFingerprint(openText) :
+      spec.rawProof?.openTextHash ? {
+        openTextHash: spec.rawProof.openTextHash,
+        openTextLength: spec.rawProof.openTextLength,
+        openTextRolling: spec.rawProof.openTextRolling} : {};
+    return {ok: true, lead: {family: modelFamily(maskOpenText(spec.family)),
+      why: safeModelText(maskOpenText(spec.why), scope, env, 300),
       priority: Math.max(0, Math.min(10, spec.priority)), as: spec.as,
       oracle: oracle === 'raw-proof' && !proofGap ? 'raw-proof' : 'raw-observation',
       ...(proofGap ? {proofGap} : {}), prelude: [], observe: [],
@@ -743,9 +754,8 @@ export function validateResearchFlow(spec, surface, scope, {env = {}, inventory 
       ...(oracle === 'raw-proof' && !proofGap ? {rawProof: {
         baseline: baseline.reviewed, negative: negative.reviewed,
         closedText: typeof spec.rawProof?.closedText === 'string' ?
-          spec.rawProof.closedText : '',
-        openText: typeof spec.rawProof?.openText === 'string' ?
-          spec.rawProof.openText : ''}} : {}),
+          maskOpenText(spec.rawProof.closedText) : '',
+        ...openFingerprint}} : {}),
       marker: '', secondMarker: '', assertion: {step: 'subject', index: 0,
         location: 'body', name: ''}, basis: 'model-http-sequence'}};
   }
@@ -1360,10 +1370,17 @@ export async function planResearchFlows(surface, scope, {infer = null, model = n
     const firstDecision = result.decisions.length;
     for (const proposal of Array.isArray(answer?.flows) ? answer.flows.slice(0, FLOWS_PER_MODEL_PAGE) : []) {
       result.coverage.proposals++;
+      const proposedOpenText = typeof proposal?.rawProof?.openText === 'string' ?
+        proposal.rawProof.openText : '';
+      const safeProposalText = (value, size) => {
+        const masked = proposedOpenText ? String(value ?? '').replaceAll(proposedOpenText,
+          '[response marker]') : value;
+        return safeModelText(masked, scope, env, size);
+      };
       const decision = {mode, proposal: true,
         path: safeModelText(proposal?.subject?.path, scope, env),
-        family: safeModelText(proposal?.family, scope, env, 80),
-        hypothesis: safeModelText(proposal?.why, scope, env),
+        family: safeProposalText(proposal?.family, 80),
+        hypothesis: safeProposalText(proposal?.why, 300),
         requestShape: {method: safeModelText(proposal?.subject?.method, scope, env, 12),
           placement: safeModelText(proposal?.subject?.placement, scope, env, 12),
           key: safeModelText(proposal?.subject?.key, scope, env, 80),
@@ -3438,7 +3455,9 @@ export async function runResearchFlows(leads, scope, {requester, infer = null, m
           baseline: rawFeedback(lead.rawProof.baseline),
           negative: rawFeedback(lead.rawProof.negative),
           closedText: safeModelText(lead.rawProof.closedText, scope, env, 160),
-          openText: safeModelText(lead.rawProof.openText, scope, env, 160)}} : {}),
+          ...(lead.rawProof.openTextHash ? {
+            openTextHash: lead.rawProof.openTextHash,
+            openTextLength: lead.rawProof.openTextLength} : {})}} : {}),
         validatedPrelude: lead.prelude.slice(0, 4).map((step, index) => ({
           index, path: safeModelText(step.path, scope, env, 300),
           method: step.method, placement: step.placement ?? null,
