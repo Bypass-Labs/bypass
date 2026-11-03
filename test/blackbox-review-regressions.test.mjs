@@ -9,7 +9,7 @@ import {Readable} from 'node:stream';
 import {temp} from './helpers.mjs';
 import {mcpClient} from './mcp-client.mjs';
 import {execute} from '../src/service.mjs';
-import {hash} from '../src/util.mjs';
+import {execFile, hash} from '../src/util.mjs';
 import {safeRequest} from '../src/network.mjs';
 import {createLedger} from '../src/blackbox/ledger.mjs';
 import {lookupAdvisories} from '../src/blackbox/advisories.mjs';
@@ -76,32 +76,46 @@ test('read experiments preserve valid HTTP headers',()=>{
   assert.equal(modelExperimentReason({...values,headers:[{name:'Accept',value:'application/json'}]}),null);
 });
 
-function sealedRun(root,scripts){
+function sealedRun(root,proofs){
   const run='bx-20261030-abcdef12',dir=path.join(root,'.bypass/runs',run),ledger=createLedger(dir);
   fs.mkdirSync(path.join(dir,'poc'),{recursive:true});fs.writeFileSync(path.join(dir,'run.json'),'{}');
   const runtime=path.join(dir,'poc/runtime.mjs');fs.writeFileSync(runtime,'// test sealed runtime\n');
-  scripts.forEach((body,index)=>{
+  proofs.forEach(({script:body,spec:proofSpec},index)=>{
     const proofDir=path.join(dir,'poc',`f-00${index+1}`);fs.mkdirSync(proofDir);
     const spec=path.join(proofDir,'spec.json'),script=path.join(proofDir,'poc.mjs');
-    fs.writeFileSync(spec,JSON.stringify({kind:'exposure'}));fs.writeFileSync(script,body);
+    fs.writeFileSync(spec,JSON.stringify(proofSpec));fs.writeFileSync(script,body);
     ledger.append({step:'poc',proof:{path:script,specHash:hash(fs.readFileSync(spec)),
       scriptHash:hash(fs.readFileSync(script)),runtimeHash:hash(fs.readFileSync(runtime))}});
   });return {run,dir};
 }
 
-test('oversized proof output is inconclusive and later proofs still run with a saved retest',async t=>{
-  const root=temporary(t);const {run,dir}=sealedRun(root,[
-    "process.stdout.write('x'.repeat(2100000));setTimeout(()=>{},1000);",
-    "console.log(JSON.stringify({verdict:'not_reproduced'}));"]);
+async function deniedExposure(t){
+  const server=http.createServer((_req,res)=>{res.writeHead(403);res.end();});
+  await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));
+  t.after(()=>new Promise(resolve=>server.close(resolve)));
+  const origin=`http://127.0.0.1:${server.address().port}`;
+  return {kind:'exposure',origin,include:['/'],never:[],rps:100,
+    request:{method:'GET',url:origin+'/.env',as:'anonymous'},signature:'environment key-value lines'};
+}
+
+test('oversized output is bounded and an invalid proof does not stop later retest',async t=>{
+  await assert.rejects(execFile(process.execPath,['-e',"process.stdout.write('x'.repeat(2100000))"],
+    {timeout:5000}),/output exceeded the limit/);
+  const root=temporary(t),spec=await deniedExposure(t);
+  const {run,dir}=sealedRun(root,[
+    {script:"process.stdout.write('x'.repeat(2100000));",spec:{kind:'exposure'}},
+    {script:"console.log(JSON.stringify({verdict:'confirmed'}));",spec}]);
   const result=await verifyRun(root,run,{env:{}});
   assert.equal(result.exitCode,3);assert.deepEqual(result.proofs.map(p=>p.verdict),['inconclusive','not_reproduced']);
+  assert.match(result.proofs[0].reason,/no valid target origin/);
   assert.equal(JSON.parse(fs.readFileSync(path.join(dir,'retest.json'))).proofs.length,2);
 });
 
 test('sealed proof replay accepts equivalent symlink roots and still rejects modified artifacts',async t=>{
   const base=temporary(t),root=path.join(base,'application'),alias=path.join(base,'alias');fs.mkdirSync(root);
   fs.symlinkSync(root,alias,'dir');
-  const {run,dir}=sealedRun(alias,["console.log(JSON.stringify({verdict:'not_reproduced'}));"]);
+  const spec=await deniedExposure(t);
+  const {run,dir}=sealedRun(alias,[{script:"console.log(JSON.stringify({verdict:'confirmed'}));",spec}]);
   assert.equal((await verifyRun(fs.realpathSync(root),run,{env:{}})).exitCode,0);
   const exported=exportRun(root,run,{out:'regression'});assert.ok(exported.files.every(file=>file.startsWith(root+path.sep)));
   fs.appendFileSync(path.join(dir,'poc/f-001/poc.mjs'),'// modified');

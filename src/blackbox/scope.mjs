@@ -380,7 +380,8 @@ export function createRequester(scope, {ledger, limiter = createLimiter(scope.li
   async function request({url, identity = 'anonymous', method = 'GET', headers = {}, body, step, task = null, agent = null, maxBytes,
     noCache = false, purpose = 'task', timeout, derivedBearer = null,
     derivedCookie = null, omitExcerpt = false, rawModelRequest = false,
-    rawForSessionChain = false, rawForAuthProof = false, redactValues = [],
+    rawForSessionChain = false, rawForAuthProof = false, captureSetCookie = false,
+    redactValues = [],
     auditCallback = null} = {}) {
     need(STEPS.has(step), `Unknown evidence step '${step}'.`);
     need(maxBytes == null || (Number.isInteger(maxBytes) && maxBytes > 0 && maxBytes <= MAX_BODY_BYTES), `maxBytes must be a whole number up to ${MAX_BODY_BYTES}.`);
@@ -412,6 +413,10 @@ export function createRequester(scope, {ledger, limiter = createLimiter(scope.li
     'Raw authentication proof extraction requires an uncached, unlogged scoped anonymous POST.');
     const additionalSecrets = Array.isArray(redactValues) ? redactValues.filter(value =>
       typeof value === 'string' && value.length >= 4 && value.length <= 4096) : [];
+    // Short captures may be ordinary response data, so redact them only where a
+    // request URL is persisted; replacing them in response bodies corrupts JSON.
+    const shortUrlSecrets = Array.isArray(redactValues) ? redactValues.filter(value =>
+      typeof value === 'string' && value.length > 0 && value.length < 4) : [];
     const contentTypes = Object.entries(callerHeaders).filter(([name]) => name.toLowerCase() === 'content-type');
     const methodPath = URL.canParse(url, scope.target.origin) ?
       new URL(url, scope.target.origin).pathname : '';
@@ -482,7 +487,8 @@ export function createRequester(scope, {ledger, limiter = createLimiter(scope.li
         Object.values(jsonDocument).filter(value => typeof value === 'string' && value.length >= 4) : []),
     ] : [];
     const context = {url, identity, method, step, task, agent, purpose, maxBytes, timeout, body,
-      omitExcerpt, rawModelRequest, rawForSessionChain, rawForAuthProof,
+      omitExcerpt, rawModelRequest, rawForSessionChain, rawForAuthProof, captureSetCookie,
+      shortUrlSecrets,
       secrets: [...credentialSecrets(scope, env), ...(derivedBearer ? [derivedBearer] : []),
         ...(derivedCookie ? [derivedCookie, derivedCookie.slice(derivedCookie.indexOf('=') + 1)] : []),
         ...additionalSecrets, ...inputSecrets, ...rawSecrets]};
@@ -608,7 +614,7 @@ export function createRequester(scope, {ledger, limiter = createLimiter(scope.li
       ...(context.rawForSessionChain || context.rawForAuthProof ? {rawBody: response.body} : {}),
       // This value is returned only to the in-process caller. The ledger's
       // storedHeaders above still omits Set-Cookie and credential values.
-      ...(context.rawForAuthProof || context.rawModelRequest ?
+      ...(context.rawForAuthProof || context.rawModelRequest || context.captureSetCookie ?
         {rawSetCookie: response.headers['set-cookie'] ?? []} : {}),
       headers, ids: idsOf(json), ms, evidenceId};
   }
@@ -624,7 +630,7 @@ export function createRequester(scope, {ledger, limiter = createLimiter(scope.li
     stats.refused += 1;
     const evidenceId = append({
       task: context.task, step: 'refused', agent: context.agent, identity: context.identity,
-      request: {method: context.method, url: storedUrl(context.url)}, refused: {rule: reason, match},
+      request: {method: context.method, url: storedUrl(context.url, context.shortUrlSecrets)}, refused: {rule: reason, match},
     }, context.secrets);
     log({stage: 'request', message: `Request refused (${reason})`, evidenceId});
     return {refused: true, reason,
@@ -636,7 +642,7 @@ export function createRequester(scope, {ledger, limiter = createLimiter(scope.li
     const headerNames = [...new Set(['accept', ...Object.keys(context.headers).map(name => name.toLowerCase())])];
     return {
       task: context.task, step: context.step, agent: context.agent, identity: context.identity,
-      request: {method: context.method, url: storedUrl(context.target), headers: headerNames,
+      request: {method: context.method, url: storedUrl(context.target, context.shortUrlSecrets), headers: headerNames,
         ...(context.body === undefined ? {} : {bodyBytes: Buffer.byteLength(context.body),
           bodyHash: `sha256:${hash(context.body)}`})},
     };
@@ -1059,8 +1065,27 @@ function storedHeaders(headers, secrets) {
   return kept;
 }
 
-function storedUrl(url) {
-  return maskCredentialParams(String(url ?? '')).slice(0, STORED_URL_CHARS);
+function storedUrl(url, shortSecrets = []) {
+  const masked = maskCredentialParams(String(url ?? '')).slice(0, STORED_URL_CHARS);
+  if (!shortSecrets.length) return masked;
+  let parsed;
+  try {parsed = new URL(masked);} catch {return scrub(masked, shortSecrets);}
+  const pathname = parsed.pathname.split('/').map(part => {
+    try {return shortSecrets.includes(decodeURIComponent(part)) ? '[REDACTED]' : part;}
+    catch {return part;}
+  }).join('/');
+  const query = parsed.search.slice(1).split('&').map(part => {
+    const split = part.indexOf('=');
+    if (split < 0) return part;
+    const raw = part.slice(split + 1);
+    let value;
+    try {value = decodeURIComponent(raw.replaceAll('+', ' '));}
+    catch {value = raw;}
+    return shortSecrets.some(secret => value.includes(secret)) ?
+      `${part.slice(0, split + 1)}[REDACTED]` : part;
+  }).join('&');
+  const hash = parsed.hash ? '#[REDACTED]' : '';
+  return `${parsed.origin}${pathname}${query ? `?${query}` : ''}${hash}`;
 }
 
 function mediaType(value) {

@@ -106,6 +106,8 @@ Muse Code owns plugin reasoning and billing. Bypass cannot verify subscription b
 | Saved regression replay | `/bypass:tests` | `bypass test run --all` | Saved checks and valid target setup; no model calls |
 | GitHub PR review and smoke tests | Ask Muse Code to generate setup | `bypass ci init --agent` | GitHub Actions; Meta API key for source review |
 
+With **Code + running app**, `/bypass:start` validates each source finding on the live app. It then offers to fix the confirmed issues and open a PR. After you select that action, Muse Code can run the exported regressions against the PR build, follow the merge and deployment, and replay the original proofs against the deployed app.
+
 ## White-box source review
 
 ### Discover source security signals
@@ -201,7 +203,7 @@ Muse Code connects the app, completes missing ownership/scope setup, and drives 
 
 The URL and paths are run inputs, not permission by themselves. Review the exact scope before testing. The request rate, engine-decision cap, and time limit bound the audit; the displayed “Muse calls” cap does not include every surrounding host turn.
 
-Running-app-only onboarding launches this engine automatically after scope approval. `/bypass:blackbox` remains available when you explicitly want to start another audit later.
+The wizard's **Running app only** choice starts this full audit automatically after scope approval. Its **Code + running app** choice reviews source first; a saved source hypothesis can then be validated live with a focused blackbox run. That focused run uses the same request and proof engine and reports its narrower coverage. `/bypass:blackbox` remains available for a separate full audit.
 
 ### From the CLI
 
@@ -212,6 +214,8 @@ For a local app you control:
 ```bash
 bypass blackbox http://127.0.0.1:3000 --accept-local --rps 2 --model-calls 120 --minutes 30
 ```
+
+To validate one finding already saved by source review, add `--finding <finding-id>`. For apps with a JSON build endpoint, `--revision-path /version --revision-field revision` compares the deployed full commit SHA to the checkout. Without that endpoint, the report marks the source/live revision unverified.
 
 For a deployed app:
 

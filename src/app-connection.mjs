@@ -20,8 +20,8 @@ export function appConnection({url,environment}={}){
   const origin=appOriginInput(url);
   const selectedEnvironment=environment||(loopback(new URL(origin).hostname)?'local':null);
   if(!selectedEnvironment)return {id:'environment',tool:'bypass_add_target',url:origin,question:appEnvironmentQuestion(origin),
-    input:choiceInput('environment',appEnvironmentChoices),
-    guidance:'Open the host selection UI with these four choices; do not ask a free-text audience question. Ask this only when the user has not already identified production, staging, preview or a test app. Do not guess from the hostname. No choice is preselected. If the host requires a default, put production first; this choice never authorizes requests.'};
+    input:choiceInput('environment',appEnvironmentChoices.filter(choice=>choice.id!=='local')),
+    guidance:'Open the host selection UI with production, staging and preview. Local is selected automatically for loopback URLs. Ask this only when the user has not already identified the environment. Do not guess a remote environment from its hostname. No choice is preselected. If the host requires a default, put production first; this choice never authorizes requests.'};
   targetURL(origin,selectedEnvironment);
   return {id:'app',tool:'bypass_add_target',automatic:true,arguments:{name:selectedEnvironment,url:origin,environment:selectedEnvironment},
     message:'Save the supplied app address, then continue to ownership verification and testing permission. No app request has been made.'};

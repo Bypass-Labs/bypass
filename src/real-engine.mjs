@@ -67,15 +67,17 @@ export function sourceReader(root,inv,{maxBytes=192000}={}){
     return result;
   }};
 }
-export function groundCandidates(candidates,reader,inv,{categories=['cross-account-access','missing-authentication']}={}){
+export function groundCandidates(candidates,reader,inv){
   need(Array.isArray(candidates)&&candidates.length<=8,'Agent returned too many or invalid source hypotheses.',3);
   return candidates.map(candidate=>{
-    need(candidate&&categories.includes(candidate.category),'Unsupported hypothesis category.',3);
+    need(candidate&&typeof candidate.category==='string'&&
+      candidate.category.trim().length>0&&candidate.category.length<=120,
+      'Hypothesis category must be a short name.',3);
     const lines=reader.readFiles.get(candidate.file);
     need(Number.isInteger(candidate.line)&&candidate.line>0&&lines?.has(candidate.line),'Hypothesis must cite a line actually read.',3);
     need(typeof candidate.quote==='string'&&candidate.quote.trim().length>0&&lines.get(candidate.line).trim()===candidate.quote.trim(),'Source citation did not match the actual line. No finding accepted.',3);
     for(const key of ['title','hypothesis','recommendation'])need(typeof candidate[key]==='string'&&candidate[key].length>0&&candidate[key].length<=2000,'Hypothesis text is invalid.',3);
-    return {title:candidate.title,category:candidate.category,hypothesis:candidate.hypothesis,recommendation:candidate.recommendation,resourcePath:typeof candidate.resourcePath==='string'?candidate.resourcePath:null,sourceEvidence:{kind:'source',file:candidate.file,line:candidate.line,quote:candidate.quote,sourceFingerprint:inv.fingerprint}};
+    return {title:candidate.title,category:candidate.category.trim(),hypothesis:candidate.hypothesis,recommendation:candidate.recommendation,resourcePath:typeof candidate.resourcePath==='string'?candidate.resourcePath:null,sourceEvidence:{kind:'source',file:candidate.file,line:candidate.line,quote:candidate.quote,sourceFingerprint:inv.fingerprint}};
   });
 }
 export async function executeRealScan(root,runId,options,{signal,report,runtime={prepareAgents,runContainer,infer,testModel}}={}){

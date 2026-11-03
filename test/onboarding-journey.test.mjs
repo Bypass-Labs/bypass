@@ -58,11 +58,11 @@ test('same origin keeps verified ownership and exact scope across checkout switc
   const original=structuredClone(read(host).targets[0]);
   const c=await mcpClient(host,options);
   await c.call('bypass_onboarding',{mode:'combined',repository:app,url:'https://app.example.com',environment:'production'});
-  const connected=await c.call('bypass_connect_repository',{repository:app,confirmed:true});assert.equal(connected.onboarding.stage,'ready');
+  const connected=await c.call('bypass_connect_repository',{repository:app,confirmed:true});assert.equal(connected.onboarding.stage,'methods');
   const copied=read(app).targets[0];assert.equal(copied.ownership.verifiedAt,original.ownership.verifiedAt);assert.equal(copied.ownership.reused,true);assert.deepEqual(copied.authorization,original.authorization);
   assert.equal(dns.resolveTxt.mock.callCount(),1);await c.close();
   const fresh=await mcpClient(host,options);t.after(()=>fresh.close());
-  const resumed=await fresh.call('bypass_onboarding');assert.equal(resumed.selectedRepository,app);assert.equal(resumed.stage,'ready');assert.match(resumed.steps.find(s=>s.id==='ownership').message,/already verified/);
+  const resumed=await fresh.call('bypass_onboarding');assert.equal(resumed.selectedRepository,app);assert.equal(resumed.stage,'methods');assert.match(resumed.steps.find(s=>s.id==='ownership').message,/already verified/);
   const other=source();await execute('init',[other]);await execute('config set',['ownershipVerification','dns'],{project:other});
   const added=await execute('target add',['prod'],{project:other,url:'https://app.example.com:443/',environment:'production'});
   assert.equal(added.target.challenge,undefined);assert.equal(added.target.ownership.reused,true);assert.equal(added.target.authorization,null,'ownership alone never imports a grant into an independent project');

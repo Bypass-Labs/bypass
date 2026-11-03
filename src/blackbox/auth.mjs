@@ -260,7 +260,7 @@ function sessionValue(result) {
   return result.placement === 'cookie' ? `${result.cookieName}=${result.value}` : result.value;
 }
 
-function credentialNames(scope, identity) {
+export function credentialNames(scope, identity) {
   const names = scope.identities[identity].login ?? {};
   return {
     usernameEnv: names.usernameEnv ?? CREDENTIAL_ENV[identity].usernameEnv,

@@ -9,6 +9,7 @@ import { pluginOnboarding } from '../src/plugin-onboarding.mjs';
 import { prepareBlackboxSetup } from '../src/blackbox/setup.mjs';
 import { rememberSelection, savedSelection, sessionHint, monitorSummary } from '../src/plugin-context.mjs';
 import { VERSION } from '../src/util.mjs';
+import { mcpClient } from './mcp-client.mjs';
 
 const dockerReady=async()=>({available:true,message:'Docker ready (test dependency).'});
 const checklist=(host,root,options={})=>pluginOnboarding(host,root,{mode:'combined',checkDocker:dockerReady,...options});
@@ -68,6 +69,8 @@ test('local onboarding permits optional accounts and retains per-probe validatio
   const root=await sourceReady(),o={project:root};await execute('target add',['app'],{...o,url:'http://127.0.0.1:3456',environment:'local'});
   let status=await checklist(root,root);assert.equal(status.nextAction.challenge.method,'local');assert.match(status.nextAction.question,/on this computer/);
   await execute('target verify',['app'],{...o,method:'local'});status=await checklist(root,root);assert.equal(status.stage,'scope');assert.equal(status.ready.live,false);
+  assert.deepEqual(status.nextAction.custom.methods.singleSelectFallback.choices.find(choice=>choice.label==='All methods').methods,
+    ['GET','HEAD','POST','PUT','PATCH','DELETE','OPTIONS']);
   await execute('target authorize',['app'],{...o,paths:'/api',accept:true});status=await checklist(root,root);assert.equal(status.stage,'ready');assert.equal(status.steps.find(s=>s.id==='accounts').status,'optional');
   await execute('identity add',['owner'],{...o,target:'app',type:'bearer','secret-env':'BYPASS_ONBOARD_OWNER_TOKEN'});
   await execute('identity add',['other'],{...o,target:'app',type:'bearer','secret-env':'BYPASS_ONBOARD_OTHER_TOKEN','check-path':'/api/me'});
@@ -109,6 +112,51 @@ test('running-app-only wizard hands fresh and saved scopes to blackbox',async()=
   assert.equal(saved.created,false);
   assert.equal(saved.scopeFile,fresh.scopeFile);
   assert.equal(read(root).runs.length,0);
+});
+
+test('combined wizard asks for exact methods, rate and shared audit limits before approval',async()=>{
+  const root=await sourceReady(),url='http://127.0.0.1:3456';
+  await execute('target add',['app'],{project:root,url,environment:'local'});
+  await execute('target verify',['app'],{project:root,method:'local'});
+  await execute('target authorize',['app'],{project:root,paths:'/',methods:'GET,HEAD,POST',rps:2,accept:true});
+  const ask=options=>pluginOnboarding(root,root,{mode:'combined',interactiveCombined:true,...options});
+  let step=await ask();assert.equal(step.stage,'methods');assert.equal(step.nextAction.input.choices.length,3);
+  const methods='GET,HEAD,POST,PUT,PATCH,DELETE,OPTIONS';
+  step=await ask({methods});assert.equal(step.stage,'rps');assert.equal(step.nextAction.input.choices.length,3);
+  step=await ask({methods,rps:12});assert.equal(step.stage,'model-calls');assert.equal(step.nextAction.input.choices.length,3);
+  step=await ask({methods,rps:12,modelCalls:400});assert.equal(step.stage,'minutes');assert.equal(step.nextAction.input.choices.length,3);
+  step=await ask({methods,rps:12,modelCalls:400,minutes:30});assert.equal(step.stage,'scope');
+  assert.deepEqual(step.nextAction.arguments.methods,methods.split(','));
+  assert.equal(step.nextAction.arguments.rps,12);
+  step=await ask({methods,rps:12,modelCalls:400,minutes:30,scopeApproved:true});
+  assert.equal(step.stage,'ready');assert.deepEqual(step.nextAction.arguments,{mode:'combined',modelCalls:400,minutes:30});
+});
+
+test('combined MCP wizard carries selected scope and total limits into the source review',async t=>{
+  const root=await sourceReady(),url='http://127.0.0.1:3456';
+  await execute('target add',['app'],{project:root,url,environment:'local'});
+  await execute('target verify',['app'],{project:root,method:'local'});
+  await execute('target authorize',['app'],{project:root,paths:'/',methods:'GET,HEAD,POST',rps:2,accept:true});
+  const client=await mcpClient(root,{stateDir:temp()});t.after(()=>client.close());
+  const methods='GET,HEAD,POST,PUT,PATCH,DELETE,OPTIONS';
+  assert.equal((await client.call('bypass_onboarding',{mode:'combined'})).stage,'methods');
+  assert.equal((await client.call('bypass_onboarding',{methods})).stage,'rps');
+  assert.equal((await client.call('bypass_onboarding',{rps:12})).stage,'model-calls');
+  assert.equal((await client.call('bypass_onboarding',{modelCalls:400})).stage,'minutes');
+  const approval=await client.call('bypass_onboarding',{minutes:30});
+  assert.equal(approval.stage,'scope');
+  assert.equal(approval.nextAction.arguments.rps,12);
+  assert.deepEqual(approval.nextAction.arguments.methods,methods.split(','));
+  const authorized=await client.call('bypass_authorize_target',{
+    name:'app',paths:'/',methods,rps:12,accept:true});
+  assert.equal(authorized.onboarding.stage,'ready');
+  assert.deepEqual(authorized.nextAction.arguments,{mode:'combined',modelCalls:400,minutes:30});
+  const scan=await client.call('bypass_scan',{mode:'combined',modelCalls:5,minutes:1});
+  assert.equal(read(root).runs.find(run=>run.id===scan.runId).options.modelCalls,400);
+  assert.equal(read(root).runs.find(run=>run.id===scan.runId).options.minutes,30);
+  assert.equal(read(root).targets.find(target=>target.name==='app').authorization.maxRequestsPerSecond,12);
+  assert.equal((await client.call('bypass_onboarding',{mode:'combined'})).stage,'methods',
+    'a later combined review asks again instead of silently reusing an old run selection');
 });
 
 test('model credential absence repairs environment without duplicating the profile',async()=>{

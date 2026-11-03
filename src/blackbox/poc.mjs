@@ -1,8 +1,10 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import {atomic} from '../store.mjs';
+import {atomic, read} from '../store.mjs';
+import {pathAllowed, scopeReady} from '../network.mjs';
 import {execFile, need, hash} from '../util.mjs';
 import {verifyLedger} from './ledger.mjs';
+import {credentialNames} from './auth.mjs';
 
 // Capture the proof runtime with the audit process's code version. Reading these
 // files only at proof time can mix versions if the CLI is edited during a run.
@@ -11,6 +13,9 @@ const PROOF_SOURCES = Object.freeze({
   boundary: fs.readFileSync(new URL('./boundary-oracle.mjs', import.meta.url), 'utf8'),
   content: fs.readFileSync(new URL('./content-boundary.mjs', import.meta.url), 'utf8'),
 });
+const distinctOperations = operations => operations.filter((item, index) =>
+  operations.findIndex(other => other.method === item.method &&
+    other.path === item.path && other.placement === item.placement) === index);
 
 const WEB_PROOF_KINDS = new Set(['open-redirect', 'host-header-redirect', 'jwt-unsigned',
   'anonymous-credential-data', 'derived-private-read',
@@ -19,7 +24,8 @@ const WEB_PROOF_KINDS = new Set(['open-redirect', 'host-header-redirect', 'jwt-u
   'xss-dom-fragment', 'ssti-arithmetic', 'sql-boolean', 'nosql-operator-bypass',
   'command-output', 'path-traversal-hosts', 'xxe-hosts', 'xxe-body-hosts',
   'crlf-header', 'public-private-key', 'public-api-credential', 'model-differential',
-  'model-json-differential', 'model-http-sequence', 'model-cookie-access',
+  'model-json-differential', 'model-http-sequence', 'model-sequence-boundary',
+  'model-cookie-access',
   'model-raw-boundary',
   'model-browser-execution', 'model-access-boundary',
   'model-state-change', 'xss-stored',
@@ -149,7 +155,8 @@ export async function proveFindings(findings, results, {runDir, surface, scope, 
         if (WEB_PROOF_KINDS.has(finding.kind)) {
           const lead = web?.results?.find(item => item.lead.path === finding.pattern &&
             item.origin === webOrigin &&
-            (['model-http-sequence', 'model-cookie-access', 'model-raw-boundary',
+            (['model-http-sequence', 'model-sequence-boundary',
+              'model-cookie-access', 'model-raw-boundary',
               'model-browser-execution'].includes(finding.kind) ?
               item.kind === finding.kind && item.lead.path === finding.pattern :
             finding.kind === 'model-access-boundary' ?
@@ -210,9 +217,14 @@ export async function proveFindings(findings, results, {runDir, surface, scope, 
         identityPath: context.scope.identities.identityPath,
         identityCookieName: context.scope.identities.identityCookieName,
         ...finding.webProof,
-        ...(finding.kind === 'model-raw-boundary' ? {
+        ...(['model-raw-boundary', 'model-sequence-boundary'].includes(finding.kind) ? {
           methods: context.scope.methods,
           targetEnvironment: context.scope.target.environment} : {}),
+        ...(finding.kind === 'model-sequence-boundary' ? {
+          credentialEnvNames: ['owner', 'outsider'].flatMap(identity =>
+            Object.values(credentialNames(context.scope, identity)))
+            .filter(name => typeof context.env[name] === 'string' &&
+              context.env[name].length > 0)} : {}),
         ...(finding.kind === 'xss-dom-fragment' ? {
           domScriptBytes: context.scope.limits.domScriptBytes,
         } : {}),
@@ -238,7 +250,8 @@ export async function proveFindings(findings, results, {runDir, surface, scope, 
             .map(item => ({path: item.path, usernameField: item.usernameField,
               passwordField: item.passwordField})),
         } : {}),
-        ...(['model-http-sequence', 'model-browser-execution', 'model-access-boundary',
+        ...(['model-http-sequence', 'model-sequence-boundary',
+          'model-browser-execution', 'model-access-boundary',
           'model-state-change'].includes(finding.kind) ||
           ['ssrf-loopback', 'remote-content-use'].includes(finding.kind) &&
             finding.webProof?.subject ? {
@@ -252,7 +265,8 @@ export async function proveFindings(findings, results, {runDir, surface, scope, 
                   finding.webProof.subject.placement)
                 .map(item => item.fields ?? [])).flat(),
         } : {}),
-        ...((['model-http-sequence', 'model-browser-execution', 'model-access-boundary',
+        ...((['model-http-sequence', 'model-sequence-boundary',
+          'model-browser-execution', 'model-access-boundary',
           'model-state-change'].includes(finding.kind) &&
             (finding.kind !== 'model-access-boundary' ||
               ['sequence-exact-body', 'sequence-json-field']
@@ -261,7 +275,7 @@ export async function proveFindings(findings, results, {runDir, surface, scope, 
             finding.webProof?.subject) ? {
           reviewedReadInputs: reviewedReadInputs(proofSurface,
             finding.webProof.subject, webOrigin),
-          reviewedOperations: (proofSurface?.methodOperations ?? [])
+          reviewedOperations: distinctOperations([...(proofSurface?.methodOperations ?? [])
             .filter(item => ['POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'].includes(item.method) &&
               ((context.scope.probes?.writeOperations ?? []).some(review =>
                 review.method === item.method && review.path === item.path &&
@@ -273,8 +287,10 @@ export async function proveFindings(findings, results, {runDir, surface, scope, 
               requiredFields: item.requiredFields ?? [],
               contentType: item.contentType ?? null,
               rootElement: item.rootElement ?? null})),
+          ...(finding.webProof?.proposedOperations ?? [])]),
         } : {}),
-        ...(['model-http-sequence', 'model-browser-execution', 'model-access-boundary', 'model-state-change',
+        ...(['model-http-sequence', 'model-sequence-boundary',
+          'model-browser-execution', 'model-access-boundary', 'model-state-change',
           'model-auth-login',
           'ssrf-loopback', 'remote-content-use',
           'model-json-differential', 'xss-stored'].includes(finding.kind) ? {
@@ -305,7 +321,8 @@ export async function proveFindings(findings, results, {runDir, surface, scope, 
         acceptHtml: surface?.exposures?.find(item => item.path === finding.pattern)?.acceptHtml === true,
         expectedHash: finding.exposureHash} : null;
     if (!spec) continue;
-    if (['model-http-sequence', 'model-browser-execution', 'model-state-change'].includes(finding.kind) ||
+    if (['model-http-sequence', 'model-sequence-boundary',
+      'model-browser-execution', 'model-state-change'].includes(finding.kind) ||
         Object.keys(context.loginSpecs).length)
       spec.credentialOrigins = context.scope.credentialOrigins;
     if (Object.keys(context.loginSpecs).length) {
@@ -379,15 +396,16 @@ function reportedProofGroups(runDir) {
 
 /** Re-execute every saved proof after a fix. The retest artifact never contains credential values. */
 export async function verifyRun(root, run, {env = process.env} = {}) {
-  const {runDir, integrity} = recordedRun(root, run);
+  const {runDir, integrity, state} = recordedRun(root, run);
   const groups = reportedProofGroups(runDir);
   const pocDir = path.join(runDir, 'poc');
   const entries = fs.existsSync(pocDir) ? fs.readdirSync(pocDir, {withFileTypes: true}).filter(item => item.isDirectory()) : [];
   need(entries.length > 0, `Run ${run} has no generated proofs.`, 3);
   const proofs = [];
+  const currentReplay = `import fs from 'node:fs';\nimport {check} from ${JSON.stringify(new URL('./poc-runtime.mjs', import.meta.url).href)};\nconst spec=JSON.parse(fs.readFileSync(process.argv[1],'utf8'));\nif(process.argv[2])spec.expiresAt=process.argv[2];\nconst result=await check(spec,process.env);\nconsole.log(JSON.stringify(result));\nconst reproduced=spec.kind==='model-http-sequence'?result.verdict==='observed':result.verdict==='confirmed';\nprocess.exitCode=reproduced?1:result.verdict==='not_reproduced'?0:3;\n`;
   for (const entry of entries) {
-    const file = path.join(pocDir, entry.name, 'poc.mjs');
-    const spec = JSON.parse(fs.readFileSync(path.join(pocDir, entry.name, 'spec.json'), 'utf8'));
+    const specPath = path.join(pocDir, entry.name, 'spec.json');
+    const spec = JSON.parse(fs.readFileSync(specPath, 'utf8'));
     // Historical sealed runtimes may still endorse this unsupported oracle.
     // Keep the artifact intact, but do not treat it as a confirmed bug today.
     if (spec.kind === 'derived-private-read') {
@@ -396,8 +414,44 @@ export async function verifyRun(root, run, {env = process.env} = {}) {
         reason: 'A self-declared private field does not establish an independent access policy or denial control'});
       continue;
     }
+    let targetUrl;
+    try { targetUrl = new URL(spec.origin); }
+    catch {
+      proofs.push({id: entry.name, kind: spec.kind, verdict: 'inconclusive',
+        exitCode: 3, controls: [], reason: 'Saved proof has no valid target origin.'});
+      continue;
+    }
+    let currentExpiry = '';
+    if (!['localhost', '127.0.0.1', '::1'].includes(targetUrl.hostname.toLowerCase())) {
+      try {
+        const targets = read(root).targets;
+        const authorized = targets.find(item => item.url === spec.origin);
+        need(authorized, 'Current target registration is missing.');
+        scopeReady(authorized);
+        for (const method of spec.methods ?? state.scope?.methods ?? ['GET', 'HEAD'])
+          scopeReady(authorized, null, method);
+        for (const prefix of spec.include ?? [])
+          need(pathAllowed(prefix, authorized.authorization.paths),
+            `Proof path ${prefix} is outside current target authorization.`);
+        need(spec.rps <= authorized.authorization.maxRequestsPerSecond,
+          'Proof rate exceeds current target authorization.');
+        const expiry = [authorized.authorization.expiresAt, authorized.ownership.expiresAt];
+        for (const origin of spec.credentialOrigins ?? []) {
+          const credentialTarget = targets.find(item => item.url === origin);
+          scopeReady(credentialTarget);
+          expiry.push(credentialTarget.authorization.expiresAt,
+            credentialTarget.ownership.expiresAt);
+        }
+        currentExpiry = new Date(Math.min(...expiry.map(value => Date.parse(value)))).toISOString();
+      } catch (error) {
+        proofs.push({id: entry.name, kind: spec.kind, verdict: 'inconclusive',
+          exitCode: 3, controls: [], reason: `Current target authorization is unavailable: ${error.message}`});
+        continue;
+      }
+    }
     let completed;
-    try { completed = await execFile(process.execPath, [file], {env, timeout: 20000}); }
+    try { completed = await execFile(process.execPath,
+      ['--input-type=module', '-e', currentReplay, specPath, currentExpiry], {env, timeout: 20000}); }
     catch {
       proofs.push({id: entry.name, kind: spec.kind, verdict: 'inconclusive',
         exitCode: 3, controls: [], reason: 'Proof execution failed or exceeded its time/output limit.'});
@@ -433,10 +487,13 @@ export function exportRun(root, run, {out = null} = {}) {
   const output = out ? path.resolve(root, out) : path.join(root, 'tests/security/blackbox');
   fs.mkdirSync(output, {recursive: true});
   const runtime = path.join(output, 'blackbox-runtime.mjs');
-  const source = fs.readFileSync(path.join(pocDir, 'runtime.mjs'), 'utf8');
-  need(!fs.existsSync(runtime) || fs.readFileSync(runtime, 'utf8') === source,
+  const savedRuntime = fs.readFileSync(path.join(pocDir, 'runtime.mjs'), 'utf8');
+  need(!fs.existsSync(runtime) || [savedRuntime, PROOF_SOURCES.runtime].includes(
+    fs.readFileSync(runtime, 'utf8')),
     `${runtime} differs from this run's proof runtime; choose another --out directory.`);
-  atomic(runtime, source);
+  // Saved PoCs retain their sealed runtime. CI exports use the current runtime
+  // so a corrected fixed-state oracle can be applied to older verified proofs.
+  atomic(runtime, PROOF_SOURCES.runtime);
   const boundarySource = path.join(pocDir, 'boundary-oracle.mjs');
   if (fs.existsSync(boundarySource)) {
     const oracle = path.join(output, 'boundary-oracle.mjs');
@@ -461,9 +518,19 @@ export function exportRun(root, run, {out = null} = {}) {
       continue;
     }
     const file = path.join(output, `${run}-${entry.name}.test.mjs`);
-    need(!fs.existsSync(file), `Regression test already exists: ${file}.`);
-    const testSource = `import test from 'node:test';\nimport assert from 'node:assert/strict';\nimport {check} from './blackbox-runtime.mjs';\nconst spec=${JSON.stringify(spec)};\ntest(${JSON.stringify(`${entry.name} ${spec.kind} is fixed`)},async()=>{\n  const result=await check(spec,process.env);\n  assert.equal(result.verdict,'not_reproduced',JSON.stringify(result));\n});\n`;
-    atomic(file, testSource);
+    const oldSource = `import test from 'node:test';\nimport assert from 'node:assert/strict';\nimport {check} from './blackbox-runtime.mjs';\nconst spec=${JSON.stringify(spec)};\ntest(${JSON.stringify(`${entry.name} ${spec.kind} is fixed`)},async()=>{\n  const result=await check(spec,process.env);\n  assert.equal(result.verdict,'not_reproduced',JSON.stringify(result));\n});\n`;
+    const previousSource = `import test from 'node:test';\nimport assert from 'node:assert/strict';\nimport {check} from './blackbox-runtime.mjs';\nconst spec=${JSON.stringify(spec)};\nconst selected=process.env.BYPASS_BLACKBOX_TEST_ORIGIN;\nconst target=selected?new URL(selected).origin:null;\nconst source=new URL(spec.origin).origin;\nconst rebase=value=>{\n  if(typeof value==='string'&&URL.canParse(value)){\n    const url=new URL(value);\n    if(url.origin===source)return value===source?target:target+url.href.slice(source.length);\n  }\n  if(Array.isArray(value))return value.map(rebase);\n  if(value&&typeof value==='object')return Object.fromEntries(Object.entries(value).map(([key,item])=>[key,rebase(item)]));\n  return value;\n};\nconst replaySpec=target?{...rebase(spec),origin:target,expiresAt:null,\n  credentialOrigins:(spec.credentialOrigins??[]).map(origin=>origin===source?target:origin)}:spec;\ntest(${JSON.stringify(`${entry.name} ${spec.kind} is fixed`)},async()=>{\n  const result=await check(replaySpec,process.env);\n  assert.equal(result.verdict,'not_reproduced',JSON.stringify(result));\n});\n`;
+    const priorSource = previousSource.replace('expiresAt:null,\n  credentialOrigins:',
+      "expiresAt:null,\n  targetEnvironment:['localhost','127.0.0.1','::1'].includes(new URL(target).hostname.toLowerCase())?'local':spec.targetEnvironment,\n  credentialOrigins:");
+    const guardSource = priorSource.replace('  if(Array.isArray(value))return value.map(rebase);',
+      "  if(typeof value==='string'&&target!==source){\n    let decoded=value;\n    try{decoded=decodeURIComponent(value)}catch{}\n    if(decoded.replaceAll('\\\\/','/').includes(source))\n      throw Error('CI origin override cannot rebase an embedded source URL');\n  }\n  if(Array.isArray(value))return value.map(rebase);");
+    const testSource = guardSource.replace('const target=selected?new URL(selected).origin:null;',
+      "if(process.env.CI&&!selected)throw Error('Set BYPASS_BLACKBOX_TEST_ORIGIN for CI replay.');\nconst target=selected?new URL(selected).origin:null;");
+    const finalSource = testSource.replace('origin:target,expiresAt:null,',
+      'origin:target,expiresAt:target===source?spec.expiresAt:null,');
+    if (fs.existsSync(file)) need([oldSource, previousSource, priorSource, guardSource, testSource, finalSource].includes(fs.readFileSync(file, 'utf8')),
+      `Regression test differs from Bypass-generated version: ${file}.`);
+    atomic(file, finalSource);
     files.push(file);
   }
   return {kind: 'blackbox-export', run, output, files, skippedProofs, integrity,

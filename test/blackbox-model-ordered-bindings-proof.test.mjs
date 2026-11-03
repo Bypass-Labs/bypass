@@ -25,7 +25,8 @@ test('sealed proof replays two fresh bindings across three reviewed POSTs', asyn
     response.setHeader('content-type', 'application/json');
     const url = new URL(request.url, 'http://fixture');
     requests.push({method: request.method, path: url.pathname,
-      cacheControl: request.headers['cache-control']});
+      cacheControl: request.headers['cache-control'],
+      cookiePresent: Boolean(request.headers.cookie)});
     if (request.method === 'GET' && url.pathname === privatePath) {
       if (request.headers.authorization !== 'Bearer fixture-owner') {
         response.writeHead(403); response.end('{"error":"owner only"}'); return;
@@ -41,18 +42,22 @@ test('sealed proof replays two fresh bindings across three reviewed POSTs', asyn
     if (request.method === 'POST' && url.pathname === start && input.seed === 1) {
       const nonce = `n${(++issued).toString(36)}`;
       nonces.add(nonce);
+      response.setHeader('set-cookie', `mission=${nonce}; Path=/api/${suffix}; HttpOnly`);
       response.end(JSON.stringify({nonce})); return;
     }
     if (request.method === 'POST' && url.pathname === exchange) {
-      if (!nonces.delete(input.nonce)) {
+      if (request.headers.cookie !== `mission=${input.nonce}` ||
+          !nonces.delete(input.nonce)) {
         response.writeHead(400); response.end('{"error":"nonce"}'); return;
       }
       const ticket = `t${(++issued).toString(36)}`;
       tickets.add(ticket);
+      response.setHeader('set-cookie', `mission=${ticket}; Path=/api/${suffix}; HttpOnly`);
       response.end(JSON.stringify({ticket})); return;
     }
     if (request.method === 'POST' && url.pathname === finish) {
-      const valid = tickets.delete(input.ticket);
+      const valid = request.headers.cookie === `mission=${input.ticket}` &&
+        tickets.delete(input.ticket);
       if (valid && input.claim === 'signal-a') {
         response.end(JSON.stringify({result: marker})); return;
       }
@@ -150,4 +155,6 @@ test('sealed proof replays two fresh bindings across three reviewed POSTs', asyn
   assert.ok(issued >= 6, 'each control and replay needs fresh captures');
   assert.ok(requests.every(item => item.cacheControl === 'no-cache' &&
     [start, exchange, finish, privatePath].includes(item.path)));
+  assert.ok(requests.filter(item => [exchange, finish].includes(item.path))
+    .every(item => item.cookiePresent), 'each fresh step carries its server-issued cookie');
 });

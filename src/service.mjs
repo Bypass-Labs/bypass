@@ -3,7 +3,7 @@ import { assessmentCoverage, findingSummary } from './review-report.mjs';
 import { createAppProfile, requireSource } from './application-setup.mjs';
 import { rememberOwnership, rememberProjectOwnership, sharedOwnership, revokeOwnership, ownershipVerification, verificationDisabled, ownershipReady } from './ownership-store.mjs';
 import { executionMode, hostAI, requireStandaloneAPI } from './execution-mode.mjs';
-import { beginHostReview, hostPlan, hostReviewStep } from './host-review.mjs';
+import { beginHostReview, hostPlan, hostReviewStep, combinedFocusBudget } from './host-review.mjs';
 import { memorySummary, recallMemory, featureContext, forgetMemory, setMemory, consolidateMemory } from './project-memory.mjs';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -114,6 +114,15 @@ export async function execute(key,args=[],o={},context={}){
   }
   if(key==='blackbox setup')return outcome(await prepareBlackboxSetup(working,args[0],o));
   if(key==='blackbox'){
+    if(executionMode()==='muse-host'&&o.finding){
+      const budget=combinedFocusBudget(rootFrom(working,false),o.finding);
+      if(budget){
+        need(!budget.exhausted,
+          `Combined audit limit reached; this source finding remains untested live. Review ${budget.reviewRunId} for remaining coverage.`,3);
+        o={...o,'model-calls':budget.modelCallsRemaining,minutes:budget.minutesRemaining,
+          rps:budget.rps??o.rps};
+      }
+    }
     let auditRps=o.rps;
     if(args[0]&&!o.scope&&
       !fs.existsSync(path.join(rootFrom(working,false),'blackbox.scope.json'))){
@@ -141,6 +150,8 @@ export async function execute(key,args=[],o={},context={}){
         auditDomains:o['audit-domains'],includes:o.include},
       noModel:!!o['no-model'],dryRun:!!o['dry-run'],noDiscovery:!!o['no-discovery'],offline:!!o.offline,
       modelName:o.model||null,sourcePath:o.source||null,
+      findingId:o.finding||null,focusPath:o['focus-path']||null,
+      revisionPath:o['revision-path']||null,revisionField:o['revision-field']||'revision',
       signal:context.signal, infer:context.infer, modelProfileOverride:context.modelProfile,
       log:event=>context.onProgress?.(event)});
     return outcome(result,result.exitCode);

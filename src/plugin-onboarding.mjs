@@ -11,7 +11,7 @@ import { pluginIdentity } from './runtime-identity.mjs';
 import { credentialStatus } from './credentials.mjs';
 import { registrationStatus } from './registration.mjs';
 import { appConnection } from './app-connection.mjs';
-import { methodInput } from './http-methods.mjs';
+import { httpMethods, methodChoices, methodInput } from './http-methods.mjs';
 import { reviewQuestion, reviewInput, sourceStatus, repositoryAction } from './application-setup.mjs';
 import { ownershipReady, verificationDisabled, sharedOwnership } from './ownership-store.mjs';
 
@@ -24,7 +24,8 @@ function blackboxScopeOutput(root,origin){
 }
 
 // Setup plans are read-only. The MCP adapter remembers explicitly selected modes.
-export async function pluginOnboarding(cwd,root,{intent='real',mode,url,environment,repository,dir,reviewScope=false}={}){
+export async function pluginOnboarding(cwd,root,{intent='real',mode,url,environment,repository,dir,reviewScope=false,
+  interactiveCombined=false,methods,rps,modelCalls,minutes,scopeApproved=false}={}){
   const [workspace,identity]=await Promise.all([workspaceInfo(cwd,root),pluginIdentity()]);
   const state=root?read(root):null;
   mode??=state?.settings.reviewMode||(state?.targets.length?'combined':null);
@@ -85,23 +86,64 @@ export async function pluginOnboarding(cwd,root,{intent='real',mode,url,environm
       if(nextAction.automatic){const base=nextAction.arguments.name;let n=2;while(state.targets.some(t=>t.name===nextAction.arguments.name))nextAction.arguments.name=base+n++;}
     }
   }
-  if(reviewScope&&mode!=='code'&&(owned||skipVerification)&&(!requestedOrigin||requestedOrigin===target.url))nextAction={id:'scope',tool:'bypass_authorize_target'};
+  if(reviewScope&&!interactiveCombined&&mode!=='code'&&(owned||skipVerification)&&(!requestedOrigin||requestedOrigin===target.url))nextAction={id:'scope',tool:'bypass_authorize_target'};
   if(nextAction.id==='ownership'){
     if(reusable)nextAction={id:'ownership',tool:'bypass_verify_target',automatic:true,arguments:{name:target.name,method:reusable.method},message:'Reuse existing valid ownership for this app URL. No DNS publication is needed.'};
     else if(target?.environment!=='local'&&!challenge)nextAction={id:'ownership',tool:'bypass_verify_target',automatic:true,arguments:{name:target.name,renew:true,method:target.ownershipVerification==='http'?'http':'dns'},message:'The prior ownership proof has expired. Issue a new challenge.'};
     else if(target?.environment==='local')Object.assign(nextAction,{question:`Do you control the app at ${target.url} on this computer?`,input:choiceInput('ownership',[{id:'confirm',label:'Confirm local ownership',description:'I control this local application.',arguments:{name:target.name,method:'local'}},{id:'later',label:'Set up later',description:'Keep live testing disabled.'}])});
     else nextAction.input=choiceInput('ownership',[{id:'check',label:target.ownershipVerification==='http'?'I added the file: check HTTPS':'I added the TXT record: check DNS',description:'Check the displayed proof without starting tests.',arguments:{name:target.name,method:target.ownershipVerification==='http'?'http':'dns'}},{id:'later',label:source?'Review code while DNS updates':'Save and verify later',description:'Keep app testing disabled.'},{id:target.ownershipVerification==='http'?'dns':'http',label:target.ownershipVerification==='http'?'Use a DNS TXT record':'Use an HTTPS verification file',description:'Show the alternative ownership proof.'}],{recommended:'check'});
   }
+  if(interactiveCombined&&mode==='combined'&&target&&(owned||skipVerification)&&
+    (!requestedOrigin||requestedOrigin===target.url)&&['scope','review'].includes(nextAction.id)){
+    const savedMethods=target.authorization?.methods||['GET','HEAD','POST'];
+    const savedRate=target.authorization?.maxRequestsPerSecond||2;
+    if(methods==null)nextAction={id:'methods',tool:'bypass_onboarding',question:'Which HTTP methods may this combined audit use?',
+      input:choiceInput('methods',[
+        {id:'current',label:target.authorization?'Keep saved methods':'Default methods',description:savedMethods.join(', '),arguments:{methods:savedMethods.join(',')}},
+        {id:'all',label:'All methods',description:'GET, HEAD, POST, PUT, PATCH, DELETE, OPTIONS.',arguments:{methods:methodChoices.map(choice=>choice.id).join(',')}},
+        {id:'custom',label:'Custom methods',description:'Enter comma-separated method names.',requiresInput:'methods'}
+      ],{custom:'value'}),guidance:'Ask this question once. Send the selected comma-separated methods to bypass_onboarding; a custom answer can name any supported HTTP methods.'};
+    else if(rps==null)nextAction={id:'rps',tool:'bypass_onboarding',question:'What request rate should the combined audit use?',
+      input:choiceInput('rps',[
+        {id:'current',label:`${savedRate} RPS`,description:'Use the saved request rate.',arguments:{rps:savedRate}},
+        {id:'ten',label:`${savedRate===10?5:10} RPS`,description:'Use this request rate.',arguments:{rps:savedRate===10?5:10}},
+        {id:'custom',label:'Custom rate',description:'Enter a positive requests-per-second number.',requiresInput:'rps'}
+      ],{custom:'value'}),guidance:'Ask this question once. Send the selected positive number to bypass_onboarding; do not silently reuse a saved rate.'};
+    else if(modelCalls==null)nextAction={id:'model-calls',tool:'bypass_onboarding',question:'How many Muse decision calls may all focused blackbox checks share?',
+      input:choiceInput('modelCalls',[
+        {id:'default',label:'120 calls',description:'Use the default total for focused blackbox checks.',arguments:{modelCalls:120}},
+        {id:'more',label:'240 calls',description:'Allow more focused blackbox decisions.',arguments:{modelCalls:240}},
+        {id:'custom',label:'Custom number',description:'Enter a positive whole number.',requiresInput:'modelCalls'}
+      ],{custom:'value'}),guidance:'Ask this question once. This cap covers focused blackbox decisions across all source findings; Muse Code source-review reasoning is outside this counter.'};
+    else if(minutes==null)nextAction={id:'minutes',tool:'bypass_onboarding',question:'What time budget should the combined review use?',
+      input:choiceInput('minutes',[
+        {id:'default',label:'30 minutes',description:'Use the default total duration.',arguments:{minutes:30}},
+        {id:'more',label:'45 minutes',description:'Allow more time for source and focused blackbox checks.',arguments:{minutes:45}},
+        {id:'custom',label:'Custom duration',description:'Enter a positive number of minutes.',requiresInput:'minutes'}
+      ],{custom:'value'}),guidance:'Ask this question once. Elapsed time starts at the source review; Bypass applies the remaining time to each focused check and stops starting new checks when it runs out. The plugin cannot interrupt Muse Code while it is thinking.'};
+    else if(!scopeApproved)nextAction={id:'scope',tool:'bypass_authorize_target'};
+    else nextAction={id:'review',tool:'bypass_scan',arguments:{mode:'combined',modelCalls,minutes},
+      message:'Start the combined source and live review with the selected total Muse-call and time limits.'};
+  }
   if(nextAction.id==='scope'){
     const scope={url:target.url,environment:target.environment,paths:target.authorization?.paths||['/'],
-      methods:target.authorization?.methods||['GET','HEAD','POST'],maxRequestsPerSecond:target.authorization?.maxRequestsPerSecond||2,
+      methods:methods==null?target.authorization?.methods||['GET','HEAD','POST']:httpMethods(methods),
+      maxRequestsPerSecond:rps??target.authorization?.maxRequestsPerSecond??2,
       expiresAt:target.authorization?.expiresAt||new Date(Date.now()+7*86400000).toISOString(),
       publicConfigDiscovery:target.authorization?.publicConfigDiscovery??true};
     const input=testingApproval(target,scope);
+    input.choices.find(choice=>choice.id==='custom').description='Choose all methods, paths or limits before approving.';
+    const methodPicker=methodInput(scope.methods);
+    methodPicker.singleSelectFallback.choices=[
+      {label:'Keep selected methods',description:scope.methods.join(', '),methods:scope.methods},
+      {label:'All methods',description:'Allow GET, HEAD, POST, PUT, PATCH, DELETE and OPTIONS.',
+        methods:methodChoices.map(choice=>choice.id)},
+      {label:'Custom methods',description:'Enter exactly the methods to allow, separated by commas.',custom:true}
+    ];
     Object.assign(nextAction,{question:input.question,input,scope,
       arguments:{name:target.name,paths:scope.paths.join(','),methods:scope.methods,'public-config':scope.publicConfigDiscovery,rps:scope.maxRequestsPerSecond},
-      custom:{methods:methodInput(target.authorization?.methods),paths:choiceInput('paths',scopeSuggestions(target).map((item,n)=>({...item,id:String(n)})),{recommended:'0',custom:'value'})},
-      guidance:'Show the compact proposed scope and Approve / Decline / Custom instructions picker. Explain that POST may create data or start jobs. Approve confirms app control and the displayed testing scope, including production when shown. Continue automatically after approval. Custom opens method/path choices or accepts instructions; do not require a questionnaire. Keep optional account creation separate unless its exact effects were explicitly approved. Domain verification is a project setting; show DNS/HTTPS steps only when required. Never describe acknowledgment as verified domain ownership.'});
+      custom:{methods:methodPicker,paths:choiceInput('paths',scopeSuggestions(target).map((item,n)=>({...item,id:String(n)})),{recommended:'0',custom:'value'})},
+      guidance:'Show the compact proposed scope and Approve / Decline / Custom instructions picker. Explain that Custom offers All methods (GET, HEAD, POST, PUT, PATCH, DELETE, OPTIONS) as one choice. Approve confirms app control and the displayed testing scope, including production when shown. Continue automatically after approval. Custom opens method/path choices or accepts instructions; do not require a questionnaire. Keep optional account creation separate unless its exact effects were explicitly approved. Domain verification is a project setting; show DNS/HTTPS steps only when required. Never describe acknowledgment as verified domain ownership.'});
   }
   return {version:VERSION,runtime:identity,intent,mode,workspace,selectedRepository:source?root:null,profileRoot:root,engine:'host',ai:hostAI(),stage:nextAction.id==='review'?'ready':nextAction.id,steps,ready:{source,live},coverageGaps:mode==='code'?[]:ready.coverageGaps,nextAction,
     alternatives:mode==='combined'&&source&&!live?[{label:'Review code now; connect the app later',tool:'bypass_scan',arguments:{mode:'code'}}]:[],

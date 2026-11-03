@@ -72,7 +72,7 @@ export function coverageFor({results = [], surface = null, web = null, ownerRead
   const decisive = new Set(['confirmed', 'not_reproduced', 'public', 'shared']);
   const webResults = web?.results ?? [];
   const confirmedSequenceResults = webResults.filter(item =>
-    ['model-http-sequence', 'model-cookie-access', 'model-raw-boundary',
+    ['model-http-sequence', 'model-sequence-boundary', 'model-cookie-access', 'model-raw-boundary',
       'model-state-change', 'model-access-boundary']
       .includes(item.kind) && item.verdict === 'confirmed').length;
   // A model sequence is stored under its generic runner kind. Its impact
@@ -83,6 +83,7 @@ export function coverageFor({results = [], surface = null, web = null, ownerRead
   const modelImpactCount = kind => Math.min(confirmedSequenceResults,
     modelImpactFindings.filter(item => item.kind === kind).length);
   const modelAccess = modelImpactCount('model-access-boundary');
+  const modelSequenceBoundary = modelImpactCount('model-sequence-boundary');
   const modelState = modelImpactCount('model-state-change');
   const modelOutsiderState = Math.min(confirmedSequenceResults,
     modelImpactFindings.filter(item => item.kind === 'model-state-change' &&
@@ -113,7 +114,7 @@ export function coverageFor({results = [], surface = null, web = null, ownerRead
   const xxe = webResults.filter(item => ['xxe-hosts', 'xxe-body-hosts'].includes(item.kind)).length;
   const ssti = webResults.filter(item => item.kind === 'ssti-arithmetic').length;
   const modelKinds = ['model-differential', 'model-json-differential',
-    'model-http-sequence', 'model-cookie-access', 'model-raw-boundary',
+    'model-http-sequence', 'model-sequence-boundary', 'model-cookie-access', 'model-raw-boundary',
     'model-browser-execution',
     'model-json-observation', 'model-http-observation', 'model-raw-observation'];
   // Queued or refused proposals are coverage cuts, not executed experiments.
@@ -132,7 +133,7 @@ export function coverageFor({results = [], surface = null, web = null, ownerRead
   const exposureTotal = (surface?.exposureStats?.total ?? 0) +
     applications.reduce((count, app) => count + (app.exposureStats?.total ?? 0), 0);
   const attempts = {'access-control': access + nosql + derivedPrivate + authLogin +
-    cookieAccess + rawBoundary + modelAccess + modelState,
+    cookieAccess + rawBoundary + modelAccess + modelSequenceBoundary + modelState,
     'exposed-paths': exposed,
     'open-redirect': redirect, 'host-header-redirect': hostHeader, 'jwt-auth': jwt,
     'parameter-pollution': pollution,
@@ -275,16 +276,17 @@ export function coverageFor({results = [], surface = null, web = null, ownerRead
   const authLoginClass = webClass('model-auth-login');
   const cookieAccessClass = webClass('model-cookie-access');
   const rawBoundaryClass = webClass('model-raw-boundary');
+  const sequenceBoundaryClass = webClass('model-sequence-boundary');
   const derivedPrivateClass = {...webClass('derived-private-read'),
     reason: 'Only newly mapped GET routes whose JSON explicitly declares private account data were checked with a fresh authenticated response and two exact anonymous reads; other access controls remain untested.'};
   const allAccess = {attempts: results.length + operatorClass.attempts + modelAccessClass.attempts +
       modelStateClass.attempts +
       derivedPrivateClass.attempts + authLoginClass.attempts + cookieAccessClass.attempts +
-      rawBoundaryClass.attempts,
+      rawBoundaryClass.attempts + sequenceBoundaryClass.attempts,
     completed: results.filter(item => decisive.has(item.verdict)).length +
       operatorClass.completed + modelAccessClass.completed + modelStateClass.completed +
       derivedPrivateClass.completed + authLoginClass.completed + cookieAccessClass.completed +
-      rawBoundaryClass.completed};
+      rawBoundaryClass.completed + sequenceBoundaryClass.completed};
   const idorClass = taskClass(['idor', 'nested-idor', 'graphql-bola']);
   const bolaClass = {attempts: idorClass.attempts + operatorClass.attempts +
       modelAccessClass.attempts + modelOutsiderState,
@@ -293,8 +295,8 @@ export function coverageFor({results = [], surface = null, web = null, ownerRead
   const missingAuthClass = taskClass(['missing-auth']);
   const jwtClass = {...webClass('jwt-unsigned'),
     reason: 'Only alg:none acceptance of an operator-supplied JWT on observed private JSON GET routes was checked; other JWT flaws remain untested.'};
-  const authBypassClass = {attempts: missingAuthClass.attempts + jwtClass.attempts + derivedPrivateClass.attempts + authLoginClass.attempts + cookieAccessClass.attempts + rawBoundaryClass.attempts,
-    completed: missingAuthClass.completed + jwtClass.completed + derivedPrivateClass.completed + authLoginClass.completed + cookieAccessClass.completed + rawBoundaryClass.completed,
+  const authBypassClass = {attempts: missingAuthClass.attempts + jwtClass.attempts + derivedPrivateClass.attempts + authLoginClass.attempts + cookieAccessClass.attempts + rawBoundaryClass.attempts + sequenceBoundaryClass.attempts,
+    completed: missingAuthClass.completed + jwtClass.completed + derivedPrivateClass.completed + authLoginClass.completed + cookieAccessClass.completed + rawBoundaryClass.completed + sequenceBoundaryClass.completed,
     reason: 'Only missing authentication on observed or configured private reads, alg:none acceptance on an observed private JSON GET, or a Muse-proposed synthetic invalid-password login with a protected GET control was checked.'};
   const keyScan = {attempts: assetFiles, completed: 0,
     reason: 'Downloaded client assets were scanned for key-shaped strings, but API key validity and privileges were not checked.'};

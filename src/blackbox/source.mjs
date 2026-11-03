@@ -14,6 +14,8 @@ const PY_ROUTE = /^[ \t]*@((?:app|router|bp|[A-Za-z_]\w*router))\.(get|post|put|
 const PHP_ROUTE = /\bRoute\s*::\s*(get|post|put|patch|delete|head|options)\s*\(\s*['"]([^'"]{1,240})['"]/g;
 const SPRING_ROUTE = /@\s*(Get|Post|Put|Patch|Delete)Mapping\s*\(\s*(?:(?:value|path)\s*=\s*)?['"]([^'"]{1,240})['"]/g;
 const DOTNET_ROUTE = /\b([A-Za-z_]\w*)\s*\.\s*Map(Get|Post|Put|Patch|Delete)\s*\(\s*['"]([^'"]{1,240})['"]/g;
+const GUARDED_METHOD = /\b(?:req(?:uest)?\.)?method\s*===?\s*(['"`])(GET|HEAD|POST|PUT|PATCH|DELETE|OPTIONS)\1/i;
+const GUARDED_PATH = /\b(?:path|pathname|url\.pathname|req(?:uest)?\.url)\s*===?\s*(['"`])(\/[^'"`]{0,239})\1/;
 const PHP_GROUP = /\bRoute\s*::\s*prefix\s*\(\s*(['"])([^'"]{1,240})\1\s*\)\s*->\s*group\s*\(\s*function\s*\([^)]*\)\s*\{/g;
 const SPRING_CLASS = /@RequestMapping\s*\(\s*(?:(?:path|value)\s*=\s*)?(['"])([^'"]{1,240})\1\s*\)[\s\S]{0,300}?\bclass\s+[A-Za-z_]\w*[^\{]*\{/g;
 const DOTNET_GROUP = /\b(?:var|RouteGroupBuilder)\s+([A-Za-z_]\w*)\s*=\s*([A-Za-z_]\w*)\s*\.\s*MapGroup\s*\(\s*(['"])([^'"]{1,240})\3\s*\)/g;
@@ -188,13 +190,42 @@ function routeFacts(text, file) {
         index: match.index, receiver});
     }
   }
+  // Some small HTTP servers dispatch routes through literal method/path
+  // guards rather than a framework router. Read both halves of the guard
+  // independently so their order does not change the extracted contract.
+  if (/\.[cm]?[jt]sx?$/i.test(file)) for (const match of text.matchAll(/\bif\s*\(/g)) {
+    const open = match.index + match[0].lastIndexOf('(');
+    const close = matchingClose(text, open, '(', ')');
+    if (close < 0) continue;
+    const condition = text.slice(open + 1, close);
+    if (!condition.includes('&&') || condition.includes('||')) continue;
+    const method = GUARDED_METHOD.exec(condition)?.[2]?.toUpperCase();
+    const literal = GUARDED_PATH.exec(condition)?.[2];
+    const path = routeWithoutCredentialValues(literal);
+    if (!method || !path) continue;
+    const bodyOpen = /^\s*\{/.exec(text.slice(close + 1))?.[0];
+    if (!bodyOpen) continue;
+    const start = close + 1 + bodyOpen.lastIndexOf('{');
+    const end = matchingClose(text, start, '{', '}');
+    if (end < 0) continue;
+    const body = text.slice(start + 1, end);
+    const bodyFields = [...new Set([
+      ...[...body.matchAll(/\bbody(?:\?)?\.([A-Za-z_][A-Za-z0-9_]*)/g)].map(item => item[1]),
+      ...[...body.matchAll(/\bbody\s*\[\s*['"]([A-Za-z_][A-Za-z0-9_]*)['"]\s*\]/g)].map(item => item[1]),
+    ])].slice(0, 20);
+    const bodyEncoding = /\b(?:readJson|JSON\.parse)\s*\(|\b(?:req|request)\.json\s*\(/.test(body) ?
+      'json' : null;
+    matches.push({path, method, index: match.index, bodyFields, bodyEncoding});
+  }
   matches.sort((a, b) => a.index - b.index);
   return matches.map((match, index) => {
     const nearby = text.slice(match.index, Math.min(text.length, match.index + 4000,
       matches[index + 1]?.index ?? text.length));
-    const params = [...new Set([PARAM, ...LITERAL_PARAMS]
-      .flatMap(expression => [...nearby.matchAll(expression)].map(item => item[1])))].slice(0, 20);
+    const params = [...new Set([...((match.bodyFields ?? [])), ...[PARAM, ...LITERAL_PARAMS]
+      .flatMap(expression => [...nearby.matchAll(expression)].map(item => item[1]))])].slice(0, 20);
     return {path: match.path, method: match.method, params, file,
+      ...(match.bodyFields?.length ? {bodyFields: match.bodyFields} : {}),
+      ...(match.bodyEncoding ? {bodyEncoding: match.bodyEncoding} : {}),
       ...(isPython ? {receiver: match.receiver} : {}),
       line: text.slice(0, match.index).split('\n').length, source: 'source-assisted'};
   });
@@ -350,6 +381,9 @@ export async function reviewSource(sourcePath, {infer = null, model = null, log 
     if (/\.[cm]?[jt]sx?$/i.test(file)) {
       const extracted = extractFromScript(body, {url: `source://${relative}`, origin});
       for (const entry of extracted.endpoints) if (safeRoutePath(entry.path)) {
+        if (routes.some(route => route.path === entry.path &&
+          (route.method === entry.method || entry.method === 'UNKNOWN' &&
+            route.method !== 'UNKNOWN'))) continue;
         const offset = body.indexOf(entry.path);
         routes.push({path: routeWithoutCredentialValues(entry.path),
           method: entry.method, params: entry.params ?? [], file: relative,

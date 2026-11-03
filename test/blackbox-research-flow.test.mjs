@@ -1627,8 +1627,16 @@ test('observed API methods preserve exact method, placement and content type in 
       const withUnusedTemplate = validateResearchFlow({...spec, subject: {...spec.subject,
         bodyTemplate: '{"expression":"{{input}}"}'}}, surface, scope, {inventory});
       assert.equal(withUnusedTemplate.ok, true);
-      assert.equal(withUnusedTemplate.normalizedBodyTemplate, true);
-      assert.equal(withUnusedTemplate.lead.subject.bodyTemplate, '');
+      assert.equal(withUnusedTemplate.lead.subject.bodyTemplate,
+        '{"expression":"{{input}}"}');
+      const templatedRequests = [];
+      await executeResearchFlow(withUnusedTemplate.lead, async request => {
+        templatedRequests.push(request);
+        return {status: 200, type: 'application/json', body: '{"ok":true}',
+          headers: {}, cached: false, evidenceId: `template-${templatedRequests.length}`};
+      });
+      assert.ok(templatedRequests.some(request => request.body ===
+        '{"expression":"plain"}' && request.rawModelRequest === true));
     }
     const requests = [];
     await executeResearchFlow(checked.lead, async request => {
@@ -1921,6 +1929,252 @@ test('blank bindings normalize and model-authored syntax remains executable', as
   } finally {fs.rmSync(dir, {recursive: true, force: true});}
 });
 
+test('a source-grounded two-write plan may omit an empty observe list and bind a fresh response', async () => {
+  const origin = 'http://127.0.0.1:4334';
+  const {scope} = loadScope({origin, overrides: {acceptLocal: true}});
+  const login = randomPath('begin'), verify = randomPath('finish');
+  const user = `user_${randomBytes(3).toString('hex')}`;
+  const password = `phrase_${randomBytes(3).toString('hex')}`;
+  const challenge = `challenge_${randomBytes(3).toString('hex')}`;
+  const flag = `choice_${randomBytes(3).toString('hex')}`;
+  const surface = {authBodyOperations: [{path: login, method: 'POST',
+    contentType: 'application/json', fields: [user, password],
+    requiredFields: [user, password]}], jsonBodyOperations: [{path: verify,
+    method: 'POST', contentType: 'application/json',
+    fields: [challenge, 'code', flag], requiredFields: [challenge, 'code', flag]}]};
+  const step = (path, key, value, fixedFields = []) => ({method: 'POST', path,
+    placement: 'json', key, value, fixedFields, bodyTemplate: '', headers: []});
+  const proposal = {family: 'two-step access boundary',
+    why: 'A fresh first response is required by the second write', priority: 8,
+    as: 'anonymous', oracle: 'status-boundary',
+    prelude: [step(login, user, 'fixture-user',
+      [{field: password, value: 'fixture-password'}])],
+    subject: {...step(verify, flag, '', [{field: 'code', value: 'wrong'}]),
+      valueEncoding: 'json'},
+    // Muse can omit this optional list when proof is in the subject response.
+    bindings: [{from: 0, pointer: `/${challenge}`, to: 'subject', index: 0,
+      key: challenge}],
+    controlValue: 'false', firstValue: 'true', secondValue: 'null',
+    marker: '', secondMarker: '',
+    assertion: {step: 'subject', index: 0, location: 'body', name: ''}};
+  const reviewed = validateResearchFlow(proposal, surface, scope);
+  assert.equal(reviewed.ok, true, JSON.stringify(reviewed));
+  assert.deepEqual(reviewed.lead.observe, []);
+  assert.equal(validateResearchFlow({...proposal, observe: null}, surface, scope).ok,
+    true, 'a null optional step list is also empty');
+  let issued = 0;
+  const fresh = new Set(), seen = [];
+  await executeResearchFlow(reviewed.lead, async request => {
+    const body = JSON.parse(request.body);
+    seen.push({path: request.url, body});
+    if (request.url === login) {
+      assert.equal(body[user], 'fixture-user');
+      assert.equal(body[password], 'fixture-password');
+      issued++;
+      const value = randomBytes(24).toString('hex');
+      fresh.add(value);
+      return {status: 200, type: 'application/json',
+        headers: {'content-type': 'application/json'},
+        body: JSON.stringify({[challenge]: value}), evidenceId: `e${issued}`};
+    }
+    assert.equal(request.url, verify);
+    assert.equal(fresh.delete(body[challenge]), true,
+      'each verification uses a new first-step response');
+    assert.equal(body.code, 'wrong');
+    return {status: body[flag] === true ? 200 : 401,
+      type: 'application/json', headers: {'content-type': 'application/json'},
+      body: JSON.stringify({ok: body[flag] === true}), evidenceId: `e${issued}`};
+  });
+  assert.ok(seen.some(item => item.path === verify && item.body[flag] === true));
+  assert.equal(seen.filter(item => item.path === login).length,
+    seen.filter(item => item.path === verify).length);
+});
+
+test('research preserves Muse request bytes and binds each fresh scalar into headers and cookies', async () => {
+  const origin = 'http://127.0.0.1:4334';
+  const {scope} = loadScope({origin, overrides: {acceptLocal: true}});
+  const begin = randomPath('begin'), finish = randomPath('finish');
+  const proposedField = `model_${randomBytes(3).toString('hex')}`;
+  const nonce = `nonce_${randomBytes(3).toString('hex')}`;
+  const header = `x-proof-${randomBytes(3).toString('hex')}`;
+  const cookie = `proof_${randomBytes(3).toString('hex')}`;
+  const bodyField = `derived_${randomBytes(3).toString('hex')}`;
+  const surface = {jsonBodyOperations: [
+    {path: begin, method: 'POST', contentType: 'application/json',
+      fields: ['user', 'mode'], requiredFields: ['user', 'mode']},
+    {path: finish, method: 'POST', contentType: 'application/json',
+      fields: ['flag'], requiredFields: ['flag']} ]};
+  const proposal = {family: 'fresh access flow', why: 'Use the setup response twice',
+    priority: 8, as: 'anonymous', oracle: 'observation',
+    prelude: [{method: 'POST', path: begin, placement: 'json', key: proposedField,
+      value: 'muse-user', fixedFields: [{field: 'user', value: 'fixture-user'},
+        {field: 'mode', value: 'muse-mode'}],
+      bodyTemplate: '', headers: [{name: 'Content-Type',
+        value: 'application/json; charset=utf-8'}]}],
+    subject: {method: 'POST', path: finish, placement: 'json', key: 'flag',
+      fixedFields: [], bodyTemplate:
+        `{"flag":"{{input}}","${bodyField}":"{{binding:${bodyField}}}","source":"Muse"}`,
+      headers: [{name: 'Content-Type', value: 'application/json; charset=utf-8'}]},
+    bindings: [{from: 0, pointer: `/${nonce}`, to: 'subject', index: 0,
+      key: header, placement: 'header'},
+    {from: 0, pointer: `/${nonce}`, to: 'subject', index: 0,
+      key: cookie, placement: 'cookie'},
+    {from: 0, pointer: `/${nonce}`, to: 'subject', index: 0,
+      key: bodyField}],
+    controlValue: 'closed', firstValue: 'candidate', secondValue: 'other',
+    marker: '', secondMarker: '',
+    assertion: {step: 'subject', index: 0, location: 'body', name: ''}};
+  const reviewed = validateResearchFlow(proposal, surface, scope);
+  assert.equal(reviewed.ok, true, JSON.stringify(reviewed));
+  assert.equal(reviewed.lead.prelude[0].key, proposedField);
+  assert.equal(reviewed.lead.prelude[0].value, 'muse-user');
+  assert.deepEqual(reviewed.lead.prelude[0].fixedFields,
+    [{field: 'user', value: 'fixture-user'},
+      {field: 'mode', value: 'muse-mode'}]);
+  assert.equal(reviewed.lead.subject.bodyTemplate,
+    proposal.subject.bodyTemplate);
+  const issued = new Set(), received = [];
+  await executeResearchFlow(reviewed.lead, async request => {
+    assert.equal(request.headers['content-type'],
+      'application/json; charset=utf-8');
+    if (request.url === begin) {
+      assert.deepEqual(JSON.parse(request.body),
+        {user: 'fixture-user', mode: 'muse-mode', [proposedField]: 'muse-user'});
+      const value = randomBytes(24).toString('hex');
+      issued.add(value);
+      return {status: 200, type: 'application/json',
+        body: JSON.stringify({[nonce]: value}), headers: {},
+        evidenceId: `begin-${issued.size}`};
+    }
+    assert.equal(request.url, finish);
+    const value = request.headers[header];
+    assert.equal(issued.delete(value), true);
+    assert.equal(request.headers.cookie, `${cookie}=${value}`);
+    assert.ok(request.redactValues.includes(value));
+    assert.equal(request.body,
+      `{"flag":"${JSON.parse(request.body).flag}","${bodyField}":"${value}","source":"Muse"}`);
+    received.push({value, body: request.body});
+    return {status: 200, type: 'application/json', body: '{"ok":true}',
+      headers: {}, evidenceId: `finish-${received.length}`};
+  });
+  assert.ok(received.length >= 3);
+  assert.equal(new Set(received.map(item => item.value)).size, received.length);
+  assert.ok(received.some(item => item.body ===
+    `{"flag":"candidate","${bodyField}":"${item.value}","source":"Muse"}`));
+});
+
+test('a staged access sequence carries only its own issued cookie into an observed read and fresh proof', async t => {
+  const suffix = randomBytes(4).toString('hex');
+  const login = `/api/${suffix}/begin`, verify = `/api/${suffix}/finish`;
+  const read = `/api/${suffix}/state`;
+  const challengeField = `challenge_${suffix}`;
+  const flagField = `flag_${suffix}`;
+  const queryField = `view_${suffix}`;
+  const cookieName = `session_${suffix}`;
+  const issued = new Set(), sessions = new Set(), tokens = [], reads = [];
+  let vulnerable = true;
+  const server = http.createServer(async (request, response) => {
+    const url = new URL(request.url, 'http://fixture.invalid');
+    response.setHeader('content-type', 'application/json');
+    response.setHeader('cache-control', 'no-store');
+    const send = (status, value) => {
+      response.statusCode = status;
+      response.end(JSON.stringify(value));
+    };
+    if (request.method === 'POST' && url.pathname === login) {
+      const challenge = randomBytes(24).toString('hex');
+      issued.add(challenge);
+      return send(200, {[challengeField]: challenge});
+    }
+    if (request.method === 'POST' && url.pathname === verify) {
+      const chunks = [];
+      for await (const chunk of request) chunks.push(chunk);
+      const body = JSON.parse(Buffer.concat(chunks).toString());
+      const fresh = issued.delete(body[challengeField]);
+      if (!fresh || !vulnerable || body[flagField] !== true)
+        return send(401, {error: 'denied'});
+      const token = randomBytes(20).toString('hex');
+      tokens.push(token);
+      sessions.add(token);
+      response.setHeader('set-cookie', `${cookieName}=${token}; Path=/; HttpOnly`);
+      return send(200, {ok: true});
+    }
+    if (request.method === 'GET' && url.pathname === read &&
+        url.searchParams.get(queryField) === 'summary') {
+      const token = String(request.headers.cookie ?? '').split(';').map(part =>
+        part.trim()).find(part => part.startsWith(`${cookieName}=`))?.slice(cookieName.length + 1);
+      const open = Boolean(token && sessions.has(token));
+      reads.push({status: open ? 200 : 401, hasCookie: Boolean(token)});
+      return send(open ? 200 : 401, open ? {state: 'open'} : {error: 'denied'});
+    }
+    return send(404, {error: 'missing'});
+  });
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+  t.after(() => new Promise(resolve => server.close(resolve)));
+  const origin = `http://127.0.0.1:${server.address().port}`;
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'bypass-sequence-cookie-'));
+  t.after(() => fs.rmSync(dir, {recursive: true, force: true}));
+  const scopeFile = path.join(dir, 'scope.json');
+  const operations = [
+    {method: 'POST', path: login, placement: 'json', contentType: 'application/json',
+      fields: ['user'], requiredFields: ['user']},
+    {method: 'POST', path: verify, placement: 'json', contentType: 'application/json',
+      fields: [challengeField, 'code', flagField],
+      requiredFields: [challengeField, 'code', flagField]},
+  ];
+  fs.writeFileSync(scopeFile, JSON.stringify({schemaVersion: 1, target: {origin},
+    include: ['/api'], methods: ['GET', 'HEAD', 'POST'],
+    probes: {jsonPostPaths: [login, verify], writeOperations: operations.map(
+      ({method, path, placement}) => ({method, path, placement}))},
+    limits: {rps: 100}}));
+  const scope = loadScope({file: scopeFile, origin}).scope;
+  const surface = {patterns: [{pattern: read, methods: ['GET'],
+    params: {[queryField]: ['summary']}}], methodOperations: operations,
+  authBodyOperations: [operations[0]], jsonBodyOperations: [operations[1]]};
+  const proposal = {family: 'staged access boundary', why: 'A successful write issues a session',
+    priority: 8, as: 'anonymous', oracle: 'status-boundary',
+    prelude: [{method: 'POST', path: login, placement: 'json', key: 'user',
+      value: 'fixture-user', fixedFields: [], bodyTemplate: '', headers: []}],
+    subject: {method: 'POST', path: verify, placement: 'json', key: flagField,
+      valueEncoding: 'json', fixedFields: [{field: 'code', value: 'wrong'}],
+      bodyTemplate: '', headers: []},
+    observe: [{method: 'GET', path: read, placement: 'query', key: queryField,
+      value: 'summary', fixedFields: [], bodyTemplate: '', headers: []}],
+    binding: {from: 0, pointer: `/${challengeField}`, to: 'subject', index: 0,
+      key: challengeField},
+    controlValue: 'false', firstValue: 'true', secondValue: 'null',
+    marker: '', secondMarker: '',
+    assertion: {step: 'observe', index: 0, location: 'body', name: ''}};
+  const reviewed = validateResearchFlow(proposal, surface, scope);
+  assert.equal(reviewed.ok, true, JSON.stringify(reviewed));
+  const ledger = createLedger(dir);
+  t.after(() => ledger.close());
+  const requester = createRequester(scope, {ledger, allowLocal: true});
+  const attempt = await executeResearchFlow(reviewed.lead, requester, {origin});
+  assert.equal(attempt.verdict, 'confirmed', attempt.reason);
+  assert.deepEqual(attempt.phases.map(phase => phase.observe[0].status),
+    [401, 200, 401, 401, 200, 401]);
+  assert.deepEqual(reads.slice(0, 6).map(item => item.hasCookie),
+    [false, true, false, false, true, false],
+  'each control starts without the candidate session');
+  const finding = {id: 'f-001', kind: 'model-sequence-boundary', pattern: verify,
+    url: `${origin}${verify}`, confirmation: attempt.evidence,
+    webProof: {...reviewed.lead, kind: 'model-sequence-boundary'}};
+  const proved = await proveFindings([finding], [], {runDir: dir, surface,
+    scope, env: {}, ledger, web: {results: []}});
+  assert.equal(proved.length, 1, 'fresh PoC replay must confirm the observed access');
+  assert.deepEqual(reads.slice(6, 12).map(item => item.status),
+    [401, 200, 401, 401, 200, 401]);
+  const stored = [ledger.file, path.join(dir, 'poc/f-001/spec.json'),
+    path.join(dir, 'poc/f-001/poc.mjs')].map(file => fs.readFileSync(file, 'utf8')).join('\n');
+  assert.ok(tokens.every(token => !stored.includes(token)),
+    'issued cookie values must remain transient');
+  vulnerable = false;
+  const fixed = await execFile(process.execPath, [proved[0].proof, '--expect-fixed'],
+    {env: process.env, timeout: 20000});
+  assert.equal(fixed.code, 0, fixed.stdout);
+});
+
 test('path-shaped model bindings to reviewed JSON fields preserve the three-step workflow', async t => {
   const origin = 'http://127.0.0.1:4334';
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'bypass-flow-body-binding-'));
@@ -1956,9 +2210,14 @@ test('path-shaped model bindings to reviewed JSON fields preserve the three-step
     controlValue: 'plain', firstValue: 'owner', secondValue: 'member',
     marker: '', secondMarker: '',
     assertion: {step: 'subject', index: 0, location: 'body', name: ''}};
-  const reviewed = validateResearchFlow(proposal, surface, scope);
+  const misplaced = validateResearchFlow(proposal, surface, scope);
+  assert.equal(misplaced.ok, false);
+  assert.equal(misplaced.reason, 'binding-target');
+  const corrected = {...proposal, bindings: proposal.bindings.map(
+    ({placement, segment, ...binding}) => binding)};
+  const reviewed = validateResearchFlow(corrected, surface, scope);
   assert.equal(reviewed.ok, true, JSON.stringify(reviewed));
-  assert.equal(reviewed.normalizedBinding, true);
+  assert.equal(reviewed.normalizedBinding, undefined);
   assert.deepEqual(reviewed.lead.bindings.map(item => item.placement),
     [undefined, undefined]);
   let sequence = 0;
@@ -2405,7 +2664,7 @@ test('a marker observation reaches Muse for an impact pivot and keeps its unclas
   assert.equal(run.findings[0].severity, 'unrated');
 });
 
-test('HTTP sequence validation keeps routes, fields, headers and XML envelopes observed', () => {
+test('HTTP sequence validation executes scoped write hypotheses and checks observed read contracts', () => {
   const origin = 'http://127.0.0.1:4329';
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'bypass-flow-scope-'));
   try {
@@ -2434,8 +2693,8 @@ test('HTTP sequence validation keeps routes, fields, headers and XML envelopes o
     const repeatedType = validateResearchFlow({...base, subject: {...base.subject,
       headers: [{name: 'Content-Type', value: 'application/json'}]}}, surface, scope);
     assert.equal(repeatedType.ok, true);
-    assert.equal(repeatedType.normalizedContentType, true);
-    assert.deepEqual(repeatedType.lead.subject.headers, []);
+    assert.deepEqual(repeatedType.lead.subject.headers,
+      [{name: 'Content-Type', value: 'application/json'}]);
     assert.equal(validateResearchFlow({...base, as: 'derived'}, surface, scope,
       {derivedAvailable: true}).ok, true);
     assert.equal(validateResearchFlow({...base, as: 'derived'}, surface, scope).reason,
@@ -2450,13 +2709,20 @@ test('HTTP sequence validation keeps routes, fields, headers and XML envelopes o
     'unobserved-read-step');
     assert.equal(validateResearchFlow({...base, controlValue: 'owner-secret-abcdef'},
       surface, scope, {env: {OWNER_TOKEN: 'owner-secret-abcdef'}}).reason, 'credential-value');
-    assert.equal(validateResearchFlow({...base, subject: {...base.subject,
-      path: '/api/missing'}}, surface, scope).reason, 'unreviewed-post');
-    assert.equal(validateResearchFlow({...base, subject: {...base.subject,
-      key: 'password'}}, surface, scope).reason, 'unobserved-post-field');
-    assert.equal(validateResearchFlow({...base, subject: {...base.subject,
-      headers: [{name: 'x-auth-token', value: 'demo'}]}}, surface, scope).reason,
-    'post-shape');
+    const proposedWrite = validateResearchFlow({...base, subject: {...base.subject,
+      path: '/api/missing'}}, surface, scope);
+    assert.equal(proposedWrite.ok, true);
+    assert.equal(proposedWrite.lead.proposedOperations[0].source, 'model-proposed');
+    assert.equal(proposedWrite.lead.proposedOperations[0].path, '/api/missing');
+    const proposedField = validateResearchFlow({...base, subject: {...base.subject,
+      key: 'password'}}, surface, scope);
+    assert.equal(proposedField.ok, true);
+    assert.equal(proposedField.lead.subject.key, 'password');
+    const proposedHeader = validateResearchFlow({...base, subject: {...base.subject,
+      headers: [{name: 'x-auth-token', value: 'demo'}]}}, surface, scope);
+    assert.equal(proposedHeader.ok, true);
+    assert.deepEqual(proposedHeader.lead.subject.headers,
+      [{name: 'x-auth-token', value: 'demo'}]);
     const xml = {...base, subject: {method: 'POST', path: '/api/xml',
       placement: 'xml', key: 'payload', fixedFields: [], headers: [],
       bodyTemplate: '<request><payload>{{input}}</payload></request>'}};
@@ -2491,9 +2757,10 @@ test('derived session forwards an exact reviewed JSON POST with its body and con
     marker: '', secondMarker: '',
     assertion: {step: 'subject', index: 0, location: 'body', name: ''}};
   assert.equal(validateResearchFlow(lead, surface, scope, {derivedAvailable: true}).ok, true);
-  assert.equal(validateResearchFlow({...lead, subject: {...lead.subject,
-    path: '/outside'}}, surface, scope, {derivedAvailable: true}).reason,
-  'unreviewed-post');
+  const proposedWrite = validateResearchFlow({...lead, subject: {...lead.subject,
+    path: '/outside'}}, surface, scope, {derivedAvailable: true});
+  assert.equal(proposedWrite.ok, true);
+  assert.equal(proposedWrite.lead.proposedOperations[0].path, '/outside');
   const requests = [];
   const run = await runResearchFlows([lead], scope, {surface,
     requester: () => {throw new Error('anonymous fallback must not run');},
@@ -2846,7 +3113,8 @@ test('guarded sequence executor handles observed headers and reviewed XML bodies
       assert.match(body, /^<request><payload>.*<\/payload><\/request>$/);
       expression = body.match(/<payload>(.*?)<\/payload>/)?.[1] ?? '';
     }
-    seen.push({method: request.method, path: url.pathname, expression});
+    seen.push({method: request.method, path: url.pathname, expression,
+      contentType: request.headers['content-type'] ?? null});
     let result;
     try {result = Function(`return (${expression})`)();}
     catch {result = 'invalid';}
@@ -2882,13 +3150,17 @@ test('guarded sequence executor handles observed headers and reviewed XML bodies
     bodyTemplate: '', headers: []}};
   const xml = {...shared, subject: {method: 'POST', path: xmlPath,
     placement: 'xml', key: 'payload', fixedFields: [],
-    bodyTemplate: '<request><payload>{{input}}</payload></request>', headers: []}};
+    bodyTemplate: '<request><payload>{{input}}</payload></request>',
+    headers: [{name: 'Content-Type', value: 'application/xml; charset=utf-8'}]}};
   assert.equal(validateResearchFlow(header, surface, scope).ok, true);
   assert.equal(validateResearchFlow(xml, surface, scope).ok, true);
   assert.equal((await executeResearchFlow(header, requester)).verdict, 'observed');
-  assert.equal((await executeResearchFlow(xml, requester)).verdict, 'observed');
+  const xmlResult = await executeResearchFlow(xml, requester);
+  assert.equal(xmlResult.verdict, 'observed', xmlResult.reason);
   assert.equal(seen.filter(item => item.path === headerPath).length, 3);
   assert.equal(seen.filter(item => item.path === xmlPath).length, 3);
+  assert.ok(seen.filter(item => item.path === xmlPath)
+    .every(item => item.contentType === 'application/xml; charset=utf-8'));
 });
 
 test('a reviewed PATCH can supply one scoped response sample for Muse follow-up', async () => {

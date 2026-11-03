@@ -3,18 +3,35 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import http from 'node:http';
 import path from 'node:path';
+import {randomBytes} from 'node:crypto';
 import {spawn} from 'node:child_process';
 import {temp} from './helpers.mjs';
 import {DEFAULT_SCOPE, validateUrl} from '../src/blackbox/scope.mjs';
 import {createLedger} from '../src/blackbox/ledger.mjs';
 import {proveFindings, verifyRun, exportRun} from '../src/blackbox/poc.mjs';
-import {check, validModelHttpSequence} from '../src/blackbox/poc-runtime.mjs';
+import {check, createSequenceCookies, validModelHttpSequence} from '../src/blackbox/poc-runtime.mjs';
 import {validateResearchFlow} from '../src/blackbox/research-flow.mjs';
 import {execFile, hash} from '../src/util.mjs';
 
 const firstMarker = 'bx0123456789ab';
 const secondMarker = 'bxabcdef012345';
 const encoded = marker => `hex:${Buffer.from(marker).toString('hex')}`;
+
+test('sequence cookies follow their origin and path and do not replace explicit values', () => {
+  const jar = createSequenceCookies();
+  const name = `session_${randomBytes(4).toString('hex')}`;
+  const value = randomBytes(12).toString('hex');
+  const source = 'https://app.example.test/flow/start';
+  jar.remember([`${name}=${value}; Path=/flow; Secure; HttpOnly`], source);
+  assert.equal(jar.header('https://app.example.test/flow/next'), `${name}=${value}`);
+  assert.equal(jar.header('https://app.example.test/other'), '');
+  assert.equal(jar.header('http://app.example.test/flow/next'), '');
+  assert.equal(jar.header('https://other.example.test/flow/next'), '');
+  assert.equal(jar.header('https://app.example.test/flow/next', `${name}=explicit`),
+    `${name}=explicit`);
+  jar.remember([`${name}=; Path=/flow; Max-Age=0`], source);
+  assert.equal(jar.header('https://app.example.test/flow/next'), '');
+});
 
 test('a novel scoped GET key can replay an independently controlled owner-body proof', async t => {
   const suffix = Math.random().toString(16).slice(2, 10);
@@ -128,10 +145,11 @@ test('a generated HTTP sequence proof replays a reviewed POST and becomes a pass
   assert.equal(before.proofs[0].verdict, 'observed');
   assert.equal(before.proofs[0].impact, 'unverified');
   const exported = exportRun(project, run, {out: path.join(project, 'regression')});
-  const regression = () => new Promise((resolve, reject) => {
+  const regression = (target = null) => new Promise((resolve, reject) => {
     const child = spawn(process.execPath, ['--test', ...exported.files],
-      {env: Object.fromEntries(Object.entries(process.env).filter(([key]) =>
-        key !== 'NODE_TEST_CONTEXT')), stdio: 'ignore'});
+      {env: {...Object.fromEntries(Object.entries(process.env).filter(([key]) =>
+        key !== 'NODE_TEST_CONTEXT')), BYPASS_BLACKBOX_TEST_ORIGIN: target ?? undefined},
+      stdio: 'ignore'});
     child.once('error', reject);
     child.once('close', resolve);
   });
@@ -148,6 +166,18 @@ test('a generated HTTP sequence proof replays a reviewed POST and becomes a pass
   assert.equal(after.exitCode, 0);
   assert.equal(after.proofs[0].verdict, 'not_reproduced');
   assert.equal(await regression(), 0);
+  const generated = fs.readFileSync(exported.files[0], 'utf8');
+  const remote = `https://review-${randomBytes(4).toString('hex')}.example.invalid`;
+  const productionSource = generated.replaceAll(origin, remote)
+    .replace('"targetEnvironment":"local"', '"targetEnvironment":"production"');
+  assert.notEqual(productionSource, generated);
+  fs.writeFileSync(exported.files[0], productionSource);
+  transformed = true;
+  assert.equal(await regression(origin), 1,
+    'the explicit local CI origin executes the vulnerable POST sequence');
+  transformed = false;
+  assert.equal(await regression(origin), 0,
+    'the explicit local CI origin passes after the POST sequence is repaired');
 });
 
 test('an exact reviewed POST body replays without a legacy POST path entry', async t => {
@@ -619,6 +649,157 @@ test('an observed GET query binding replays through its generated proof and regr
   assert.equal(await regression(), 0);
 });
 
+test('a staged POST boundary replays with an observed GET query follow-up', async t => {
+  const suffix = randomBytes(4).toString('hex');
+  const begin = `/api/${suffix}/begin`;
+  const finish = `/api/${suffix}/finish`;
+  const observe = `/api/${suffix}/state`;
+  const challengeField = `challenge_${suffix}`;
+  const ticketField = `ticket_${suffix}`;
+  const cookieField = `cookie_${suffix}`;
+  const ticketHeader = `x-ticket-${suffix}`;
+  const ticketEchoField = `ticket_echo_${suffix}`;
+  const cookieName = `session_${suffix}`;
+  const optionField = `option_${suffix}`;
+  const queryField = `view_${suffix}`;
+  const challenges = new Set();
+  const tickets = new Map();
+  const requests = [];
+  const contentTypes = [];
+  const boundHeaders = [];
+  const submittedBodies = [];
+  let vulnerable = true;
+  const server = http.createServer(async (request, response) => {
+    const url = new URL(request.url, 'http://fixture');
+    requests.push(`${request.method} ${url.pathname}${url.search}`);
+    if (request.method === 'POST') contentTypes.push(request.headers['content-type']);
+    response.setHeader('content-type', 'application/json');
+    response.setHeader('cache-control', 'no-store');
+    const send = (status, data) => {
+      response.statusCode = status;
+      response.end(JSON.stringify(data));
+    };
+    if (request.method === 'POST' && url.pathname === begin) {
+      const challenge = randomBytes(24).toString('hex');
+      const ticket = randomBytes(12).toString('hex');
+      const cookieValue = randomBytes(12).toString('hex');
+      challenges.add(challenge);
+      tickets.set(challenge, {ticket, cookieValue});
+      return send(200, {[challengeField]: challenge,
+        [ticketField]: ticket, [cookieField]: cookieValue});
+    }
+    if (request.method === 'POST' && url.pathname === finish) {
+      const chunks = [];
+      for await (const chunk of request) chunks.push(chunk);
+      const rawBody = Buffer.concat(chunks).toString();
+      submittedBodies.push(rawBody);
+      const body = JSON.parse(rawBody);
+      const issued = tickets.get(body[challengeField]);
+      const fresh = challenges.delete(body[challengeField]);
+      const bound = issued && request.headers[ticketHeader] === issued.ticket &&
+        body[ticketEchoField] === issued.ticket &&
+        request.headers.cookie?.split(';').map(part => part.trim())
+          .includes(`${cookieName}=${issued.cookieValue}`);
+      boundHeaders.push({header: request.headers[ticketHeader],
+        cookie: request.headers.cookie, query: url.search});
+      return send(fresh && bound && vulnerable && body[optionField] === true ? 200 : 401,
+        {accepted: fresh && bound && vulnerable && body[optionField] === true});
+    }
+    if (request.method === 'GET' && url.pathname === observe &&
+        url.searchParams.get(queryField) === 'summary')
+      return send(200, {state: 'observed'});
+    return send(404, {error: 'missing'});
+  });
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+  t.after(() => new Promise(resolve => server.close(resolve)));
+  const origin = `http://127.0.0.1:${server.address().port}`;
+  const operations = [
+    {method: 'POST', path: begin, placement: 'json',
+      contentType: 'application/json', fields: ['user'], requiredFields: ['user']},
+    {method: 'POST', path: finish, placement: 'json',
+      contentType: 'application/json', fields: [challengeField, 'code', optionField,
+        ticketEchoField],
+      requiredFields: [challengeField, 'code', optionField]},
+  ];
+  const webProof = {kind: 'model-sequence-boundary', oracle: 'status-boundary',
+    as: 'anonymous',
+    prelude: [{method: 'POST', path: begin, placement: 'json', key: 'user',
+      value: 'fixture-user', fixedFields: [], bodyTemplate: '{"user":"{{input}}"}',
+      headers: [{name: 'Content-Type', value: 'application/json; charset=utf-8'}]}],
+    subject: {method: 'POST', path: finish, placement: 'json', key: optionField,
+      valueEncoding: 'json', fixedFields: [{field: 'code', value: 'wrong'}],
+      bodyTemplate: `{ "code" : "wrong", "${challengeField}" : "{{binding:${challengeField}}}", "${ticketEchoField}" : "{{binding:${ticketHeader}}}", "${optionField}" : {{input}} }`,
+      headers: [{name: 'Content-Type',
+        value: 'application/json; charset=utf-8'}]},
+    observe: [{method: 'GET', path: observe, placement: 'query', key: queryField,
+      value: 'summary', fixedFields: [], bodyTemplate: '', headers: []}],
+    bindings: [
+      {from: 0, pointer: `/${challengeField}`, to: 'subject',
+        index: 0, key: challengeField},
+      {from: 0, pointer: `/${ticketField}`, to: 'subject',
+        index: 0, key: ticketHeader, placement: 'header'},
+      {from: 0, pointer: `/${cookieField}`, to: 'subject',
+        index: 0, key: cookieName, placement: 'cookie'}],
+    bindingReviews: [
+      {sourcePath: begin, sourceAs: 'anonymous', sourcePointer: `/${challengeField}`,
+        sourceMethod: 'POST', sourcePlacement: 'json', sourceFields: ['user'],
+        sourceType: 'string', sourceStatus: 200, targetPath: finish,
+        targetPlacement: 'json', targetFields: [challengeField, 'code', optionField]},
+      {sourcePath: begin, sourceAs: 'anonymous', sourcePointer: `/${ticketField}`,
+        sourceMethod: 'POST', sourcePlacement: 'json', sourceFields: ['user'],
+        sourceType: 'string', sourceStatus: 200, targetPath: finish,
+        targetPlacement: 'header', targetFields: [ticketHeader]},
+      {sourcePath: begin, sourceAs: 'anonymous', sourcePointer: `/${cookieField}`,
+        sourceMethod: 'POST', sourcePlacement: 'json', sourceFields: ['user'],
+        sourceType: 'string', sourceStatus: 200, targetPath: finish,
+        targetPlacement: 'cookie', targetFields: [cookieName]}],
+    controlValue: 'false', firstValue: 'true', secondValue: 'null',
+    marker: '', secondMarker: '',
+    assertion: {step: 'subject', index: 0, location: 'body', name: ''}};
+  const spec = {...webProof, origin, include: ['/api'], never: [], rps: 100,
+    targetEnvironment: 'local', methods: ['GET', 'HEAD', 'POST'],
+    identities: {}, auth: 'bearer', reviewedOperations: operations,
+    reviewedPostPaths: {json: [begin, finish], xml: [], form: []}};
+  assert.equal(validModelHttpSequence(spec), true);
+  assert.equal((await check(spec)).verdict, 'confirmed');
+  assert.ok(contentTypes.length > 0);
+  assert.ok(contentTypes.every(type => type === 'application/json; charset=utf-8'));
+  assert.ok(boundHeaders.length > 0);
+  assert.ok(boundHeaders.every(item => item.header &&
+    item.cookie?.includes(`${cookieName}=`) && item.query === ''));
+  assert.ok(submittedBodies.every(body => body.startsWith('{ "code" : "wrong", ')));
+  assert.ok(requests.some(item => item === `GET ${observe}?${queryField}=summary`));
+  const project = temp();
+  const run = `bx-20261028-${suffix}`;
+  const dir = path.join(project, '.bypass/runs', run);
+  fs.mkdirSync(dir, {recursive: true});
+  fs.writeFileSync(path.join(dir, 'run.json'), '{}');
+  t.after(() => fs.rmSync(project, {recursive: true, force: true}));
+  const scope = structuredClone(DEFAULT_SCOPE);
+  scope.target.origin = origin;
+  scope.include = ['/api'];
+  scope.methods = ['GET', 'HEAD', 'POST'];
+  scope.probes.jsonPostPaths = [begin, finish];
+  scope.probes.writeOperations = operations;
+  const surface = {patterns: [{pattern: observe, methods: ['GET'],
+    params: {[queryField]: ['summary']}}], methodOperations: operations};
+  const finding = {id: 'f-001', kind: 'model-sequence-boundary', pattern: finish,
+    url: `${origin}${finish}`, confirmation: [], webProof};
+  const proved = await proveFindings([finding], [], {runDir: dir, surface,
+    scope, env: {}, ledger: createLedger(dir), web: {results: []}});
+  assert.equal(proved.length, 1);
+  const savedSpec = fs.readFileSync(path.join(dir, 'poc/f-001/spec.json'), 'utf8');
+  for (const {ticket, cookieValue} of tickets.values()) {
+    assert.ok(!savedSpec.includes(ticket));
+    assert.ok(!savedSpec.includes(cookieValue));
+  }
+  assert.equal((await verifyRun(project, run, {env: {}})).proofs[0].verdict,
+    'confirmed');
+  vulnerable = false;
+  assert.equal((await verifyRun(project, run, {env: {}})).proofs[0].verdict,
+    'not_reproduced');
+});
+
 test('reviewed PUT, PATCH, DELETE and OPTIONS sequences preserve exact method and body contract', async t => {
   const seen = [];
   let transformed = true;
@@ -722,7 +903,7 @@ test('reviewed PUT, PATCH, DELETE and OPTIONS sequences preserve exact method an
     'not_reproduced');
 });
 
-test('verify presents a sealed legacy sequence proof as an unrated observation', async t => {
+test('verify does not promote a legacy proof without a replayable target', async t => {
   const project = temp();
   t.after(() => fs.rmSync(project, {recursive: true, force: true}));
   const run = 'bx-20261028-abcdef12';
@@ -740,8 +921,8 @@ test('verify presents a sealed legacy sequence proof as an unrated observation',
     specHash: hash(fs.readFileSync(spec)), scriptHash: hash(fs.readFileSync(script)),
     runtimeHash: hash(fs.readFileSync(runtime)), verdict: 'confirmed', exitCode: 1}});
   const replay = await verifyRun(project, run, {env: {}});
-  assert.equal(replay.exitCode, 1);
-  assert.equal(replay.proofs[0].verdict, 'observed');
-  assert.equal(replay.proofs[0].impact, 'unverified');
+  assert.equal(replay.exitCode, 3);
+  assert.equal(replay.proofs[0].verdict, 'inconclusive');
+  assert.match(replay.proofs[0].reason, /valid target origin/);
   assert.equal(replay.proofs[0].kind, 'model-http-sequence');
 });
