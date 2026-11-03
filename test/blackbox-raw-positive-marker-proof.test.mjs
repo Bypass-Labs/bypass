@@ -115,6 +115,19 @@ test('response marker fingerprint scans a large body without saving marker text'
   assert.equal(JSON.stringify(proof).includes(marker), false);
 });
 
+test('a missing route is inconclusive even when every response lacks the marker', () => {
+  const route = '/missing-preview';
+  const proof = {baseline: [{path: route}], negative: [{path: route}],
+    ...responseMarkerFingerprint('internal-response-marker')};
+  const response = body => ({status: 404, type: 'application/json', body});
+  const request = [{method: 'POST', path: route, body: '{}'}];
+  const uniform = Array.from({length: 6}, () => response('{"error":"Unknown route"}'));
+  const varied = [response('baseline'), response('negative'), response('candidate'),
+    response('candidate'), response('negative'), response('baseline')];
+  assert.equal(rawBoundaryOutcome(uniform, proof, request).verdict, 'inconclusive');
+  assert.equal(rawBoundaryOutcome(varied, proof, request).verdict, 'inconclusive');
+});
+
 test('planning metadata masks a long response marker before truncation', async () => {
   const marker = `INTERNAL_SEAL_${randomBytes(16).toString('hex')}${'x'.repeat(320)}`;
   const origin = 'http://127.0.0.1:4329';

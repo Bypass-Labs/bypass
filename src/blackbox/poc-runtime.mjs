@@ -624,6 +624,9 @@ export function rawBoundaryOutcome(responses, proof, candidateRequests = []) {
   const signature = item => JSON.stringify([item.status, item.type,
     item.hash ?? `sha256:${sha(item.body ?? '')}`]);
   const contentType = item => String(item.type ?? item.headers?.['content-type'] ?? '');
+  const baselineAvailable = [baselineA, baselineB].every(item =>
+    item.status >= 200 && item.status < 400);
+  const closedControls = Boolean(closedText) && controls.every(closed);
   if (candidates.every(item => item.status === 403 && /html/i.test(contentType(item))) &&
       controls.every(item => item.status >= 200 && item.status < 300 &&
         /json/i.test(contentType(item))))
@@ -635,7 +638,8 @@ export function rawBoundaryOutcome(responses, proof, candidateRequests = []) {
     return {verdict: 'inconclusive', reason: 'candidate received an HTML access block'};
   if (controls.every(item => signature(item) === signature(candidateA)) &&
       signature(candidateA) === signature(candidateB) &&
-      (!(closedText && openMarker) || controls.every(closed)))
+      (!(closedText && openMarker) || closedControls) &&
+      (!openMarker || closedControls || baselineAvailable))
     return {verdict: 'not_reproduced', reason: 'candidate and controls returned the same response'};
   if (openMarker && (closedText && containsResponseMarker(closedText, openMarker) ||
       requestSuppliesMarker(candidateRequests, openMarker)))
@@ -649,7 +653,7 @@ export function rawBoundaryOutcome(responses, proof, candidateRequests = []) {
           hasOpen(item)))
       return {verdict: 'confirmed', proofMode: 'positive-marker',
         reason: 'positive response marker repeated in fresh candidates and was absent from both controls'};
-    if (controls.every(item => !hasOpen(item)) &&
+    if (baselineAvailable && controls.every(item => !hasOpen(item)) &&
         candidates.every(item => !hasOpen(item)) &&
         signature(baselineA) === signature(baselineB) &&
         signature(negativeA) === signature(negativeB) &&
