@@ -111,8 +111,17 @@ test('combined receipt does not promote unsealed or unrelated focused tasks to p
     focus:{findingId:proposed.liveValidation[0].finding,path:'/login'},scope:{target:{origin:url}},
     startedAt:new Date().toISOString(),finishedAt:new Date().toISOString(),stats:{tasks:1,confirmed:1,modelCalls:1}}));
   assert.equal((await hostReviewStep(root,{id:started.runId,action:'status'})).liveValidation[0].status,'inconclusive');
+  const saved=JSON.parse(fs.readFileSync(path.join(folder,'run.json'),'utf8'));
+  saved.stats={tasks:1,notReproduced:1,modelCalls:1};
+  fs.writeFileSync(path.join(folder,'run.json'),JSON.stringify(saved));
+  const unrelated=await hostReviewStep(root,{id:started.runId,action:'status'});
+  assert.equal(unrelated.liveValidation[0].status,'untested');
+  assert.match(unrelated.liveValidation[0].reason,/focused hypothesis/);
+  saved.stats={tasks:1,blocked:1,modelCalls:1};
+  fs.writeFileSync(path.join(folder,'run.json'),JSON.stringify(saved));
+  assert.equal((await hostReviewStep(root,{id:started.runId,action:'status'})).liveValidation[0].status,'untested');
   saveFocusedProof(folder,url,'/api/other');
-  assert.equal((await hostReviewStep(root,{id:started.runId,action:'status'})).liveValidation[0].status,'inconclusive');
+  assert.equal((await hostReviewStep(root,{id:started.runId,action:'status'})).liveValidation[0].status,'untested');
   saveFocusedProof(folder,url,'/private',{spec:{prelude:[{method:'POST',path:'/login'}],
     subject:{method:'GET',path:'/private'}}});
   assert.equal((await hostReviewStep(root,{id:started.runId,action:'status'})).liveValidation[0].status,'confirmed');

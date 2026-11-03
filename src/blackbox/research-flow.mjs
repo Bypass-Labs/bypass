@@ -14,7 +14,7 @@ import {responseCached, modelExperimentReason, stateChangeCanaries,
   captureSequenceScalar, uniqueJsonStringField,
   boundSequencePath, renderCapturedHtml, xssPayload, sequenceJsonBody,
   rawBoundaryOutcome, createSequenceCookies,
-  responseMarkerFingerprint} from './poc-runtime.mjs';
+  responseMarkerFingerprint, jsonDisclosureOutcome} from './poc-runtime.mjs';
 import {MODEL_RESPONSE_BYTES, requestFailureVerdict, responseSizeLimited, responseSizeReason} from './response-size.mjs';
 
 const marker = () => `bx${randomBytes(6).toString('hex')}`;
@@ -688,11 +688,12 @@ export function validateResearchFlow(spec, surface, scope, {env = {}, inventory 
   // impact on the strength of a response difference alone.
   const knownOracles = ['marker', 'marker-proof', 'protected-body', 'protected-json-field',
     'observation', 'status-boundary', 'local-callback', 'remote-content-use', 'state-change',
-    'browser-execution', 'cookie-access', 'raw-observation', 'raw-proof'];
+    'browser-execution', 'cookie-access', 'raw-observation', 'raw-proof',
+    'anonymous-json-disclosure'];
   const oracle = spec.oracle === undefined ?
     (spec.rawProof ? 'raw-proof' : spec.rawRequests ? 'raw-observation' : 'marker') :
     knownOracles.includes(spec.oracle) ? spec.oracle : 'observation';
-  if (oracle === 'raw-observation' || oracle === 'raw-proof') {
+  if (['raw-observation', 'raw-proof', 'anonymous-json-disclosure'].includes(oracle)) {
     const secretEntries = operatorSecretEntries(scope, env);
     const reviewRequests = requests => {
       if (!Array.isArray(requests) || !requests.length)
@@ -728,6 +729,29 @@ export function validateResearchFlow(spec, surface, scope, {env = {}, inventory 
     if (candidate.error)
       return fail('raw-request-shape', {component: candidate.error});
     const reviewed = candidate.reviewed;
+    if (oracle === 'anonymous-json-disclosure') {
+      const focus = surface?.focus;
+      const pointers = spec.jsonPointers;
+      if (!focus?.findingId ||
+          reviewed.length !== 2 ||
+          reviewed.some(item => item.method !== 'GET' || item.as !== 'anonymous' ||
+            item.headers.length || item.body) ||
+          reviewed[0].path === reviewed[1].path ||
+          !Array.isArray(pointers) || !pointers.length ||
+          pointers.some(pointer => typeof pointer !== 'string' ||
+            !pointer.startsWith('/') || pointer.includes('\u0000')))
+        return fail('anonymous-json-disclosure-shape');
+      return {ok: true, lead: {family, why: safeModelText(spec.why, scope, env, 300),
+        priority: Math.max(0, Math.min(10, spec.priority)), as: 'anonymous',
+        oracle, rawRequests: reviewed, jsonPointers: [...new Set(pointers)],
+        sourcePath: focus.path, sourceClaim: `${focus.hypothesis ?? ''} ${focus.source?.quote ?? ''}`,
+        prelude: [], observe: [],
+        subject: {method: 'GET', path: reviewed[0].path,
+          placement: 'request', key: 'request', headers: []},
+        controlValue: '', firstValue: '', secondValue: '',
+        marker: '', secondMarker: '', assertion: {step: 'subject', index: 0,
+          location: 'body', name: ''}, basis: 'model-http-sequence'}};
+    }
     const baseline = oracle === 'raw-proof' ? reviewRequests(spec.rawProof?.baseline) : null;
     const negative = oracle === 'raw-proof' ? reviewRequests(spec.rawProof?.negative) : null;
     // A malformed proof does not discard the executable candidate. Return its
@@ -1036,6 +1060,7 @@ const FLOW_SCHEMA = {type: 'object', properties: {
   priority: {type: 'integer'}, as: {type: 'string', enum: ['anonymous', 'owner', 'outsider', 'derived']},
   oracle: {type: 'string', maxLength: 80},
   rawRequests: {type: 'array', items: RAW_REQUEST_SCHEMA},
+  jsonPointers: {type: 'array', items: {type: 'string'}},
   rawProof: {type: 'object', properties: {
     baseline: {type: 'array', items: RAW_REQUEST_SCHEMA},
     negative: {type: 'array', items: RAW_REQUEST_SCHEMA},
@@ -1669,6 +1694,7 @@ export async function planResearchFlows(surface, scope, {infer = null, model = n
         'If credentialReferences is present, use its exact {{env:NAME}} strings for configured login fields in a prelude. Never put the credential values in the plan. These references are resolved only when sending the request and replaying proof. ' +
         'For any exact scoped HTTP experiment use oracle "raw-observation" with rawRequests: an ordered list of requests. Each request needs method and path; include headers as name/value pairs and body when needed, and optional as identity. Supply the exact query, header, cookie, form, JSON, XML or raw-body values you want tested. The requests run in order under the configured scope and rate; response status, type, shape, HTML title and hash return for revision. A negative result for one value does not rule out a different evidence-based value. This form needs no typed subject, control values or assertion. ' +
         'When an exact request has a measurable effect, use oracle "raw-proof" with rawRequests holding the candidate sequence and rawProof containing baseline and negative sequences of complete requests. Bypass replays each sequence twice. For a 200-to-200 page gate, set rawProof.closedText and rawProof.openText to distinct short text observed in the respective responses; when controls have different bodies but neither contains a unique positive response marker, set only rawProof.openText. For a denied-status-to-success boundary both markers may be empty. The candidate and control values are Muse-authored and preserved. A response effect alone does not establish a particular vulnerability class. ' +
+        'For a sourceFinding that identifies private JSON returned anonymously, you may use oracle "anonymous-json-disclosure": supply rawRequests with two exact anonymous GET record URLs and jsonPointers naming the fields you judged private from source and response evidence. Bypass freshly reads each URL twice, verifies stable distinct field values without saving them, and replays the proof. Choose the fields yourself; there is no built-in sensitive-field name list for this oracle. This proves anonymous delivery of those source-identified fields, not a separate account ownership boundary. ' +
         'For suspected XSS through an observed GET input or reviewed write followed by an observed HTML GET, use oracle "browser-execution". Choose the route and optional read steps; set firstValue and secondValue to html-double, html-single or script-close style hints, controlValue to plain, and marker strings empty. Bypass generates fresh inert script canaries, renders only captured HTML in isolated Chrome, and proves two executions with a fresh replay. Arbitrary model-authored script is never sent. ' +
         'If another plausible hypothesis lacks a listed impact verifier, you may name its oracle; Bypass runs it as an observation and requires later independent proof. ' +
         'For an authorized local target, use oracle "local-callback" when an observed query, JSON, form or XML field appears to make the server fetch a URL. Select the exact observed route, method and URL field; set all value and marker strings empty. Bypass supplies fresh audit-owned 127.0.0.1 callback URLs, a plain control, repeats, and a separate proof. Never provide a callback URL yourself. This oracle is unavailable for a deployed target without an audit-owned callback reachable from that target. ' +
@@ -2275,6 +2301,29 @@ async function executeRawProof(lead, requester, scope, env) {
   return outcome;
 }
 
+async function executeAnonymousJsonDisclosure(lead, requester, scope, env) {
+  const evidence = [], controls = [], responses = [], facts = [];
+  for (const label of ['first', 'fresh']) {
+    const run = await executeRawRequests(lead.rawRequests, requester, scope, env,
+      label, label === 'first' ? 'task' : 'reverify');
+    evidence.push(...run.evidence);
+    controls.push(...run.controls);
+    responses.push(...run.responses);
+    facts.push({prelude: [], subject: {status: run.responses[0]?.status ?? null,
+      hash: run.responses[0]?.hash ?? null},
+    observe: [{status: run.responses[1]?.status ?? null,
+      hash: run.responses[1]?.hash ?? null}]});
+    if (!run.complete) return {verdict: 'inconclusive',
+      reason: run.error ?? 'anonymous JSON read did not complete',
+      evidence, controls, facts};
+  }
+  // The outcome inspects transient response bodies; only statuses and hashes
+  // enter checkpoints, findings, and Muse feedback.
+  return {...jsonDisclosureOutcome(responses, lead.rawRequests, lead.jsonPointers,
+    {sourcePath: lead.sourcePath, sourceClaim: lead.sourceClaim}),
+    evidence, controls, facts};
+}
+
 /** Compare repeated, uncached phases. Observation mode records signals, never impact. */
 export async function executeResearchFlow(lead, requester,
   {resolveValue = value => value, origin = 'http://sequence.invalid'} = {}) {
@@ -2830,6 +2879,32 @@ function rawBoundaryFinding(lead, scope, attempt, derivedLogin = null) {
       status: item.status, evidence: item.evidenceId, probe: item.label}))};
 }
 
+function anonymousJsonDisclosureFinding(lead, scope, surface, attempt) {
+  const focus = surface.focus;
+  const url = new URL(lead.rawRequests[0].path, scope.target.origin);
+  return {kind: 'model-anonymous-json-disclosure',
+    title: focus.title, severity: 'medium',
+    owasp: 'A01 Broken Access Control', cwe: 'CWE-862',
+    pattern: url.pathname, url: url.href, host: url.host, task: null,
+    verdict: 'confirmed', rule: 'confirmed/source-focused-anonymous-json-disclosure',
+    evidence: attempt.evidence, confirmation: attempt.evidence,
+    mirror: {result: 'unverified', evidence: [], reason: 'fresh proof replay is required'},
+    tags: ['source-focused', 'muse-proposed', 'anonymous-json-disclosure'],
+    reach: {observed: 2, basis: attempt.reason},
+    dataClasses: lead.jsonPointers,
+    remediation: 'Require server-side authorization before returning the source-identified private record fields.',
+    foundBy: 'muse-proposed-http-sequence', status: 'open',
+    modelHypothesis: {family: lead.family, why: lead.why},
+    sourceFinding: {id: focus.findingId, source: focus.source,
+      hypothesis: focus.hypothesis},
+    webProof: {kind: 'model-anonymous-json-disclosure', as: 'anonymous',
+      rawRequests: lead.rawRequests, jsonPointers: lead.jsonPointers,
+      sourcePath: lead.sourcePath, sourceClaim: lead.sourceClaim},
+    webSteps: attempt.controls.map(item => ({identity: 'anonymous',
+      method: item.method, url: new URL(item.path, scope.target.origin).href,
+      status: item.status, evidence: item.evidenceId, probe: item.label}))};
+}
+
 function stateChangeFinding(lead, scope, attempt) {
   const url = new URL(lead.subject.path, scope.target.origin);
   return {kind: 'model-state-change',
@@ -3069,6 +3144,8 @@ function protectedBodyFinding(lead, scope, attempt, protectedAs = 'owner',
 const signature = lead => JSON.stringify([lead.oracle, lead.protectedPath ?? null,
   lead.as, lead.prelude, lead.subject, lead.observe,
   lead.rawRequests ?? null, lead.rawProof ?? null,
+  ...(lead.oracle === 'anonymous-json-disclosure' ?
+    [lead.jsonPointers ?? null, lead.sourcePath ?? null] : []),
   lead.bindings ?? lead.binding ?? null,
   lead.controlValue, lead.firstValue, lead.secondValue,
   lead.assertion]);
@@ -3195,6 +3272,20 @@ export async function runResearchFlows(leads, scope, {requester, infer = null, m
           controls: attempted.controls, responses: attempted.facts};
         history.push(entry);
         ledger?.append({step: 'investigation', kind: 'model-local-callback-attempt', ...entry});
+        log({stage: 'progress', type: 'research-attempt'});
+        if (attempted.verdict === 'confirmed') {stopReason = 'confirmed'; break;}
+      } else if (lead.oracle === 'anonymous-json-disclosure') {
+        attempted = await executeAnonymousJsonDisclosure(lead,
+          requestForIdentity, scope, env);
+        attempted.evidence.forEach(item => evidence.add(item));
+        const entry = {attempt: history.length + 1, path: lead.subject.path,
+          placement: 'request', field: lead.jsonPointers.join(', '), as: 'anonymous',
+          family: lead.family, oracle: lead.oracle, verdict: attempted.verdict,
+          reason: attempted.reason, evidence: attempted.evidence,
+          controls: attempted.controls, responses: attempted.facts};
+        history.push(entry);
+        ledger?.append({step: 'investigation', kind: 'model-anonymous-json-disclosure-attempt',
+          ...entry});
         log({stage: 'progress', type: 'research-attempt'});
         if (attempted.verdict === 'confirmed') {stopReason = 'confirmed'; break;}
       } else if (lead.oracle === 'raw-proof') {
@@ -3600,6 +3691,7 @@ export async function runResearchFlows(leads, scope, {requester, infer = null, m
           'If a protected-content attempt says its ordinary control or reset also returned the owner material, choose a different observed public control input whose JSON shape omits that field. Do not repeat the same leaky control or use an owner-authenticated prelude to establish the claimed anonymous disclosure. ' +
           'For observation experiments set marker strings empty; a stable status, redirect, content type or body-shape difference is unclassified evidence, not a finding. Use it to pivot toward an independent impact oracle when the observed route contract supports one. A marker observation with a matching sourceFinding impact hypothesis receives an automatic fresh typed replay. If its proof remains inconclusive, revise the exact candidate or choose another impact oracle; otherwise stop when no meaningful distinct test follows. ' +
           'lastRawRequests and lastRawProof summarize the prior complete candidate and control requests; operator credentials are redacted. Revise oracle "raw-observation" with exact rawRequests for any supported request shape when the evidence suggests another test. A failed value only disproves that value; consider a different evidence-based candidate. If a candidate has a unique positive response marker, use oracle "raw-proof" with baseline and negative request sequences and rawProof.openText; include closedText only when both controls share a measured closed page. The harness independently replays the exact candidate and controls before reporting. ' +
+          'For source-identified private JSON disclosed without a session, oracle "anonymous-json-disclosure" accepts two exact anonymous GET record URLs in rawRequests and your chosen jsonPointers. Fresh reads and proof replay compare the selected values without storing them. ' +
           'If the reviewed subject and selected HTML response support browser execution, switch to oracle "browser-execution" with the same observed steps, firstValue and secondValue as html-double, html-single or script-close style hints, and empty markers. Bypass supplies fresh inert script canaries and replays two isolated Chrome executions. Arbitrary model-authored script is never sent. ' +
           'If a plausible hypothesis has no named impact verifier, you may name its oracle; Bypass executes it as observation and requires later independent proof. ' +
           'For an observed URL field on a local target, switch to oracle "local-callback" with empty values and markers; Bypass inserts audit-owned callback URLs and verifies them independently. Never submit an external callback URL. ' +
@@ -3812,7 +3904,9 @@ export async function runResearchFlows(leads, scope, {requester, infer = null, m
       ...(lead.oracle === 'browser-execution' ?
         {assertionStep: lead.assertion.step} : {}),
       ...(lead.queryKeySource ? {queryKeySource: lead.queryKeySource} : {})},
-    kind: lead.oracle === 'raw-proof' ? 'model-raw-boundary' :
+    kind: lead.oracle === 'anonymous-json-disclosure' ?
+      'model-anonymous-json-disclosure' :
+      lead.oracle === 'raw-proof' ? 'model-raw-boundary' :
       lead.oracle === 'raw-observation' ? 'model-raw-observation' :
       lead.oracle === 'browser-execution' ? 'model-browser-execution' :
       lead.oracle === 'state-change' ? 'model-state-change' :
@@ -3857,6 +3951,9 @@ export async function runResearchFlows(leads, scope, {requester, infer = null, m
       if (attempted.accessContext && typeof onConfirmedAccess === 'function')
         onConfirmedAccess({lead, finding, context: attempted.accessContext});
     }
+    if (lead.oracle === 'anonymous-json-disclosure' &&
+        attempted?.verdict === 'confirmed')
+      findings.push(anonymousJsonDisclosureFinding(lead, scope, surface, attempted));
     investigations.push({...(initial.proposalId ? {proposalId: initial.proposalId} : {}),
       initial: {path: initial.subject.path, field: initial.subject.key,
       family: initial.family}, final: {path: lead.subject.path, field: lead.subject.key,
@@ -3871,7 +3968,9 @@ export async function runResearchFlows(leads, scope, {requester, infer = null, m
           ...(item.oracle === 'browser-execution' ?
             {assertionStep: item.assertion?.step} : {}),
           ...(item.queryKeySource ? {queryKeySource: item.queryKeySource} : {})},
-        kind: item.oracle === 'raw-proof' ? 'model-raw-boundary' :
+        kind: item.oracle === 'anonymous-json-disclosure' ?
+          'model-anonymous-json-disclosure' :
+          item.oracle === 'raw-proof' ? 'model-raw-boundary' :
           item.oracle === 'raw-observation' ? 'model-raw-observation' :
           item.oracle === 'browser-execution' ? 'model-browser-execution' :
           item.oracle === 'state-change' ? 'model-state-change' :

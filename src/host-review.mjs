@@ -91,9 +91,10 @@ function focusedOutcome(saved) {
   if(!saved)return {status:'pending'};
   const counts=saved.stats??{};
   const status=!saved.finishedAt?'running':saved.sealedFindings.length?'confirmed':
-    counts.confirmed>0||counts.inconclusive>0?'inconclusive':counts.blocked>0?'blocked':
-    counts.notReproduced>0?'not-reproduced':'untested';
+    counts.confirmed>0||counts.inconclusive>0?'inconclusive':'untested';
   return {status,runId:saved.run,proofs:saved.sealedFindings.map(item=>item.id),
+    ...(status==='untested'&&counts.tasks>0?
+      {reason:'No test of the focused hypothesis was independently recorded.'}:{}),
     counts:{confirmed:counts.confirmed??0,
     notReproduced:counts.notReproduced??0,inconclusive:counts.inconclusive??0,
     blocked:counts.blocked??0,tasks:counts.tasks??0}};

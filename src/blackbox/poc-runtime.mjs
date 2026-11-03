@@ -277,6 +277,83 @@ export function modelJsonPointer(body, pointer) {
   }
   return typeof value === 'string' && /^[\x21-\x7e]{16,4096}$/.test(value) ? value : null;
 }
+/** Read a Muse-selected JSON scalar without assigning meaning to its field name. */
+export function jsonDisclosureScalar(body, pointer) {
+  if (typeof body !== 'string' || Buffer.byteLength(body) > MODEL_RESPONSE_BYTES ||
+      typeof pointer !== 'string' || !pointer.startsWith('/')) return null;
+  let value;
+  try {value = JSON.parse(body);} catch {return null;}
+  for (const part of pointer.slice(1).split('/')) {
+    const key = part.replace(/~1/g, '/').replace(/~0/g, '~');
+    if (!value || typeof value !== 'object' || !Object.hasOwn(value, key)) return null;
+    value = value[key];
+  }
+  return (typeof value === 'string' && value.length ||
+    typeof value === 'number' && Number.isFinite(value) ||
+    typeof value === 'boolean') ? String(value) : null;
+}
+
+/** Fresh anonymous JSON reads establish delivery of Muse-selected source data. */
+export function jsonDisclosureOutcome(responses, requests, pointers,
+  {sourcePath, sourceClaim} = {}) {
+  if (!Array.isArray(responses) || responses.length !== 4 ||
+      !Array.isArray(requests) || requests.length !== 2 ||
+      !Array.isArray(pointers) || !pointers.length)
+    return {verdict: 'inconclusive', reason: 'JSON disclosure proof is incomplete'};
+  const route = raw => {
+    try {return new URL(raw, 'https://proof.invalid');} catch {return null;}
+  };
+  const source = route(sourcePath), firstRoute = route(requests[0].path),
+    secondRoute = route(requests[1].path);
+  const parts = value => value?.pathname.split('/').slice(1) ?? [];
+  const a = parts(firstRoute), b = parts(secondRoute), s = parts(source);
+  const changed = a.flatMap((part, index) => part === b[index] ? [] : [index]);
+  const sameResource = source && firstRoute && secondRoute &&
+    a.length === b.length && a.length === s.length &&
+    changed.length <= 1 &&
+    a.every((part, index) => changed.includes(index) || part === s[index]) &&
+    (changed.length || firstRoute.search !== secondRoute.search);
+  const fieldNamedInSource = pointer => {
+    const name = pointer.split('/').at(-1)?.replace(/~1/g, '/').replace(/~0/g, '~');
+    return name && new RegExp(`(^|[^a-z0-9])${name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}($|[^a-z0-9])`, 'i')
+      .test(sourceClaim ?? '');
+  };
+  if (!sameResource || pointers.some(pointer => !fieldNamedInSource(pointer)))
+    return {verdict: 'inconclusive',
+      reason: 'selected JSON fields or record routes were not tied to the source finding'};
+  if (responses.some(item => !item || item.refused || item.blocked ||
+      !Number.isInteger(item.status) || item.status === 429 ||
+      item.status >= 500 || responseCached(item)))
+    return {verdict: 'inconclusive', reason: 'anonymous JSON response was unavailable or cached'};
+  if (responses.every(item => [401, 403, 404].includes(item.status)))
+    return {verdict: 'not_reproduced', reason: 'both anonymous reads were denied'};
+  if (responses.some(item => item.status !== 200 ||
+      !/(?:json|\+json)/i.test(item.type ?? '')))
+    return {verdict: 'inconclusive', reason: 'anonymous JSON reads did not complete consistently'};
+  const reflected = (value, request) => {
+    const url = new URL(request.path, 'https://proof.invalid');
+    const decode = part => {
+      try {return decodeURIComponent(part);} catch {return part;}
+    };
+    return url.pathname.split('/').some(part => decode(part) === value) ||
+      [...url.searchParams.values()].includes(value);
+  };
+  let distinctFields = 0;
+  for (const pointer of pointers) {
+    const values = responses.map(item => jsonDisclosureScalar(item.body, pointer));
+    if (values.every(value => value === null)) continue;
+    if (values.some(value => value === null))
+      return {verdict: 'inconclusive', reason: 'selected JSON field was unstable'};
+    if (values[0] !== values[2] || values[1] !== values[3])
+      return {verdict: 'inconclusive', reason: 'selected JSON values changed on fresh reads'};
+    if (values[0] !== values[1] &&
+        !reflected(values[0], requests[0]) && !reflected(values[1], requests[1]))
+      distinctFields++;
+  }
+  return distinctFields ? {verdict: 'confirmed',
+    reason: `${distinctFields} Muse-selected JSON field(s) held distinct stable values in two fresh anonymous records`} :
+    {verdict: 'not_reproduced', reason: 'selected distinct record data was absent'};
+}
 const PEM_PRIVATE_KEY = /-----BEGIN ((?:RSA |EC |DSA )?PRIVATE KEY)-----[\s\S]{1,8192}?-----END \1-----/g;
 
 /** Return only the field name and count when a public JSON list exposes distinct account credentials. */
@@ -1158,6 +1235,25 @@ async function checkModelRawBoundary(spec, env) {
       hash: `sha256:${sha(last.body)}`});
   }
   return {...rawBoundaryOutcome(responses, spec.rawProof, spec.rawRequests), controls};
+}
+
+async function checkAnonymousJsonDisclosure(spec, env) {
+  if (!Array.isArray(spec.rawRequests) || spec.rawRequests.length !== 2 ||
+      !Array.isArray(spec.jsonPointers) || !spec.jsonPointers.length ||
+      spec.rawRequests.some(item => item.method !== 'GET' ||
+        item.as !== 'anonymous' || item.headers?.length || item.body))
+    return {verdict: 'inconclusive', reason: 'anonymous JSON proof requests are incomplete'};
+  const responses = [], controls = [];
+  for (const label of ['first', 'fresh']) for (const request of spec.rawRequests) {
+    const response = await read(spec, request.path, 'anonymous', env,
+      {'cache-control': 'no-cache'});
+    responses.push(response);
+    controls.push({label, path: request.path, status: response.status,
+      hash: response.hash});
+  }
+  return {...jsonDisclosureOutcome(responses, spec.rawRequests, spec.jsonPointers,
+    {sourcePath: spec.sourcePath, sourceClaim: spec.sourceClaim}),
+    controls};
 }
 
 const LOGIN_TOKEN = /^[\x21-\x7e]{1,8192}$/;
@@ -3898,6 +3994,8 @@ async function checkWithinBudget(spec, env, replay) {
     if (spec.kind === 'model-json-differential') return await checkModelJsonDifferential(spec, env);
     if (spec.kind === 'model-cookie-access') return await checkModelCookieAccess(spec);
     if (spec.kind === 'model-raw-boundary') return await checkModelRawBoundary(spec, env);
+    if (spec.kind === 'model-anonymous-json-disclosure')
+      return await checkAnonymousJsonDisclosure(spec, env);
     if (['model-http-sequence', 'model-sequence-boundary',
       'model-browser-execution'].includes(spec.kind))
       return await checkModelHttpSequence(spec, env);
