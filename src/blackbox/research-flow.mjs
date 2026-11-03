@@ -384,37 +384,39 @@ function observedHeaders(headers) {
 }
 
 function reviewedSequenceStep(step, inventory, scope, as, markers, env,
-  derivedAvailable = false, allowWrite = false) {
-  if (typeof step?.path !== 'string') return false;
+  derivedAvailable = false, allowWrite = false, onFailure = () => {}) {
+  const reject = reason => {onFailure(reason); return null;};
+  if (typeof step?.path !== 'string') return reject('path-shape');
   const readPath = step.path.split('?')[0];
-  if (!concrete(readPath)) return null;
-  if (step.as !== undefined && !['anonymous', 'owner', 'outsider', 'derived'].includes(step.as)) return false;
+  if (!concrete(readPath)) return reject('path-shape');
+  if (step.as !== undefined && !['anonymous', 'owner', 'outsider', 'derived'].includes(step.as)) return reject('identity-shape');
   const identity = readIdentity(step, as);
-  if (!safeReadIdentity(identity, scope, env, derivedAvailable)) return null;
+  if (!safeReadIdentity(identity, scope, env, derivedAvailable)) return reject('identity-unavailable');
   if (!['GET', 'HEAD'].includes(step.method)) {
-    if (!allowWrite || !scope.methods.includes(step.method)) return null;
+    if (!allowWrite || !scope.methods.includes(step.method)) return reject('method-scope');
     const operation = inventory.writeOperations.get(
       `${step.method} ${step.placement} ${step.path}`);
-    if (!operation || !operation.fields.length ||
-        !safeHeaders(step.headers ?? [], markers) ||
-        !validateUrl(scope, step.path, {purpose: purposeFor(step.placement) ??
+    if (!operation || !operation.fields.length) return reject('write-contract');
+    if (!safeHeaders(step.headers ?? [], markers)) return reject('headers-shape');
+    if (!validateUrl(scope, step.path, {purpose: purposeFor(step.placement) ??
           'reviewed-method', method: step.method,
-          identity: identity === 'derived' ? 'anonymous' : identity}).ok) return null;
+          identity: identity === 'derived' ? 'anonymous' : identity}).ok)
+      return reject('route-scope');
     const bodyTemplate = step.bodyTemplate ?? '';
-    if (!bodyTemplate && (typeof step.key !== 'string' ||
-        typeof step.value !== 'string') ||
-        bodyTemplate.includes('{{input}}') && typeof step.value !== 'string')
-      return null;
+    if (!bodyTemplate && typeof step.key !== 'string')
+      return reject('input-shape');
+    if (step.value != null && typeof step.value !== 'string')
+      return reject('input-shape');
     const key = step.key ?? operation.fields[0];
-    if (!operation.fields.includes(key)) return null;
+    if (!operation.fields.includes(key)) return reject('input-field');
     const value = step.value ?? '';
     const harmless = value => validModelFixedFields(
       [{field: key, value}], '__bx_unused', markers);
     if (!harmless(value) || !validModelFixedFields(step.fixedFields ?? [], key,
-      markers, operation.fields)) return null;
+      markers, operation.fields)) return reject('input-values');
     const fixed = [...(step.fixedFields ?? [])];
     if (step.placement === 'xml' &&
-        !validXmlTemplate(bodyTemplate, operation, key, markers)) return null;
+        !validXmlTemplate(bodyTemplate, operation, key, markers)) return reject('xml-template');
     return {...step, as: identity, key, value,
       placement: operation.placement, fixedFields: fixed,
       bodyTemplate, headers: step.headers ?? [],
@@ -429,10 +431,10 @@ function reviewedSequenceStep(step, inventory, scope, as, markers, env,
       !route?.methods.has(step.method) ||
       !groundedQuery || !url.search && step.path !== url.pathname ||
       !safeHeaders(step.headers ?? [], markers) ||
-      !observedHeaders(step.headers ?? [], route.headers)) return null;
+      !observedHeaders(step.headers ?? [], route.headers)) return reject('read-contract');
   return validateUrl(scope, step.path, {method: step.method,
     identity: identity === 'derived' ? 'anonymous' : identity}).ok ?
-    {...step, as: identity, headers: step.headers ?? []} : null;
+    {...step, as: identity, headers: step.headers ?? []} : reject('route-scope');
 }
 
 const bindingPlaceholder = binding => binding && typeof binding === 'object' &&
@@ -837,12 +839,20 @@ export function validateResearchFlow(spec, surface, scope, {env = {}, inventory 
   const proposals = proposedWriteOperations(spec, inventory, scope);
   inventory = proposals.inventory;
   const rawBindings = proposedBindings(spec);
-  const reviewedPrelude = spec.prelude.map(step => reviewedSequenceStep(step,
-    inventory, scope, spec.as, markers, env, derivedAvailable, true));
-  const reviewedObserve = spec.observe.map(step => reviewedSequenceStep(step,
-    inventory, scope, spec.as, markers, env, derivedAvailable, true));
+  const stepFailures = [];
+  const reviewStep = (step, component, index) => reviewedSequenceStep(step,
+    inventory, scope, spec.as, markers, env, derivedAvailable, true,
+    reason => stepFailures.push({component, index, valueReason: reason,
+      method: typeof step?.method === 'string' ? step.method : null,
+      placement: typeof step?.placement === 'string' ? step.placement : null,
+      hasKey: typeof step?.key === 'string',
+      hasValue: typeof step?.value === 'string'}));
+  const reviewedPrelude = spec.prelude.map((step, index) =>
+    reviewStep(step, 'prelude-step', index));
+  const reviewedObserve = spec.observe.map((step, index) =>
+    reviewStep(step, 'observe-step', index));
   if ([...reviewedPrelude, ...reviewedObserve].some(step => !step))
-    return fail('unobserved-read-step');
+    return fail('unobserved-read-step', stepFailures[0]);
   spec = {...spec, prelude: reviewedPrelude, observe: reviewedObserve};
   const assertion = spec.assertion;
   if (!assertion || !['subject', 'observe'].includes(assertion.step) ||
