@@ -2030,6 +2030,11 @@ test('a bound POST prelude needs no separate value before an authenticated POST 
   assert.deepEqual(unavailableIdentity.diagnostic, {component: 'prelude-step',
     index: 1, valueReason: 'identity-unavailable', method: 'POST',
     placement: 'json', hasKey: true, hasValue: false});
+  const unboundJson = validateResearchFlow({...proposal, bindings: [],
+    prelude: [proposal.prelude[0],
+      {...proposal.prelude[1], valueEncoding: 'json'}]}, {}, scope);
+  assert.equal(unboundJson.reason, 'unobserved-read-step');
+  assert.equal(unboundJson.diagnostic.valueReason, 'input-value');
 
   const issued = new Set(), sessions = new Set(), seen = [];
   const response = (status, body, evidenceId, rawSetCookie = []) => ({
