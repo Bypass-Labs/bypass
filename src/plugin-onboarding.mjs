@@ -14,6 +14,7 @@ import { appConnection } from './app-connection.mjs';
 import { httpMethods, methodChoices, methodInput } from './http-methods.mjs';
 import { reviewQuestion, reviewInput, sourceStatus, repositoryAction } from './application-setup.mjs';
 import { ownershipReady, verificationDisabled, sharedOwnership } from './ownership-store.mjs';
+import { latestRemediation } from './remediation-checkpoint.mjs';
 
 function blackboxScopeOutput(root,origin){
   const file=path.join(root,'blackbox.scope.json');
@@ -33,6 +34,13 @@ export async function pluginOnboarding(cwd,root,{intent='real',mode,url,environm
   if(!mode)return early('review-type',{id:'review-type',tool:'bypass_onboarding',question:reviewQuestion,input:reviewInput()},
     {guidance:'Open the host question/selection tool with these three choices. Do not initialize the current folder yet. Retain any repository URL and app URL the user supplied for the selected flow.'});
   need(['code','combined','live'].includes(mode),'Choose code, combined, or live review.');
+  const pending = root && latestRemediation(root);
+  if (pending && !repository && !url && methods == null && rps == null &&
+    modelCalls == null && minutes == null) return early('release',
+    {id:'release',tool:'bypass_remediation',arguments:{action:'status',review:pending.review},
+      message:'Resume this PR deployment and proof replay. The old audit does not need to restart.'},
+    {release:{review:pending.review,pr:pending.pr,status:pending.status,target:pending.target},
+      alternatives:[{label:'Start a separate new review',tool:'bypass_scan',arguments:{mode}}]});
   if(intent==='preview'&&state?.demo)return {...early('ready',{tool:'bypass_scan',arguments:{mode:'combined'}}),engine:'mock',simulation:true,ai:hostAI(),ready:{source:true,live:true}};
   if(mode!=='live'){
     if(repository){const action=await repositoryAction(cwd,root,repository,dir);if(action)return early('repository',action);}

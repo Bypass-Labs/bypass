@@ -20,6 +20,7 @@ import { registerProjectCredentials } from './credentials.mjs';
 import { closeScannerSessions } from './scanner/service.mjs';
 import { BlackboxHostBridge } from './blackbox/host-bridge.mjs';
 import { httpMethods } from './http-methods.mjs';
+import { remediationCheckpoint } from './remediation-checkpoint.mjs';
 
 const str=(description,extra={})=>({type:'string',description,...extra});
 const bool=description=>({type:'boolean',description});
@@ -162,6 +163,15 @@ export const toolDefinitions=[
   tool('bypass_blackbox_stop','Stop this session’s blackbox audit and preserve its partial evidence.',{},[],'blackbox-host-stop'),
   tool('bypass_blackbox_verify','Replay every saved blackbox proof against the authorized target.',{run:identityKey},['run'],'blackbox verify',a=>[a.run]),
   tool('bypass_blackbox_export','Export Node regression tests for confirmed blackbox findings.',{run:identityKey,out:str('Repository-relative output directory')},['run'],'blackbox export',a=>[a.run]),
+  tool('bypass_remediation','Keep a combined-review PR linked to its original blackbox proofs, then replay them after merge and deployment. Never merges a PR.',{
+    action:str('Checkpoint action',{enum:['open','status','replay']}),review:identityKey,
+    pr:str('Opened pull-request URL'),branch:str('Pull-request source branch'),
+    runs:{type:'array',items:identityKey,description:'Confirmed focused blackbox run IDs'},
+    mergeRevision:str('Full merged commit SHA observed on the repository host'),
+    revisionPath:str('Optional in-scope JSON path exposing the deployed full commit SHA'),
+    revisionField:str('JSON field in that response; default revision'),
+    deploymentObserved:bool('True only after host deployment status was checked when no revision endpoint exists')},
+  ['action','review'],'remediation'),
   tool('bypass_run_monitor','Run a saved monitor immediately using real deterministic replay.',{name:str('Monitor name')},['name'],'monitor run',a=>[a.name]),
   tool('bypass_resume_monitor','Resume an existing monitor after checking current authorization.',{name:str('Monitor name')},['name'],'monitor resume',a=>[a.name]),
   tool('bypass_remove_monitor','Remove a schedule while retaining its prior run evidence.',{name:str('Monitor name')},['name'],'monitor remove',a=>[a.name]),
@@ -296,6 +306,8 @@ export async function serveMCP(cwd=process.cwd(),io={input:process.stdin,output:
           result=outcome({kind:'blackbox-host-decision',...blackboxBridge.submit(args.id,args.decision)});
         }else if(t.command==='blackbox-host-stop'){
           result=outcome({kind:'blackbox-host',...blackboxBridge.stop()});
+        }else if(t.command==='remediation'){
+          result=outcome(await remediationCheckpoint(selectedRoot,args,{signal:controller.signal}));
         }else if(['blackbox','blackbox resume'].includes(t.command)){
           if(args.out)validateProjectOutput(selectedRoot,args.out);
           const options={...t.makeOptions(args),project:selectedRoot,json:true,'non-interactive':true};
