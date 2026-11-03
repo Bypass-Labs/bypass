@@ -7,9 +7,9 @@ import { hash, now, id, need } from './util.mjs';
 export const userStateDirectory=()=>process.env.BYPASS_PLUGIN_STATE_DIR||path.join(os.homedir(),'.local/state/bypass');
 const directory=()=>process.env.BYPASS_OWNERSHIP_DIR||path.join(userStateDirectory(),'ownership');
 const originOf=value=>new URL(value).origin;
-// Missing settings retain the verification requirement of older projects.
-export const ownershipVerification=state=>state.settings.ownershipVerification??'dns';
-export const verificationDisabled=target=>target?.environment!=='local'&&target?.ownershipVerification==='off';
+// Domain proof is feature-flagged and off unless a project explicitly enables it.
+export const ownershipVerification=state=>state.settings.ownershipVerification??'off';
+export const verificationDisabled=target=>target?.environment!=='local'&&(target?.ownershipVerification??'off')==='off';
 export function ownershipReady(target){
   const proof=target?.ownership;
   return !!target&&!ownershipRevoked(target)&&Date.parse(proof?.expiresAt)>Date.now()&&

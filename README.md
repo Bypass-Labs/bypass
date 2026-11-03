@@ -73,7 +73,7 @@ For a running app, supply its URL and choose its environment if unknown. Bypass 
 <details>
 <summary>Project setting: domain ownership verification</summary>
 
-New projects start with domain verification **off**. Explicit app-control and scope approval is still required. To require proof, tell Muse Code “Require DNS ownership verification for this project” or “Use HTTPS-file verification.” Bypass updates the project setting and shows only the required extra step. In the CLI, use **Settings → Domain ownership verification**, or:
+Domain verification is **off** unless a project explicitly enables it. Explicit app-control and scope approval is still required. To require proof, tell Muse Code “Require DNS ownership verification for this project” or “Use HTTPS-file verification.” Bypass updates the project setting and shows only the required extra step. In the CLI, use **Settings → Domain ownership verification**, or:
 
 ```bash
 bypass config set ownershipVerification dns   # off | dns | http
