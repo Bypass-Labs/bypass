@@ -407,6 +407,8 @@ function reviewedSequenceStep(step, inventory, scope, as, markers, env,
       return reject('input-shape');
     if (step.value != null && typeof step.value !== 'string')
       return reject('input-shape');
+    if (step.value == null && step.valueEncoding === 'json')
+      return reject('input-value');
     const key = step.key ?? operation.fields[0];
     if (!operation.fields.includes(key)) return reject('input-field');
     const value = step.value ?? '';
