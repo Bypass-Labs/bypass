@@ -146,7 +146,8 @@ function rawBoundaryKey(finding) {
       !finding.proof) return null;
   const {rawRequests, rawProof, as} = finding.webProof ?? {};
   if (!rawRequests?.length || !rawProof?.baseline?.length ||
-      !rawProof.closedText || !rawProof.openText) return null;
+      !rawProof.closedText ||
+      !(rawProof.openTextHash && rawProof.openTextLength || rawProof.openText)) return null;
   try {
     const origin = new URL(finding.url).origin;
     const withoutFinalRoute = steps => steps.map((step, index) => {
@@ -155,7 +156,7 @@ function rawBoundaryKey(finding) {
       return {...step, path: `${url.origin}${url.search}`};
     });
     return JSON.stringify([origin, finding.cwe, finding.severity, as,
-      rawProof.closedText, rawProof.openText,
+      rawProof.closedText, rawProof.openTextHash ?? rawProof.openText,
       withoutFinalRoute(rawRequests), withoutFinalRoute(rawProof.baseline)]);
   } catch { return null; }
 }
