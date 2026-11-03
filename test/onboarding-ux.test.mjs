@@ -64,7 +64,7 @@ test('verification-off still requires explicit consent, production approval, exa
   assert.throws(()=>scopeReady(read(root).targets[0]),/authorization/);
 });
 
-test('project DNS and HTTPS settings restore the verification step; old projects remain strict',async t=>{
+test('project DNS and HTTPS flags restore verification while a missing flag stays off',async t=>{
   const root=await project(t),o={project:root};
   await execute('target add',['app'],{...o,url:'https://strict-demo.example.com',environment:'staging'});
   await execute('target authorize',['app'],{...o,accept:true,paths:'/api'});
@@ -85,8 +85,10 @@ test('project DNS and HTTPS settings restore the verification step; old projects
   plan=await pluginOnboarding(root,root,{mode:'live'});assert.equal(plan.stage,'ownership');assert.equal(read(root).targets[1].ownershipVerification,'http');
   assert.equal(plan.nextAction.challenge.method,'http');assert.match(plan.nextAction.challenge.url,/^https:\/\/file-demo/);
   await change(root,s=>{delete s.settings.ownershipVerification;});
-  await execute('target add',['legacy'],{...o,url:'https://legacy-demo.example.com',environment:'staging'});
-  assert.equal(read(root).targets[2].ownershipVerification,'dns');
+  await execute('target add',['default-off'],{...o,url:'https://default-off.example.com',environment:'staging'});
+  assert.equal(read(root).targets[2].ownershipVerification,'off');
+  await execute('target use',['default-off'],o);
+  plan=await pluginOnboarding(root,root,{mode:'live'});assert.equal(plan.stage,'scope');assert.equal(plan.nextAction.tool,'bypass_authorize_target');
   await assert.rejects(execute('config set',['ownershipVerification','whatever'],o),/off, dns, or http/);
 });
 

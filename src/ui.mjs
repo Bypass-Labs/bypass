@@ -433,7 +433,7 @@ export async function terminal(options={},io){
           continue;
         }
         if(choice==='11'){
-          const current=read(root).settings.ownershipVerification||'dns';
+          const current=read(root).settings.ownershipVerification??'off';
           const selected=await choose(ask,[{id:'off',label:'Off: acknowledge control when approving scope'},{id:'dns',label:'Require DNS TXT verification'},{id:'http',label:'Require an HTTPS verification file'}],`Domain verification: ${current}. Changing it clears testing permission.`);
           if(selected)await run('config set',['ownershipVerification',selected.id]);
         }

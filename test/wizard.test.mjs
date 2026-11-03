@@ -65,6 +65,7 @@ test('wizard never turns local ownership acknowledgment into testing permission 
 
 test('wizard production scope requires the separate production confirmation',async t=>{
   const root=temp();await execute('init',[root]);
+  await change(root,state=>{delete state.settings.ownershipVerification;});
   await execute('model add',['muse'],{project:root,provider:'meta','secret-env':'BYPASS_UNIT_API_KEY',model:'test-model',stream:false});
   await execute('target add',['production'],{project:root,url:'https://app.example.com',environment:'production'});
   t.mock.method(dns,'resolveTxt',async()=>[[read(root).targets[0].challenge.token]]);

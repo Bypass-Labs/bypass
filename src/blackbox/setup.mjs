@@ -291,7 +291,7 @@ export async function prepareBlackboxSetup(working, rawUrl, options = {}) {
         target.authorization = null;
       }
       return {...entry, name: target.name, environment: target.environment,
-        verification: verificationDisabled(target)?'off':target.ownershipVerification||'dns',
+        verification: verificationDisabled(target)?'off':target.ownershipVerification??'off',
         ownershipReady: !needsOwnership, authorizationReady: entry.audit && ownershipReady(target) &&
           authorized(target, scope, {primary: entry.url === origin,
             credentialed: scope.credentialOrigins.includes(entry.url)}),
