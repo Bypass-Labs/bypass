@@ -187,9 +187,9 @@ This disables the model-request deadline, socket inactivity timeout, synthetic
 connection-check deadline, and Docker review worker's ten-minute deadline for
 `scan`. Cancellation still works; a stalled server can wait indefinitely until
 you cancel. Token, call, evidence, and container resource limits remain.
-Standalone discovery/evaluation also disables its per-task timeout for these
-profiles. Overall discovery/evaluation stage budgets and running-app
-authorization/run budgets remain separate safeguards. Other profiles
+Standalone discovery/evaluation also disables its per-task and overall
+reasoning-stage timeouts for these profiles. CodeQL extraction/analysis resource
+timeouts and running-app authorization/run budgets remain separate safeguards. Other profiles
 retain their configured timeouts; the default remains 60 seconds.
 
 ### Connection interrupted despite no timeout
@@ -360,16 +360,17 @@ Use standalone `discover` to keep reasoning on local Glimmer. In Muse, pass
 `discovery-only: true` to `bypass_discover` to skip evaluation.
 
 The model profile's `--timeout-ms 0` disables standalone discovery/evaluation
-per-task timeouts, including on resumed tasks. There is no default 300-second
-cutoff across successive model calls. The issued task records
-`taskTimeoutDisabled: true`; its `expiresAt` is the overall stage deadline,
-not a per-task timeout. Stage budgets remain in force, so slow local generation
-can still exhaust the configured discovery or evaluation `timeoutSeconds`.
+per-task and policy/evaluation reasoning-stage timeouts, including on resumed
+tasks. There is no 300-second task cutoff or 1,800-second reasoning-stage cutoff.
+The issued task records `taskTimeoutDisabled: true`,
+`stageTimeoutDisabled: true`, and `expiresAt: 0` (no time expiry).
+Configured model-request, evidence, task-count, attempt-count, and context
+budgets still apply, as does cancellation. Deterministic CodeQL timeouts remain.
 Finite profiles and Muse-hosted reasoning retain their configured task leases.
 
 Standalone discovery/evaluation tasks have no fixed per-task conversation-turn
 cap. A task can continue requesting evidence until its submission is accepted.
-Applicable task leases, stage deadlines, configured model-request/evidence budgets,
+Applicable task leases and stage deadlines, configured model-request/evidence budgets,
 conversation-size limits, and cancellation still apply. This does not change
 the separate Docker `scan` worker's turn limits.
 
@@ -394,9 +395,40 @@ An interrupted scanner run prints its failure message and stores its manifest
 under `.bypass/scanner/<run-id>/manifest.json`, separately from `scan` evidence.
 Use `discover status <run-id>` to inspect the saved state and
 `discover resume <run-id>` to retry unfinished tasks when the recorded source,
-runtime, and stage budgets still permit it. Accepted CodeQL signals and completed
+runtime, and applicable stage budgets still permit it. Accepted CodeQL signals and completed
 evaluation cases are retained; restarting a run is necessary if its stage budget
 has expired.
+
+### Explicit JSON-schema responses
+
+For a compatible custom server such as local llama.cpp, opt in with
+`--response-mode json-schema` when adding the profile. The default is `tools`.
+This sends Chat `response_format.json_schema` or Responses `text.format`,
+without tool definitions. Bypass still parses and validates final response JSON
+locally; invalid responses never execute. Unsupported formats fail explicitly,
+with no automatic protocol fallback. A plain `model test` remains a marker
+check, not a structured-action compatibility test.
+
+```sh
+npm start -- model add glimmer-local-json \
+  --provider custom \
+  --base-url http://127.0.0.1:8080/v1 \
+  --model meta-models/Muse-Glimmer-30B-GGUF:Q4_K_M \
+  --secret-env BYPASS_LOCAL_MUSE_KEY \
+  --transport chat --response-mode json-schema \
+  --effort minimal --stream false --timeout-ms 0 \
+  --project "$APP"
+npm start -- model use glimmer-local-json --project "$APP"
+npm start -- discover --detector both --project "$APP"
+```
+
+An empty tool-argument object (`toolArgumentCharacters: [2]`, no `actionFields`)
+cannot be corrected by increasing time alone. JSON-schema mode constrains final
+content instead of relying on tool argument generation. A local synthetic test
+through Bypass's actual scanner driver completed a read and submission in two
+Glimmer requests, about 16 seconds, with no rejected actions. No application
+source was sent. A complete application discovery run is still required to
+verify model reliability on that repository.
 
 This task-timeout change requires the updated pinned scanner image, prepared
 automatically on first use. Older runs pinned to a different image cannot be

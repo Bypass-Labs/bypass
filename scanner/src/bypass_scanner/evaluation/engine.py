@@ -74,7 +74,7 @@ class EvaluationEngine(TaskEngine):
             if not signals and all(task['status']=='done' for task in data['tasks']):
                 self.finish(state,data)
                 return
-            if time.time()>=data['deadline']:
+            if not state.get('reasoningTimeoutDisabled',False) and time.time()>=data['deadline']:
                 raise ValueError('Evaluation run budget expired; start a new scan with explicit limits.')
             for task in data['tasks']:
                 if task['status']=='leased':

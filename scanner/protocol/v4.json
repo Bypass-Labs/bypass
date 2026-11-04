@@ -271,6 +271,9 @@
         "taskTimeoutDisabled": {
           "type": "boolean"
         },
+        "stageTimeoutDisabled": {
+          "type": "boolean"
+        },
         "policyId": {
           "type": "string",
           "minLength": 1,
@@ -1089,6 +1092,15 @@
       ],
       "additionalProperties": false
     },
+    "reasoningRunRequest": {
+      "type": "object",
+      "properties": {
+        "run": {"type": "string", "minLength": 1, "maxLength": 160},
+        "disableReasoningTimeout": {"type": "boolean"}
+      },
+      "required": ["run"],
+      "additionalProperties": false
+    },
     "policyLimits": {
       "type": "object",
       "properties": {
@@ -1775,6 +1787,9 @@
           "importSarif": {
             "type": "boolean"
           },
+          "disableReasoningTimeout": {
+            "type": "boolean"
+          },
           "executionMode": {
             "type": "string",
             "enum": [
@@ -1798,7 +1813,7 @@
     "resume": {
       "description": "Resume for deterministic CodeQL discovery; zero model calls.",
       "inputSchema": {
-        "$ref": "#/schemas/runRequest"
+        "$ref": "#/schemas/reasoningRunRequest"
       },
       "responseSchema": "response"
     },
@@ -2012,7 +2027,7 @@
     "evaluate": {
       "description": "Evaluate a saved discovery run using bounded source-only tasks.",
       "inputSchema": {
-        "$ref": "#/schemas/runRequest"
+        "$ref": "#/schemas/reasoningRunRequest"
       },
       "responseSchema": "response"
     },

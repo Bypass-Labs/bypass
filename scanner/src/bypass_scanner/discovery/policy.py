@@ -119,7 +119,7 @@ class PolicyEngine(TaskEngine):
             current = selected(state['config'], self.snapshot_root(run), recorded['files'])
             if digest(current) != data['policyDigest']:
                 raise ValueError('Selected policy contents changed; start a new scan.')
-            if time.time()>=data['deadline']:
+            if not state.get('reasoningTimeoutDisabled',False) and time.time()>=data['deadline']:
                 raise ValueError('Policy run budget expired; start a new scan with explicit limits.')
             for task in data['tasks']:
                 if task['status']=='leased':task['status']='pending'

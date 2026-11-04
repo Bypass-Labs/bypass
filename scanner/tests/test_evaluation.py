@@ -130,6 +130,17 @@ class EvaluationTests(unittest.TestCase):
             self.assertNotEqual(response['status'],'error',response)
         self.w.cancel(run)
 
+    def test_unlimited_evaluation_can_submit_past_original_stage_deadline(self):
+        run=self.start(mode='standalone-api')
+        self.w.cancel(run);self.w.evaluate(run,True)
+        data=self.w.evaluation_engine().load(run)
+        with patch('bypass_scanner.tasks.time.time',return_value=data['deadline']+1):
+            task=self.call('next_task',run=run,disableTaskTimeout=True)['task']
+            self.assertTrue(task['stageTimeoutDisabled']);self.assertEqual(task['expiresAt'],0)
+            response=self.submit(run,task,self.result(run,task,'needs_review'))
+            self.assertNotEqual(response['status'],'error',response)
+        self.w.cancel(run)
+
     def test_opt_out_saved_run_and_legacy_configuration(self):
         run=self.start({'evaluation':'off'})
         self.assertEqual(self.w.status(run)['evaluation'],'not_run')

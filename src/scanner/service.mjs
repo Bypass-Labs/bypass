@@ -216,7 +216,8 @@ export async function scannerService(key,args=[],options={},context={}) {
   const executing=['start','resume','evaluate'].includes(operation);
   if(reasoning&&!host&&executing){
     const {standaloneProfile}=await import('./api-driver.mjs');
-    context.profileState=read(root);standaloneProfile(context.profileState);
+    context.profileState=read(root);
+    input.disableReasoningTimeout=standaloneProfile(context.profileState).timeoutMs===0;
     context.policyLimits=config.policyLimits;
     context.evaluationLimits=config.evaluationLimits;
   }
