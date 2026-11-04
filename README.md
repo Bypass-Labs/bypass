@@ -118,7 +118,7 @@ Muse Code owns plugin reasoning and billing. Bypass cannot verify subscription b
 | Whitebox discovery and evaluation | `/bypass:discover` → SAST / Policy / Both | `bypass discover --detector <mode>` | Source + Docker; reasoning uses Muse Code or a CLI API profile; SAST discovery-only needs no model |
 | AI-assisted source review | `/bypass:review` | `bypass scan --mode code` | Muse Code session; CLI needs a provider key + Docker |
 | Running-app discovery and testing | `/bypass:blackbox` | `bypass blackbox <url>` | Approved target + scope; CLI needs an API key, Meta by default |
-| Combined source + running-app audit | `/bypass:review` after selecting both | `bypass scan --mode combined` | Connected repository, approved target, API profile, and Docker for source isolation |
+| Combined source + running-app audit | `/bypass:start` → **Code + running app** | `bypass scan --mode combined` | Connected repository and approved target; the CLI also needs an API profile and Docker for source isolation |
 | Saved regression replay | `/bypass:tests` | `bypass test run --all` | Saved checks and valid target setup; no model calls |
 | GitHub PR review and smoke tests | Ask Muse Code to generate setup | `bypass ci init --agent` | GitHub Actions; Meta API key for source review |
 

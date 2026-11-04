@@ -13,7 +13,7 @@ export const pluginAliases={
   'app connect':{tool:'bypass_connect_app'},
   init:{tool:'bypass_connect_repository'},'repo connect':{tool:'bypass_connect_repository'},
   'memory list':{tool:'bypass_memory'},
-  scan:{tool:'bypass_scan',note:'Prepare a durable host review. Muse drives bypass_review_step read/source/probe/finish; no independent AI worker.'},
+  scan:{tool:'bypass_scan',note:'Prepare a durable host source review. In combined mode, Muse then starts one full live audit with cited leads and the remaining budget.'},
   'model add':{tool:'bypass_add_model',note:'Explains host-owned reasoning; cannot configure API inference inside Muse. API profiles are standalone-only.'},
   'model use':{tool:'bypass_use_model',note:'Explains host-owned reasoning; choose the active Muse model through host settings.'},
   'model test':{tool:'bypass_test_model',note:'Explains host-owned reasoning without sending an independent model request.'},

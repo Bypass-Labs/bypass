@@ -44,13 +44,13 @@ Options: `--scope <value>`, `--model <value>`, `--offline`, `--agents <value>`, 
 
 Discover SAST/policy signals and evaluate them against source by default.
 
-Options: `--detector <value>`, `--languages <value>`, `--rule <value>`, `--exclude-rule <value>`, `--policy <value>`, `--exclude-policy <value>`, `--include-tests`, `--include-examples`, `--include-generated`, `--sarif <value>`, `--config <value>`, `--plan`, `--discovery-only`
+Options: `--detector <value>`, `--languages <value>`, `--rule <value>`, `--exclude-rule <value>`, `--policy <value>`, `--exclude-policy <value>`, `--include-tests`, `--include-examples`, `--include-generated`, `--sarif <value>`, `--config <value>`, `--plan`, `--discovery-only`, `--debug-log`, `--debug-raw`
 
 ## `bypass discover evaluate <run>`
 
 Evaluate saved detector signals against their source snapshot; no runtime reproduction.
 
-Options: None.
+Options: `--debug-log`, `--debug-raw`
 
 ## `bypass discover status <run>`
 
@@ -62,7 +62,7 @@ Options: None.
 
 Resume discovery/evaluation after identity checks; standalone reasoning requires an API profile.
 
-Options: None.
+Options: `--debug-log`, `--debug-raw`
 
 ## `bypass discover cancel <run>`
 
