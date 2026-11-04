@@ -35,6 +35,9 @@ test('a source-only checkout builds a self-contained plugin and removes stale ou
 
   // The built plugin must launch with no development dependency tree present.
   fs.renameSync(path.join(root,'node_modules'),path.join(root,'development-dependencies'));
+  const sdk=await import(pathToFileURL(path.join(runtime,'vendor/openai.mjs')).href);
+  assert.equal(typeof sdk.APIPromise,'function');
+  assert.doesNotMatch(fs.readFileSync(path.join(runtime,'src/providers.mjs'),'utf8'),/from ['"]openai(?:\/[^'"]*)?['"]/);
   const app=path.join(root,'app');fs.mkdirSync(app);
   const {mcpClient}=await import(pathToFileURL(path.join(root,'test/mcp-client.mjs')).href);
   const client=await mcpClient(app,{packaged:true,stateDir:path.join(root,'plugin-state')});

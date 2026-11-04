@@ -3,14 +3,22 @@ import { fileURLToPath } from 'node:url';
 import { spawn } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { execFile, need, hash, Fault, abortFault } from './util.mjs';
+import { dockerRemediation, dockerBlockerMessage } from './docker-diagnostics.mjs';
 
 const directory=fileURLToPath(new URL('../agents/',import.meta.url));
 export const agentTag=()=>`bypass-agent:${hash(fs.readFileSync(directory+'worker.mjs','utf8')+fs.readFileSync(directory+'Dockerfile','utf8')).slice(0,16)}`;
-export async function dockerStatus({signal}={}){
+export async function dockerStatus({signal,runner=execFile,platform,fileExists}={}){
+  const blocked=async(cliMissing)=>{
+    const diagnostics=await dockerRemediation({runner,signal,platform,fileExists,cliMissing});
+    return {available:false,version:null,...diagnostics,
+      message:dockerBlockerMessage(cliMissing?'Docker is unavailable.':'Docker cannot be reached.',diagnostics,'No simulated fallback is used.')};
+  };
   try{
-    const result=await execFile('docker',['version','--format','{{.Server.Version}}'],{timeout:10000,signal});
-    return {available:result.code===0,version:result.code===0?result.stdout:null,reason:result.code===0?null:/permission denied|operation not permitted|EACCES|EPERM/i.test(result.stderr)?'permission_denied':'unavailable',message:result.code===0?'Docker is ready.':/permission denied|operation not permitted|EACCES|EPERM/i.test(result.stderr)?'This process cannot access the Docker socket. Check host/plugin sandbox permissions and the Docker context in the terminal that launches Muse; the daemon may already be running.':'Start Docker Desktop or Colima, then retry. No simulated fallback is used.'};
-  }catch(error){if(signal?.aborted)throw error;return {available:false,message:'Docker is unavailable. Install/start Docker Desktop or Colima and make docker available in this terminal.'};}
+    const result=await runner('docker',['version','--format','{{.Server.Version}}'],{timeout:10000,signal});
+    if(result.code===0)return {available:true,version:result.stdout,reason:null,message:'Docker is ready.'};
+    if(/permission denied|operation not permitted|EACCES|EPERM/i.test(result.stderr||''))return {available:false,version:null,reason:'permission_denied',message:'This process cannot access the Docker socket. Check host/plugin sandbox permissions and the Docker context in the terminal that launches Muse; the daemon may already be running.'};
+    return blocked(false);
+  }catch(error){if(signal?.aborted)throw error;return blocked(true);}
 }
 export async function prepareAgents({signal,onProgress}={}){
   const status=await dockerStatus({signal});need(status.available,status.message,3);
@@ -30,7 +38,7 @@ export async function runContainer(role,task,rpc,{image,signal,onProgress,timeou
   onProgress?.({stage:role,message:`Starting ${role} agent · ${name} · shared model`});
   let child,result,failure,buffer='',bytes=0,busy=false,requests=0;
   const controller=new AbortController(),combined=signal?AbortSignal.any([signal,controller.signal]):controller.signal;
-  const timer=setTimeout(()=>controller.abort(new Fault(`${role} exceeded ten minutes.`,3)),timeoutMs);
+  const timer=timeoutMs===0?null:setTimeout(()=>controller.abort(new Fault(`${role} exceeded ten minutes.`,3)),timeoutMs);
   try{
     if(combined.aborted)throw abortFault(combined);
     // Await creation before attaching: killing `docker run` while its create request

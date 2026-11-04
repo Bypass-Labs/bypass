@@ -119,6 +119,28 @@ class EvaluationTests(unittest.TestCase):
         self.assertEqual(self.submit(run,task,result)['status'],'completed','Exact final submission is idempotent.')
         self.assertEqual(self.submit(run,task,{**result,'impact':'changed'})['status'],'error')
 
+    def test_standalone_evaluation_without_task_timeout_can_read_and_submit_after_300_seconds(self):
+        run=self.start(mode='standalone-api')
+        task=self.call('next_task',run=run,disableTaskTimeout=True)['task']
+        data=self.w.evaluation_engine().load(run)
+        self.assertTrue(task['taskTimeoutDisabled'])
+        self.assertEqual(task['expiresAt'],data['deadline'])
+        with patch('bypass_scanner.tasks.time.time',return_value=time.time()+301):
+            response=self.submit(run,task,self.result(run,task,'needs_review'))
+            self.assertNotEqual(response['status'],'error',response)
+        self.w.cancel(run)
+
+    def test_unlimited_evaluation_can_submit_past_original_stage_deadline(self):
+        run=self.start(mode='standalone-api')
+        self.w.cancel(run);self.w.evaluate(run,True)
+        data=self.w.evaluation_engine().load(run)
+        with patch('bypass_scanner.tasks.time.time',return_value=data['deadline']+1):
+            task=self.call('next_task',run=run,disableTaskTimeout=True)['task']
+            self.assertTrue(task['stageTimeoutDisabled']);self.assertEqual(task['expiresAt'],0)
+            response=self.submit(run,task,self.result(run,task,'needs_review'))
+            self.assertNotEqual(response['status'],'error',response)
+        self.w.cancel(run)
+
     def test_opt_out_saved_run_and_legacy_configuration(self):
         run=self.start({'evaluation':'off'})
         self.assertEqual(self.w.status(run)['evaluation'],'not_run')

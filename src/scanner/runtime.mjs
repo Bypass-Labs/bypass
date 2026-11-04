@@ -3,6 +3,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { randomUUID } from 'node:crypto';
 import { execFile, hash, need, abortFault, Fault } from '../util.mjs';
+import { dockerRemediation, dockerBlockerMessage } from '../docker-diagnostics.mjs';
 import { ScannerClient } from './client.mjs';
 import { manifest } from './contracts.mjs';
 
@@ -29,13 +30,18 @@ export function scannerTag(detector='codeql') {
   return `bypass-scanner:${detector==='policy'?'policy-':''}${hash(scannerPackageFiles().map(name=>[name,fs.readFileSync(path.join(scannerDirectory,name),'utf8')])).slice(0,16)}`;
 }
 
-export async function scannerDoctor({signal,runner=execFile,detector='codeql'}={}) {
+export async function scannerDoctor({signal,runner=execFile,detector='codeql',platform,fileExists}={}) {
   const tag=scannerTag(detector), lock=JSON.parse(fs.readFileSync(path.join(scannerDirectory,'codeql-lock.json')));
   const base={image:{tag,available:false,platform:imagePlatform},runtime:detector,codeql:detector==='policy'?null:{version:lock.version,bundleSha256:lock.bundleSha256},analysisImplemented:true,implementedStages:['discovery']};
+  const blocked=async(cliMissing)=>{
+    const diagnostics=await dockerRemediation({runner,signal,platform,fileExists,cliMissing});
+    return {...base,docker:{available:false,...diagnostics},status:'blocked',
+      message:dockerBlockerMessage(cliMissing?'Docker is unavailable.':'Docker cannot be reached.',diagnostics,cliMissing?'No repository clone or host CodeQL installation is required. Then re-run scanner doctor.':'Then re-run scanner doctor.')};
+  };
   let docker;
   try {docker=await runner('docker',['version','--format','{{.Server.Version}}'],{signal,timeout:10000});}
-  catch(error){if(signal?.aborted)throw error;return {...base,docker:{available:false},status:'blocked',message:'Docker is unavailable. Install/start Docker Desktop or Colima; no repository clone or host CodeQL installation is required.'};}
-  if(docker.code!==0)return {...base,docker:{available:false},status:'blocked',message:'Docker cannot be reached. Check its daemon, context, and socket permissions.'};
+  catch(error){if(signal?.aborted)throw error;return blocked(true);}
+  if(docker.code!==0)return blocked(false);
   const inspected=await runner('docker',['image','inspect',tag,'--format','{{.Id}}'],{signal,timeout:10000});
   const id=inspected.code===0&&/^sha256:[a-f0-9]{64}$/.test(inspected.stdout)?inspected.stdout:null;
   return {...base,docker:{available:true,version:docker.stdout},image:{...base.image,available:!!id,id},status:id?'ready':'blocked',

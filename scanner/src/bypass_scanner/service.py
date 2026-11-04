@@ -54,7 +54,7 @@ def invoke(operation, arguments, engine=None):
         elif operation in ('next_task','evidence','submit'):
             tasks=engine.task_engine(arguments['run'], arguments.get('task'))
             if operation=='next_task':
-                run,task=tasks.next_task(arguments['run'])
+                run,task=tasks.next_task(arguments['run'],arguments.get('disableTaskTimeout',False))
                 result=response(operation,run['status'],run['message'],run=run,**({'task':task} if task else {}))
             elif operation=='evidence':
                 run,evidence=tasks.evidence(arguments['run'],arguments['task'],arguments['operation'],arguments.get('arguments',{}))
@@ -76,6 +76,8 @@ def invoke(operation, arguments, engine=None):
                 run = engine.start(arguments)
             elif operation == 'build_failed':
                 run = engine.build_failed(arguments['run'], arguments['job'])
+            elif operation in ('resume','evaluate'):
+                run = getattr(engine,operation)(arguments['run'],arguments.get('disableReasoningTimeout',False))
             else:
                 run = getattr(engine, operation)(arguments['run'])
             result = response(operation, run['status'], run['message'], run=run)

@@ -64,21 +64,31 @@ class TaskEngine:
             raise ValueError(state['message'])
 
     def expire(self, state, data):
-        if time.time() >= data['deadline'] and state['status'] not in TERMINAL:
+        if not state.get('reasoningTimeoutDisabled',False) and time.time() >= data['deadline'] and state['status'] not in TERMINAL:
             for task in data['tasks']:
                 if task['status'] != 'done':
                     task['status'] = 'deferred'
                     data['coverage'].append({'workUnitId':task['definition']['workUnitId'], 'outcome':'deferred', 'reason':'run deadline'})
             self.finish(state, data, expired=True)
 
-    def next_task(self, run):
+    def next_task(self, run, disable_task_timeout=False):
         with self.locked(run) as (state, data):
+            if disable_task_timeout and state['executionMode']!='standalone-api':
+                raise ValueError('Disabling task timeouts requires standalone API execution.')
             self.expire(state, data)
             if state['status'] in TERMINAL:
                 return self.w.public(state), None
             self.verify_source(state)
+            stage_disabled=state.get('reasoningTimeoutDisabled',False)
+            def expires():
+                return 0 if stage_disabled else data['deadline'] if disable_task_timeout else min(time.time()+data['limits']['taskTimeoutSeconds'],data['deadline'])
             for task in data['tasks']:
-                if task['status']=='leased' and task['definition']['expiresAt']>time.time():
+                if task['status']=='leased' and (task['definition'].get('stageTimeoutDisabled',False) or task['definition']['expiresAt']>time.time()):
+                    if (task['definition'].get('taskTimeoutDisabled',False)!=disable_task_timeout
+                            or task['definition'].get('stageTimeoutDisabled',False)!=stage_disabled):
+                        task['definition'].update(taskTimeoutDisabled=disable_task_timeout,
+                                                  stageTimeoutDisabled=stage_disabled,expiresAt=expires())
+                        self.save(state,data)
                     return self.w.public(state), task['definition']
                 if task['status']=='leased':
                     task['status']='pending'
@@ -90,7 +100,8 @@ class TaskEngine:
                     continue
                 task.update(attempts=task['attempts']+1, requests=0, bytes=0, status='leased')
                 task['evidenceIds']=[r['id'] for r in task['definition']['inputEvidence']]
-                task['definition'].update(id='task_'+uuid4().hex, expiresAt=min(time.time()+data['limits']['taskTimeoutSeconds'],data['deadline']))
+                task['definition'].update(id='task_'+uuid4().hex, taskTimeoutDisabled=disable_task_timeout,
+                                          stageTimeoutDisabled=stage_disabled,expiresAt=expires())
                 state.update(status='awaiting_reasoning', phase=self.namespace+'/'+task['definition']['phase'],
                              message='Source-only task leased; read evidence and submit its declared result.')
                 self.save(state,data)
@@ -103,7 +114,7 @@ class TaskEngine:
         if state['status'] in TERMINAL:
             raise ValueError('Reasoning run is terminal; resume interrupted work explicitly.')
         task=next((t for t in data['tasks'] if t['definition']['id']==identity and t['status']=='leased'),None)
-        if task is None or task['definition']['expiresAt']<=time.time():
+        if task is None or (not task['definition'].get('stageTimeoutDisabled',False) and task['definition']['expiresAt']<=time.time()):
             raise ValueError('Stale or expired task lease; request next_task.')
         return task
 

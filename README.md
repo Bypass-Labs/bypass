@@ -40,6 +40,21 @@ Start with the Muse Code plugin. A **standalone CLI** is also available for term
 
 **Requires Muse Code installed, opened, and signed in first.** Install Muse Code from [Meta's official guide](https://dev.meta.ai/docs/muse-code), then run the Bypass plugin installer. You can select your application during setup; you do not need to start in its folder.
 
+<a id="docker-prerequisite"></a>
+
+**Prerequisite for SAST/policy discovery: a running Docker daemon.** The CodeQL/policy scanner runs inside a container, so `/bypass:discover`, `bypass discover`, `bypass scanner doctor`, standalone policy discovery, and standalone Docker-engine source review need Docker installed **and running** before the scan starts. Running-app testing, saved regression replay, discovery plans (`--plan`), and policy listing need no Docker. Bypass never auto-starts a Docker VM; when the daemon is unreachable, `scanner doctor` now reports why (`cli-missing`, `daemon-stopped`, `wrong-context`, or `daemon-unreachable`) with the exact commands to run.
+
+On macOS, the `docker` CLI alone is not enough — a Linux VM provides the daemon. With Colima (Homebrew):
+
+```bash
+brew install colima docker
+colima start                 # or: colima start <profile>
+docker context use colima    # named profile: docker context use colima-<profile>
+docker version               # must print a Server version
+```
+
+Docker Desktop also works: install it, open it, and wait until it reports running. On Linux, start Docker Engine (for example `sudo systemctl start docker`). Keep several GB of free disk for the first scanner image build. If `docker version` prints only client info, check `docker context ls` and `colima list` before retrying; a stopped profile or a context pointed at a missing socket blocks the scan even though Docker is "installed".
+
 **1. Install the plugin.**
 
 macOS / Linux:
@@ -128,7 +143,7 @@ Choose **SAST**, **Policy**, or **Both** in Muse Code:
 
 SAST/Both use GitHub CodeQL under its [separate usage terms](https://github.com/github/codeql-cli-binaries/blob/main/LICENSE.md); Bypass's license does not grant CodeQL rights for private or commercial code.
 
-Docker must be running. First use prepares the selected image: Policy uses a lightweight Python runtime; SAST/Both download the pinned CodeQL toolchains. Later scans reuse the image. No host Python, host CodeQL, or separate plugin API key is required.
+Docker must be running (see [Docker prerequisite](#docker-prerequisite)). First use prepares the selected image: Policy uses a lightweight Python runtime; SAST/Both download the pinned CodeQL toolchains. Later scans reuse the image. No host Python, host CodeQL, or separate plugin API key is required. If `bypass scanner doctor` reports blocked, follow its `docker.remediation` commands — for Colima that is typically `colima start <profile>` plus `docker context use colima-<profile>` — then re-run the doctor.
 
 From the CLI, after [installation](#standalone-cli):
 
@@ -287,6 +302,14 @@ bypass discover --detector policy --project /path/to/app
 ```
 
 For the separate guided source-review workflow, use `bypass engine use docker --project /path/to/app`, then `bypass scan --mode code --project /path/to/app`.
+
+For **local Muse Glimmer without authentication**, see the [complete local source-review setup](docs/AI_MODES.md#local-muse-glimmer-source-review). It covers the localhost endpoint, placeholder token, explicit model-profile selection, real Docker engine, and a 180-second per-request timeout. For slower generation, [disable the timeout explicitly](docs/AI_MODES.md#disable-the-model-timeout) with `--timeout-ms 0`; cancellation remains available. Bypass connects directly to the local model server; Muse Code is not involved.
+
+If a no-timeout review reports a connection interruption, try the [buffered-mode diagnostic](docs/AI_MODES.md#connection-interrupted-despite-no-timeout) with `--stream false`. Streaming overhead can hit the separate response-size limit; server failures can produce the same error.
+
+For slow local Glimmer reasoning or reasoning-only responses, [select minimal reasoning explicitly](docs/AI_MODES.md#select-minimal-reasoning-for-local-glimmer) with `--effort minimal`. Custom profiles keep the server default unless an effort is selected.
+
+For CodeQL and bundled policy checks, use [local Glimmer discovery](docs/AI_MODES.md#codeql-and-policy-discovery-with-local-glimmer) with `bypass discover --detector both --project /path/to/app`. Unlike `scan --mode code`, this runs the scanner detectors and source-only evaluation by default; it does not reproduce vulnerabilities against a running app.
 
 Run `bypass init /path/to/app` first if the application is not connected. The first-run experience supports **Meta Model API** and local OpenAI-compatible servers running **Muse Spark Open** or **Muse Glimmer**. Explicit legacy provider profiles remain available through advanced commands but are not offered during onboarding. Bypass never changes billing paths or enables Muse Spark Contributor without an explicit model selection. [Provider examples and migration](docs/AI_MODES.md).
 

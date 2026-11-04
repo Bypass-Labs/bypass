@@ -10,6 +10,17 @@ CodeQL CLI is downloaded separately under [GitHub's usage terms](https://github.
 Bypass's license does not grant CodeQL rights for private or commercial code.
 Policy-only mode does not use CodeQL. [Dependency notices](../THIRD_PARTY_NOTICES.md).
 
+## Prerequisites
+
+A running Docker daemon is required for `scanner doctor`, `scanner prepare`,
+and every discovery run. Plans (`--plan`) and `scanner policies` need none.
+On macOS the `docker` CLI is only a client; start Docker Desktop
+(`open -a Docker`) or Colima (`colima start [profile]`, then
+`docker context use colima[-<profile>]`) and confirm `docker version` prints a
+Server version. Bypass never auto-starts a VM. When the daemon is unreachable,
+`scanner doctor` returns `docker.reason` plus exact `docker.remediation`
+commands for the detected setup instead of a generic "start Docker" message.
+
 ## Select detectors and rules
 
 `--detector sast` is the default; `codeql` remains an alias. Select `policy` for
@@ -74,6 +85,27 @@ the declared result schema using issued evidence receipts. Search is navigation;
 read receipts are required for citations. Follow `nextAction` and `nextCursor`.
 The standalone CLI drives this loop automatically with its selected API profile.
 The server does not launch a model or a shell.
+
+Standalone reasoning has no fixed per-task conversation-turn cap: evidence
+requests can continue until an accepted submission or a remaining budget,
+deadline, or cancellation stops the task. Other workflows retain their own
+turn limits. A standalone profile with `--timeout-ms 0` also disables per-task
+timeouts: the driver leases tasks with `disableTaskTimeout: true`, and the
+issued task records `taskTimeoutDisabled: true`. Zero-timeout standalone
+profiles also disable policy/evaluation stage deadlines: tasks record
+`stageTimeoutDisabled: true` and `expiresAt: 0`. Finite profiles and
+Muse-hosted tasks retain their leases and stage deadlines. CodeQL resource
+timeouts, request/evidence/context budgets, attempt limits, and cancellation
+remain enforced.
+
+Standalone tool schemas distinguish evidence (`action`, `operation`,
+`arguments`) from submission (`action`, `result`); unused fields must be absent.
+Malformed JSON and schema-invalid actions receive explicit model correction
+feedback without executing them. Correction requests consume the same model
+budgets and applicable task lease, with no new turn cap. Safe diagnostics identify declared
+fields only, never source or argument values. If invalid actions continue until
+interruption, the manifest message retains the last rejection feedback.
+Transport and timeout failures still interrupt immediately.
 
 Task leases, retry counts, model requests, evidence requests/bytes, follow-up
 levels, and run deadlines are bounded. Exact submissions are idempotent. Resume

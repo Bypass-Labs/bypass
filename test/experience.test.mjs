@@ -12,6 +12,36 @@ import { execute } from '../src/service.mjs';
 import { delay, VERSION } from '../src/util.mjs';
 import { temp, cli } from './helpers.mjs';
 
+test('scanner interruptions display the saved failure, scanner evidence path, and real usage',t=>{
+  const output=[];t.mock.method(console,'log',text=>output.push(text));
+  const id='scan_18aa42c25cc7467c84be5a64';
+  printResult({status:'interrupted',exitCode:3,message:'Reasoning task lease expired.',run:{
+    id,status:'interrupted',stage:'discovery',phase:'mapping',signalCount:84,evaluation:'not_run',executionMode:'standalone-api',
+    reasoning:{independentModelRequests:2}
+  }});
+  const text=output.join('\n');
+  assert.match(text,/Discovery incomplete/);assert.match(text,/Reasoning task lease expired/);
+  assert.match(text,/Detector signals: 84/);assert.match(text,/Model requests: 2/);
+  assert.ok(text.includes(`.bypass/scanner/${id}/manifest.json`));
+  assert.ok(text.includes(`bypass discover resume ${id}`));
+  assert.doesNotMatch(text,/undefined|\.bypass\/runs\/|model calls 0/);
+});
+
+test('scanner status displays manifest errors even without a top-level message',t=>{
+  const output=[];t.mock.method(console,'log',text=>output.push(text));
+  const id='scan_18aa42c25cc7467c84be5a64';
+  printResult({status:'interrupted',exitCode:3,run:{id,status:'interrupted',message:'Saved scanner failure.',signalCount:84,evaluation:'not_run',executionMode:'standalone-api',policy:{modelRequests:1},evaluationSummary:{modelRequests:2}}});
+  assert.match(output.join('\n'),/Saved scanner failure/);assert.match(output.join('\n'),/Model requests: 3/);
+});
+
+test('completed host scanner output distinguishes host reasoning from independent model requests',t=>{
+  const output=[];t.mock.method(console,'log',text=>output.push(text));
+  const id='scan_18aa42c25cc7467c84be5a64';
+  printResult({status:'completed',exitCode:0,run:{id,status:'completed',signalCount:1,evaluation:'completed',executionMode:'muse-host'}});
+  const text=output.join('\n');assert.match(text,/active Muse session/);
+  assert.ok(text.includes(`bypass discover report ${id} --format md`));assert.doesNotMatch(text,/Discovery incomplete/);
+});
+
 test('walkthrough advances on Enter through real proof, independent pass/fail, scheduler and cleanup',async()=>{
   const root=temp(),output=[],prompts=[];
   const result=await onboard({flow:'demo',dir:root},[],{

@@ -5,6 +5,7 @@ import path from 'node:path';
 import http from 'node:http';
 import { spawnSync } from 'node:child_process';
 import { execute } from '../src/service.mjs';
+import { change } from '../src/store.mjs';
 import { inExecutionMode } from '../src/execution-mode.mjs';
 import { ScannerClient } from '../src/scanner/client.mjs';
 import { scannerDirectory,scannerOutput,prepareScanner } from '../src/scanner/runtime.mjs';
@@ -104,14 +105,19 @@ test('Muse drives real Python tasks and evidence with a broken API profile and z
   }finally{await closeScannerSessions();}
 });
 
-test('standalone executes the same real tasks through its bounded provider driver',{skip:!available},async()=>{
+test('standalone no-timeout profiles disable model, task, and reasoning-stage deadlines',{skip:!available},async()=>{
   const root=await source();await addTestModel(root);
+  await change(root,state=>{state.models[0].timeoutMs=0;});
   let turns=0;
   const context={scannerConnect:connect,scannerSessionFactory:()=>{
     let task;
     return {turn:async(messages,options)=>{
       turns++;options.onProgress({kind:'phase',phase:'request'});
       task??=JSON.parse(messages[1].content);
+      assert.equal(task.taskTimeoutDisabled,true);
+      assert.equal(task.stageTimeoutDisabled,true);
+      assert.equal(options.timeoutMs,0);assert.equal(task.expiresAt,0);
+      assert.equal(Number.isInteger(options.timeoutMs),true);
       const last=JSON.parse(messages.at(-1).content);
       if(!last.evidence)return {action:'evidence',operation:'read',arguments:{path:'app.py'}};
       const ref=last.evidence.reference.id;
@@ -125,6 +131,11 @@ test('standalone executes the same real tasks through its bounded provider drive
   assert.equal(turns,4);assert.equal(result.run.reasoning.independentModelRequests,4);assert.equal(result.run.reasoning.hostReasoning,false);
   const signal=JSON.parse(fs.readFileSync(path.join(root,'.bypass/scanner',result.run.id,'signals.json')))[0];
   validateJSON(manifest.schemas.signal,signal);assert.equal(signal.evaluation,'not_run');
+  const saved=JSON.parse(fs.readFileSync(path.join(root,'.bypass/scanner',result.run.id,'policy/state.json')));
+  for(const task of saved.tasks){
+    assert.equal(task.definition.taskTimeoutDisabled,true);
+    assert.equal(task.definition.expiresAt,0);assert.equal(task.definition.stageTimeoutDisabled,true);
+  }
 });
 
 test('API driver failure persists an interrupted run and retains usage receipts',{skip:!available},async()=>{
@@ -136,24 +147,111 @@ test('API driver failure persists an interrupted run and retains usage receipts'
   assert.equal(result.run.signalCount,0);
 });
 
-test('standalone policy uses the real provider transport only at the configured endpoint',{skip:!available},async t=>{
-  const root=await source();let requests=0;
+test('resuming with a no-timeout profile replaces old task deadlines without resetting stage budgets',{skip:!available},async()=>{
+  const root=await source();await addTestModel(root);
+  const interrupted=await execute('discover',[],{project:root,'discovery-only':true,detector:'policy',policy:'authz/object-access'},
+    {scannerConnect:connect,scannerSessionFactory:()=>({turn:async(messages,options)=>{
+      assert.equal(JSON.parse(messages[1].content).taskTimeoutDisabled,false);
+      options.onProgress({kind:'phase',phase:'request'});
+      throw new Error('Synthetic interruption before profile change');
+    }})});
+  assert.equal(interrupted.status,'interrupted');
+  const filename=path.join(root,'.bypass/scanner',interrupted.run.id,'policy/state.json');
+  const before=JSON.parse(fs.readFileSync(filename));
+  await change(root,state=>{state.models[0].timeoutMs=0;});
+  const result=await execute('discover resume',[interrupted.run.id],{project:root},
+    {scannerConnect:connect,scannerSessionFactory:()=>{
+      let task;
+      return {turn:async(messages,options)=>{
+        task??=JSON.parse(messages[1].content);
+        assert.equal(task.taskTimeoutDisabled,true);assert.equal(task.expiresAt,0);
+        assert.equal(task.stageTimeoutDisabled,true);assert.equal(options.timeoutMs,0);
+        options.onProgress({kind:'phase',phase:'request'});
+        const last=JSON.parse(messages.at(-1).content);
+        if(!last.evidence)return {action:'evidence',operation:'read',arguments:{path:'app.py'}};
+        const ref=last.evidence.reference.id;
+        return {action:'submit',result:task.phase==='mapping'?mapping(ref):finding(ref)};
+      }};
+    }});
+  assert.equal(result.run.status,'completed',JSON.stringify(result));
+  assert.equal(result.run.reasoning.independentModelRequests,5);
+  assert.equal(JSON.parse(fs.readFileSync(filename)).deadline,before.deadline);
+});
+
+test('an interrupted real scanner retains safe rejection feedback and correction usage',{skip:!available},async()=>{
+  const root=await source();await addTestModel(root);let turns=0;
+  const result=await execute('discover',[],{project:root,detector:'policy',policy:'authz/object-access'},
+    {scannerConnect:connect,scannerSessionFactory:()=>({turn:async(_messages,options)=>{
+      turns++;options.onProgress({kind:'phase',phase:'request'});
+      if(turns===1)return {action:'submit',operation:'read',arguments:{path:'PRIVATE_SOURCE'},result:{}};
+      throw new Error('Synthetic provider interruption');
+    }})});
+  assert.equal(result.status,'interrupted');assert.equal(result.run.reasoning.independentModelRequests,2);
+  assert.equal(result.run.signalCount,0);
+  const saved=JSON.parse(fs.readFileSync(path.join(root,'.bypass/scanner',result.run.id,'manifest.json')));
+  assert.match(saved.message,/Synthetic provider interruption/);assert.match(saved.message,/Last rejected security action/);
+  assert.match(saved.message,/"receivedFields":\["action","operation","arguments","result"\]/);
+  assert.doesNotMatch(saved.message,/PRIVATE_SOURCE/);
+});
+
+test('standalone policy repairs invalid actions beyond ten turns through the real provider transport',{skip:!available},async t=>{
+  const root=await source();let requests=0;const phaseTurns=new Map(),references=new Map();
   const key='BYPASS_POLICY_TRANSPORT_TEST_KEY',previous=process.env[key];process.env[key]='synthetic-policy-key';
   t.after(()=>{if(previous===undefined)delete process.env[key];else process.env[key]=previous;});
   const server=http.createServer((request,response)=>{
     assert.equal(request.url,'/v1/chat/completions');assert.equal(request.headers.authorization,'Bearer synthetic-policy-key');
     let body='';request.on('data',chunk=>body+=chunk);request.on('end',()=>{
       requests++;const message=JSON.parse(body),task=JSON.parse(message.messages[1].content),last=JSON.parse(message.messages.at(-1).content);
+      const turns=(phaseTurns.get(task.phase)||0)+1;phaseTurns.set(task.phase,turns);
+      if(last.evidence)references.set(task.phase,last.evidence.reference.id);
       assert.equal(message.tools[0].function.parameters.type,'object');
-      const action=last.evidence?{action:'submit',result:task.phase==='mapping'?mapping(last.evidence.reference.id):finding(last.evidence.reference.id)}:
-        {action:'evidence',operation:'read',arguments:{path:'app.py'}};
+      const schema=message.tools[0].function.parameters;
+      const completed={action:'submit',result:task.phase==='mapping'?mapping(references.get(task.phase)):finding(references.get(task.phase))};
+      const action=turns===12?{...completed,operation:'read',arguments:{}}:turns===13?{action:'submit'}:
+        turns===14?{action:'evidence',operation:'read',arguments:{path:'app.py'},result:{},PRIVATE_FIELD:'PRIVATE_VALUE'}:
+        turns===16?{action:'submit',result:null}:turns>=17?completed:{action:'evidence',operation:'read',arguments:{path:'app.py'}};
+      if([12,13,14,16].includes(turns))assert.throws(()=>validateJSON(schema,action));
+      if(turns>=13&&turns<=17){
+        assert.equal(last.status,'error');assert.match(last.message,/correct the rejected action/);
+        assert.doesNotMatch(JSON.stringify(last),/PRIVATE_FIELD|PRIVATE_VALUE/);
+      }
+      if(turns===13||turns===16){
+        assert.equal(message.messages.at(-1).role,'tool');
+        assert.equal(message.messages.at(-1).tool_call_id,`rejected-${task.phase}-${turns-1}`);
+      }
+      const assistant=[12,15].includes(turns)?{role:'assistant',content:null,tool_calls:[{id:`rejected-${task.phase}-${turns}`,type:'function',
+        function:{name:'security_action',arguments:turns===15?'{"action":':JSON.stringify(action)}}]}:{role:'assistant',content:JSON.stringify(action)};
       response.setHeader('content-type','application/json');
-      response.end(JSON.stringify({id:'fixture',object:'chat.completion',choices:[{index:0,finish_reason:'stop',message:{role:'assistant',content:JSON.stringify(action)}}]}));
+      response.end(JSON.stringify({id:'fixture',object:'chat.completion',choices:[{index:0,finish_reason:assistant.tool_calls?'tool_calls':'stop',message:assistant}]}));
     });
   });
   await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));t.after(()=>new Promise(resolve=>server.close(resolve)));
-  await execute('model add',['policy-api'],{project:root,provider:'custom','base-url':`http://127.0.0.1:${server.address().port}/v1`,model:'fixture',stream:false,'secret-env':key,'allow-private':true});
+  await execute('model add',['policy-api'],{project:root,provider:'custom','base-url':`http://127.0.0.1:${server.address().port}/v1`,model:'fixture',stream:false,'secret-env':key,'allow-private':true,'timeout-ms':0});
   const result=await execute('discover',[],{project:root,'discovery-only':true,detector:'policy',policy:'authz/object-access'},{scannerConnect:connect});
-  assert.equal(result.run.status,'completed',JSON.stringify(result));assert.equal(requests,4);
-  assert.equal(result.run.reasoning.independentModelRequests,4);
+  assert.equal(result.run.status,'completed',JSON.stringify(result));assert.equal(requests,34);
+  assert.deepEqual([...phaseTurns.values()],[17,17]);
+  assert.equal(result.run.reasoning.independentModelRequests,34);
+  assert.equal(result.run.signalCount,1);
+});
+
+test('real standalone Python tasks use explicit JSON-schema content with zero inference deadlines',{skip:!available},async t=>{
+  const root=await source();let requests=0;
+  const key='BYPASS_POLICY_JSON_TEST_KEY',previous=process.env[key];process.env[key]='synthetic-key';
+  t.after(()=>{if(previous===undefined)delete process.env[key];else process.env[key]=previous;});
+  const server=http.createServer(async(request,response)=>{
+    let body='';for await(const chunk of request)body+=chunk;
+    const input=JSON.parse(body),task=JSON.parse(input.messages[1].content),last=JSON.parse(input.messages.at(-1).content);
+    assert.equal(input.tools,undefined);assert.equal(input.response_format.type,'json_schema');
+    assert.equal(task.stageTimeoutDisabled,true);assert.equal(task.expiresAt,0);
+    assert.match(input.messages[0].content,/as JSON in final response content/);
+    const action=last.evidence?{action:'submit',result:task.phase==='mapping'?mapping(last.evidence.reference.id):finding(last.evidence.reference.id)}:
+      {action:'evidence',operation:'read',arguments:{path:'app.py'}};
+    validateJSON(input.response_format.json_schema.schema,action);requests++;
+    response.setHeader('content-type','application/json');
+    response.end(JSON.stringify({choices:[{finish_reason:'stop',message:{role:'assistant',content:JSON.stringify(action)}}]}));
+  });
+  await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));t.after(()=>new Promise(resolve=>server.close(resolve)));
+  await execute('model add',['policy-json'],{project:root,provider:'custom','base-url':`http://127.0.0.1:${server.address().port}/v1`,model:'fixture',stream:false,'secret-env':key,'timeout-ms':0,'response-mode':'json-schema'});
+  const result=await execute('discover',[],{project:root,'discovery-only':true,detector:'policy',policy:'authz/object-access'},{scannerConnect:connect});
+  assert.equal(result.run.status,'completed',JSON.stringify(result));assert.equal(requests,4);assert.equal(result.run.signalCount,1);
 });
