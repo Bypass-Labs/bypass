@@ -692,7 +692,7 @@ function sourcePathMatches(pattern, candidate, origin) {
         /^[^/]+$/.test(actual.pathname.slice(expected.pathname.length))) return true;
     const parts = expected.pathname.split('/').map(part =>
       /^:[A-Za-z_][A-Za-z0-9_]*$/.test(part) ||
-      /^\{[A-Za-z_][A-Za-z0-9_]*\}$/.test(part) ? '[^/]+' :
+      /^\{[A-Za-z_][A-Za-z0-9_]*\}$/.test(part) || part === '*' ? '[^/]+' :
         part.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
     return new RegExp(`^${parts.join('/')}$`).test(actual.pathname);
   } catch {return false;}

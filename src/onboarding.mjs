@@ -263,10 +263,8 @@ export async function onboard(options={}, args=[], io={}) {
     else if(startReview)say('\nStarting the code security audit now.');
     else if(mode==='live')say('\nThe selected API model runs without Docker. Authorize app testing boundaries to start the audit.');
     else say(info.engine.mode==='docker'?'\nSecurity audit ready. The audit checks your model connection before sending source.':'\nYour saved offline-preview choice is retained. Use /engine to switch to the security audit.');
-    say('\nYour review\n'+reviewSummary(info.review));
-    say(startReview
-      ? 'No additional review setup is required. Progress and coverage will appear next.'
-      : mode==='live'
+    if(!startReview)say('\nYour review\n'+reviewSummary(info.review));
+    if(!startReview)say(mode==='live'
         ? 'Open the project to finish testing permission; the audit starts immediately after approval.'
         : 'Press Enter on the next screen to review source. Live checks need verified app scope. Accounts are optional; add them for cross-account checks or authorize registration testing.\nType / for commands; /app resumes DNS and /models changes the model.');
     const openDashboard=!!startReview||io.inDashboard||io.rich||await yes('Open my project?','y');

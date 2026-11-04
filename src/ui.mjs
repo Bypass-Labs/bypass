@@ -191,19 +191,23 @@ export function tokenize(line){
   for(const ch of line){if(escaped){word+=ch;escaped=false;started=true;}else if(ch==='\\'&&quote!=="'"){escaped=true;}else if(quote){if(ch===quote)quote=null;else word+=ch;started=true;}else if(ch==='"'||ch==="'"){quote=ch;started=true;}else if(/\s/.test(ch)){if(started){tokens.push(word);word='';started=false;}}else{word+=ch;started=true;}}
   if(quote||escaped)throw new Fault('Unclosed quote or escape in command.');if(started)tokens.push(word);return tokens;
 }
-function createPrompt(){
-  if(process.stdin.isTTY&&process.stdout.isTTY&&process.env.TERM!=='dumb'&&process.env.BYPASS_PLAIN!=='1')return createTerminalSession();
-  const rl=readline.createInterface({input:process.stdin,output:process.stdout});
+export function createPrompt({input=process.stdin,output=process.stdout,env=process.env}={}){
+  if(input.isTTY&&output.isTTY&&env.TERM!=='dumb'&&env.BYPASS_PLAIN!=='1')return createTerminalSession({input,output,env});
+  const rl=readline.createInterface({input,output});
   const controller=new AbortController();
   rl.once('SIGINT',()=>{controller.abort();rl.close();});
   rl.once('close',()=>controller.abort());
   const ask=async(text,defaultValue='')=>{try{const result=await rl.question(`${text}${defaultValue?muted(` [${defaultValue}]`):''}: `,{signal:controller.signal});return result.trim()||defaultValue;}catch(e){if(e.name==='AbortError')throw new Fault('Setup stopped. Saved choices are retained.',130);throw e;}};
   const secret=async text=>{
-    if(!process.stdin.isTTY||!process.stdout.isTTY)throw new Fault('Set MODEL_API_KEY before launching Bypass in a non-interactive environment.',3,{reason:'credential_missing'});
-    rl.pause();const input=process.stdin,output=process.stdout,wasRaw=input.isRaw;let value='';
+    if(!input.isTTY||!output.isTTY)throw new Fault('Set MODEL_API_KEY before launching Bypass in a non-interactive environment.',3,{reason:'credential_missing'});
+    rl.pause();const wasRaw=input.isRaw;let value='';
+    // readline keeps its keypress listener while paused, and that listener
+    // echoes each character. Suspend it while our masked raw listener runs.
+    const pausedKeypressListeners=input.listeners('keypress');
+    for(const listener of pausedKeypressListeners)input.off('keypress',listener);
     emitKeypressEvents(input);input.setRawMode(true);input.resume();output.write(`${text}: `);
     return new Promise((resolve,reject)=>{
-      const finish=(error)=>{input.off('keypress',key);input.setRawMode(Boolean(wasRaw));rl.resume();output.write('\n');if(error)reject(error);else resolve(value);};
+      const finish=(error)=>{input.off('keypress',key);input.setRawMode(Boolean(wasRaw));for(const listener of pausedKeypressListeners)input.on('keypress',listener);rl.resume();output.write('\n');if(error)reject(error);else resolve(value);};
       const key=(str,event={})=>{
         if(event.ctrl&&event.name==='c'){finish(new Fault('Setup stopped. Saved choices are retained.',130));return;}
         if(['return','enter'].includes(event.name)){finish();return;}
@@ -223,7 +227,7 @@ function createPrompt(){
     try{return await work(operation.signal);}
     finally{rl.removeListener('line',skip);controller.signal.removeEventListener('abort',stop);}
   };
-  return {ask,secret,run,signal:controller.signal,close:()=>rl.close()};
+  return {ask,secret,run,write:line=>output.write(cleanText(redact(String(line)))+'\n'),signal:controller.signal,close:()=>rl.close()};
 }
 async function choose(ask,items,title){
   if(ask.select&&items.length)return ask.select(title,items,{back:true});

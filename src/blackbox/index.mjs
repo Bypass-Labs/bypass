@@ -23,7 +23,7 @@ import { buildFindings, consolidateBrowserXssProofs, consolidateRawBoundaryProof
   renderReport, exitCodeFor } from './report.mjs';
 import { proveFindings } from './poc.mjs';
 import {reviewSource} from './source.mjs';
-import {runWebProbes} from './web-probes.mjs';
+import {runWebProbes, runSourceDisclosureProbes} from './web-probes.mjs';
 import {reconDerivedSession, derivedAnonymousSurface, reconConfirmedAccess} from './derived-session-recon.mjs';
 import {checkDerivedAnonymousAccess} from './derived-access.mjs';
 import {auditDiscoveredHosts, followupResponseHints, mergeResponsePatterns} from './host-audit.mjs';
@@ -531,6 +531,7 @@ export async function runAudit({url, root = process.cwd(), scopeFile = null, ove
     atomic(path.join(runDir, 'web-progress.json'), webProgress);
   };
   let web = {findings: [], results: [], cut: 0, tested: 0, strategyDecisions: []};
+  let earlySource = {findings: [], results: [], tested: 0, keys: [], plan: []};
   let assessment = null;
   let stats = {startedAt, model: null, modelCalls: 0, requests: 0, cached: 0, tasks: 0, agents: 0};
   try {
@@ -704,6 +705,18 @@ export async function runAudit({url, root = process.cwd(), scopeFile = null, ove
       ...(!focus ? sourceReview.proposals.map(path => ({path, method: 'GET',
         params: [], source: 'model:source'})) : []));
       atomic(path.join(runDir, 'source.json'), sourceReview);
+    }
+    if (!dryRun && sourceReview?.securityLeads?.length) {
+      say({stage: 'progress', type: 'activity',
+        message: 'Checking cited private-record routes with fresh anonymous reads'});
+      earlySource = await runSourceDisclosureProbes({sourceReview}, scope,
+        {requester: anonymousRequester, budget: Math.min(3, taskLimit)});
+      atomic(path.join(runDir, 'source-live-probes.json'), earlySource);
+      for (const result of earlySource.results)
+        say({stage: 'progress', type: 'task-done', confirmed: result.verdict === 'confirmed'});
+      if (earlySource.tested) say({stage: 'source-proof', message:
+        `${earlySource.tested} cited route${earlySource.tested === 1 ? '' : 's'} checked early · ` +
+        `${earlySource.findings.length} positive signal${earlySource.findings.length === 1 ? '' : 's'} queued for replay`});
     }
     if (model && !focus) {
       const assetHosts = (discovery?.hosts ?? []).filter(host => host.assets?.files?.length);
@@ -971,7 +984,7 @@ export async function runAudit({url, root = process.cwd(), scopeFile = null, ove
           verifiedExposures.push({...exposure, confirmationEvidence: fresh.evidenceId, hash: fresh.hash});
       }
       surface.exposures = verifiedExposures;
-      const availableWebTasks = Math.max(0, taskLimit - (plan.tasks?.length ?? 0));
+      const availableWebTasks = Math.max(0, taskLimit - (plan.tasks?.length ?? 0) - earlySource.tested);
       const secretSummaries = [mined,
         ...credentialAudits.map(audit => audit.mined),
         ...(discovery?.hosts ?? []).map(host => host.assets)];
@@ -1454,6 +1467,7 @@ export async function runAudit({url, root = process.cwd(), scopeFile = null, ove
         modelCallsLeft: primaryModelCallsLeft});
       const primaryWeb = await runWebProbes(surface, sessions.scope, {requester, ledger,
         budget: Math.max(0, primaryBudget - resumedPrimary),
+        skipLeadKeys: earlySource.keys,
         onProgressCheckpoint: onWebProgress('primary'),
         env: sessions.env,
         infer: model ? invokeModel : null, model,
@@ -1870,10 +1884,11 @@ export async function runAudit({url, root = process.cwd(), scopeFile = null, ove
           ...(run.sessionIndex != null ? {sessionIndex: run.sessionIndex} : {})})));
       web = {descendantFeedbackPending: descendantWeb.responsePathHints.map(({origin, path}) =>
           ({origin, path})),
-        findings: [...keyAudit.findings, ...credentialAudit.findings, ...primaryWeb.findings,
+        findings: [...earlySource.findings, ...keyAudit.findings, ...credentialAudit.findings, ...primaryWeb.findings,
           ...derivedWeb.flatMap(item => item.findings),
           ...credentialWeb.flatMap(item => item.findings), ...descendantWeb.findings],
-        results: [...keyAudit.results, ...credentialAudit.results,
+        results: [...earlySource.results.map(item => ({...item, origin: sessions.scope.target.origin})),
+          ...keyAudit.results, ...credentialAudit.results,
           ...primaryWeb.results.map(item => ({...item, origin: sessions.scope.target.origin})),
           ...derivedResultRows,
           ...credentialWeb.flatMap((item, index) => item.results.map(result =>
@@ -1882,10 +1897,11 @@ export async function runAudit({url, root = process.cwd(), scopeFile = null, ove
           derivedWeb.reduce((count, item) => count +
             (deferredEarlyCuts.get(item) ?? item.cut), 0) +
           credentialWeb.reduce((count, item) => count + item.cut, 0) + descendantWeb.cut,
-        tested: keyAudit.tested + credentialAudit.tested + primaryWeb.tested +
+        tested: earlySource.tested + keyAudit.tested + credentialAudit.tested + primaryWeb.tested +
           derivedResultRows.length + credentialWeb.reduce((count, item) => count + item.tested, 0) +
           descendantWeb.tested,
-        plan: [...keyAudit.plan, ...credentialAudit.plan,
+        plan: [...earlySource.plan.map(item => ({...item, origin: sessions.scope.target.origin})),
+          ...keyAudit.plan, ...credentialAudit.plan,
           ...primaryWeb.plan.map(item => ({...item, origin: sessions.scope.target.origin})),
           ...derivedWeb.flatMap(run => run.plan.map(item => ({...item,
             origin: sessions.scope.target.origin,

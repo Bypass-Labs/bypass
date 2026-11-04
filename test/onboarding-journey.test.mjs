@@ -175,6 +175,7 @@ test('authorized combined CLI setup immediately hands off to the review without 
   assert.equal(result.readiness.ready.source,true);assert.equal(result.readiness.ready.liveTesting,true);
   assert.equal(prompts.some(label=>/Open my project|Run my first security audit/.test(label)),false);
   assert.doesNotMatch(output.join('\n'),/Press Enter on the next screen|Run \/review/);
+  assert.doesNotMatch(output.join('\n'),/Your review\nRepository:/,'automatic handoff should not repeat the project summary');
   assert.match(output.join('\n'),/Starting one security audit now\. Source review and live testing share one result/);
 });
 

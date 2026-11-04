@@ -310,11 +310,12 @@ function sourceDisclosureLeads(surface, scope, budget) {
         !['GET', 'HEAD', 'UNKNOWN'].includes(source.method) ||
         !PRIVATE_RECORD_PATH.test(source.path) || !(source.fields?.length)) continue;
     const tokens = [...source.path.matchAll(/:([A-Za-z_][A-Za-z0-9_]*)|\{([A-Za-z_][A-Za-z0-9_]*)\}/g)];
-    const prefix = tokens.length === 0 && source.path.endsWith('/') &&
+    const prefixPath = source.path.endsWith('/*') ? source.path.slice(0, -1) : source.path;
+    const prefix = tokens.length === 0 && prefixPath.endsWith('/') &&
       /startsWith\s*\(/.test(source.source?.quote ?? '');
     if (tokens.length !== 1 && !prefix) continue;
-    const firstPath = prefix ? `${source.path}1` : source.path.replace(tokens[0][0], '1');
-    const secondPath = prefix ? `${source.path}2` : source.path.replace(tokens[0][0], '2');
+    const firstPath = prefix ? `${prefixPath}1` : source.path.replace(tokens[0][0], '1');
+    const secondPath = prefix ? `${prefixPath}2` : source.path.replace(tokens[0][0], '2');
     const first = validateUrl(scope, firstPath, {identity: 'anonymous', method: 'GET'});
     const second = validateUrl(scope, secondPath, {identity: 'anonymous', method: 'GET'});
     if (!first.ok || !second.ok) continue;
@@ -920,6 +921,39 @@ function sourceDisclosureFinding(lead, scope, responses, outcome) {
     webSteps: responses.map((response, index) => ({identity: 'anonymous', method: 'GET',
       url: new URL(lead.rawRequests[index % 2].path, scope.target.origin).href,
       status: response.status, evidence: response.evidenceId}))};
+}
+
+async function checkSourceDisclosure(lead, scope, requester) {
+  const responses = [], evidence = [];
+  for (let round = 0; round < 2; round++) for (const request of lead.rawRequests) {
+    const response = await requester({url: request.path, identity: 'anonymous', method: 'GET',
+      step: round ? 'reverify' : 'task', noCache: true, omitExcerpt: true,
+      maxBytes: MODEL_RESPONSE_BYTES, headers: {'cache-control': 'no-cache'}});
+    responses.push(response);
+    if (response.evidenceId) evidence.push(response.evidenceId);
+  }
+  const outcome = jsonDisclosureOutcome(responses, lead.rawRequests, lead.jsonPointers,
+    {sourcePath: lead.sourcePath, sourceClaim: lead.sourceClaim});
+  return {result: {lead, kind: 'model-anonymous-json-disclosure',
+      sourceLeadId: lead.sourceLeadId, verdict: outcome.verdict,
+      reason: outcome.reason, evidence: unique(evidence)},
+    finding: outcome.verdict === 'confirmed' ?
+      sourceDisclosureFinding(lead, scope, responses, outcome) : null};
+}
+
+/** Prove cited read-only source leads before optional model planning consumes time. */
+export async function runSourceDisclosureProbes(surface, scope, {requester, budget = 3} = {}) {
+  const selected = sourceDisclosureLeads(surface, scope, budget);
+  const findings = [], results = [];
+  for (const lead of selected.leads) {
+    const checked = await checkSourceDisclosure(lead, scope, requester);
+    results.push(checked.result);
+    if (checked.finding) findings.push(checked.finding);
+  }
+  return {findings, results, tested: results.length,
+    keys: selected.leads.map(lead => webLeadKey('source-anonymous-json-disclosure', lead)),
+    plan: selected.leads.map(lead => ({kind: 'source-anonymous-json-disclosure', lead,
+      priority: 10, by: 'cited-source'}))};
 }
 
 function sstiFinding(lead, scope, control, first, second, firstUrl, secondUrl) {
@@ -3943,21 +3977,9 @@ export async function runWebProbes(surface, scope, {requester, ledger = null, bu
         findings.push(rateLimitFinding(lead, scope, responses, outcome, elapsedMs));
     }
   if (item.kind === 'source-anonymous-json-disclosure') for (const {lead} of [item]) {
-    const responses = [], evidence = [];
-    for (let round = 0; round < 2; round++) for (const request of lead.rawRequests) {
-      const response = await requester({url: request.path, identity: 'anonymous', method: 'GET',
-        step: round ? 'reverify' : 'task', noCache: true, omitExcerpt: true,
-        maxBytes: MODEL_RESPONSE_BYTES, headers: {'cache-control': 'no-cache'}});
-      responses.push(response);
-      if (response.evidenceId) evidence.push(response.evidenceId);
-    }
-    const outcome = jsonDisclosureOutcome(responses, lead.rawRequests, lead.jsonPointers,
-      {sourcePath: lead.sourcePath, sourceClaim: lead.sourceClaim});
-    recordResult({lead, kind: 'model-anonymous-json-disclosure',
-      sourceLeadId: lead.sourceLeadId, verdict: outcome.verdict,
-      reason: outcome.reason, evidence: unique(evidence)});
-    if (outcome.verdict === 'confirmed')
-      findings.push(sourceDisclosureFinding(lead, scope, responses, outcome));
+    const checked = await checkSourceDisclosure(lead, scope, requester);
+    recordResult(checked.result);
+    if (checked.finding) findings.push(checked.finding);
   }
   if (item.kind === 'anonymous-credential-data') for (const {lead} of [item]) {
     const call = (step) => requester({url: lead.path, identity: 'anonymous', method: 'GET',

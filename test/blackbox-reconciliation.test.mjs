@@ -7,7 +7,7 @@ import {temp} from './helpers.mjs';
 import {DEFAULT_SCOPE} from '../src/blackbox/scope.mjs';
 import {createLedger} from '../src/blackbox/ledger.mjs';
 import {reviewSource} from '../src/blackbox/source.mjs';
-import {runWebProbes} from '../src/blackbox/web-probes.mjs';
+import {runWebProbes, runSourceDisclosureProbes} from '../src/blackbox/web-probes.mjs';
 import {planResearchFlows, runResearchFlows} from '../src/blackbox/research-flow.mjs';
 import {proveFindings} from '../src/blackbox/poc.mjs';
 import {renderReport} from '../src/blackbox/report.mjs';
@@ -28,7 +28,7 @@ test('source review preserves a bounded private-record lead without response val
   assert.ok(!JSON.stringify(lead).includes('users[1]'));
 });
 
-test('source private-record verifier handles named and prefix routes without storing PII', async t => {
+test('source private-record verifier handles named, prefix, and wildcard routes without storing PII', async t => {
   const root = temp();
   t.after(() => fs.rmSync(root, {recursive: true, force: true}));
   const ledger = createLedger(root);
@@ -43,19 +43,24 @@ test('source private-record verifier handles named and prefix routes without sto
     2: {email: 'beta@example.test', phone: '+15550000002', clearance: 'blue'}};
   let sequence = 0;
   for(const [route,quote] of [['/v2/api/user/:id','email: target.email'],
-    ['/v2/api/user/',"if (path.startsWith(dossierPrefix)) {"]]){
+    ['/v2/api/user/',"if (path.startsWith(dossierPrefix)) {"],
+    ['/v2/api/user/*',"if (path.startsWith(dossierPrefix)) {"]]){
     sourceLead.path=route;sourceLead.source.quote=quote;
-    const checked = await runWebProbes({patterns: [], sourceReview: {securityLeads: [sourceLead]}},
-      scope, {budget: 1, ledger, researchDeadline: Date.now() + 10_000,
-        requester: async ({url}) => {
+    const requester = async ({url}) => {
           const id = new URL(url, scope.target.origin).pathname.split('/').at(-1);
           return {status: 200, type: 'application/json', body: JSON.stringify(values[id]),
             headers: {'cache-control': 'no-store'}, evidenceId: ledger.append({step: 'task',
               request: {url}, response: {status: 200, hash: `response-${++sequence}`}})};
-        }});
+        };
+    const surface = {patterns: [], sourceReview: {securityLeads: [sourceLead]}};
+    const checked = route.endsWith('*') ?
+      await runSourceDisclosureProbes(surface, scope, {budget: 1, requester}) :
+      await runWebProbes(surface, scope, {budget: 1, ledger,
+        researchDeadline: Date.now() + 10_000, requester});
     assert.equal(checked.findings.length, 1, JSON.stringify(checked.results));
     assert.equal(checked.findings[0].sourceFinding.id, sourceLead.id);
     assert.equal(checked.results[0].verdict, 'confirmed');
+    if(route.endsWith('*'))assert.equal(checked.keys.length,1);
   }
   const stored = fs.readFileSync(ledger.file, 'utf8');
   for (const record of Object.values(values)) for (const value of Object.values(record))
