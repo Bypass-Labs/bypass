@@ -118,7 +118,6 @@ export async function pluginOnboarding(cwd,root,{intent='real',mode,url,environm
       input:choiceInput('minutes',[
         {id:'quick',label:'5-minute test',description:'Fast first pass with partial coverage; remaining work is reported.',arguments:{minutes:5}},
         {id:'default',label:'30 minutes',description:'Use the default total duration.',arguments:{minutes:30}},
-        {id:'more',label:'45 minutes',description:'Allow more time for source and live checks.',arguments:{minutes:45}},
         {id:'custom',label:'Custom duration',description:'Enter a positive number of minutes.',requiresInput:'minutes'}
       ],{recommended:'default',custom:'value'}),guidance:'Ask this question once. Elapsed time starts at the source review; Bypass applies the remaining time to the connected live audit. Five minutes is a quick pass, not full coverage. The plugin cannot interrupt Muse Code while it is thinking.'};
     else if(!scopeApproved)nextAction={id:'scope',tool:'bypass_authorize_target'};
