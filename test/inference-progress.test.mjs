@@ -118,3 +118,28 @@ test('invalid model actions persist response diagnostics in run results and usag
   assert.ok(progress.some(event=>event.message.includes('Response diagnostics:')&&event.message.includes('invalid_json')));
   assert.doesNotMatch(JSON.stringify(saved.result.details)+JSON.stringify(progress),/PRIVATE_OUTPUT|PRIVATE_REASONING/);
 });
+
+test('source review repairs one malformed action and counts both requests',async()=>{
+  const root=temp();await execute('init',[root]);
+  await execute('model add',['muse'],{project:root,provider:'meta','secret-env':'BYPASS_UNIT_API_KEY',model:'test-model',stream:false});
+  await execute('engine use',['docker'],{project:root});
+  await change(root,s=>{s.models[0].lastAttempt={status:'connected',checkedAt:new Date().toISOString()};});
+  const run=await createRun(root,'scan',{mode:'code'}),progress=[],calls=[];
+  const result=await executeSourceReview(root,run.id,{mode:'code'},{report:async(_role,message)=>progress.push(message),runtime:{
+    testModel:async()=>assert.fail('Recent preflight should be reused'),prepareAgents:async()=>({image:'test'}),
+    infer:async(_profile,messages,{session})=>{
+      calls.push({messages,session});
+      if(calls.length===1)throw new Fault('Invalid action',3,{reason:'invalid_arguments',
+        responseDiagnostics:{jsonStatus:'empty_content',jsonSource:'content'}});
+      return {focus:'Review source'};
+    },
+    runContainer:async()=>({result:{candidates:[]},container:{role:'white-box'}})
+  }});
+  assert.equal(result.modelCalls,2);
+  assert.equal(calls.length,2);
+  assert.equal(calls[0].session,calls[1].session);
+  assert.equal(calls[1].messages.length,1);
+  assert.match(calls[1].messages[0].content,/exactly one security_action/);
+  assert.ok(progress.some(message=>message.includes('retrying once with the same evidence')));
+  assert.deepEqual(read(root).runs[0].agentEvidence.modelUsage.map(item=>item.status),['failed','completed']);
+});

@@ -6,7 +6,7 @@ import path from 'node:path';
 import { read, change, event } from './store.mjs';
 import { inventory } from './repository.mjs';
 import { reviewReadiness } from './review-readiness.mjs';
-import { infer, INFERENCE_TIMEOUT_MS, modelResponseSchema } from './inference.mjs';
+import { infer, INFERENCE_TIMEOUT_MS, modelResponseSchema, withStructuredRepair } from './inference.mjs';
 import { testModel } from './models.mjs';
 import { prepareAgents, runContainer } from './agent-runtime.mjs';
 import { named, need, id, now, hash, redact } from './util.mjs';
@@ -112,20 +112,28 @@ export async function executeSourceReview(root,runId,options,{signal,report,runt
   const sessions=new Map();
   const model=async(role,messages,activeSignal=signal)=>{
     if(!sessions.has(role))sessions.set(role,new ProviderSession(profile));
-    need(modelCalls<18,'Shared model call budget exceeded.',3);modelCalls++;const usage={role,call:modelCalls,at:now(),status:'started'};modelUsage.push(usage);await persist();
-    await report(role,`${role}: model call ${modelCalls} · ${profile.name} / ${profile.model}`);
-    const started=Date.now(),progress=[];let lastPhase;
-    const timeoutLabel=profile.timeoutMs===0?'no timeout':`${(profile.timeoutMs??INFERENCE_TIMEOUT_MS)/1000}s`;
-    const heartbeat=setInterval(()=>{report(role,`${role}: waiting for ${profile.name} · ${Math.floor((Date.now()-started)/1000)}s / ${timeoutLabel} · cancel to stop`).catch(()=>{});},10000);
-    try{const result=await runtime.infer(profile,messages,{signal:activeSignal,schema:modelResponseSchema(role==='white-box'?'white-box-live':role),session:sessions.get(role),onProgress:event=>{
-      if(event.diagnostics)usage.responseDiagnostics=event.diagnostics;
-      if(event.kind==='model'){
-        usage.resolvedModel=event.model;
-
-      }else if(event.phase!==lastPhase){lastPhase=event.phase;usage.lastPhase=event.phase;if(event.httpStatus)usage.httpStatus=event.httpStatus;progress.push(report(role,`${role}: ${event.message}`));}
-    }});usage.status='completed';return result;}
-    catch(error){usage.status='failed';usage.reason=error.details?.reason||'model_response';if(error.details?.responseDiagnostics)usage.responseDiagnostics=error.details.responseDiagnostics;error.details={...error.details,stage:role,call:modelCalls,lastPhase:usage.lastPhase,...(usage.httpStatus?{httpStatus:usage.httpStatus}:{}),next:'model test'};throw error;}
-    finally{clearInterval(heartbeat);usage.elapsedMs=Date.now()-started;usage.finishedAt=now();await Promise.allSettled(progress);await persist();}
+    const session=sessions.get(role);
+    const attempt=async attemptMessages=>{
+      need(modelCalls<18,'Shared model call budget exceeded.',3);modelCalls++;const usage={role,call:modelCalls,at:now(),status:'started'};modelUsage.push(usage);await persist();
+      await report(role,`${role}: model call ${modelCalls} · ${profile.name} / ${profile.model}`);
+      const started=Date.now(),progress=[];let lastPhase;
+      const timeoutLabel=profile.timeoutMs===0?'no timeout':`${(profile.timeoutMs??INFERENCE_TIMEOUT_MS)/1000}s`;
+      const heartbeat=setInterval(()=>{report(role,`${role}: waiting for ${profile.name} · ${Math.floor((Date.now()-started)/1000)}s / ${timeoutLabel} · cancel to stop`).catch(()=>{});},10000);
+      try{const result=await runtime.infer(profile,attemptMessages,{signal:activeSignal,schema:modelResponseSchema(role==='white-box'?'white-box-live':role),session,onProgress:event=>{
+        if(event.diagnostics)usage.responseDiagnostics=event.diagnostics;
+        if(event.kind==='model'){
+          usage.resolvedModel=event.model;
+        }else if(event.phase!==lastPhase){lastPhase=event.phase;usage.lastPhase=event.phase;if(event.httpStatus)usage.httpStatus=event.httpStatus;progress.push(report(role,`${role}: ${event.message}`));}
+      }});usage.status='completed';return result;}
+      catch(error){usage.status='failed';usage.reason=error.details?.reason||'model_response';if(error.details?.responseDiagnostics)usage.responseDiagnostics=error.details.responseDiagnostics;error.details={...error.details,stage:role,call:modelCalls,lastPhase:usage.lastPhase,...(usage.httpStatus?{httpStatus:usage.httpStatus}:{}),next:'model test'};throw error;}
+      finally{clearInterval(heartbeat);usage.elapsedMs=Date.now()-started;usage.finishedAt=now();await Promise.allSettled(progress);await persist();}
+    };
+    return withStructuredRepair(attempt,messages,{
+      continuation:true,
+      canRetry:()=>!activeSignal?.aborted&&modelCalls<18&&
+        (session.maxTurns===null||session.turns<session.maxTurns),
+      onRetry:()=>{session.discardRejectedStructuredReply();return report(role,`${role}: model response was invalid; retrying once with the same evidence`);}
+    });
   };
   await report('replay','Preparing the source review; live testing runs in the shared black-box runner.');
   // A saved profile is not a working connection. Check before source upload or container work.

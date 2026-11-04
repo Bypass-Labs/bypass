@@ -5,7 +5,7 @@ import {loopback} from '../network.mjs';
 import { atomic, rootFrom } from '../store.mjs';
 import { hash, id, need, now, Fault, abortFault } from '../util.mjs';
 import { modelProfile } from '../models.mjs';
-import { infer as modelInfer } from '../inference.mjs';
+import { infer as modelInfer, withStructuredRepair } from '../inference.mjs';
 import { loadScope, taskAllowance, createLimiter, createRequester, validateUrl } from './scope.mjs';
 import { createLedger, verifyLedger, scrub, maskExcerpt } from './ledger.mjs';
 import { mineOrigin, maskSecrets } from './assets.mjs';
@@ -559,7 +559,7 @@ export async function runAudit({url, root = process.cwd(), scopeFile = null, ove
       if (next) next();
       else modelInFlight--;
     };
-    const invokeModel = async (profile, messages, options = {}) => {
+    const invokeModelOnce = async (profile, messages, options = {}) => {
       await acquireModelSlot();
       let call=null,callStarted=null,activity='Analyzing observed security evidence';
       try {
@@ -598,6 +598,12 @@ export async function runAudit({url, root = process.cwd(), scopeFile = null, ove
         }
       } finally { releaseModelSlot(); }
     };
+    const invokeModel = (profile, messages, options = {}) => withStructuredRepair(
+      repairMessages=>invokeModelOnce(profile,repairMessages,options),messages,{
+        canRetry:()=>!signal?.aborted&&modelInvocations<scope.limits.modelCalls&&Date.now()<deadline,
+        onRetry:()=>log({stage:'progress',type:'activity',message:
+          'Model returned an invalid structured response; retrying this decision once with the same evidence'})
+      });
     phase('doing', 1, 'Scope and host discovery');
     const auditLimiter = createLimiter(scope.limits.rps);
     const anonymousRequester = createRequester(scope, {ledger, limiter: auditLimiter,

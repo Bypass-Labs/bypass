@@ -20,6 +20,36 @@ export async function infer(profile,messages,options={}) {
   return (options.session || new ProviderSession(profile)).turn(messages,options);
 }
 
+// A malformed structured reply is safe to ask for again: no security action
+// passed local validation. The caller owns the model-call and time budgets, so
+// each attempt goes through its normal counted request path.
+export function recoverableStructuredReply(error) {
+  const diagnostics=error?.details?.responseDiagnostics;
+  return error?.code===3 && !!diagnostics &&
+    (['invalid_json','empty_content'].includes(diagnostics.jsonStatus) ||
+      diagnostics.schemaStatus==='invalid');
+}
+
+const REPAIR_PROMPT='Return exactly one security_action matching the supplied schema. Use the security_action function if available; otherwise return only JSON text. No prose, markdown, or second action. Use only the supplied evidence; leave uncertain fields empty only where the schema permits.';
+function repairPrompt(error) {
+  const diagnostics=error.details.responseDiagnostics;
+  const issue=diagnostics.schemaStatus==='invalid'?'The previous action did not match the required schema.':
+    diagnostics.jsonStatus==='empty_content'?'The previous action was empty.':
+      'The previous action was not valid JSON.';
+  return `${issue} ${REPAIR_PROMPT}`;
+}
+
+export async function withStructuredRepair(attempt,messages,
+  {canRetry=()=>true,onRetry=()=>{},continuation=false}={}) {
+  try{return await attempt(messages);}
+  catch(error){
+    if(!recoverableStructuredReply(error)||!canRetry())throw error;
+    await onRetry(error);
+    const correction={role:'user',content:repairPrompt(error)};
+    return attempt(continuation?[correction]:[...messages,correction]);
+  }
+}
+
 export function parseModelJSON(text){
   need(typeof text==='string'&&text.length<=64000,'Model response is absent or too large.',3);
   const plain=text.trim().replace(/^```(?:json)?\s*/,'').replace(/\s*```$/,'');
