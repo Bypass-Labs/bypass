@@ -66,6 +66,24 @@ test('real engine consumes source, proves HTTP failure, exports a fixed test, ca
   }finally{await stopPOC(root);}
 });
 
+test('combined review continues source analysis when accounts and resource probes are not configured',async()=>{
+  const root=temp();fs.writeFileSync(path.join(root,'app.mjs'),'export const publicRoute = true;\n');
+  await execute('init',[root]);await execute('engine use',['docker'],{project:root});await addTestModel(root);
+  await execute('target add',['app'],{project:root,url:'http://127.0.0.1:45679',environment:'local'});
+  await execute('target verify',['app'],{project:root,method:'local'});
+  await execute('target authorize',['app'],{project:root,accept:true,paths:'/',methods:'GET'});
+  assert.equal(Object.hasOwn(read(root).targets[0],'probes'),false);
+  const runtime={
+    prepareAgents:async()=>({image:'test-image'}),
+    infer:async()=>({focus:'Review the available source without configured account probes.'}),
+    runContainer:async role=>({result:role==='white-box'?{knowledge:[],candidates:[]}:{summary:'No configured HTTP controls.'},container:{role,image:'test-image'}})
+  };
+  const run=await createRun(root,'scan',{mode:'combined'});
+  const result=await executeRealScan(root,run.id,{mode:'combined'},{runtime,report:async()=>{}});
+  assert.deepEqual(result.probes,[]);assert.deepEqual(result.containers.map(container=>container.role),['white-box','black-box']);
+  assert.equal(result.modelCalls,1);assert.equal(result.executionFailures.length,0);
+});
+
 test('source citations cannot invent files or lines, and source reads cannot follow escaping symlinks',()=>{
   const root=temp(),outside=temp();fs.writeFileSync(path.join(root,'app.mjs'),'const actual = true;\n');
   fs.writeFileSync(path.join(outside,'secret.mjs'),'secret');fs.symlinkSync(outside,path.join(root,'linked'));

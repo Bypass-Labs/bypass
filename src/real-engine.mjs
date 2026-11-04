@@ -107,7 +107,7 @@ export async function executeRealScan(root,runId,options,{signal,report,runtime=
   await change(root,s=>{named(s.runs,runId,'Run').partialRegression=regression;});
   if(plan.mode!=='code'){
     await report('accounts','Validating two logins and the owner resource before AI · three authorized GET requests per resource');
-    for(const probe of read(root).targets.find(t=>t.name===plan.target).probes){
+    for(const probe of read(root).targets.find(t=>t.name===plan.target)?.probes||[]){
       const check=await validateProbe(root,probe.name,{target:plan.target,signal});preflight.push(check);await persist();
       await report('accounts',`${probe.name}: ${check.status} · ${check.reason}`);
       if(signal?.aborted)need(false,'Cancelled',130); // blocked accounts limit this probe, not the source review
