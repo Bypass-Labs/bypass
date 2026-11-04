@@ -374,7 +374,7 @@ Options: --detach, --once, --stop.
 
 Generate a GitHub Actions workflow for exported Node tests, or use --agent for Meta API PR review, deployment verification and scheduled replay. Setup generates files only. See [GitHub agent setup](GITHUB_AGENT.md).
 
-Options: --provider, --target, --force, --agent, --action-ref, --every, --revision-path, --revision-field. The action reference is a reviewed full Bypass commit SHA, optionally taken from bundled release identity. Cadence choices are 24h, 6h and off.
+Options: --provider, --target, --force, --agent, --action-ref, --release-id, --every, --revision-path, --revision-field. Generated workflows pin the public Bypass Action to a full commit SHA and pass an immutable Bypass release ID. Installed packages supply the release ID; source checkouts use `--release-id`. Cadence choices are 24h, 6h and off.
 
 ## mcp serve
 

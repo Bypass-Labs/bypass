@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import { createHash } from 'node:crypto';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { GitHubAPI, artifactState, restoreGitHubState } from '../src/github-api.mjs';
 import { githubPolicy, assessmentConclusion, sourcePath } from '../src/github-policy.mjs';
 import { reviewSource } from '../src/github-review.mjs';
@@ -13,7 +14,7 @@ import { initStore } from '../src/store.mjs';
 import { execFile } from '../src/util.mjs';
 import { toolDefinitions } from '../src/mcp.mjs';
 
-const SHA='a'.repeat(40),HEAD='b'.repeat(40),repo={id:7,default_branch:'main',private:true};
+const SHA='a'.repeat(40),HEAD='b'.repeat(40),RELEASE_ID=`main-${SHA}-123-1`,repo={id:7,default_branch:'main',private:true};
 const context={repository:'owner/app',repositoryId:7,sha:HEAD,policySha:SHA,kind:'review',pr:2,defaultBranch:'main'};
 const prior={version:1,repositoryId:7,findings:[],targets:{}};
 function sourceAPI(files){return {tree:async()=>Object.keys(files).map(path=>({path})),pages:async()=>Object.keys(files).map(filename=>({filename,status:'modified'})),file:async file=>files[file],currentPR:async()=>({head:{sha:HEAD}})};}
@@ -111,13 +112,26 @@ test('result gating and summary never equate failed coverage or source concern w
 });
 test('CLI and Muse expose pinned GitHub setup; source-only setup needs no model or live target',async()=>{
   const root=temp();initStore(root,{kind:'local',path:root},'test');
-  const r=await cli(root,'ci','init','--agent','--action-ref',SHA);assert.equal(r.code,0,JSON.stringify(r.data));
-  const workflow=fs.readFileSync(path.join(root,'.github/workflows/bypass-security.yml'),'utf8');assert.ok(workflow.includes(`bypass@${SHA}`));assert.ok(!workflow.includes('actions/checkout'));assert.ok(!workflow.includes('pull_request_target'));assert.ok(!workflow.includes('schedule:'));assert.ok(workflow.includes('github.token'));
-  assert.ok(toolDefinitions.find(t=>t.name==='bypass_ci').inputSchema.properties.agent);
-  const output=generateGitHubAgent(temp(),{}, {'action-ref':SHA});assert.deepEqual(output.secrets,['MODEL_API_KEY']);
-  assert.throws(()=>generateGitHubAgent(temp(),{}, {'action-ref':'main'}),/40-character/);
-  assert.throws(()=>generateGitHubAgent(root,{}, {'action-ref':SHA}),/exists/);
-  const escaped=temp();fs.symlinkSync(temp(),path.join(escaped,'.github'));assert.throws(()=>generateGitHubAgent(escaped,{}, {'action-ref':SHA}),/symlinks/);
+  const r=await cli(root,'ci','init','--agent','--release-id',RELEASE_ID);assert.equal(r.code,0,JSON.stringify(r.data));
+  const workflow=fs.readFileSync(path.join(root,'.github/workflows/bypass-security.yml'),'utf8');assert.ok(workflow.includes('Bypass-Labs/bypass-action@09ca04b225533704831bf7d424f41e2c68d265e6'));assert.ok(workflow.includes(`release-id: ${RELEASE_ID}`));assert.ok(!workflow.includes('actions/checkout'));assert.ok(!workflow.includes('pull_request_target'));assert.ok(!workflow.includes('schedule:'));assert.ok(workflow.includes('github.token'));
+  assert.ok(toolDefinitions.find(t=>t.name==='bypass_ci').inputSchema.properties['release-id']);
+  const output=generateGitHubAgent(temp(),{}, {'release-id':RELEASE_ID,'action-ref':SHA});assert.deepEqual(output.secrets,['MODEL_API_KEY']);assert.ok(fs.readFileSync(output.workflow,'utf8').includes(`Bypass-Labs/bypass-action@${SHA}`));
+  assert.throws(()=>generateGitHubAgent(temp(),{}, {'release-id':RELEASE_ID,'action-ref':'main'}),/40-character/);
+  assert.throws(()=>generateGitHubAgent(temp(),{}, {'release-id':'main-invalid'}),/immutable Bypass release ID/);
+  assert.throws(()=>generateGitHubAgent(temp(),{}, {}),/immutable Bypass release ID/);
+  assert.throws(()=>generateGitHubAgent(root,{}, {'release-id':RELEASE_ID}),/exists/);
+  const escaped=temp();fs.symlinkSync(temp(),path.join(escaped,'.github'));assert.throws(()=>generateGitHubAgent(escaped,{}, {'release-id':RELEASE_ID}),/symlinks/);
+});
+
+test('installed package infers its immutable release ID',async()=>{
+  const packageRoot=temp(),runtimeSource=path.join(packageRoot,'runtime/src');
+  fs.cpSync(fileURLToPath(new URL('../src/',import.meta.url)),runtimeSource,{recursive:true});
+  fs.writeFileSync(path.join(packageRoot,'release.json'),JSON.stringify({releaseId:RELEASE_ID,commit:SHA}));
+  const {generateGitHubAgent:installed}=await import(pathToFileURL(path.join(runtimeSource,'github-setup.mjs')).href);
+  const generated=installed(temp(),{},{});
+  const workflow=fs.readFileSync(generated.workflow,'utf8');
+  assert.ok(workflow.includes(`release-id: ${RELEASE_ID}`));
+  assert.ok(workflow.includes('Bypass-Labs/bypass-action@09ca04b225533704831bf7d424f41e2c68d265e6'));
 });
 
 test('bundled action entrypoint writes actionable artifacts on missing Meta key without a nested host or API request',async()=>{
