@@ -41,6 +41,7 @@ const BLACKBOX_PHASES=[
   {label:'Report and coverage',working:'Building the evidence report and remaining-coverage summary',why:'The result separates confirmed findings from observations and untested work.',next:'Review findings, save regression tests or resume pending research.'}
 ];
 const STANDALONE_FIRST_AUDIT_MINUTES=10;
+const STANDALONE_GUIDED_AUDIT_MODEL_CALLS=24;
 export function blackboxOutcomeText(result){
   const findings=(result?.findings??[]).filter(finding=>finding.verdict==='confirmed'&&
     !RESEARCH_BEHAVIOR.has(finding.kind));
@@ -554,7 +555,7 @@ export async function terminal(options={},io){
           }
           const local=loopback(new URL(url).hostname);
           const limits={agents:options.agents,'http-workers':options['http-workers'],
-            'model-calls':options['model-calls'],
+            'model-calls':options['model-calls']??STANDALONE_GUIDED_AUDIT_MODEL_CALLS,
             'max-urls':options['max-urls'],
             'max-tasks':options['max-tasks'],
             minutes:options.minutes??STANDALONE_FIRST_AUDIT_MINUTES,
@@ -636,6 +637,7 @@ export async function terminal(options={},io){
           console.log('\n'+reviewSummary(readiness(root).review));
           console.log(`\nRunning your ${read(root).settings.analysisEngine==='docker'?'security audit':'security review preview'}${mode==='code'?' (code only)':mode==='live'?' (app only)':''}…`);
           const result=await run('scan',[],{mode,
+            'model-calls':options['model-calls']??STANDALONE_GUIDED_AUDIT_MODEL_CALLS,
             minutes:options.minutes??STANDALONE_FIRST_AUDIT_MINUTES});
           if(result.run?.result?.findings?.length)await showResults();
         }

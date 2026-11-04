@@ -1172,7 +1172,7 @@ const answerFlows = answer => (Array.isArray(answer?.flows) ?
   answer?.flows && typeof answer.flows === 'object' ? [answer.flows] : [])
   .map(knownFlow);
 const isModelOutputFailure = error => ['incomplete_output','multiple_actions'].includes(error?.details?.reason) ||
-  /^(?:Invalid type for|Unknown) security_action\.flows(?: field)?\./.test(error?.message ?? '');
+  /^(?:(?:Invalid type for|Unknown) security_action\.flows(?: field)?\.|Invalid security_action\.flows\.)/.test(error?.message ?? '');
 const SAMPLE_SCHEMA = {type: 'object', properties: {samples: {type: 'array', maxItems: 1,
   items: {type: 'object', properties: {
     subject: FLOW_SCHEMA.properties.subject,

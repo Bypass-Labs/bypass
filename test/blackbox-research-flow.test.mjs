@@ -1619,8 +1619,8 @@ test('HTTP sequence planning accepts one validated flow object without discardin
   assert.equal(planned.leads[0].modelNote, undefined);
 });
 
-for (const failure of ['malformed', 'unknown', 'incomplete']) {
-  test(`HTTP sequence planning retries a ${failure} route page without hiding later routes`, async () => {
+for (const failure of ['malformed', 'invalid', 'unknown', 'incomplete']) {
+  test(`HTTP sequence planning retries ${failure === 'malformed' ? 'a' : 'an'} ${failure} route page without hiding later routes`, async () => {
     const origin = 'http://127.0.0.1:4329';
     const {scope} = loadScope({origin, overrides: {acceptLocal: true}});
     const surface = {patterns: Array.from({length: 12}, (_, index) => ({
@@ -1632,7 +1632,8 @@ for (const failure of ['malformed', 'unknown', 'incomplete']) {
         pages.push(routes.map(item => item.path));
         if (pages.length === 1) {
           const error = new Error(failure === 'malformed' ?
-            'Invalid type for security_action.flows.' : failure === 'unknown' ?
+            'Invalid type for security_action.flows.' : failure === 'invalid' ?
+              'Invalid security_action.flows.' : failure === 'unknown' ?
               'Unknown security_action.flows field.' :
               'Provider response incomplete (max_output_tokens); no action executed.');
           if (failure === 'incomplete') error.details = {reason: 'incomplete_output'};
