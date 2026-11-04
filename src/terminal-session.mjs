@@ -229,7 +229,12 @@ export function frame(state, columns, rows, now=Date.now()) {
     side(shortPath(state.context.repo)||(state.context.app?'Running app only · no repository needed':'Choose your application source'));
     side();side('LIVE APP','title');side(state.context.app||'Optional · connect with /app');
     side();side('MODEL','title');side(state.context.model||'API key for CLI · /models');
-    if(state.context.checks!==undefined){side();side(`${state.context.checks} saved tests · ${state.context.memory||0} memories`,'success');}
+    if(state.context.checks!==undefined){
+      side();side('BYPASS PROJECT','title');
+      side(shortPath(state.context.bypassProject||path.join(state.context.repo,'.bypass')));
+      side(`Saved tests ${state.context.checks} · checks.json`,'success');
+      side(`Memory ${state.context.memory||0} · state.json`,'success');
+    }
     if(!state.tasks.length){side();side('EXPLORE','title');side('/demo     Guided proof loop','info');side('/help     All commands','info');}
   }
   for(let i=0;i<available;i++){

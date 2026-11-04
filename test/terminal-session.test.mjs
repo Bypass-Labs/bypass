@@ -183,7 +183,9 @@ test('wide task panel can be collapsed without losing the project or active comm
 
 test('a live audit keeps an explanatory evidence card visible and uses the top bar for trust guarantees',async t=>{
   const tty=terminal(t,130,38);let finish;
-  tty.ui.setContext({title:'job-radar.app',repo:'/tmp/job-radar',engine:'docker',app:'https://job-radar.app · authorized',model:'muse-spark-1.3 · connected'});
+  tty.ui.setContext({title:'job-radar.app',repo:'/tmp/job-radar',bypassProject:'/tmp/job-radar/.bypass',
+    engine:'docker',app:'https://job-radar.app · authorized',model:'muse-spark-1.3 · connected',
+    checks:4,memory:7});
   tty.ui.setTasks('Black-box audit',['Scope and hosts','Assets and source','Routes and responses','Plan and test leads','Replay and assess','Report and coverage']);
   tty.ui.task(0,'done');tty.ui.task(1,'running');
   const audit=tty.ui.activity('Black-box audit',()=>new Promise(resolve=>{finish=resolve;}));
@@ -200,6 +202,8 @@ test('a live audit keeps an explanatory evidence card visible and uses the top b
   for(const value of [/LIVE AUDIT/,/DONE\s+19 assets inspected/,/WORKING\s+Muse is reviewing/,/WHY\s+Muse proposes/,/RECOVERED\s+One slow batch/,/NEXT\s+Run accepted/,/LIVE\s+20\/80 candidates · 148 HTTP · 12 Muse/])assert.match(text,value);
   assert.match(text,/PHASES\s+━+─+\s+16% · 1\/6 complete/);
   assert.match(text,/1\/6 phases complete/);
+  for(const value of [/BYPASS PROJECT/,/\/tmp\/job-radar\/\.bypass/,/Saved tests 4 · checks\.json/,
+    /Memory 7 · state\.json/])assert.match(text,value);
   const activeLine=view=>view.lines.find(line=>line.text.includes('Black-box audit ·'))?.text;
   assert.notEqual(activeLine(first),activeLine(frame(tty.ui.state,130,38,now+160)),
     'the running audit marker animates while the phase percentage stays evidence-based');

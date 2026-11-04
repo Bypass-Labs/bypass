@@ -253,7 +253,11 @@ export async function modelTestWizard(root,name,{interactive=process.stdin.isTTY
 function updateWorkspace(prompt,root){
   if(!prompt.setContext)return;
   const info=readiness(root);
-  prompt.setContext({demo:false,engine:info.engine.mode,title:info.project.name,repo:root,branch:info.project.repository.branch,app:info.target?`${info.target.url} · ${info.target.authorized?'authorized':info.target.ownership==='verified'||info.target.ownershipVerification==='off'?'scope required':'verification pending'}`:'not connected · code preview available',model:info.model?modelDisplay(info.model):'not configured · /models for API setup',checks:info.checks.enabled,memory:info.memory?.records||0});
+  prompt.setContext({demo:false,engine:info.engine.mode,title:info.project.name,repo:root,
+    bypassProject:path.join(root,'.bypass'),branch:info.project.repository.branch,
+    app:info.target?`${info.target.url} · ${info.target.authorized?'authorized':info.target.ownership==='verified'||info.target.ownershipVerification==='off'?'scope required':'verification pending'}`:'not connected · code preview available',
+    model:info.model?modelDisplay(info.model):'not configured · /models for API setup',
+    checks:info.checks.enabled,memory:info.memory?.records||0});
 }
 async function modelWizard(ask,root,io){
   const setup=await promptAPIProfile(ask,(title,options)=>choose(ask,options,title));if(!setup)return;
