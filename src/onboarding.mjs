@@ -45,7 +45,6 @@ export async function onboard(options={}, args=[], io={}) {
   say('Press Enter for the recommended next action. Your progress is saved.');
   const flow=options.flow||((options.repo||options.project||args[0])?'quickstart':(await pick('How would you like to start?',[
     {label:'Connect my application (recommended)',id:'quickstart'},
-    {label:'See the full local walkthrough — no login or DNS needed',id:'demo'},
     {label:'Advanced setup — more configuration choices',id:'advanced'}
   ])).id);
   const advanced=flow==='advanced';

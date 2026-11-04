@@ -20,7 +20,7 @@ test('structured responses satisfy Muse strict required-properties contract recu
     }
     for(const child of Object.values(value))if(Array.isArray(child))child.forEach(visit);else visit(child);
   };
-  for(const role of ['orchestrator','white-box'])visit(modelResponseSchema(role));
+  for(const role of ['orchestrator','white-box','white-box-live'])visit(modelResponseSchema(role));
   assert.throws(()=>modelResponseSchema('black-box'),/Unknown model response role/);
 });
 

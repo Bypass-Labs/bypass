@@ -42,7 +42,7 @@ test('slash search, arrow selection, completion and command history work with re
   assert.deepEqual(tty.ui.state.menu.map(item=>item.id),['models']);
   tty.key('tab');assert.equal(tty.ui.state.input,'/models');tty.key('return');assert.equal(await answer,'/models');
   answer=tty.ui.command('review');tty.key('up');assert.equal(tty.ui.state.input,'/models');tty.key('return');assert.equal(await answer,'/models');
-  answer=tty.ui.command('review');tty.type('/');tty.key('down');tty.key('return');assert.equal(await answer,'/demo');
+  answer=tty.ui.command('review');tty.type('/');tty.key('down');tty.key('return');assert.equal(await answer,'/blackbox');
   answer=tty.ui.command('review');tty.key('return');assert.equal(await answer,'review');
 });
 
@@ -181,7 +181,7 @@ test('wide task panel can be collapsed without losing the project or active comm
   assert.equal(tty.ui.state.input,'/sta');tty.key('return');assert.equal(await answer,'/status');
 });
 
-test('a live audit keeps an explanatory evidence card visible and uses the top bar for trust guarantees',async t=>{
+test('a live audit keeps a compact pulse visible and makes Ctrl+O reveal the full activity log',async t=>{
   const tty=terminal(t,130,38);let finish;
   tty.ui.setContext({title:'job-radar.app',repo:'/tmp/job-radar',bypassProject:'/tmp/job-radar/.bypass',
     engine:'docker',app:'https://job-radar.app · authorized',model:'muse-spark-1.3 · connected',
@@ -195,11 +195,16 @@ test('a live audit keeps an explanatory evidence card visible and uses the top b
     recovered:'One slow batch was split automatically; completed evidence was preserved.',
     next:'Run accepted candidates with scoped HTTP controls.',
     metrics:'20/80 candidates · 148 HTTP · 12 Muse'});
+  for(let index=1;index<=7;index++)tty.ui.write(`MUSE ${index}      Bounded decision ${index} finished`);
   const now=tty.ui.state.liveStatus.updatedAt+18000;
   const first=frame(tty.ui.state,130,38,now),text=first.lines.map(line=>line.text).join('\n');
-  assert.match(text,/LIVE REQUESTS · APPROVED SCOPE ONLY · EVIDENCE SAVED CONTINUOUSLY/);
+  assert.match(text,/^▰╲▰  BYPASS  \/  BUILT FOR MUSE MODELS/m);
   assert.doesNotMatch(text,/REAL AI|bounded scope/);
-  for(const value of [/LIVE AUDIT/,/DONE\s+19 assets inspected/,/WORKING\s+Muse is reviewing/,/WHY\s+Muse proposes/,/RECOVERED\s+One slow batch/,/NEXT\s+Run accepted/,/LIVE\s+20\/80 candidates · 148 HTTP · 12 Muse/])assert.match(text,value);
+  for(const value of [/AUDIT PULSE/,/ACTIVE\s+[◐◓◑◒]\s+Muse is reviewing/,/RECOVERED\s+One slow batch/,/NEXT\s+Run accepted/,/EVIDENCE\s+20\/80 candidates · 148 HTTP · 12 Muse/])assert.match(text,value);
+  assert.match(text,/ACTIVITY LOG\s+latest updates · 3 hidden/);
+  assert.doesNotMatch(text,/Bounded decision 1 finished/);
+  assert.match(text,/Bounded decision 7 finished/);
+  assert.match(text,/Ctrl\+O show details/);
   assert.match(text,/PHASES\s+━+─+\s+16% · 1\/6 complete/);
   assert.match(text,/1\/6 phases complete/);
   for(const value of [/BYPASS PROJECT/,/\/tmp\/job-radar\/\.bypass/,/Saved tests 4 · checks\.json/,
@@ -208,11 +213,16 @@ test('a live audit keeps an explanatory evidence card visible and uses the top b
   assert.notEqual(activeLine(first),activeLine(frame(tty.ui.state,130,38,now+160)),
     'the running audit marker animates while the phase percentage stays evidence-based');
   assert.doesNotMatch(text,/last evidence/);
-  for(const [columns,rows,status] of [[80,24,'job-radar.app · AUDIT LIVE · SCOPE GUARDED · EVIDENCE SAVING'],[40,15,'AUDIT LIVE · SCOPE GUARDED']]){
+  tty.key('o',{ctrl:true});
+  const detailed=frame(tty.ui.state,130,38,now).lines.map(line=>line.text).join('\n');
+  assert.match(detailed,/AUDIT PULSE · DETAILS ON/);
+  assert.match(detailed,/Bounded decision 1 finished/);
+  assert.match(detailed,/Ctrl\+O hide details/);
+  for(const [columns,rows,brand] of [[80,24,'▰╲▰  BYPASS  /  BUILT FOR MUSE MODELS'],[40,15,'BYPASS / MUSE']]){
     const compact=frame(tty.ui.state,columns,rows,now);
     assert.equal(compact.lines.length,rows);
     assert.ok(compact.lines.every(line=>cells(line.text)<=columns-2));
-    assert.match(compact.lines[1].text,new RegExp(status.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')));
+    assert.ok(compact.lines[0].text.startsWith(brand));
   }
   finish({});await audit;
 });

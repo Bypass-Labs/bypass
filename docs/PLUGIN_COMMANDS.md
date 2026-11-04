@@ -2,7 +2,7 @@
 
 The Muse plugin is the primary experience. Use ordinary requests or its slash commands; Muse calls these tools for you. You do not need to learn MCP syntax or leave Muse for project operations.
 
-Standalone model setup has a deliberate mode boundary: plugin model tools explain host ownership and cannot configure or invoke API inference. This reference is generated from the CLI catalog and plugin definitions. CI checks all 112 public CLI commands and their options; there are 114 typed tools. Regenerate with `node scripts/check-plugin-parity.mjs --write` after intentionally changing the catalog.
+Standalone model setup has a deliberate mode boundary: plugin model tools explain host ownership and cannot configure or invoke API inference. This reference is generated from the CLI catalog and plugin definitions. CI checks all 100 public CLI commands and their options; there are 114 typed tools. Regenerate with `node scripts/check-plugin-parity.mjs --write` after intentionally changing the catalog.
 
 ## Start inside Muse
 
@@ -45,11 +45,6 @@ CLI global `--project` maps to the selected repository; `--json` maps to structu
 | `scanner policies` | `bypass_scanner_policies` | List exact bundled policy IDs without Docker or inference. |
 | `scanner doctor` | `bypass_scanner_doctor` | Inspect the selected detector runtime and image readiness; no inference. |
 | `scanner prepare` | `bypass_scanner_prepare` | Prepare the lightweight policy or pinned SAST runtime. |
-| `poc` | `bypass_demo_start` · {"kind":"real"} | Conversational real demo replaces the standalone terminal screen. |
-| `poc start` | `bypass_demo_start` · {"kind":"real"} | Create a separate real fixture for Muse to investigate; no plugin API key or Docker required. |
-| `poc resume` | `bypass_demo_control` · {"action":"resume"} | Restart the saved generated local fixture; preserve findings and tests. |
-| `poc stop` | `bypass_demo_control` · {"action":"stop"} | Stop this POC fixture app; preserve its evidence. |
-| `demo` | `bypass_demo_start` · {"kind":"preview"} | Muse guides the same six-step walkthrough. |
 | `onboard` | `bypass_onboarding` | Conversational checklist, with bypass_connect_repository for repository and config input. |
 | `init` | `bypass_connect_repository` | Connect a repository and configure a project. |
 | `app connect` | `bypass_connect_app` | Connect a running app without a source repository. |
@@ -132,12 +127,5 @@ CLI global `--project` maps to the selected repository; `--json` maps to structu
 | `monitor worker` | `bypass_monitor_worker` | Run the real local scheduler (machine must remain awake). |
 | `ci init` | `bypass_ci` | Generate GitHub saved checks, or a Meta API security agent with --agent. |
 | `mcp serve` | Muse starts the approved server | Muse starts this already-approved server. Starting a second stdio server is a transport action, not an application operation. |
-| `demo start` | `bypass_demo_start` · {"kind":"preview"} | Create the Ledger Git fixture and start its HTTP server. |
-| `demo status` | `bypass_demo_control` · {"action":"status"} | Show the fixture state. |
-| `demo fix` | `bypass_demo_control` · {"action":"fix"} | Enable ownership enforcement in the local fixture. |
-| `demo regress` | `bypass_demo_control` · {"action":"regress"} | Reintroduce the local fixture defect. |
-| `demo add-route` | `bypass_demo_control` · {"action":"add-route"} | Add an uncovered export route to the fixture. |
-| `demo reset` | `bypass_demo_control` · {"action":"reset"} | Reset fixture behavior while retaining evidence. |
-| `demo stop` | `bypass_demo_control` · {"action":"stop"} | Stop the local fixture server. |
 
 Use `bypass_help` with a query for live option discovery. Tool schemas include the corresponding CLI options; presentation aliases above explain intentional differences. Source hypotheses, fixture proof, real HTTP evidence and historical results keep their original labels in both interfaces.

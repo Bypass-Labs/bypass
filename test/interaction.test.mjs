@@ -67,6 +67,15 @@ test('Muse model choices keep Meta naming and do not silently opt into Contribut
   assert.match(choices[1].description,/Prompts, code, context, and responses/);
 });
 
+test('Contributor onboarding uses bounded fast reasoning for its first audit',async t=>{
+  const meta=await metaModelFixture(t,{models:['muse-spark-1.3-contributor']});
+  const result=await promptMuseProfile(async()=>assert.fail('No manual profile fields expected.'),
+    async(_title,items)=>items[0],{metaBaseUrl:meta.baseUrl,write:()=>{}});
+  assert.equal(result.config.model,'muse-spark-1.3-contributor');
+  assert.equal(result.config.effort,'minimal');
+  assert.equal(result.config['timeout-ms'],120000);
+});
+
 test('Meta selection requests a private key immediately when MODEL_API_KEY is absent',async t=>{
   const meta=await metaModelFixture(t,{models:['muse-wonder-1.0']}),raw='inline-meta-key-for-test';delete process.env.MODEL_API_KEY;
   const prompts=[],output=[];

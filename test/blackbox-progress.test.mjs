@@ -108,6 +108,12 @@ test('interactive progress redraws one colored live line as counters advance', (
   progress({stage: 'progress', type: 'request', requests: 11});
   clock += 200;
   progress({stage: 'progress', type: 'model', modelCalls: 3});
+  progress({stage:'progress',type:'model-start',call:3,
+    activity:'Planning an HTTP-sequence check',active:2,configured:4});
+  clock += 25000;
+  progress({stage:'progress',type:'model-finish',call:3,
+    activity:'Planning an HTTP-sequence check',status:'completed',durationMs:25000,
+    active:1,configured:4});
   clock += 200;
   progress({stage: 'progress', type: 'task-done', confirmed: true});
   progress({stage: 'progress', type: 'task-untested'});
@@ -115,10 +121,13 @@ test('interactive progress redraws one colored live line as counters advance', (
     title: 'Test observed leads', requests: 11, modelCalls: 3});
   progress.finish();
   const output = chunks.join('');
+  const plain = output.replace(/\x1b\[[0-9;]*m/g, '');
   assert.match(output, /\x1b\[2K/);
   assert.match(output, /\x1b\[36m/);
   assert.match(output, /11 HTTP · 3 Muse · 1 check run/);
   assert.match(output, /1 check run · 1 untested/);
+  assert.match(plain, /Muse 3\s+Planning an HTTP-sequence check · started · 2\/4 active/);
+  assert.match(plain, /Muse 3\s+completed · 00:25 · 1 still active/);
   assert.match(output, /4\/6  Done/);
 });
 

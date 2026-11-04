@@ -61,7 +61,7 @@ test('onboarding handoff starts the approved audit immediately and streams progr
   const scope=JSON.parse(fs.readFileSync(path.join(root,'blackbox.onboarding.scope.json'),'utf8'));
   assert.equal(scope.target.environment,'local');assert.deepEqual(scope.methods,['GET','HEAD']);assert.equal(scope.limits.rps,32);
   assert.equal(scope.limits.modelCalls,120);assert.equal(scope.limits.maxUrls,400);
-  assert.equal(scope.limits.tasks,0);assert.equal(scope.limits.minutes,30);
+  assert.equal(scope.limits.tasks,0);assert.equal(scope.limits.minutes,10);
   assert.equal(fs.readdirSync(path.join(root,'.bypass/runs')).filter(item=>item.startsWith('bx-')).length,1);
 });
 

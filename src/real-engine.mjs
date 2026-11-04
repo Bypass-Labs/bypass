@@ -87,7 +87,18 @@ export function groundCandidates(candidates,reader,inv){
         3,{stage:'white-box',reason:'source_citation_invalid',citation:{...citation,issue,quoteCharacters:quote?.length??0,actualLineCharacters:actual.length,matchingReadLines,includesLineNumber,multiline}});
     }
     for(const key of ['title','hypothesis','recommendation'])need(typeof candidate[key]==='string'&&candidate[key].length>0&&candidate[key].length<=2000,'Hypothesis text is invalid.',3);
-    return {title:candidate.title,category:candidate.category.trim(),hypothesis:candidate.hypothesis,recommendation:candidate.recommendation,resourcePath:typeof candidate.resourcePath==='string'?candidate.resourcePath:null,sourceEvidence:{kind:'source',file:candidate.file,line:candidate.line,quote:candidate.quote,sourceFingerprint:inv.fingerprint}};
+    const resourcePath=typeof candidate.resourcePath==='string'?candidate.resourcePath.trim():null;
+    need(resourcePath===null||resourcePath.startsWith('/')&&resourcePath.length<=300&&
+      !/[\\?#\x00-\x1f\x7f]/.test(resourcePath),'Hypothesis route is invalid.',3);
+    const route=resourcePath?(inv.routeLocations||[]).find(item=>item.path===resourcePath):null;
+    const method=typeof candidate.method==='string'&&
+      ['GET','HEAD','POST','PUT','PATCH','DELETE','OPTIONS','UNKNOWN'].includes(candidate.method)?
+      candidate.method:route?.method??'UNKNOWN';
+    const privateFields=Array.isArray(candidate.privateFields)?[...new Set(candidate.privateFields
+      .filter(field=>typeof field==='string'&&/^[A-Za-z_][A-Za-z0-9_.-]{0,79}$/.test(field)))].slice(0,8):[];
+    return {title:candidate.title,category:candidate.category.trim(),hypothesis:candidate.hypothesis,
+      recommendation:candidate.recommendation,resourcePath,method,privateFields,
+      sourceEvidence:{kind:'source',file:candidate.file,line:candidate.line,quote:candidate.quote,sourceFingerprint:inv.fingerprint}};
   });
 }
 export async function executeSourceReview(root,runId,options,{signal,report,runtime={prepareAgents,runContainer,infer,testModel}}={}){
@@ -106,7 +117,7 @@ export async function executeSourceReview(root,runId,options,{signal,report,runt
     const started=Date.now(),progress=[];let lastPhase;
     const timeoutLabel=profile.timeoutMs===0?'no timeout':`${(profile.timeoutMs??INFERENCE_TIMEOUT_MS)/1000}s`;
     const heartbeat=setInterval(()=>{report(role,`${role}: waiting for ${profile.name} · ${Math.floor((Date.now()-started)/1000)}s / ${timeoutLabel} · cancel to stop`).catch(()=>{});},10000);
-    try{const result=await runtime.infer(profile,messages,{signal:activeSignal,schema:modelResponseSchema(role),session:sessions.get(role),onProgress:event=>{
+    try{const result=await runtime.infer(profile,messages,{signal:activeSignal,schema:modelResponseSchema(role==='white-box'?'white-box-live':role),session:sessions.get(role),onProgress:event=>{
       if(event.diagnostics)usage.responseDiagnostics=event.diagnostics;
       if(event.kind==='model'){
         usage.resolvedModel=event.model;
@@ -164,9 +175,22 @@ export async function executeSourceReview(root,runId,options,{signal,report,runt
     try{
     const reader=sourceReader(root,inv);
     let initialSource=[];
-    if(inv.files.length>0&&inv.files.length<=4){
-      try{if(inv.files.reduce((n,file)=>n+fs.statSync(path.join(root,file)).size,0)<=32000)initialSource=reader.read(inv.files);}catch{/* The worker can request individual eligible files. */}
+    // Start with application handlers even when the repository also contains
+    // tests and workflows, so cited HTTP leads can reach the live runner early.
+    const priority=file=>{
+      const routes=(inv.routeLocations??[]).filter(route=>route.file===file).length;
+      return (routes?1000+routes:0)+(/^src\//.test(file)?100:0)+
+        (/server|route|controller|api/i.test(file)?50:0)-
+        (/^test\/|^\.github\/|^build\./.test(file)?100:0);
+    };
+    const selected=[];let selectedBytes=0;
+    for(const file of [...inv.files].sort((a,b)=>priority(b)-priority(a))){
+      if(selected.length>=1)break;
+      let size;try{size=fs.statSync(path.join(root,file)).size;}catch{continue;}
+      if(size>32000||selectedBytes+size>32000)continue;
+      selected.push(file);selectedBytes+=size;
     }
+    if(selected.length)try{initialSource=reader.read(selected);}catch{/* The worker can request individual eligible files. */}
     const rememberReads=async files=>{for(const {file,startLine,endLine,totalLines} of files)sourceReads.push({file,startLine,endLine,totalLines});await persist();};
     if(initialSource.length)await rememberReads(initialSource);
     if(initialSource.length)await report('white-box',`Read ${initialSource.map(f=>`${f.file}:${f.startLine}-${f.endLine}`).join(', ')} (source only; supplied to agent)`);
@@ -179,7 +203,10 @@ export async function executeSourceReview(root,runId,options,{signal,report,runt
     memoryReceipt.learned=learned;await report('memory',`Saved ${learned.saved.length} cited source interpretations for future feature work${learned.rejected?`; rejected ${learned.rejected} unsupported records`:''}.`);
     await persist();
     await report('white-box','Validating source hypothesis citations against lines actually read.');
-    candidates=groundCandidates(worker.result.candidates,reader,inv).filter(candidate=>!scope.exactPassingChecks.some(check=>check.binding?.resourcePath===candidate.resourcePath));await persist();
+    candidates=groundCandidates(worker.result.candidates,reader,inv).filter(candidate=>!scope.exactPassingChecks.some(check=>check.binding?.resourcePath===candidate.resourcePath));
+    need(!candidates.some(candidate=>!candidate.resourcePath),
+      'White-box returned an HTTP hypothesis without a source-observed route. Retry the review so live validation can receive a concrete path.',
+      3,{stage:'white-box',reason:'source_route_missing'});await persist();
     await report('white-box',`${candidates.length} source hypothesis(es) grounded in actual file lines.`);
     }catch(error){throw error;}
   }

@@ -16,7 +16,7 @@ test('standalone uses official SDK tool calls through both real Docker workers a
     else{
       let action;
       if(system.startsWith('Plan a bounded'))action={focus:'Inspect invoice authorization.'};
-      else if(system.startsWith('Review the actual'))action=body.messages.some(m=>m.role==='tool')?{action:'finish',summary:'Missing owner check',paths:[],knowledge:[],candidates:[{title:'Missing invoice ownership',category:'cross-account-access',file:'policy.mjs',line:2,quote:'  return Boolean(account);',resourcePath:'/api/invoices/inv-101',hypothesis:'Any signed-in account may read the invoice.',recommendation:'Require account === invoice.ownerId.'}]}:{action:'read_files',paths:['policy.mjs'],candidates:[],knowledge:[],summary:''};
+      else if(system.startsWith('Review the actual'))action=body.messages.some(m=>m.role==='tool')?{action:'finish',summary:'Missing owner check',paths:[],knowledge:[],candidates:[{title:'Missing invoice ownership',category:'cross-account-access',file:'policy.mjs',line:2,quote:'  return Boolean(account);',resourcePath:'/api/invoices/inv-101',method:'GET',privateFields:[],hypothesis:'Any signed-in account may read the invoice.',recommendation:'Require account === invoice.ownerId.'}]}:{action:'read_files',paths:['policy.mjs'],candidates:[],knowledge:[],summary:''};
       else action={action:'probe',bindingIndex:0,summary:''};
       message={role:'assistant',content:null,tool_calls:[{id:'call-'+calls.length,type:'function',function:{name:'security_action',arguments:JSON.stringify(action)}}]};
     }

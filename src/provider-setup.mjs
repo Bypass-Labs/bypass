@@ -46,7 +46,10 @@ export async function promptMuseProfile(ask,pick,{secret,write=()=>{},activity,s
     write(`✓ Authenticated with Meta Model API · ${catalog.length} Muse model${catalog.length===1?'':'s'} available.`);
     const model=catalog.find(item=>item.model===preferred?.model)||await pick('Choose a Muse model',catalog,0);need(model,'Choose a Muse model.');
     if(preferred?.model===model.model)write(`Keeping saved model · ${model.label}.`);
-    const config={...base,model:model.model};
+    // Contributor's default reasoning can consume the entire response budget
+    // before returning a bounded audit action. Keep the inexpensive first-run
+    // path responsive; advanced model profiles can override these settings.
+    const config={...base,model:model.model,...(model.model==='muse-spark-1.3-contributor'?{effort:'minimal','timeout-ms':120000}:{})};
     write('Testing a small synthetic prompt; no repository content is sent. Meta Model API usage may apply.');
     const check=await run(`Connect ${model.label.split(' — ')[0]}`,operationSignal=>testModel(apiProfile('meta',{...config,stream:false}),null,{signal:operationSignal,onProgress:progress=>write(`  ${progress.message}`)}));
     write(`✓ ${model.label.split(' — ')[0]} key authenticated · billing and inference working.`);

@@ -8,11 +8,11 @@ Global: --project <path>, --json, --non-interactive, --help, --version.
 
 ## Interactive shortcuts
 
-Run `./bypass --project /path/to/your/app` to open the persistent workspace. Press Enter for the suggested action. Type `/` for a searchable command list: `/blackbox`, `/engine`, `/poc`, `/repo`, `/review`, `/results`, `/demo`, `/tests`, `/app`, `/models`, `/status`, `/memory`, `/context`, `/history`, `/plugin`, `/settings`, `/help`, and `/quit`. The slash is optional. `?`, `back`, and `q` still work. `/help all` shows the complete catalog.
+Run `./bypass --project /path/to/your/app` to open the persistent workspace. Press Enter for the suggested action. Type `/` for a searchable command list: `/review`, `/blackbox`, `/engine`, `/repo`, `/app`, `/models`, `/results`, `/tests`, `/status`, `/memory`, `/context`, `/history`, `/plugin`, `/settings`, `/help`, and `/quit`. The slash is optional. `?`, `back`, and `q` still work. `/help all` shows the complete public catalog.
 
-Use ↑↓ and Enter in menus, Tab to complete a slash command, ↑↓ on an empty command bar to recall session commands, Ctrl+O to expand operation details, PgUp/PgDn to scroll, and Esc to clear a draft, go back, or stop a running operation. Ctrl+C exits with saved project state retained. Enter skips a running model connection check. A local fixture startup finishes its short setup before cleanup; its footer says when it cannot be interrupted.
+Use ↑↓ and Enter in menus, Tab to complete a slash command, ↑↓ on an empty command bar to recall session commands, Ctrl+O to show or hide the activity log, Ctrl+T to toggle the task panel, PgUp/PgDn to scroll, and Esc to clear a draft, go back, or stop a running operation. Ctrl+C exits with saved project state retained. Enter skips a running model connection check.
 
-`/app` opens the current app's ownership challenge and next action directly. DNS ownership and testing authorization remain separate. Expired challenges are renewed before presenting their record. `/history` reads persisted project events. Session transcripts are saved locally under `.bypass/sessions/` on exit; command recall is limited to the current session.
+`/app` opens the current app's authorization and next action. DNS ownership proof is optional and feature flagged off in the default CLI flow; when enabled, it remains a separate step. Expired challenges are renewed before presenting their record. `/history` reads persisted project events. Session transcripts are saved locally under `.bypass/sessions/` on exit; command recall is limited to the current session.
 
 These shortcuts belong to the interactive screen; shell commands use the catalog below. Raw catalog commands also work inside the workspace, except processes that need their own terminal (`auth login`, `mcp serve`, internal server commands). A foreground monitor worker requested in the workspace starts detached; `monitor worker --once` runs a single tick. Stopping `run watch` stops watching, not the background job; use `run stop <id>` to request job cancellation.
 
@@ -22,13 +22,9 @@ For a scrolling interface or screen reader, use `BYPASS_PLAIN=1 ./bypass`. `TERM
 
 `bypass blackbox <url>` audits an authorized running app. For loopback targets it creates a reviewable `blackbox.scope.json` when needed; `--accept-local` confirms the local target. A deployed target needs `blackbox setup <url>`, scope review and testing authorization. DNS/HTTPS ownership proof is feature-flagged off by default; when a project explicitly enables `ownershipVerification` or requests discovered apex domains, setup also returns the required ownership step. `blackbox scope <url>` writes the scope file without registering the target.
 
-The standalone audit uses the selected API model profile or the Meta default (`META_API_KEY`, then `LLM_KEY`, then `MODEL_API_KEY`). New terminal profiles suggest the generic `LLM_KEY` name while keeping existing provider-specific variable names available. The key value stays in the launching environment. `--no-model` runs the code-only path. `--rps` limits shared HTTP rate; `--agents` controls concurrent Muse decisions and `--http-workers` controls concurrent HTTP tasks. `--model-calls`, `--max-urls`, `--max-tasks`, `--minutes` and `--dom-script-bytes` set the recorded limits; zero means unlimited only for URL and task counts. Optional `--source <dir>` supplies source for hypothesis generation, while HTTP behavior remains the proof boundary.
+The standalone audit uses the selected API model profile or the Meta default (`META_API_KEY`, then `LLM_KEY`, then `MODEL_API_KEY`). New terminal profiles suggest the generic `LLM_KEY` name while keeping existing provider-specific variable names available. The key value stays in the launching environment. The interactive standalone wizard gives the first audit a 10-minute wall-clock budget; pass `--minutes` to choose another limit. Direct setup commands retain their documented scope defaults. `--no-model` runs the code-only path. `--rps` limits shared HTTP rate; `--agents` controls concurrent Muse decisions and `--http-workers` controls concurrent HTTP tasks. `--model-calls`, `--max-urls`, `--max-tasks`, `--minutes` and `--dom-script-bytes` set the recorded limits; zero means unlimited only for URL and task counts. Optional `--source <dir>` supplies source for hypothesis generation, while HTTP behavior remains the proof boundary.
 
 `blackbox resume <run-id>` continues saved model research, `blackbox verify <run-id>` replays generated proofs, and `blackbox export <run-id>` writes standalone Node regressions. Runs save `report.md`, `coverage.json`, `evidence.jsonl` and PoCs under `.bypass/runs/<run-id>/`. A confirmed finding returns exit 1; incomplete coverage remains explicit. In Muse Code, `/bypass:blackbox` uses the active Muse session through the same runner and needs no separate API key. [Detailed scope and current limits](BLACKBOX_AUDIT.md).
-
-## poc / poc start / poc stop
-
-`poc` creates a separate local app and opens the workspace with the real audit engine selected. Docker isolates source review; the broad black-box runner performs the scoped HTTP work. The fixture uses two public accounts. `--dir` must be empty; `--model` overrides the selected standalone API profile model; the Muse plugin uses its active host model. Existing active project profiles are reused when `--project` is supplied. `poc start` is the scriptable setup and also supports `--port`; it returns the project root. `poc stop --project <root>` stops the fixture app and preserves evidence.
 
 ## engine use <docker|mock> / engine doctor / engine prepare
 
@@ -38,15 +34,9 @@ Select the real audit or offline preview. `engine doctor` checks Docker and the 
 
 Configure one exact owner-owned JSON resource for HTTP proof. Options: `--target`, `--path`, `--resource-id`, `--owner`, `--outsider`, `--id-field` (default `id`), `--identity-field` (default `id`). Both selectors support nested fields (`run.id`) and JSON Pointer (`/run/id`). Both identities need an authorized `--check-path` returning distinct account IDs. Credentials stay in environment variables. Up to six probes per target. Reusing a probe name updates that binding. `probe list` shows configured probes.
 
-## demo
-
-Run the complete guided local walkthrough. Press Enter through review, HTTP proof, fix/retest, independent Node export, deliberate regression, and a local scheduler tick. Discovery is simulated; proof and replay are real fixture requests. No model, DNS, or plugin is needed. Creates a fresh isolated fixture, saves evidence, and stops its server on completion or when you leave. `--dir` must name an empty directory. Interactive only; use `demo start` for scripts.
-
-Options: --dir.
-
 ## onboard [path]
 
-Application repository and app setup (recommended opening choice), guided local walkthrough, or advanced setup. Requires an interactive terminal. `--flow quickstart`, `--flow advanced`, or `--flow demo` skips the opening choice. Supplying a repository path, `--repo`, or `--project` defaults to QuickStart. Existing settings and evidence are retained. App fields accept bare domains; pending DNS defaults to continuing the review preview. For automation, use `init --non-interactive` and explicit commands below.
+Connect source code, a running app, or both, select a Muse model connection, authorize the live scope when applicable, and start the selected security audit. Requires an interactive terminal. `--flow quickstart` or `--flow advanced` skips the opening choice. Supplying a repository path, `--repo`, or `--project` defaults to QuickStart. Existing settings and evidence are retained. App fields accept bare domains. For automation, use `init --non-interactive` and explicit commands below.
 
 Options: --repo, --dir, --flow, --mode.
 
