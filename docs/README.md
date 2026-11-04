@@ -14,5 +14,6 @@ Start with the [product README](../README.md) and the [first security audit walk
 - [GitHub agent setup](GITHUB_AGENT.md)
 - [Architecture](ARCHITECTURE.md)
 - [Release and installation process](RELEASES.md)
+- [Hackathon build record and submission visuals](../HACKATHON.md)
 
 Older version-specific walkthroughs, POC plans, integration checklists and copied run snapshots were removed from the working documentation. Git history retains them if an investigation needs the original record. The optional `/bypass:demo` Muse command still runs an isolated sample app; it does not test a customer repository or deployment.

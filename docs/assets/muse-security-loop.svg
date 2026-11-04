@@ -1,0 +1,129 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1520" height="1300" viewBox="0 0 1520 1300" role="img" aria-labelledby="diagram-title diagram-description">
+  <title id="diagram-title">Bypass for Muse Code: execution and evidence flow</title>
+  <desc id="diagram-description">The Muse Code plugin and standalone CLI submit validated model decisions to Bypass. White-box source review yields cited signals. Gray-box and black-box tasks pass through scope controls, HTTP or browser execution, and independent proof checks. Run artifacts feed local security context and model-free regression replay. The GitHub agent separately reviews PR source with Meta Model API and replays approved checks after deployment or on a schedule.</desc>
+  <defs>
+    <style>
+      text { font-family: "Helvetica Neue", Arial, sans-serif; }
+      .mono { font-family: Menlo, Consolas, "Liberation Mono", monospace; }
+      .tiny { font-size: 17px; font-weight: 700; letter-spacing: 0.7px; }
+      .title { font-size: 42px; font-weight: 700; letter-spacing: -0.8px; }
+      .boxTitle { font-size: 27px; font-weight: 700; }
+      .body { font-size: 21px; }
+      .note { font-size: 19px; fill: #5C6468; }
+      .file { font-size: 19px; fill: #474E52; }
+      .rule { stroke: #B9BFC1; stroke-width: 1.5; }
+      .arrow { fill: none; stroke: #7F898E; stroke-width: 2.2; marker-end: url(#tip); }
+    </style>
+    <marker id="tip" viewBox="0 0 10 10" refX="8.4" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+      <path d="M 1 1 L 9 5 L 1 9 Z" fill="#7F898E"/>
+    </marker>
+  </defs>
+
+  <rect width="1520" height="1300" fill="#FCFBF8"/>
+  <text x="60" y="57" class="mono tiny" fill="#B93834">BYPASS FOR MUSE CODE</text>
+  <text x="60" y="105" class="title">Execution and evidence flow</text>
+  <path d="M 60 128 H 1460" class="rule"/>
+
+  <text x="60" y="157" class="mono tiny" fill="#687176">ENTRY POINTS AND MODEL ACCESS</text>
+  <rect x="60" y="174" width="680" height="126" fill="#FFFFFF" stroke="#AEB6B9" stroke-width="1.5"/>
+  <path d="M 60 174 H 740" stroke="#B93834" stroke-width="4"/>
+  <text x="82" y="213" class="boxTitle">Muse Code plugin</text>
+  <text x="82" y="247" class="body">Muse Spark or Muse Wonder via the active session</text>
+  <text x="82" y="277" class="note">Commands, MCP tools, and session hook</text>
+
+  <rect x="780" y="174" width="680" height="126" fill="#FFFFFF" stroke="#AEB6B9" stroke-width="1.5"/>
+  <text x="802" y="213" class="boxTitle">CLI and MCP server</text>
+  <text x="802" y="247" class="body">Meta Model API: muse-spark-1.3 or configured model</text>
+  <text x="802" y="277" class="note">Self-hosted Muse Spark Open; macOS, Linux, Windows</text>
+
+  <path d="M 400 301 V 326" class="arrow"/>
+  <path d="M 1120 301 V 326" class="arrow"/>
+  <rect x="60" y="339" width="1400" height="80" fill="#F2F1EE" stroke="#B9BFC1" stroke-width="1.5"/>
+  <rect x="60" y="339" width="6" height="80" fill="#B93834"/>
+  <text x="82" y="370" class="mono tiny" fill="#4F595E">TEST SELECTION AND CONTROL</text>
+  <text x="82" y="402" class="body">Muse proposes adaptive checks; Bypass validates tool input. CodeQL runs without inference.</text>
+
+  <text x="60" y="458" class="mono tiny" fill="#687176">ASSESSMENT METHODS</text>
+  <path d="M 280 420 V 483" class="arrow"/>
+  <path d="M 760 420 V 483" class="arrow"/>
+  <path d="M 1240 420 V 483" class="arrow"/>
+
+  <rect x="60" y="495" width="440" height="145" fill="#FFFFFF" stroke="#AEB6B9" stroke-width="1.5"/>
+  <text x="82" y="525" class="mono tiny" fill="#4F595E">WHITE-BOX SAST</text>
+  <text x="82" y="562" class="boxTitle">Static analysis</text>
+  <text x="82" y="597" class="body">CodeQL and policy review</text>
+  <text x="82" y="625" class="note">Cited source signals; no runtime claim</text>
+
+  <rect x="540" y="495" width="440" height="145" fill="#FFFFFF" stroke="#AEB6B9" stroke-width="1.5"/>
+  <text x="562" y="525" class="mono tiny" fill="#4F595E">GRAY-BOX TESTING</text>
+  <text x="562" y="562" class="boxTitle">Source-informed testing</text>
+  <text x="562" y="597" class="body">Routes and verified test accounts</text>
+  <text x="562" y="625" class="note">Targeted HTTP checks on the running app</text>
+
+  <rect x="1020" y="495" width="440" height="145" fill="#FFFFFF" stroke="#AEB6B9" stroke-width="1.5"/>
+  <text x="1042" y="525" class="mono tiny" fill="#4F595E">BLACK-BOX DAST</text>
+  <text x="1042" y="562" class="boxTitle">External testing</text>
+  <text x="1042" y="597" class="body">Public assets, API, and GraphQL</text>
+  <text x="1042" y="625" class="note">HTTP and isolated browser checks</text>
+
+  <path d="M 280 641 V 681" class="arrow"/>
+  <path d="M 760 641 V 681" class="arrow"/>
+  <path d="M 1240 641 V 681" class="arrow"/>
+
+  <rect x="60" y="694" width="440" height="181" fill="#FFFFFF" stroke="#AEB6B9" stroke-width="1.5"/>
+  <text x="82" y="726" class="mono tiny" fill="#4F595E">STATIC ANALYSIS SIGNALS</text>
+  <text x="82" y="763" class="boxTitle">Cited code evidence</text>
+  <text x="82" y="799" class="body">CodeQL and policy results retain</text>
+  <text x="82" y="826" class="body">source location and coverage.</text>
+  <text x="82" y="858" class="mono file">.bypass/scanner/&lt;run-id&gt;/</text>
+
+  <rect x="540" y="694" width="920" height="181" fill="#FFFFFF" stroke="#25282B" stroke-width="2"/>
+  <rect x="540" y="694" width="920" height="37" fill="#25282B"/>
+  <text x="559" y="720" class="mono tiny" fill="#FFFFFF">DYNAMIC TEST EXECUTION AND VALIDATION</text>
+  <path d="M 843 746 V 857 M 1139 746 V 857" class="rule"/>
+  <text x="559" y="761" class="mono tiny" fill="#4F595E">SCOPE CONTROL</text>
+  <text x="559" y="790" class="body">Origin and DNS</text>
+  <text x="559" y="813" class="body">Methods and paths</text>
+  <text x="559" y="836" class="body">Credential origins</text>
+  <text x="559" y="859" class="body">Rate and deadline</text>
+  <text x="863" y="761" class="mono tiny" fill="#4F595E">TEST EXECUTION</text>
+  <text x="863" y="795" class="body">HTTP requests</text>
+  <text x="863" y="823" class="body">Isolated Chrome</text>
+  <text x="863" y="851" class="body">Audit-owned callback</text>
+  <text x="1159" y="761" class="mono tiny" fill="#4F595E">FINDING VALIDATION</text>
+  <text x="1159" y="795" class="body">Negative controls</text>
+  <text x="1159" y="823" class="body">Family-specific checks</text>
+  <text x="1159" y="851" class="body">Fresh replay</text>
+
+  <path d="M 280 876 V 915" class="arrow"/>
+  <path d="M 1000 876 V 915" class="arrow"/>
+  <text x="60" y="920" class="mono tiny" fill="#687176">PERSISTED OUTPUT</text>
+
+  <rect x="60" y="933" width="680" height="109" fill="#F2F1EE" stroke="#B9BFC1" stroke-width="1.5"/>
+  <text x="82" y="966" class="boxTitle">SAST and policy report</text>
+  <text x="82" y="997" class="body">Policy evidence and available CodeQL SARIF</text>
+  <text x="82" y="1025" class="note">No runtime verdict from source evidence alone.</text>
+
+  <rect x="780" y="933" width="680" height="109" fill="#F2F1EE" stroke="#B9BFC1" stroke-width="1.5"/>
+  <text x="802" y="966" class="boxTitle">Dynamic test report</text>
+  <text x="802" y="997" class="mono file">evidence.jsonl   report.json   poc/</text>
+  <text x="802" y="1025" class="note">Confirmed, inconclusive, and untested stay distinct.</text>
+
+  <path d="M 400 1043 V 1070" class="arrow"/>
+  <path d="M 900 1043 V 1057 H 700 V 1070" class="arrow"/>
+  <path d="M 1120 1043 V 1070" class="arrow"/>
+  <rect x="60" y="1082" width="680" height="110" fill="#FFFFFF" stroke="#AEB6B9" stroke-width="1.5"/>
+  <text x="82" y="1115" class="mono tiny" fill="#4F595E">DEVELOPER WORKFLOW</text>
+  <text x="82" y="1148" class="body">Muse reads local security context through MCP.</text>
+  <text x="82" y="1176" class="note"><tspan class="mono">bypass_feature_context</tspan> supplies findings for the next feature.</text>
+
+  <rect x="780" y="1082" width="680" height="110" fill="#FFFFFF" stroke="#AEB6B9" stroke-width="1.5"/>
+  <text x="802" y="1115" class="mono tiny" fill="#4F595E">SECURITY REGRESSION TESTS</text>
+  <text x="802" y="1148" class="body">Supported proofs export as Node tests.</text>
+  <text x="802" y="1176" class="note">Model-free replay in CI, after deployment, and on a schedule.</text>
+
+  <rect x="60" y="1213" width="1400" height="61" fill="#F2F1EE" stroke="#B9BFC1" stroke-width="1.5"/>
+  <text x="82" y="1250" class="mono tiny" fill="#4F595E">GITHUB PR REVIEW</text>
+  <path d="M 345 1224 V 1263" class="rule"/>
+  <text x="370" y="1250" class="body">Meta Model API reviews the immutable PR head and returns file-and-line citations.</text>
+</svg>
