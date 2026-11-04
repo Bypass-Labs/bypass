@@ -4,7 +4,7 @@ import { createAppProfile, requireSource } from './application-setup.mjs';
 import { rememberOwnership, rememberProjectOwnership, sharedOwnership, revokeOwnership, ownershipVerification, verificationDisabled, ownershipReady } from './ownership-store.mjs';
 import { executionMode, hostAI, requireStandaloneAPI } from './execution-mode.mjs';
 import { beginHostReview, hostPlan, hostReviewStep, combinedFocusBudget } from './host-review.mjs';
-import { memorySummary, recallMemory, featureContext, forgetMemory, setMemory, consolidateMemory } from './project-memory.mjs';
+import { memorySummary, recallMemory, featureContext, forgetMemory, setMemory, consolidateMemory, rememberBlackboxFindings } from './project-memory.mjs';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -98,7 +98,9 @@ export async function execute(key,args=[],o={},context={}){
       modelName:o.model||null,offline:!!o.offline,
       signal:context.signal, infer:context.infer, modelProfileOverride:context.modelProfile,
       log:event=>context.onProgress?.(event)});
-    return outcome(result,result.exitCode);
+    const memory=fs.existsSync(path.join(projectRoot,'.bypass/state.json'))?
+      await rememberBlackboxFindings(projectRoot,result):null;
+    return outcome({...result,memory},result.exitCode);
   }
   if(key==='blackbox scope'){
     const {origin,file,scope}=prepareScopeTemplate(working,args[0],o,{reuse:o.reuse===true});
@@ -154,7 +156,10 @@ export async function execute(key,args=[],o={},context={}){
       revisionPath:o['revision-path']||null,revisionField:o['revision-field']||'revision',
       signal:context.signal, infer:context.infer, modelProfileOverride:context.modelProfile,
       log:event=>context.onProgress?.(event)});
-    return outcome(result,result.exitCode);
+    const projectRoot=rootFrom(working,false);
+    const memory=fs.existsSync(path.join(projectRoot,'.bypass/state.json'))?
+      await rememberBlackboxFindings(projectRoot,result):null;
+    return outcome({...result,memory},result.exitCode);
   }
   if(key==='discover'||key.startsWith('discover ')||key.startsWith('scanner ')){
     const {scannerService}=await import('./scanner/service.mjs');

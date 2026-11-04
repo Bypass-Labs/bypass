@@ -175,7 +175,7 @@ export class ProviderSession {
         // Preserve provider reasoning_content and exact tool calls for multi-turn replay.
         this.history.push(message);text=message.content||'';calls=responseCalls;
       }
-      need(calls.length<=1,'Only one bounded security action per turn is supported.',3);
+      need(calls.length<=1,'Model returned more than one security action for a single page.',3,{reason:'multiple_actions'});
       need(!jsonSchema||!calls.length,'Unexpected tool call in JSON-schema response mode; no action executed.',3);
       if(!schema){need(!calls.length,'Unexpected model tool call.',3);return text;}
       let value;

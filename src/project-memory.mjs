@@ -73,6 +73,37 @@ export async function rememberObservation(root,{target,binding,result,runId,sour
   }));
 }
 
+const blackboxTopic=finding=>/rate.?limit|login|auth|credential/i.test(`${finding.kind} ${finding.title}`)?'authentication':
+  /access|idor|bola|bfla|permission|account/i.test(`${finding.kind} ${finding.title}`)?'authorization':'trust-boundary';
+const RESEARCH_BEHAVIOR=new Set(['model-differential','model-json-differential','model-http-sequence']);
+
+// Black-box findings live outside the source-review finding store. Preserve the
+// compact, replay-backed conclusion here without copying response bodies,
+// credentials, or model prompts into project memory.
+export async function rememberBlackboxFindings(root,result){
+  const findings=(result?.findings??[]).filter(finding=>finding?.verdict==='confirmed'&&finding?.id&&
+    !RESEARCH_BEHAVIOR.has(finding.kind));
+  if(!findings.length)return {...memorySummary(read(root)),saved:[]};
+  return change(root,state=>{
+    const origin=result.origin;
+    const target=state.targets.find(item=>item.url===origin);
+    const saved=findings.map(finding=>upsert(state,
+      `blackbox:${origin}:${finding.kind}:${finding.pattern||finding.url||finding.title}`,{
+        kind:'investigation',topic:blackboxTopic(finding),title:short(`Confirmed: ${finding.title}`),
+        summary:short(finding.assessment?.impact||finding.rationale||finding.title),
+        outcome:'confirmed',confidence:'replayed HTTP proof; historical',
+        target:target?{name:target.name,origin:target.url}:origin?{name:new URL(origin).hostname,origin}:null,
+        resourcePath:finding.pattern||(()=>{try{return new URL(finding.url).pathname;}catch{return null;}})(),
+        evidence:{kind:'blackbox',runId:result.run,findingId:finding.id,observedAt:result.stats?.finishedAt||now(),
+          severity:finding.severity,cwe:finding.cwe,owasp:finding.owasp,rule:finding.rule,
+          confirmation:(finding.confirmation||[]).slice(-20),proof:finding.proof?String(finding.proof):null,
+          remediation:short(finding.assessment?.remediation||finding.remediation)}
+      })).filter(Boolean);
+    if(saved.length)event(state,'blackbox-memory',`Saved ${saved.length} confirmed black-box finding${saved.length===1?'':'s'} to security memory.`,{runId:result.run,memoryIds:saved});
+    return {...memorySummary(state),saved};
+  });
+}
+
 // Deterministic consolidation adds no inference calls. Original evidence remains
 // addressable even when compact memory is forgotten or disabled.
 export async function consolidateMemory(root,{runId}={}){
