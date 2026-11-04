@@ -596,7 +596,7 @@ Options: `--detach`, `--once`, `--stop`
 
 Generate GitHub saved checks, or a Meta API security agent with --agent.
 
-Options: `--provider <value>`, `--target <value>`, `--force`, `--agent`, `--action-ref <value>`, `--every <value>`, `--revision-path <value>`, `--revision-field <value>`
+Options: `--provider <value>`, `--target <value>`, `--force`, `--agent`, `--action-ref <value>`, `--release-id <value>`, `--every <value>`, `--revision-path <value>`, `--revision-field <value>`
 
 ## `bypass mcp serve`
 

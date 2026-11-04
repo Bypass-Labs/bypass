@@ -10,7 +10,7 @@ import { generateGitHubAgent } from '../src/github-setup.mjs';
 import { runGitHubAgent } from '../src/github-agent.mjs';
 import { temp } from './helpers.mjs';
 
-const SHA='a'.repeat(40),origin='https://app.example',future=new Date(Date.now()+86400000).toISOString();
+const SHA='a'.repeat(40),RELEASE_ID=`main-${SHA}-123-1`,origin='https://app.example',future=new Date(Date.now()+86400000).toISOString();
 const context={kind:'verify',sha:SHA,deploymentId:12,environment:'production',deploymentURL:origin};
 const env={BYPASS_DNS_PRODUCTION:'bypass-verification=abcdefghijklmnopqrstuv',OWNER_TOKEN:'owner-fixture',OTHER_TOKEN:'outsider-fixture'};
 const base={schemaVersion:1,origin,environment:'production',authorization:{origin,methods:['GET'],paths:['/api'],maxRequestsPerSecond:10,expiresAt:future,productionAcknowledged:true},ownershipExpiresAt:future,resourcePath:'/api/jobs/one',resourceId:'one',idField:'id',identityField:'id',requireIdentityControl:true,owner:{type:'bearer',secretEnv:'OWNER_TOKEN',checkPath:'/api/me'},outsider:{type:'bearer',secretEnv:'OTHER_TOKEN',checkPath:'/api/me'}};
@@ -56,7 +56,7 @@ test('a deployment selects only the matching app when multiple apps share an env
 });
 test('live setup exports only credential references and pinned schedules while preserving expiring permission',()=>{
   const root=temp(),state={settings:{requestTimeoutMs:8000},targets:[{name:'production',url:origin,environment:'production',ownership:{status:'verified',method:'dns',expiresAt:future},authorization:base.authorization}],identities:[{name:'owner',target:'production',...base.owner,credentialRef:'private-secret',lastTest:{token:'never-export'}},{name:'other',target:'production',...base.outsider}],checks:[{id:'check_one',findingId:'finding_one',enabled:true,engine:'host',title:'Account boundary',bindings:{production:{resourcePath:base.resourcePath,resourceId:'one',owner:'owner',outsider:'other',identityField:'id'}}}]};
-  const generated=generateGitHubAgent(root,state,{agent:true,'action-ref':SHA,target:'production','revision-path':'/api/version','revision-field':'sha',every:'6h'});
+  const generated=generateGitHubAgent(root,state,{agent:true,'action-ref':SHA,'release-id':RELEASE_ID,target:'production','revision-path':'/api/version','revision-field':'sha',every:'6h'});
   const config=fs.readFileSync(path.join(root,'.github/bypass.json'),'utf8');assert.ok(!config.includes('private-secret'));assert.ok(!config.includes('never-export'));assert.ok(config.includes(future));assert.ok(generated.secrets.includes('OWNER_TOKEN'));
   const yaml=fs.readFileSync(generated.workflow,'utf8');assert.ok(yaml.includes("17 */6 * * *"));assert.ok(yaml.includes('${{ secrets.OWNER_TOKEN }}'));assert.ok(!yaml.includes('muse login'));
   const parsed=JSON.parse(config);parsed.targets.production.checks[0].spec.owner.secretEnv='MODEL_API_KEY';assert.throws(()=>githubPolicy(parsed),/dedicated app/);

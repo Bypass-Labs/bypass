@@ -4,7 +4,7 @@
 
 This is the first GitHub runner implementation. It uses GitHub Actions, Bypass's shared source-citation validation and HTTP regression engine. It does not use your Muse subscription, run application code, fix application files, or require Docker. Cloudflare Workers and Workers AI are phase two.
 
-The public installer includes this integration. Update Bypass and start a fresh Muse session before setup. Installed packages pin the Action to their bundled **full Bypass commit SHA** automatically; a source checkout requires an explicit reviewed `--action-ref`. Start with the [README walkthrough](../README.md#github-security-agent) for setup, secret names and everyday use.
+The public installer includes this integration. Update Bypass and start a fresh Muse session before setup. Installed packages supply their immutable release ID automatically; generated workflows pin the public Bypass Action to a full commit SHA. A source checkout needs `--release-id`. Start with the [README walkthrough](../README.md#github-security-agent) for setup, secret names and everyday use.
 
 ## Start in Muse
 
@@ -12,7 +12,7 @@ With this version of the Bypass plugin loaded in your application, ask:
 
 > Set up Bypass's GitHub agent for this repository. Use the Meta Model API, start with report-only PR reviews, and add daily smoke tests if we have approved saved live checks. Generate the files for review; don't deploy them yet.
 
-Muse uses `bypass_ci` with `agent: true`. It should reuse the selected repository, offer **Source review** / **Source + saved live checks**, and offer **Daily (recommended)** / **Every 6 hours** / **After deploy only**. It resolves the reviewed Bypass package commit for `action-ref`; it must not substitute your application's commit. A custom answer remains available. A source checkout can supply an explicit reviewed commit; a released package can use its bundled release identity.
+Muse uses `bypass_ci` with `agent: true`. It should reuse the selected repository, offer **Source review** / **Source + saved live checks**, and offer **Daily (recommended)** / **Every 6 hours** / **After deploy only**. The generated workflow uses the pinned public Action commit and the installed Bypass release ID; neither value is your application's commit. A source checkout supplies the release ID explicitly.
 
 1. **Generate the configuration.** Three files appear in your app: `.github/bypass.json`, `.github/workflows/bypass-pr-signal.yml`, and `.github/workflows/bypass-security.yml`. Existing files are not replaced without an explicit request.
 2. **Add your Meta key once.** In your repository's **Settings → Secrets and variables → Actions → New repository secret**, name it `MODEL_API_KEY`. Alternatively use `gh secret set MODEL_API_KEY` from the app repository; the CLI prompts privately. Do not put the key in chat or commit it. The runner uses `https://api.meta.ai/v1` with `muse-spark-1.3` by default.
@@ -29,7 +29,7 @@ bypass ci init --agent
 gh secret set MODEL_API_KEY
 ```
 
-Review and merge the three generated files, then inspect the baseline under Actions → Bypass Security. When using a source checkout, add `--action-ref <REVIEWED_BYPASS_COMMIT_SHA>` with a full 40-character Bypass SHA. Installed packages infer it from their release identity. `bypass ci init` without `--agent` retains the existing exported-test workflow.
+Review and merge the three generated files, then inspect the baseline under Actions → Bypass Security. When using a source checkout, add `--release-id main-<BYPASS_COMMIT_SHA>-<RUN_ID>-<ATTEMPT>` for the reviewed public release. Installed packages infer it from their release identity. `--action-ref` can override the pinned public Action SHA when reviewing a new Action version. `bypass ci init` without `--agent` retains the existing exported-test workflow.
 
 To include an existing DNS-verified target and saved regression checks:
 
@@ -41,7 +41,7 @@ bypass ci init --agent \
 
 If setup files already exist, inspect the proposed settings before explicitly adding `--force`. This regenerates all three files, including custom policy settings; it is not a merge operation. `--every 6h` changes the cadence; `--every off` keeps deployment and manual verification without cron.
 
-The equivalent Muse tool accepts the same `agent`, `action-ref`, `target`, `every`, `revision-path` and `revision-field` options. Choosing **After deploy only** maps to `every: "off"`. No workflow is pushed and no secret is configured merely by generating these files.
+The equivalent Muse tool accepts the same `agent`, `action-ref`, `release-id`, `target`, `every`, `revision-path` and `revision-field` options. Choosing **After deploy only** maps to `every: "off"`. No workflow is pushed and no secret is configured merely by generating these files.
 
 ## Connect deployment verification
 
