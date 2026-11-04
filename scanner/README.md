@@ -75,6 +75,11 @@ read receipts are required for citations. Follow `nextAction` and `nextCursor`.
 The standalone CLI drives this loop automatically with its selected API profile.
 The server does not launch a model or a shell.
 
+Standalone reasoning has no fixed per-task conversation-turn cap: evidence
+requests can continue until an accepted submission or a remaining budget,
+deadline, or cancellation stops the task. Other workflows retain their own
+turn limits.
+
 Task leases, retry counts, model requests, evidence requests/bytes, follow-up
 levels, and run deadlines are bounded. Exact submissions are idempotent. Resume
 checks source/runtime/policy identity; expired run budgets require a new run.

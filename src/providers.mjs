@@ -119,11 +119,15 @@ function responseShape(text,reasoning,calls,finish,profile) {
     jsonStatus:'not_attempted'};
 }
 export class ProviderSession {
-  constructor(profile){this.profile=profile;this.history=[];this.pending=null;this.turns=0;}
+  constructor(profile,{maxTurns=10}={}){
+    need(maxTurns===null||(Number.isInteger(maxTurns)&&maxTurns>0),'Provider turn limit must be a positive integer or null.',3);
+    this.profile=profile;this.history=[];this.pending=null;this.turns=0;this.maxTurns=maxTurns;
+  }
   async turn(messages,{schema,signal,onProgress,timeoutMs}={}) {
     const p=checkedProfile(this.profile);
     const credentialDigest=hash({key:process.env[p.secretEnv],workspace:p.workspaceEnv?process.env[p.workspaceEnv]:null});need(!this.credentialDigest||this.credentialDigest===credentialDigest,'API credential or workspace changed during this run. Start a new review explicitly.',3,{reason:'credential_changed'});this.credentialDigest=credentialDigest;
-    need(++this.turns<=10,'Provider session exceeded ten turns.',3);
+    this.turns++;
+    need(this.maxTurns===null||this.turns<=this.maxTurns,`Provider session exceeded ${this.maxTurns} turns.`,3);
     need(Array.isArray(messages)&&messages.length&&Buffer.byteLength(JSON.stringify(messages))<=700000,'Model input exceeds the bounded context budget.',3);
     const requestTimeout=timeoutMs??p.timeoutMs;
     const deadline=requestTimeout===0?null:AbortSignal.timeout(requestTimeout),active=signal&&deadline?AbortSignal.any([signal,deadline]):signal||deadline;

@@ -359,6 +359,12 @@ task leases or overall stage budgets. Slow local generation may still exhaust
 those independent limits; inspect the run's coverage and unresolved cases rather
 than treating it as a completed review.
 
+Standalone discovery/evaluation tasks have no fixed per-task conversation-turn
+cap. A task can continue requesting evidence until its submission is accepted.
+Task leases, stage deadlines, configured model-request/evidence budgets,
+conversation-size limits, and cancellation still apply. This does not change
+the separate Docker `scan` worker's turn limits.
+
 An interrupted scanner run prints its failure message and stores its manifest
 under `.bypass/scanner/<run-id>/manifest.json`, separately from `scan` evidence.
 Use `discover status <run-id>` to inspect the saved state and

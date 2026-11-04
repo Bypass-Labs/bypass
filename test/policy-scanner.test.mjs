@@ -140,16 +140,17 @@ test('API driver failure persists an interrupted run and retains usage receipts'
   assert.equal(result.run.signalCount,0);
 });
 
-test('standalone policy uses the real provider transport only at the configured endpoint',{skip:!available},async t=>{
-  const root=await source();let requests=0;
+test('standalone policy completes tasks beyond ten turns through the real provider transport',{skip:!available},async t=>{
+  const root=await source();let requests=0;const phaseTurns=new Map();
   const key='BYPASS_POLICY_TRANSPORT_TEST_KEY',previous=process.env[key];process.env[key]='synthetic-policy-key';
   t.after(()=>{if(previous===undefined)delete process.env[key];else process.env[key]=previous;});
   const server=http.createServer((request,response)=>{
     assert.equal(request.url,'/v1/chat/completions');assert.equal(request.headers.authorization,'Bearer synthetic-policy-key');
     let body='';request.on('data',chunk=>body+=chunk);request.on('end',()=>{
       requests++;const message=JSON.parse(body),task=JSON.parse(message.messages[1].content),last=JSON.parse(message.messages.at(-1).content);
+      const turns=(phaseTurns.get(task.phase)||0)+1;phaseTurns.set(task.phase,turns);
       assert.equal(message.tools[0].function.parameters.type,'object');
-      const action=last.evidence?{action:'submit',result:task.phase==='mapping'?mapping(last.evidence.reference.id):finding(last.evidence.reference.id)}:
+      const action=turns>11?{action:'submit',result:task.phase==='mapping'?mapping(last.evidence.reference.id):finding(last.evidence.reference.id)}:
         {action:'evidence',operation:'read',arguments:{path:'app.py'}};
       response.setHeader('content-type','application/json');
       response.end(JSON.stringify({id:'fixture',object:'chat.completion',choices:[{index:0,finish_reason:'stop',message:{role:'assistant',content:JSON.stringify(action)}}]}));
@@ -158,6 +159,7 @@ test('standalone policy uses the real provider transport only at the configured 
   await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));t.after(()=>new Promise(resolve=>server.close(resolve)));
   await execute('model add',['policy-api'],{project:root,provider:'custom','base-url':`http://127.0.0.1:${server.address().port}/v1`,model:'fixture',stream:false,'secret-env':key,'allow-private':true,'timeout-ms':0});
   const result=await execute('discover',[],{project:root,'discovery-only':true,detector:'policy',policy:'authz/object-access'},{scannerConnect:connect});
-  assert.equal(result.run.status,'completed',JSON.stringify(result));assert.equal(requests,4);
-  assert.equal(result.run.reasoning.independentModelRequests,4);
+  assert.equal(result.run.status,'completed',JSON.stringify(result));assert.equal(requests,24);
+  assert.deepEqual([...phaseTurns.values()],[12,12]);
+  assert.equal(result.run.reasoning.independentModelRequests,24);
 });

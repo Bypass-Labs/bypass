@@ -68,6 +68,18 @@ test('custom profiles omit reasoning overrides by default and never retry unsupp
   });
 });
 
+test('provider sessions allow scanner opt-in beyond ten turns while retaining the default cap',async t=>{
+  const {profile,calls}=await endpoint(t,(_req,res)=>chat(res,action({focus:'test'})));
+  const unlimited=new ProviderSession(profile,{maxTurns:null});
+  for(let turn=0;turn<12;turn++)assert.equal((await unlimited.turn([{role:'user',content:'Synthetic observation'}],{schema})).focus,'test');
+  assert.equal(calls.length,12);
+  const bounded=new ProviderSession(profile);
+  for(let turn=0;turn<10;turn++)await bounded.turn([{role:'user',content:'Synthetic observation'}],{schema});
+  await assert.rejects(bounded.turn([{role:'user',content:'Synthetic observation'}],{schema}),/exceeded 10 turns/);
+  assert.equal(calls.length,22);
+  for(const maxTurns of [0,-1,1.5,Infinity])assert.throws(()=>new ProviderSession(profile,{maxTurns}),/Provider turn limit/);
+});
+
 test('no-timeout profiles retain SDK parsing without deadline or socket timers',async t=>{
   for(const transport of ['chat','responses'])for(const stream of [false,true]){
     await t.test(`${transport} ${stream?'streamed':'buffered'}`,async t=>{
