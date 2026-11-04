@@ -49,6 +49,17 @@ test('JSON-schema mode fails explicitly on unsupported servers without fallback 
   assert.equal(calls.length,1);
 });
 
+test('raw rejection callback excludes reasoning and stays out of public failure details',async t=>{
+  const {profile}=await endpoint(t,(_req,res)=>chat(res,{role:'assistant',content:'PRIVATE_INVALID_JSON',reasoning_content:'PRIVATE_REASONING'}));
+  const responses=[];
+  await assert.rejects(new ProviderSession(profile).turn([{role:'user',content:'x'}],{schema,onRejectedResponse:response=>responses.push(response)}),error=>{
+    assert.doesNotMatch(JSON.stringify(error.details),/PRIVATE_INVALID_JSON|PRIVATE_REASONING/);
+    return true;
+  });
+  assert.equal(responses[0].content,'PRIVATE_INVALID_JSON');
+  assert.doesNotMatch(JSON.stringify(responses),/PRIVATE_REASONING/);
+});
+
 test('JSON-schema Chat supports streamed content and still rejects schema-invalid JSON',async t=>{
   for(const valid of [true,false])await t.test(String(valid),async t=>{
     const {profile}=await endpoint(t,(_req,res)=>{

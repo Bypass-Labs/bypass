@@ -95,8 +95,12 @@ issued task records `taskTimeoutDisabled: true`. Zero-timeout standalone
 profiles also disable policy/evaluation stage deadlines: tasks record
 `stageTimeoutDisabled: true` and `expiresAt: 0`. Finite profiles and
 Muse-hosted tasks retain their leases and stage deadlines. CodeQL resource
-timeouts, request/evidence/context budgets, attempt limits, and cancellation
-remain enforced.
+timeouts, evidence-byte/context budgets, task/attempt limits, and cancellation
+remain enforced. Zero-timeout standalone profiles also disable model-request
+and per-task evidence-request count limits for policy discovery and evaluation.
+Counts remain recorded across resumes without resetting usage. Finite profiles
+and Muse-hosted tasks retain request limits. Progress identifies unlimited
+request counts explicitly.
 
 Standalone tool schemas distinguish evidence (`action`, `operation`,
 `arguments`) from submission (`action`, `result`); unused fields must be absent.

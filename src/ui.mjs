@@ -21,6 +21,7 @@ import { summaryText as blackboxSummary } from './blackbox/report.mjs';
 import { progressLine as blackboxProgressLine } from './blackbox/progress.mjs';
 import { createTheme, brandHeading } from './terminal-theme.mjs';
 import { promptMethods, mayChangeData, recommendedMethods } from './http-methods.mjs';
+import { reasoningProgress } from './scanner/progress.mjs';
 
 const theme=createTheme();
 const color=!!process.stdout.isTTY&&!process.env.NO_COLOR;
@@ -82,6 +83,10 @@ export function printResult(data){
     console.log(`\n${bold(incomplete?'Discovery incomplete':'Discovery')} · ${label(status)}\nRun: ${r.id}`);
     if(value.message||r.message)console.log(`\n${value.message||r.message}`);
     console.log(`\nStage: ${r.phase||r.stage||'discovery'}\nDetector signals: ${r.signalCount}\nEvaluation: ${r.evaluation}`);
+    for(const stage of ['discovery','evaluation']){
+      const progress=reasoningProgress(r,stage);
+      if(progress)console.log(progress.message);
+    }
     console.log(r.executionMode==='muse-host'?'Reasoning: active Muse session · usage unavailable':`Model requests: ${r.reasoning?.independentModelRequests??((r.policy?.modelRequests||0)+(r.evaluationSummary?.modelRequests||0))}`);
     console.log(`Evidence: .bypass/scanner/${r.id}/manifest.json`);
     console.log(`Next: bypass discover ${status==='interrupted'?`resume ${r.id}`:`report ${r.id} --format md`}`);
