@@ -12,6 +12,25 @@ import { stopPOC } from '../src/poc.mjs';
 import { beginHostReview, hostReviewStep, combinedFocusBudget, combinedReviewHandoff } from '../src/host-review.mjs';
 import { inExecutionMode } from '../src/execution-mode.mjs';
 import { inventory } from '../src/repository.mjs';
+import { sourceContextFromFindings } from '../src/audit-engine.mjs';
+
+test('combined handoff retains methods from cited source handlers when inventory says UNKNOWN',async()=>{
+  const root=temp();
+  fs.mkdirSync(path.join(root,'src'));
+  fs.writeFileSync(path.join(root,'src/server.ts'),
+    "if (method === 'POST' && path === '/api/auth/verify-2fa') {\n"+
+    "  if (body.rememberDevice) return success();\n}\n");
+  await execute('init',[root]);
+  await change(root,state=>state.findings.push({id:'source-2fa',title:'2FA bypass',
+    category:'authorization',method:'UNKNOWN',resourcePath:'/api/auth/verify-2fa',
+    hypothesis:'Remembered devices may bypass the second factor.',recommendation:'Verify the code.',
+    sourceEvidence:{kind:'source',file:'src/server.ts',line:2,
+      quote:'  if (body.rememberDevice) return success();'}}));
+  const context=sourceContextFromFindings(root,{findings:['source-2fa'],
+    inventory:await inventory(root)});
+  assert.equal(context.endpoints[0].method,'POST');
+  assert.equal(context.securityLeads[0].method,'POST');
+});
 
 function saveFocusedProof(folder,url,route,{verdict='confirmed',spec={}}={}) {
   const proof=path.join(folder,'poc','f-001','poc.mjs');

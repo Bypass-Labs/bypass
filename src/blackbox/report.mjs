@@ -332,6 +332,12 @@ function sourceFindingValidation(surface, findings, web) {
   return (surface?.sourceReview?.securityLeads ?? []).map(lead => {
     const finding = findings.find(item => item.sourceFinding?.id === lead.id);
     const result = (web?.results ?? []).find(item => item.sourceLeadId === lead.id);
+    const relatedKind = /\bsql\b|sql injection/i.test(`${lead.title} ${lead.hypothesis}`) ?
+      'sql-boolean' : /command injection/i.test(`${lead.title} ${lead.hypothesis}`) ?
+        'command-output' : null;
+    const related = !result && relatedKind ? (web?.results ?? []).find(item =>
+      item.kind === relatedKind && item.lead?.path === lead.path &&
+      ['blocked', 'inconclusive'].includes(item.verdict)) : null;
     let status = 'not tested', liveReason = 'No matching bounded live verifier completed.';
     if (finding) {
       status = 'confirmed live';
@@ -345,10 +351,13 @@ function sourceFindingValidation(surface, findings, web) {
     } else if (result?.verdict === 'confirmed') {
       status = 'inconclusive';
       liveReason = 'A positive live signal was recorded, but no final proof survived replay.';
+    } else if (related) {
+      status = related.verdict;
+      liveReason = `A related ${relatedKind} check was ${related.verdict}: ${related.reason}. The source claim was not proved.`;
     }
     return {...lead, sourceVerdict: 'unproven', status, liveReason,
       evidence: finding ? [...(finding.evidence ?? []), ...(finding.confirmation ?? [])] :
-        result?.evidence ?? []};
+        result?.evidence ?? related?.evidence ?? []};
   });
 }
 

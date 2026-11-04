@@ -4,7 +4,7 @@ Bypass tests one authorized app origin under an explicit scope. The standalone C
 
 ## Start
 
-The shortest standalone path is `bypass onboard`: choose **Running app only** or **Code + running app**, select the app URL, review paths and methods, and approve the displayed scope. A resumed combined project asks you to select the saved app or enter another URL before live testing. The first audit starts after setup; `bypass blackbox <url>` is the direct command for an already configured app. In Muse Code, combined review completes source work first, then passes cited leads to one full live audit. Its five-minute choice is a quick pass with explicit untested coverage.
+The shortest standalone path is `bypass onboard`: choose **Running app only** or **Code + running app**, select the app URL, review paths and methods, and approve the displayed scope. A resumed combined project asks you to select the saved app or enter another URL before live testing. The first audit starts after setup; `bypass blackbox <url>` is the direct command for an already configured app. In Muse Code, combined review completes source work first, then passes cited leads to one full live audit. Its ten-minute choice is a quick pass with explicit untested coverage.
 
 In Muse Code, `/bypass:start` connects the application and `/bypass:blackbox` starts a running-app audit with the active Muse session. The plugin does not ask for a separate Meta API key.
 

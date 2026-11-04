@@ -1481,7 +1481,7 @@ export async function runAudit({url, root = process.cwd(), scopeFile = null, ove
         researchDeadline,
         // A short combined review can finish Muse planning at the research
         // cutoff and still run already selected checks in the proof reserve.
-        ...(combinedReviewId && scope.limits.minutes <= 5 ?
+        ...(combinedReviewId && scope.limits.minutes <= 10 ?
           {executionDeadline: deadline - 5_000} : {}),
         researchDeadlineAfterAuth: () => derivedPending.length ?
           protectedPlanningDeadline(Date.now(), primaryAfterSessionDeadline,

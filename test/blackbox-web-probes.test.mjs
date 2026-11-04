@@ -1718,6 +1718,27 @@ test('SQL search tries observed example baselines and prioritizes routes with a 
   assert.equal(values.length, 7);
 });
 
+test('Cloudflare challenge is reported as blocked SQL proof, not a negative app result',async()=>{
+  const {scope}=loadScope({origin:'http://127.0.0.1:4329',overrides:{acceptLocal:true}});
+  const surface={patterns:[{pattern:'/api/telemetry/search',params:{q:['present']},
+    source:['public-asset'],responseFacts:{status:200,type:'application/json'},
+    publicIds:['1']}]};
+  let calls=0;
+  const requester=async ({url})=>{
+    calls++;
+    const baseline=new URL(url,scope.target.origin).searchParams.get('q')==='present';
+    const body=baseline?'{"items":[{"id":1}]}':'<title>Attention Required! | Cloudflare</title>';
+    return {status:baseline?200:403,type:baseline?'application/json':'text/html',
+      body,ids:baseline?['1']:[],hash:body,headers:{server:'cloudflare'},
+      evidenceId:`ev-${String(calls).padStart(4,'0')}`};
+  };
+  const run=await runWebProbes(surface,scope,{requester,budget:1});
+  const result=run.results.find(item=>item.kind==='sql-boolean');
+  assert.equal(result?.verdict,'blocked',JSON.stringify(run.results));
+  assert.match(result.reason,/Cloudflare blocked/);
+  assert.equal(run.findings.length,0);
+});
+
 test('Muse reviews late web candidates in bounded pages and cannot rank an unseen page', async () => {
   const {scope} = loadScope({origin: 'http://127.0.0.1:4329', overrides: {acceptLocal: true}});
   const patterns = Array.from({length: 41}, (_, index) => ({

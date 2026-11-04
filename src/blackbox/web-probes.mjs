@@ -4567,7 +4567,13 @@ export async function runWebProbes(surface, scope, {requester, ledger = null, bu
       }
       if ([yes, no].some(item => item.status == null || [400, 401, 403, 429].includes(item.status) ||
           item.status >= 500 || item.status >= 300 && item.status < 400)) {
-        verdict = 'inconclusive'; reason = 'SQL boolean response was an error, throttle or redirect'; break;
+        const edgeBlocked = [yes, no].some(item => item.status === 403 &&
+          /attention required!?\s*\|\s*cloudflare/i.test(item.body ?? ''));
+        verdict = edgeBlocked ? 'blocked' : 'inconclusive';
+        reason = edgeBlocked ?
+          'Cloudflare blocked the SQL proof request (HTTP 403); application behavior remains untested' :
+          'SQL boolean response was an error, throttle or redirect';
+        break;
       }
       if (index && baseline.hash !== pairs[0].baseline.hash) {
         verdict = 'inconclusive'; reason = 'record baseline changed between SQL boolean pairs'; break;

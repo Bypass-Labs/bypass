@@ -1,4 +1,5 @@
 import path from 'node:path';
+import fs from 'node:fs';
 import {read, change, event} from './store.mjs';
 import {executeSourceReview, realPlan} from './real-engine.mjs';
 import {prepareScopeTemplate} from './blackbox/setup.mjs';
@@ -18,8 +19,26 @@ const leadCategory = finding => finding.privateFields?.length ? 'sensitive-data'
 export function sourceContextFromFindings(root, sourceResult) {
   const state = read(root);
   const routeLocations = sourceResult.inventory?.routeLocations ?? [];
-  const methodFor = finding => finding.method ?? routeLocations.find(route =>
-    route.path === finding.resourcePath)?.method ?? 'UNKNOWN';
+  const methodsByFile = new Map();
+  const sourceMethods = file => {
+    if (methodsByFile.has(file)) return methodsByFile.get(file);
+    const methods = new Map();
+    const full = path.resolve(root, file ?? '');
+    if (sourceResult.inventory?.files?.includes(file) &&
+        full.startsWith(path.resolve(root) + path.sep) &&
+        fs.existsSync(full) && fs.statSync(full).size <= 1_000_000) {
+      for (const line of fs.readFileSync(full, 'utf8').split('\n')) {
+        const method = line.match(/\b(?:req\.)?method\s*===\s*(['"])(GET|HEAD|POST|PUT|PATCH|DELETE|OPTIONS)\1/);
+        const route = line.match(/\b(?:path|pathname|url)\s*===\s*(['"])(\/[^'"]+)\1/);
+        if (method && route) methods.set(route[2], method[2]);
+      }
+    }
+    methodsByFile.set(file, methods);
+    return methods;
+  };
+  const methodFor = finding => (finding.method && finding.method !== 'UNKNOWN' ? finding.method : null) ?? routeLocations.find(route =>
+    route.path === finding.resourcePath && route.method)?.method ??
+    sourceMethods(finding.sourceEvidence?.file).get(finding.resourcePath) ?? 'UNKNOWN';
   const findings = (sourceResult.findings ?? []).map(findingId =>
     state.findings.find(finding => finding.id === findingId)).filter(Boolean);
   const files = [...new Map(findings.filter(finding => finding.sourceEvidence?.file)

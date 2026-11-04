@@ -129,6 +129,24 @@ test('combined report keeps source findings and labels each live-validation stat
   assert.match(report.markdown, /source findings remain unproven unless the status is \*\*confirmed live\*\*/i);
 });
 
+test('related blocked SQL check explains why a source claim was not live-confirmed', () => {
+  const scope = structuredClone(DEFAULT_SCOPE);
+  const lead = {id:'source-sql',title:'SQL injection in telemetry search',
+    category:'injection',path:'/api/telemetry/search',method:'GET',
+    hypothesis:'A SQL search value may expose hidden records.',remediation:'Bind query values.',
+    fields:[],verdict:'unproven',source:{file:'server.ts',line:20,quote:'query'}};
+  const report = renderReport({run:'bx-source-blocked',scope,scopeHash:'test',
+    surface:{patterns:[],sourceReview:{securityLeads:[lead],files:[],notes:[],
+      secretLeads:[],stats:{files:1,skipped:0,filesCut:0,routesCut:0}}},
+    findings:[],results:[],web:{results:[{kind:'sql-boolean',
+      lead:{path:lead.path},verdict:'blocked',
+      reason:'Cloudflare blocked the SQL proof request (HTTP 403)',evidence:[]}]}});
+  const status=report.json.surface.application.sourceFindings[0];
+  assert.equal(status.status,'blocked');
+  assert.match(status.liveReason,/source claim was not proved/);
+  assert.match(report.markdown,/Cloudflare blocked the SQL proof request/);
+});
+
 test('combined planning prioritizes cited source findings and preserves their live outcome', async () => {
   const scope = structuredClone(DEFAULT_SCOPE);
   const sourceLead = {id: 'finding-header-trust',

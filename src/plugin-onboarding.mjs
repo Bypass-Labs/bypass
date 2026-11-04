@@ -94,6 +94,8 @@ export async function pluginOnboarding(cwd,root,{intent='real',mode,url,environm
   }
   if(interactiveCombined&&mode==='combined'&&target&&(owned||skipVerification)&&
     (!requestedOrigin||requestedOrigin===target.url)&&['scope','review'].includes(nextAction.id)){
+    if(minutes!=null)need(Number.isFinite(minutes)&&minutes>=10,
+      'The combined wizard needs at least 10 minutes for source and live testing.');
     const savedMethods=target.authorization?.methods||recommendedMethods;
     const savedRate=target.authorization?.maxRequestsPerSecond||DEFAULT_REQUESTS_PER_SECOND;
     if(methods==null)nextAction={id:'methods',tool:'bypass_onboarding',question:'Which HTTP methods may this combined audit use?',
@@ -116,10 +118,10 @@ export async function pluginOnboarding(cwd,root,{intent='real',mode,url,environm
       ],{custom:'value'}),guidance:'Ask this question once. This cap covers the connected full live audit; Muse Code source-review reasoning is outside this counter.'};
     else if(minutes==null)nextAction={id:'minutes',tool:'bypass_onboarding',question:'What time budget should the combined review use?',
       input:choiceInput('minutes',[
-        {id:'quick',label:'5-minute test',description:'Fast first pass with partial coverage; remaining work is reported.',arguments:{minutes:5}},
+        {id:'quick',label:'10-minute test',description:'Fast first pass with partial coverage; remaining work is reported.',arguments:{minutes:10}},
         {id:'default',label:'30 minutes',description:'Use the default total duration.',arguments:{minutes:30}},
-        {id:'custom',label:'Custom duration',description:'Enter a positive number of minutes.',requiresInput:'minutes'}
-      ],{recommended:'default',custom:'value'}),guidance:'Ask this question once. Elapsed time starts at the source review; Bypass applies the remaining time to the connected live audit. Five minutes is a quick pass, not full coverage. The plugin cannot interrupt Muse Code while it is thinking.'};
+        {id:'custom',label:'Custom duration',description:'Enter at least 10 minutes.',requiresInput:'minutes'}
+      ],{recommended:'default',custom:'value'}),guidance:'Ask this question once. Elapsed time starts at the source review; Bypass applies the remaining time to the connected live audit. Ten minutes is a quick pass, not full coverage. The plugin cannot interrupt Muse Code while it is thinking.'};
     else if(!scopeApproved)nextAction={id:'scope',tool:'bypass_authorize_target'};
     else nextAction={id:'review',tool:'bypass_scan',arguments:{mode:'combined',modelCalls,minutes},
       message:'Start the combined source and live review with the selected total Muse-call and time limits.'};
