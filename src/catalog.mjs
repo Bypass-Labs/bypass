@@ -19,12 +19,12 @@ export const commands={
   'scanner policies':command('scanner policies','List exact bundled policy IDs without Docker or inference.','query'),
   'scanner doctor':command('scanner doctor','Inspect the selected detector runtime and image readiness; no inference.','detector'),
   'scanner prepare':command('scanner prepare','Prepare the lightweight policy or pinned SAST runtime.','detector'),
-  poc:command('poc','Open an isolated two-container security POC with a local test app.','dir model'),
-  'poc start':command('poc start','Create a separate POC app with public accounts and containerized audit workers.','dir port model'),
-  'poc resume':command('poc resume','Restart the saved generated local fixture; preserve findings and tests.'),
-  'poc stop':command('poc stop','Stop this POC fixture app; preserve its evidence.'),
-  demo:command('demo','Guided local walkthrough: prove, fix, retest, and catch a regression.','dir'),
-  onboard:command('onboard [path]','Guided QuickStart, resumable app verification, or local demo.','repo dir flow mode'),
+  poc:command('poc','Open an isolated two-container security POC with a local test app.','dir model',{hidden:true}),
+  'poc start':command('poc start','Create a separate POC app with public accounts and containerized audit workers.','dir port model',{hidden:true}),
+  'poc resume':command('poc resume','Restart the saved generated local fixture; preserve findings and tests.','',{hidden:true}),
+  'poc stop':command('poc stop','Stop this POC fixture app; preserve its evidence.','',{hidden:true}),
+  demo:command('demo','Guided local walkthrough: prove, fix, retest, and catch a regression.','dir',{hidden:true}),
+  onboard:command('onboard [path]','Connect code, a running app, or both and start the selected security audit.','repo dir flow mode'),
   init:command('init [path]','Connect a repository and configure a project.','repo dir config name plan tracked-files'),
   'app connect':command('app connect <url>','Connect a running app without a source repository.','environment'),
   'repo show':command('repo show','Inspect the connected repository.'),
@@ -106,13 +106,13 @@ export const commands={
   'monitor worker':command('monitor worker','Run the real local scheduler (machine must remain awake).','detach once stop'),
   'ci init':command('ci init','Generate GitHub saved checks, or a Meta API security agent with --agent.','provider target force agent action-ref every revision-path revision-field'),
   'mcp serve':command('mcp serve','Start the typed stdio MCP server.'),
-  'demo start':command('demo start','Create the Ledger Git fixture and start its HTTP server.','dir port'),
-  'demo status':command('demo status','Show the fixture state.'),
-  'demo fix':command('demo fix','Enable ownership enforcement in the local fixture.'),
-  'demo regress':command('demo regress','Reintroduce the local fixture defect.'),
-  'demo add-route':command('demo add-route','Add an uncovered export route to the fixture.'),
-  'demo reset':command('demo reset','Reset fixture behavior while retaining evidence.'),
-  'demo stop':command('demo stop','Stop the local fixture server.'),
+  'demo start':command('demo start','Create the Ledger Git fixture and start its HTTP server.','dir port',{hidden:true}),
+  'demo status':command('demo status','Show the fixture state.','',{hidden:true}),
+  'demo fix':command('demo fix','Enable ownership enforcement in the local fixture.','',{hidden:true}),
+  'demo regress':command('demo regress','Reintroduce the local fixture defect.','',{hidden:true}),
+  'demo add-route':command('demo add-route','Add an uncovered export route to the fixture.','',{hidden:true}),
+  'demo reset':command('demo reset','Reset fixture behavior while retaining evidence.','',{hidden:true}),
+  'demo stop':command('demo stop','Stop the local fixture server.','',{hidden:true}),
   _run:command('_run <id>','Internal detached run entry point.','',{hidden:true}),
   '_demo-serve':command('_demo-serve','Internal fixture server.','',{hidden:true})
 };
@@ -139,9 +139,9 @@ export function parse(argv){
   return {key,args:words,options};
 }
 export function help(key,reference=false){
-  if(!key&&!reference)return `BYPASS  /  security checks that stay with your code\n\nMuse plugin (recommended): /bypass:start inside Muse\n\n  bypass onboard       Connect your application\n  bypass poc           Try the isolated local security demo\n  bypass status        See what is done and what comes next\n  bypass scan          Review configured source and live checks\n  bypass discover --plan  Plan deterministic CodeQL discovery (no LLM)\n  bypass test run --all  Replay saved regressions without AI\n\nCredentials are optional. Account-boundary tests need two accounts.\nStandalone AI needs an API-key profile; Muse uses its active session.\n\nFull reference: bypass --help --reference\nCommand details: bypass <command> --help\n`;
+  if(!key&&!reference)return `BYPASS  /  security checks that stay with your code\n\nMuse plugin (recommended): /bypass:start inside Muse\n\n  bypass onboard       Connect code, a running app, or both\n  bypass scan          Run the selected source, live, or combined audit\n  bypass status        See what is done and what comes next\n  bypass finding list  Open findings, impact, and remediation\n  bypass test run --all  Replay saved regressions without AI\n\nStandalone AI uses a Muse model API profile; the Muse plugin uses its active session.\n\nFull reference: bypass --help --reference\nCommand details: bypass <command> --help\n`;
   const selected=commands[key];
   if(selected)return `bypass ${selected.usage}\n\n${selected.description}\n\nOptions: ${selected.flags.map(x=>'--'+x).join(', ')||'(none)'}\nGlobal: --project <path>, --json, --non-interactive, --help\n`;
   const entries=Object.entries(commands).filter(([k,v])=>!v.hidden&&(!key||k.startsWith(key+' ')));
-  return `BYPASS  /  security checks that stay with your code\n\nStart here: bypass demo — complete guided walkthrough; no DNS or login needed.\nYour project: bypass onboard — connect a repository and preview a review.\n\nAudit engine · isolated Docker workers for source review and HTTP proof; offline preview available\n\n${entries.map(([,v])=>`  ${v.usage.padEnd(38)} ${v.description}`).join('\n')}\n\nGlobal: --project <path>, --json, --non-interactive, --help, --version\nExit codes: 0 success · 1 failed regression · 2 usage/config · 3 blocked/incomplete (including mock scan results) · 130 cancelled\n`;
+  return `BYPASS  /  security checks that stay with your code\n\nStart here: bypass onboard — connect code, a running app, or both.\nRun an audit: bypass scan — use the selected source, live, or combined scope.\n\nAudit engine · isolated source review plus authorized HTTP testing\n\n${entries.map(([,v])=>`  ${v.usage.padEnd(38)} ${v.description}`).join('\n')}\n\nGlobal: --project <path>, --json, --non-interactive, --help, --version\nExit codes: 0 success · 1 failed regression · 2 usage/config · 3 blocked/incomplete · 130 cancelled\n`;
 }

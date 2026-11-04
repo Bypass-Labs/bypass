@@ -8,6 +8,7 @@ import {DEFAULT_SCOPE} from '../src/blackbox/scope.mjs';
 import {createLedger} from '../src/blackbox/ledger.mjs';
 import {reviewSource} from '../src/blackbox/source.mjs';
 import {runWebProbes} from '../src/blackbox/web-probes.mjs';
+import {planResearchFlows, runResearchFlows} from '../src/blackbox/research-flow.mjs';
 import {proveFindings} from '../src/blackbox/poc.mjs';
 import {renderReport} from '../src/blackbox/report.mjs';
 
@@ -27,7 +28,7 @@ test('source review preserves a bounded private-record lead without response val
   assert.ok(!JSON.stringify(lead).includes('users[1]'));
 });
 
-test('source private-record verifier uses two anonymous IDs twice and stores no PII values', async t => {
+test('source private-record verifier handles named and prefix routes without storing PII', async t => {
   const root = temp();
   t.after(() => fs.rmSync(root, {recursive: true, force: true}));
   const ledger = createLedger(root);
@@ -41,17 +42,21 @@ test('source private-record verifier uses two anonymous IDs twice and stores no 
   const values = {1: {email: 'alpha@example.test', phone: '+15550000001', clearance: 'red'},
     2: {email: 'beta@example.test', phone: '+15550000002', clearance: 'blue'}};
   let sequence = 0;
-  const checked = await runWebProbes({patterns: [], sourceReview: {securityLeads: [sourceLead]}},
-    scope, {budget: 1, ledger, researchDeadline: Date.now() + 10_000,
-      requester: async ({url}) => {
-        const id = new URL(url, scope.target.origin).pathname.split('/').at(-1);
-        return {status: 200, type: 'application/json', body: JSON.stringify(values[id]),
-          headers: {'cache-control': 'no-store'}, evidenceId: ledger.append({step: 'task',
-            request: {url}, response: {status: 200, hash: `response-${++sequence}`}})};
-      }});
-  assert.equal(checked.findings.length, 1, JSON.stringify(checked.results));
-  assert.equal(checked.findings[0].sourceFinding.id, sourceLead.id);
-  assert.equal(checked.results[0].verdict, 'confirmed');
+  for(const [route,quote] of [['/v2/api/user/:id','email: target.email'],
+    ['/v2/api/user/',"if (path.startsWith(dossierPrefix)) {"]]){
+    sourceLead.path=route;sourceLead.source.quote=quote;
+    const checked = await runWebProbes({patterns: [], sourceReview: {securityLeads: [sourceLead]}},
+      scope, {budget: 1, ledger, researchDeadline: Date.now() + 10_000,
+        requester: async ({url}) => {
+          const id = new URL(url, scope.target.origin).pathname.split('/').at(-1);
+          return {status: 200, type: 'application/json', body: JSON.stringify(values[id]),
+            headers: {'cache-control': 'no-store'}, evidenceId: ledger.append({step: 'task',
+              request: {url}, response: {status: 200, hash: `response-${++sequence}`}})};
+        }});
+    assert.equal(checked.findings.length, 1, JSON.stringify(checked.results));
+    assert.equal(checked.findings[0].sourceFinding.id, sourceLead.id);
+    assert.equal(checked.results[0].verdict, 'confirmed');
+  }
   const stored = fs.readFileSync(ledger.file, 'utf8');
   for (const record of Object.values(values)) for (const value of Object.values(record))
     assert.ok(!stored.includes(value), `ledger stored ${value}`);
@@ -117,4 +122,34 @@ test('combined report keeps source findings and labels each live-validation stat
     ['confirmed live', 'not reproduced', 'inconclusive', 'not tested']);
   assert.match(report.markdown, /Source findings and live validation/);
   assert.match(report.markdown, /source findings remain unproven unless the status is \*\*confirmed live\*\*/i);
+});
+
+test('combined planning prioritizes cited source findings and preserves their live outcome', async () => {
+  const scope = structuredClone(DEFAULT_SCOPE);
+  const sourceLead = {id: 'finding-header-trust',
+    title: 'Caller-controlled crew header is trusted as authentication',
+    category: 'authorization', path: '/api/crew', method: 'GET', fields: [],
+    hypothesis: 'An anonymous request with the source-observed header may impersonate a crew member.',
+    remediation: 'Resolve identity from server-validated session state.', verdict: 'unproven',
+    source: {file: 'src/server.ts', line: 42, quote: "return req.headers['x-crew-id'];"}};
+  const surface = {patterns: [{pattern: '/api/crew', methods: ['GET'], params: {},
+    responseFacts: {status: 401}}], sourceReview: {securityLeads: [sourceLead]}};
+  let context;
+  const planned = await planResearchFlows(surface, scope, {model: 'fixture', budget: 1,
+    modelCallsAvailable: 1, infer: async (_model, messages) => {
+      context = JSON.parse(messages[1].content);
+      return {flows: [{sourceFindingId: sourceLead.id, family: 'header trust',
+        why: 'Test the cited authentication boundary before broad exploration',
+        priority: 10, as: 'anonymous', oracle: 'raw-observation',
+        rawRequests: [{method: 'GET', path: '/api/crew', headers: [], body: ''}]}]};
+    }});
+  assert.equal(context.sourceFindings[0].id, sourceLead.id);
+  assert.equal(planned.leads[0].sourceFindingId, sourceLead.id,
+    JSON.stringify(planned.decisions));
+  const run = await runResearchFlows(planned.leads, scope, {surface,
+    requester: async () => ({status: 401, type: 'application/json', body: '{}',
+      headers: {'cache-control': 'no-store'}, evidenceId: 'ev-1', cached: false}),
+    modelCallsAvailable: 0});
+  assert.equal(run.results[0].sourceLeadId, sourceLead.id);
+  assert.notEqual(run.results[0].verdict, 'untested');
 });

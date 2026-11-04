@@ -10,14 +10,15 @@ import {hash, id, need, now, redact} from './util.mjs';
 const RESEARCH_BEHAVIOR = new Set(['model-differential', 'model-json-differential',
   'model-http-sequence']);
 
-const leadCategory = category => /auth|access|idor|bola|permission|account/i.test(category) ?
-  'authorization' : /inject/i.test(category) ? 'injection' : /sensitive|disclos/i.test(category) ?
-    'sensitive-data' : 'other';
+const leadCategory = finding => finding.privateFields?.length ? 'sensitive-data' :
+  /auth|access|idor|bola|permission|account/i.test(finding.category) ?
+    'authorization' : /inject/i.test(finding.category) ? 'injection' :
+      /sensitive|disclos/i.test(finding.category) ? 'sensitive-data' : 'other';
 
 function sourceContext(root, sourceResult) {
   const state = read(root);
   const routeLocations = sourceResult.inventory?.routeLocations ?? [];
-  const methodFor = finding => routeLocations.find(route =>
+  const methodFor = finding => finding.method ?? routeLocations.find(route =>
     route.path === finding.resourcePath)?.method ?? 'UNKNOWN';
   const findings = (sourceResult.findings ?? []).map(findingId =>
     state.findings.find(finding => finding.id === findingId)).filter(Boolean);
@@ -29,9 +30,9 @@ function sourceContext(root, sourceResult) {
     file: finding.sourceEvidence.file, line: finding.sourceEvidence.line,
     source: 'white-box'}));
   const securityLeads = findings.filter(finding => finding.resourcePath).map(finding => ({
-    id: finding.id, title: finding.title, category: leadCategory(finding.category),
+    id: finding.id, title: finding.title, category: leadCategory(finding),
     path: finding.resourcePath, method: methodFor(finding), hypothesis: finding.hypothesis,
-    remediation: finding.recommendation, fields: [], source: {
+    remediation: finding.recommendation, fields: finding.privateFields ?? [], source: {
       file: finding.sourceEvidence.file, line: finding.sourceEvidence.line,
       quote: finding.sourceEvidence.quote}, verdict: 'unproven'}));
   return {root, files, endpoints, notes: securityLeads.map(lead => ({path: lead.path,

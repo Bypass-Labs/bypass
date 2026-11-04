@@ -96,7 +96,7 @@ export function createBlackboxProgress(origin, {write = chunk => process.stderr.
   columns = () => process.stderr.columns || 100, now = () => Date.now()} = {}) {
   const seen = new Set();
   const counters = {requests: 0, modelCalls: 0, checksDone: 0, checksUntested: 0, checksTotal: 0, confirmed: 0,
-    researchAttempts: 0,
+    researchAttempts: 0, modelActive: 0,
     routesReviewed: 0, routesAvailable: 0, pathsAccepted: 0};
   const frames = ['◐', '◓', '◑', '◒'];
   const heartbeatMs = 15000;
@@ -134,14 +134,15 @@ export function createBlackboxProgress(origin, {write = chunk => process.stderr.
     const bar = `${'█'.repeat(filled)}${'░'.repeat(10 - filled)}`;
     const spinner = frames[frame++ % frames.length];
     const shortTitle = ['Scope', 'Assets', 'Routes', 'Probes', 'Proofs', 'Report'][active.step - 1] ?? active.title;
+    const activeTitle=active.subtask?`${shortTitle} · ${active.subtask}`:shortTitle;
     const checks = active.step === 3 && counters.routesAvailable ?
       ` · ${counters.routesReviewed}/${counters.routesAvailable} routes` :
       counters.checksTotal ? ` · ${checksText()}` : '';
     const width = Math.max(24, columns() - 1);
     const choices = [
       `  ${spinner}  ${bar}  ${active.step}/${active.total}  ${active.title}  ·  ${elapsed(clock - startedAt)}  ·  ${countersText()}`,
-      `  ${spinner}  ${bar.slice(0, 6)}  ${active.step}/${active.total} ${shortTitle} · ${elapsed(clock - startedAt)} · ${counters.requests} HTTP · ${counters.modelCalls} Muse${checks}`,
-      `  ${spinner} ${active.step}/${active.total} ${shortTitle} · ${elapsed(clock - startedAt)} · ${counters.requests} HTTP · ${counters.modelCalls} Muse${checks}`,
+      `  ${spinner}  ${bar.slice(0, 6)}  ${active.step}/${active.total} ${activeTitle} · ${elapsed(clock - startedAt)} · ${counters.requests} HTTP · ${counters.modelCalls} Muse${checks}`,
+      `  ${spinner} ${active.step}/${active.total} ${activeTitle} · ${elapsed(clock - startedAt)} · ${counters.requests} HTTP · ${counters.modelCalls} Muse${checks}`,
       `  ${spinner} ${active.step}/${active.total} ${shortTitle} ${elapsed(clock - startedAt)} H${counters.requests} M${counters.modelCalls}${active.step === 3 && counters.routesAvailable ? ` R${counters.routesReviewed}/${counters.routesAvailable}` : counters.checksTotal ? checksReconciled ? ` ${counters.checksDone}/${counters.checksTotal}` : ` ${counters.checksDone} run` : ''}`,
     ];
     const plain = choices.find(value => value.length <= width) ?? choices.at(-1).slice(0, width);
@@ -158,6 +159,19 @@ export function createBlackboxProgress(origin, {write = chunk => process.stderr.
     if (event?.stage === 'progress') {
       if (event.type === 'request') counters.requests = Math.max(counters.requests, event.requests ?? 0);
       if (event.type === 'model') counters.modelCalls = Math.max(counters.modelCalls, event.modelCalls ?? 0);
+      if (event.type === 'model-start') {
+        counters.modelActive = Math.max(1, event.active ?? 1);
+        if(active)active.subtask=`${event.activity} · Muse ${event.call}`;
+        clear();
+        write(`  ${paint('36',('Muse '+event.call).padEnd(14))} ${redact(event.activity)} · started · ${counters.modelActive}/${event.configured ?? 4} active\n`);
+      }
+      if (event.type === 'model-finish') {
+        counters.modelActive = Math.max(0, event.active ?? 0);
+        if(active)active.subtask=counters.modelActive?`${counters.modelActive} Muse calls active`:'Applying Muse output';
+        clear();
+        write(`  ${paint(event.status === 'completed'?'32':'33',('Muse '+event.call).padEnd(14))} ${event.status} · ${elapsed(event.durationMs ?? 0)}${counters.modelActive?` · ${counters.modelActive} still active`:''}\n`);
+      }
+      if (event.type === 'activity' && event.message && active) active.subtask=event.message;
       if (event.type === 'research-attempt') counters.researchAttempts++;
       if (event.type === 'recon-total') counters.routesAvailable = Math.max(counters.routesAvailable, event.routesAvailable ?? 0);
       if (event.type === 'recon') {

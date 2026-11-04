@@ -27,5 +27,5 @@ export function createTheme({output=process.stdout,env=process.env}={}) {
 
 export function brandHeading(subtitle,{output=process.stdout,env=process.env}={}) {
   const {paint}=createTheme({output,env});
-  return `${paint('brand','▰╲')}${paint('title','▰  BYPASS LABS')}\n${paint('muted',subtitle)}`;
+  return `${paint('brand','▰╲▰')}${paint('title','  BYPASS')}${paint('muted','  /  ')}${paint('title','BUILT FOR MUSE MODELS')}\n${paint('muted',subtitle)}`;
 }

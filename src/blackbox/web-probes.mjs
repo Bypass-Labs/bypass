@@ -306,13 +306,15 @@ function rateLimitLeads(surface, scope, budget) {
 function sourceDisclosureLeads(surface, scope, budget) {
   const leads = [];
   for (const source of surface?.sourceReview?.securityLeads ?? []) {
-    if (source.category !== 'sensitive-data' ||
+    if (!['sensitive-data', 'authorization'].includes(source.category) ||
         !['GET', 'HEAD', 'UNKNOWN'].includes(source.method) ||
         !PRIVATE_RECORD_PATH.test(source.path) || !(source.fields?.length)) continue;
     const tokens = [...source.path.matchAll(/:([A-Za-z_][A-Za-z0-9_]*)|\{([A-Za-z_][A-Za-z0-9_]*)\}/g)];
-    if (tokens.length !== 1) continue;
-    const firstPath = source.path.replace(tokens[0][0], '1');
-    const secondPath = source.path.replace(tokens[0][0], '2');
+    const prefix = tokens.length === 0 && source.path.endsWith('/') &&
+      /startsWith\s*\(/.test(source.source?.quote ?? '');
+    if (tokens.length !== 1 && !prefix) continue;
+    const firstPath = prefix ? `${source.path}1` : source.path.replace(tokens[0][0], '1');
+    const secondPath = prefix ? `${source.path}2` : source.path.replace(tokens[0][0], '2');
     const first = validateUrl(scope, firstPath, {identity: 'anonymous', method: 'GET'});
     const second = validateUrl(scope, secondPath, {identity: 'anonymous', method: 'GET'});
     if (!first.ok || !second.ok) continue;
@@ -2727,6 +2729,8 @@ export async function runWebProbes(surface, scope, {requester, ledger = null, bu
     .map(row => row.name));
   const observedTaskDemand = trackRows.reduce((count, row) =>
     count + row.count, 0);
+  log({stage:'progress',type:'activity',
+    message:`Preparing ${Math.min(observedTaskDemand,availableBudget)} scoped checks from ${observedTaskDemand} observed leads`});
   log({stage: 'progress', type: 'task-estimate',
     total: Math.min(observedTaskDemand, availableBudget)});
   // The first sequence page may need a sample, follow-up, or several revisions.
@@ -3535,6 +3539,8 @@ export async function runWebProbes(surface, scope, {requester, ledger = null, bu
         evidence: (lastResult.evidence ?? []).filter(item =>
           typeof item === 'string' && /^ev-\d+$/.test(item)).slice(0, 16)}} : {})});
   };
+  log({stage:'progress',type:'activity',
+    message:`Executing ${plan.leads.length} scoped checks with ${Math.max(1,Math.floor(scope.limits?.agents??1))} HTTP workers`});
   log({stage: 'progress', type: 'task-total', total: plan.leads.length});
   if (!earlyProgressCount) progressCheckpoint('planned');
   const recordResult = (item, alreadyProgressed = false) => {

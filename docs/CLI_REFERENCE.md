@@ -112,39 +112,9 @@ Prepare the lightweight policy or pinned SAST runtime.
 
 Options: `--detector <value>`
 
-## `bypass poc`
-
-Open an isolated two-container security POC with a local test app.
-
-Options: `--dir <value>`, `--model <value>`
-
-## `bypass poc start`
-
-Create a separate POC app with public accounts and containerized audit workers.
-
-Options: `--dir <value>`, `--port <value>`, `--model <value>`
-
-## `bypass poc resume`
-
-Restart the saved generated local fixture; preserve findings and tests.
-
-Options: None.
-
-## `bypass poc stop`
-
-Stop this POC fixture app; preserve its evidence.
-
-Options: None.
-
-## `bypass demo`
-
-Guided local walkthrough: prove, fix, retest, and catch a regression.
-
-Options: `--dir <value>`
-
 ## `bypass onboard [path]`
 
-Guided QuickStart, resumable app verification, or local demo.
+Connect code, a running app, or both and start the selected security audit.
 
 Options: `--repo <value>`, `--dir <value>`, `--flow <value>`, `--mode <value>`
 
@@ -332,7 +302,7 @@ Options: None.
 
 Add a standalone API-key provider profile.
 
-Options: `--provider <value>`, `--base-url <value>`, `--model <value>`, `--secret-env <value>`, `--allow-private`, `--effort <value>`, `--transport <value>`, `--max-output-tokens <value>`, `--timeout-ms <value>`, `--stream <value>`, `--workspace-env <value>`
+Options: `--provider <value>`, `--base-url <value>`, `--model <value>`, `--secret-env <value>`, `--allow-private`, `--effort <value>`, `--transport <value>`, `--response-mode <value>`, `--max-output-tokens <value>`, `--timeout-ms <value>`, `--stream <value>`, `--workspace-env <value>`
 
 ## `bypass model list`
 
@@ -631,48 +601,6 @@ Options: `--provider <value>`, `--target <value>`, `--force`, `--agent`, `--acti
 ## `bypass mcp serve`
 
 Start the typed stdio MCP server.
-
-Options: None.
-
-## `bypass demo start`
-
-Create the Ledger Git fixture and start its HTTP server.
-
-Options: `--dir <value>`, `--port <value>`
-
-## `bypass demo status`
-
-Show the fixture state.
-
-Options: None.
-
-## `bypass demo fix`
-
-Enable ownership enforcement in the local fixture.
-
-Options: None.
-
-## `bypass demo regress`
-
-Reintroduce the local fixture defect.
-
-Options: None.
-
-## `bypass demo add-route`
-
-Add an uncovered export route to the fixture.
-
-Options: None.
-
-## `bypass demo reset`
-
-Reset fixture behavior while retaining evidence.
-
-Options: None.
-
-## `bypass demo stop`
-
-Stop the local fixture server.
 
 Options: None.
 ## Exit codes

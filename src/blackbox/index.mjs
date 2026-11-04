@@ -43,6 +43,20 @@ const ACCEPTED_RESEARCH_CHECKPOINT = /^(?:json-experiment|access-boundary)(?:-de
 const HTTP_SEQUENCE_CHECKPOINT = /^http-sequence(?:-derived-[0-9a-f]{12})?(?:-page-[0-9a-f]{12})?(?:-queue-[0-9a-f]{12})?-checkpoint\.json$/;
 const AUDIT_MODEL_DEADLINE_MESSAGE = 'Audit wall-clock deadline cut a Muse research call; remaining work is untested.';
 
+export function describeModelActivity(messages = []) {
+  const instruction=messages.find(message=>message?.role==='system')?.content ?? '';
+  if(/source route excerpts|source-grounded/i.test(instruction))return 'Reviewing source-grounded routes';
+  if(/public (?:JS|assets?)|mined files|asset/i.test(instruction))return 'Interpreting routes from public assets';
+  if(/HTTP sequence|workflow|multi-step/i.test(instruction))return 'Planning an HTTP-sequence check';
+  if(/access-control|access boundary|access-boundary|object authorization|account boundary/i.test(instruction))return 'Planning an access-boundary check';
+  if(/authentication|login|session/i.test(instruction))return 'Planning an authentication check';
+  if(/web-test candidates|observed (?:GET|read-only)|rank only the supplied/i.test(instruction))return 'Ranking observed web checks';
+  if(/response facts|follow-up|revise|repair|experiment|investigat/i.test(instruction))return 'Assessing a bounded research result';
+  if(/independently proved|impact|remediation|assess/i.test(instruction))return 'Writing impact and remediation';
+  if(/hostnames|DNS/i.test(instruction))return 'Interpreting discovered hosts';
+  return 'Analyzing observed security evidence';
+}
+
 const hasPendingPageLeads = page => Array.isArray(page?.pendingLeads) &&
   page.pendingLeads.some(lead =>
     !page.pendingCompletedIds?.includes(lead.proposalId));
@@ -458,8 +472,9 @@ export async function runAudit({url, root = process.cwd(), scopeFile = null, ove
   const events = [];
   const say = item => { events.push({at: now(), ...item}); log(item); };
   let liveRequests = 0, liveModelCalls = 0;
-  let currentPhase = {step: 0, title: 'Starting'};
-  const stopRecord = (status, extra = {}) => ({run, status, phase: currentPhase,
+  let currentPhase = {step: 0, title: 'Starting', since: Date.now()};
+  const stopRecord = (status, extra = {}) => ({run, status,
+    phase: {step: currentPhase.step, title: currentPhase.title},
     evidenceEntries: ledger.count(), requests: liveRequests, modelCalls: liveModelCalls,
     startedAt, finishedAt: now(), ...extra});
   const onSignal = signal => {
@@ -475,9 +490,12 @@ export async function runAudit({url, root = process.cwd(), scopeFile = null, ove
   for (const [signal, handler] of Object.entries(signalHandlers)) process.once(signal, handler);
   const phase = (state, step, title) => {
     if (signal?.aborted) throw abortFault(signal);
-    if (state === 'doing') currentPhase = {step, title};
+    const phaseDurationMs=state === 'done' && currentPhase.step === step ?
+      Math.max(0,Date.now()-currentPhase.since) : null;
+    if (state === 'doing') currentPhase = {step, title, since: Date.now()};
     log({stage: 'progress', type: 'phase', state, step,
-      total: 6, title, requests: liveRequests, modelCalls: liveModelCalls});
+      total: 6, title, requests: liveRequests, modelCalls: liveModelCalls,
+      ...(phaseDurationMs!=null?{durationMs:phaseDurationMs}:{})});
   };
   const appendEvidence = ledger.append;
   ledger.append = entry => {
@@ -542,6 +560,7 @@ export async function runAudit({url, root = process.cwd(), scopeFile = null, ove
     };
     const invokeModel = async (profile, messages, options = {}) => {
       await acquireModelSlot();
+      let call=null,callStarted=null,activity='Analyzing observed security evidence';
       try {
         need(modelInvocations < scope.limits.modelCalls, 'Muse model-call budget was exhausted.', 3);
         if (Date.now() >= deadline) {
@@ -549,18 +568,31 @@ export async function runAudit({url, root = process.cwd(), scopeFile = null, ove
           throw new Fault(AUDIT_MODEL_DEADLINE_MESSAGE, 3, {reason: 'research_deadline'});
         }
         modelInvocations++;
+        call=modelInvocations;
+        callStarted=Date.now();
+        activity=describeModelActivity(messages);
         liveModelCalls = modelInvocations;
         stats.modelWorkersPeak = Math.max(stats.modelWorkersPeak ?? 0, modelInFlight);
         log({stage: 'progress', type: 'model', modelCalls: liveModelCalls});
+        log({stage:'progress',type:'model-start',call,activity,active:modelInFlight,
+          configured:modelParallelism});
         const remainingMs = deadline - Date.now();
         const timeoutMs = Math.max(1, Math.min(model.provider === 'muse-host' ? 300000 : 60000, remainingMs));
         try {
-          return await activeInfer(profile, messages, {...options, signal, timeoutMs,
+          const answer=await activeInfer(profile, messages, {...options, signal, timeoutMs,
             onProgress: progress => {if (progress.kind === 'model') stats.model = progress.model;}});
+          log({stage:'progress',type:'model-finish',call,activity,status:'completed',
+            durationMs:Date.now()-callStarted,active:Math.max(0,modelInFlight-1),
+            configured:modelParallelism});
+          return answer;
         } catch (error) {
           const classified = classifyAuditModelDeadline(error,
             {auditLimited: remainingMs <= 60000, deadline});
           if (classified !== error) researchDeadlineCut = true;
+          log({stage:'progress',type:'model-finish',call,activity,
+            status:/timed out|deadline/i.test(classified.message)?'timed out':'failed',
+            durationMs:Date.now()-callStarted,active:Math.max(0,modelInFlight-1),
+            configured:modelParallelism});
           throw classified;
         }
       } finally { releaseModelSlot(); }

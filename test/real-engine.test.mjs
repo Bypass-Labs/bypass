@@ -31,7 +31,7 @@ function controlledRuntime(){
       if(system.startsWith('Plan a bounded'))return {focus:'Inspect authentication and ownership.'};
       if(system.startsWith('Review the actual')){
         if(messages.length===2)return {action:'read_files',paths:['policy.mjs']};
-        return {action:'finish',candidates:[{title:'Account ownership is not checked',category:'cross-account-access',file:'policy.mjs',line:2,quote:'  return Boolean(account);',resourcePath:'/api/invoices/inv-101',hypothesis:'Any authenticated account can read the invoice.',recommendation:'Compare account to invoice.ownerId.'}]};
+        return {action:'finish',candidates:[{title:'Account ownership is not checked',category:'cross-account-access',file:'policy.mjs',line:2,quote:'  return Boolean(account);',resourcePath:'/api/invoices/inv-101',method:'GET',privateFields:['invoiceNumber'],hypothesis:'Any authenticated account can read the invoice.',recommendation:'Compare account to invoice.ownerId.'}]};
       }
       if(messages.length===2)return {action:'probe',bindingIndex:0};
       return {action:'finish',summary:'Use observed controls.'};
@@ -61,6 +61,7 @@ test('combined engine starts broad live work in parallel, hands off source leads
         const context=await options.sourceContext;
         assert.equal(context.securityLeads.length,1);
         const lead=context.securityLeads[0];
+        assert.equal(lead.method,'GET');assert.deepEqual(lead.fields,['invoiceNumber']);
         return {kind:'blackbox-audit',run:'bx-20261103-a1b2c3d4',runDir:path.join(root,'.bypass/runs/bx-20261103-a1b2c3d4'),
           projectRoot:root,origin:read(root).targets[0].url,exitCode:1,stats:{modelCalls:2,
             finishedAt:new Date().toISOString(),requests:12},coverage:{tested:1},
@@ -113,6 +114,10 @@ test('source citations cannot invent files or lines, and source reads cannot fol
   candidate.quote='const actual = true;';candidate.category='command-injection';
   assert.equal(groundCandidates([candidate],reader,inv)[0].category,'command-injection');
   assert.equal(modelResponseSchema('white-box').properties.candidates.items.properties.category.enum,undefined);
+  assert.deepEqual(modelResponseSchema('white-box').properties.candidates.items.properties.resourcePath.type,['string','null']);
+  assert.equal(modelResponseSchema('white-box-live').properties.candidates.items.properties.resourcePath.type,'string');
+  assert.ok(modelResponseSchema('white-box-live').properties.candidates.items.required.includes('method'));
+  assert.ok(modelResponseSchema('white-box-live').properties.candidates.items.required.includes('privateFields'));
 });
 
 test('citation diagnostics distinguish unread evidence, invalid quotes, and formatting without source disclosure',()=>{
