@@ -17,6 +17,8 @@ test('every public CLI command and option has a plugin operation or an explicit 
   assert.deepEqual(catalog.flatMap(c=>c.options.filter(o=>!o.available).map(o=>`${c.command} --${o.flag}`)),[]);
   assert.deepEqual(catalog.filter(c=>c.hostOwned).map(c=>c.command),['mcp serve']);
   assert.equal(new Set(toolDefinitions.map(t=>t.name)).size,toolDefinitions.length);
+  assert.ok(toolDefinitions.find(tool=>tool.name==='bypass_install_plugin').inputSchema.properties.install,
+    'the plugin keeps its existing install field for backward compatibility');
   assert.equal(operationFailed({exitCode:1,verification:{status:'failed'}}),false);
   assert.equal(operationFailed({exitCode:1,run:{status:'failed'}}),true);
 });

@@ -59,9 +59,9 @@ CLI global `--project` maps to the selected repository; `--json` maps to structu
 | `doctor` | `bypass_doctor` | Check Node, Git, Muse, configuration, and worker health. |
 | `config show` | `bypass_config` | Show nonsecret project configuration. |
 | `config set` | `bypass_set_config` | Set project settings, including ownershipVerification (off, dns, http). |
-| `auth login` | `bypass_auth_login` | Use local mode or launch official Muse account login. |
-| `auth status` | `bypass_auth_status` | Show local mode and Muse account integration status. |
-| `auth logout` | `bypass_auth_logout` | Clear Bypass-local account metadata; Muse account is separate. |
+| `auth login` | `bypass_auth_login` | Explain the supported authentication path: an API key in standalone mode or the official Muse login flow. |
+| `auth status` | `bypass_auth_status` | Show whether authentication is owned by the standalone API profile or the active Muse session. |
+| `auth logout` | `bypass_auth_logout` | Clear legacy Bypass-local account metadata; this does not sign out of Muse. |
 | `integrate muse` | `bypass_install_plugin` | Reuse an existing Muse plugin or install the bundled plugin. |
 | `integrate status` | `bypass_integration_status` | Inspect the Muse plugin installation. |
 | `integrate remove` | `bypass_remove_plugin` | Remove the native Muse plugin. |

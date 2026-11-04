@@ -413,7 +413,7 @@ export async function terminal(options={},io){
       if(choice==='help all'){console.log(help());continue;}
       if(choice==='back'){advanced=false;continue;}
       if(choice==='settings'){advanced=true;continue;}
-      if(choice==='status'){console.log('\n'+reviewSummary(readiness(root).review));continue;}
+      if(choice==='status'){await run('status');continue;}
       if(choice==='history'){const s=read(root);console.log('\nSaved project activity\n'+(s.events.slice(-15).map(e=>`${e.at} · ${e.message}`).join('\n')||'No saved activity yet. Start with /review or /demo.'));continue;}
       const aliases={review:'4',results:'5',tests:'6',app:prompt.rich?'app':'1',models:'3',plugin:'10'};
       choice=aliases[choice]||choice;

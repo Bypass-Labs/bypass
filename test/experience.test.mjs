@@ -79,6 +79,14 @@ test('Enter runs review and opens results; help exposes commands; no extra retur
   assert.equal(scripted.data.run.result.simulation,true);
 });
 
+test('interactive status uses the complete shared readiness result',async t=>{
+  const root=temp();fs.writeFileSync(path.join(root,'app.js'),'export const example = true;');await execute('init',[root]);
+  const output=[],commands=['status','quit'];t.mock.method(console,'log',(...args)=>output.push(args.join(' ')));
+  await terminal({project:root},{rich:true,command:async()=>commands.shift(),setContext:()=>{},setNext:()=>{},close:()=>{}});
+  const transcript=output.join('\n');
+  assert.match(transcript,/Model:/);assert.match(transcript,/Saved tests:/);assert.match(transcript,/Security memory:/);assert.match(transcript,/Next:/);
+});
+
 test('a successful preview never hides failed saved-check results',t=>{
   const output=[];t.mock.method(console,'log',text=>output.push(text));
   printResult({run:{kind:'scan',result:{simulation:true,inventory:{sourceFileCount:1},findings:[],regression:[{status:'failed',reason:'Account boundary regressed'}]}}});
