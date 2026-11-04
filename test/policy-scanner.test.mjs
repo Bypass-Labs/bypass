@@ -108,8 +108,8 @@ test('Muse drives real Python tasks and evidence with a broken API profile and z
 test('standalone no-timeout profiles disable model, task, and reasoning-stage deadlines',{skip:!available},async()=>{
   const root=await source();await addTestModel(root);
   await change(root,state=>{state.models[0].timeoutMs=0;});
-  let turns=0;
-  const context={scannerConnect:connect,scannerSessionFactory:()=>{
+  let turns=0;const progress=[];
+  const context={scannerConnect:connect,onProgress:event=>progress.push(event),scannerSessionFactory:()=>{
     let task;
     return {turn:async(messages,options)=>{
       turns++;options.onProgress({kind:'phase',phase:'request'});
@@ -128,6 +128,8 @@ test('standalone no-timeout profiles disable model, task, and reasoning-stage de
   }};
   const result=await execute('discover',[],{project:root,'discovery-only':true,detector:'policy',policy:'authz/object-access'},context);
   assert.equal(result.run.status,'completed',JSON.stringify(result));assert.equal(result.run.signalCount,1);
+  assert.equal(progress[0].message,`Scanner run: ${result.run.id}`);
+  assert.equal(progress[0].runId,result.run.id);
   assert.equal(turns,4);assert.equal(result.run.reasoning.independentModelRequests,4);assert.equal(result.run.reasoning.hostReasoning,false);
   const signal=JSON.parse(fs.readFileSync(path.join(root,'.bypass/scanner',result.run.id,'signals.json')))[0];
   validateJSON(manifest.schemas.signal,signal);assert.equal(signal.evaluation,'not_run');
@@ -159,8 +161,9 @@ test('resuming with a no-timeout profile replaces old task deadlines without res
   const filename=path.join(root,'.bypass/scanner',interrupted.run.id,'policy/state.json');
   const before=JSON.parse(fs.readFileSync(filename));
   await change(root,state=>{state.models[0].timeoutMs=0;});
+  const progress=[];
   const result=await execute('discover resume',[interrupted.run.id],{project:root},
-    {scannerConnect:connect,scannerSessionFactory:()=>{
+    {scannerConnect:connect,onProgress:event=>progress.push(event),scannerSessionFactory:()=>{
       let task;
       return {turn:async(messages,options)=>{
         task??=JSON.parse(messages[1].content);
@@ -174,6 +177,7 @@ test('resuming with a no-timeout profile replaces old task deadlines without res
       }};
     }});
   assert.equal(result.run.status,'completed',JSON.stringify(result));
+  assert.equal(progress[0].message,`Scanner run: ${result.run.id} · resuming`);
   assert.equal(result.run.reasoning.independentModelRequests,5);
   assert.equal(JSON.parse(fs.readFileSync(filename)).deadline,before.deadline);
 });
@@ -248,10 +252,17 @@ test('real standalone Python tasks use explicit JSON-schema content with zero in
       {action:'evidence',operation:'read',arguments:{path:'app.py'}};
     validateJSON(input.response_format.json_schema.schema,action);requests++;
     response.setHeader('content-type','application/json');
-    response.end(JSON.stringify({choices:[{finish_reason:'stop',message:{role:'assistant',content:JSON.stringify(action)}}]}));
+    response.end(JSON.stringify({choices:[{finish_reason:'stop',message:{role:'assistant',content:requests===1?'SYNTHETIC_INVALID_JSON':JSON.stringify(action)}}]}));
   });
   await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));t.after(()=>new Promise(resolve=>server.close(resolve)));
   await execute('model add',['policy-json'],{project:root,provider:'custom','base-url':`http://127.0.0.1:${server.address().port}/v1`,model:'fixture',stream:false,'secret-env':key,'timeout-ms':0,'response-mode':'json-schema'});
-  const result=await execute('discover',[],{project:root,'discovery-only':true,detector:'policy',policy:'authz/object-access'},{scannerConnect:connect});
-  assert.equal(result.run.status,'completed',JSON.stringify(result));assert.equal(requests,4);assert.equal(result.run.signalCount,1);
+  const result=await execute('discover',[],{project:root,'discovery-only':true,detector:'policy',policy:'authz/object-access','debug-log':true,'debug-raw':true},{scannerConnect:connect});
+  assert.equal(result.run.status,'completed',JSON.stringify(result));assert.equal(requests,5);assert.equal(result.run.signalCount,1);
+  const debugDirectory=path.join(root,'.bypass/debug'),files=fs.readdirSync(debugDirectory);
+  assert.equal(files.length,1);
+  const records=fs.readFileSync(path.join(debugDirectory,files[0]),'utf8').trim().split('\n').map(line=>JSON.parse(line));
+  const rejection=records.find(record=>record.event==='rejected_response');
+  assert.equal(rejection.raw.content,'SYNTHETIC_INVALID_JSON');
+  assert.equal(rejection.diagnostics.jsonStatus,'invalid_json');
+  assert.equal(records.filter(record=>record.event==='request').length,5);
 });

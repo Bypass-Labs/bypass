@@ -158,7 +158,7 @@ class TaskEngine:
                     raise ValueError('Usage receipts must record one attempted request.')
                 if count and state['executionMode']!='standalone-api':
                     raise ValueError('Muse reasoning cannot record independent API requests.')
-                if data['modelRequests']+count>data['limits']['maxModelRequests']:
+                if not state.get('reasoningTimeoutDisabled',False) and data['modelRequests']+count>data['limits']['maxModelRequests']:
                     raise ValueError('Run model request limit reached.')
                 data['modelRequests']+=count
                 if arguments.get('interrupt'):
@@ -170,7 +170,7 @@ class TaskEngine:
                 self.w.render(state)
                 return self.w.public(state), {'checkpointed':True}
             task=self.active(state,data,identity)
-            if task['requests']>=data['limits']['maxRequestsPerTask']:
+            if not state.get('reasoningTimeoutDisabled',False) and task['requests']>=data['limits']['maxRequestsPerTask']:
                 raise ValueError('Task evidence request limit reached; submit or checkpoint.')
             task['requests']+=1
             previous_receipts=set(data['receipts'])

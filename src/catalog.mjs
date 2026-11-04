@@ -7,10 +7,10 @@ export const commands={
   'blackbox verify':command('blackbox verify <run-id>','Re-execute generated proofs and check ledger integrity.'),
   'blackbox export':command('blackbox export <run-id>','Write Node regression tests for confirmed findings.','out'),
   'blackbox resume':command('blackbox resume <run-id>','Continue saved Muse research in a fresh scoped audit.','scope model offline agents http-workers rps model-calls max-urls max-tasks minutes dom-script-bytes'),
-  discover:command('discover','Discover SAST/policy signals and evaluate them against source by default.','detector languages rule exclude-rule policy exclude-policy include-tests include-examples include-generated sarif config plan discovery-only'),
-  'discover evaluate':command('discover evaluate <run>','Evaluate saved detector signals against their source snapshot; no runtime reproduction.'),
+  discover:command('discover','Discover SAST/policy signals and evaluate them against source by default.','detector languages rule exclude-rule policy exclude-policy include-tests include-examples include-generated sarif config plan discovery-only debug-log debug-raw'),
+  'discover evaluate':command('discover evaluate <run>','Evaluate saved detector signals against their source snapshot; no runtime reproduction.','debug-log debug-raw'),
   'discover status':command('discover status <run>','Read durable SAST/policy progress and coverage.'),
-  'discover resume':command('discover resume <run>','Resume discovery/evaluation after identity checks; standalone reasoning requires an API profile.'),
+  'discover resume':command('discover resume <run>','Resume discovery/evaluation after identity checks; standalone reasoning requires an API profile.','debug-log debug-raw'),
   'discover cancel':command('discover cancel <run>','Cancel discovery and retain accepted artifacts.'),
   'discover report':command('discover report <run>','Write a discovery report and return its artifact reference.','format'),
   'discover signals':command('discover signals <run>','Read a bounded page of unevaluated SAST/policy signals.','cursor limit'),
@@ -116,7 +116,7 @@ export const commands={
   _run:command('_run <id>','Internal detached run entry point.','',{hidden:true}),
   '_demo-serve':command('_demo-serve','Internal fixture server.','',{hidden:true})
 };
-export const booleanFlags=new Set(['discovery-only','include-tests','include-examples','include-generated','agent','public-config','reference','require-verification','json','help','version','non-interactive','plan','full','detach','all','force','accept','production','renew','once','stop','device','install','replace','allow-private','accept-local','no-model','dry-run','no-discovery','offline']);
+export const booleanFlags=new Set(['debug-log','debug-raw','discovery-only','include-tests','include-examples','include-generated','agent','public-config','reference','require-verification','json','help','version','non-interactive','plan','full','detach','all','force','accept','production','renew','once','stop','device','install','replace','allow-private','accept-local','no-model','dry-run','no-discovery','offline']);
 export const globalFlags=['project','json','help','version','non-interactive','reference'];
 export function parse(argv){
   const options={},words=[];

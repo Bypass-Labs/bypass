@@ -158,10 +158,10 @@ test('scanner corrects provider parse/schema failures but never retries transpor
   });
 });
 
-test('uncapped valid and rejected scanner turns still enforce request budgets, task expiry, and cancellation',async t=>{
+test('finite profiles enforce request budgets and uncapped turns still enforce task expiry and cancellation',async t=>{
   for(const invalid of [false,true])for(const stop of ['budget','expiry','cancel'])await t.test(`${stop} ${invalid?'rejected':'valid'}`,async t=>{
     let now=Date.now();t.mock.method(Date,'now',()=>now);
-    const controller=new AbortController(),profile=apiProfile('test',{provider:'custom','base-url':'http://127.0.0.1:8080/v1',model:'fixture','secret-env':'BYPASS_UNIT_API_KEY','timeout-ms':0});
+    const controller=new AbortController(),profile=apiProfile('test',{provider:'custom','base-url':'http://127.0.0.1:8080/v1',model:'fixture','secret-env':'BYPASS_UNIT_API_KEY','timeout-ms':stop==='budget'?60000:0});
     const run={id:'scan_18aa42c25cc7467c84be5a64',status:'awaiting_reasoning'};
     const task={id:'bounded-task',kind:'discovery',phase:'mapping',expiresAt:now/1000+60,resultSchema:{type:'object'}};
     let turns=0;

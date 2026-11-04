@@ -126,7 +126,7 @@ export class ProviderSession {
     need(maxTurns===null||(Number.isInteger(maxTurns)&&maxTurns>0),'Provider turn limit must be a positive integer or null.',3);
     this.profile=profile;this.history=[];this.pending=null;this.turns=0;this.maxTurns=maxTurns;
   }
-  async turn(messages,{schema,signal,onProgress,timeoutMs}={}) {
+  async turn(messages,{schema,signal,onProgress,timeoutMs,onRejectedResponse}={}) {
     const p=checkedProfile(this.profile);
     const credentialDigest=hash({key:process.env[p.secretEnv],workspace:p.workspaceEnv?process.env[p.workspaceEnv]:null});need(!this.credentialDigest||this.credentialDigest===credentialDigest,'API credential or workspace changed during this run. Start a new review explicitly.',3,{reason:'credential_changed'});this.credentialDigest=credentialDigest;
     this.turns++;
@@ -135,7 +135,7 @@ export class ProviderSession {
     const requestTimeout=timeoutMs??p.timeoutMs;
     const deadline=requestTimeout===0?null:AbortSignal.timeout(requestTimeout),active=signal&&deadline?AbortSignal.any([signal,deadline]):signal||deadline;
     if(active?.aborted)throw abortFault(active);
-    let client,diagnostics;
+    let client,diagnostics,rejectedContent,rejectedArguments;
     try {
       const workspace=p.workspaceEnv?need(process.env[p.workspaceEnv],`Set ${p.workspaceEnv} for the selected Anthropic workspace.`,3):null;
       const Client=requestTimeout===0?DeadlineFreeOpenAI:OpenAI;
@@ -161,6 +161,7 @@ export class ProviderSession {
         calls=response.output.filter(x=>x.type==='function_call').map(x=>({id:x.call_id,name:x.name,arguments:x.arguments}));
         text=response.output.filter(x=>x.type==='message').flatMap(x=>x.content||[]).filter(x=>x.type==='output_text').map(x=>x.text).join('');
         diagnostics=responseShape(text,null,calls,response.status,p);
+        rejectedContent=text;rejectedArguments=calls.map(call=>call.arguments);
       } else {
         const request={...common,messages:this.history,...(jsonSchema?{response_format:{type:'json_schema',json_schema:{name:'security_action',strict:true,schema}}}:{}),...(p.provider==='openai'?{max_completion_tokens:p.maxTokens}:{max_tokens:p.maxTokens}),...(p.effort?(p.provider==='deepseek'&&p.effort==='none'?{thinking:{type:'disabled'}}:{reasoning_effort:p.effort}):{})};
         let response=await client.chat.completions.create(request,{signal:active}),message,finish;
@@ -171,6 +172,7 @@ export class ProviderSession {
         }else{message=response.choices?.[0]?.message;finish=response.choices?.[0]?.finish_reason;}
         const responseCalls=(message?.tool_calls||[]).map(x=>({id:x.id,...x.function}));
         diagnostics=responseShape(message?.content,message?.reasoning_content,responseCalls,finish,p);
+        rejectedContent=message?.content;rejectedArguments=responseCalls.map(call=>call.arguments);
         need(message&&['stop','tool_calls'].includes(finish),'Model output incomplete or filtered; no action executed.',3,{reason:'incomplete_output'});
         // Preserve provider reasoning_content and exact tool calls for multi-turn replay.
         this.history.push(message);text=message.content||'';calls=responseCalls;
@@ -192,6 +194,7 @@ export class ProviderSession {
       if(signal?.aborted)throw abortFault(signal);
       if(deadline?.aborted)throw new Fault('Model request timed out. Earlier evidence is saved; retry explicitly.',3,{reason:'model_timeout'});
       const failure=providerFailure(error,p.provider);
+      if(diagnostics&&onRejectedResponse)onRejectedResponse({diagnostics,content:rejectedContent,toolArguments:rejectedArguments});
       if(diagnostics){
         failure.details={...failure.details,responseDiagnostics:diagnostics};
         onProgress?.({kind:'phase',phase:'diagnostics',message:`Response diagnostics: ${JSON.stringify(diagnostics)}`,diagnostics});

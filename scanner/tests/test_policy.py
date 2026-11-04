@@ -120,6 +120,32 @@ class PolicyTests(unittest.TestCase):
         self.assertEqual(self.call('resume',{'run':run,'disableReasoningTimeout':True})['status'],'error')
         self.assertFalse(self.engine.read(run).get('reasoningTimeoutDisabled',False))
 
+    def test_unlimited_resume_preserves_counts_beyond_model_and_evidence_request_limits(self):
+        run=self.start(mode='standalone-api');task=self.next(run)
+        engine=self.engine.policy_engine()
+        data=engine.load(run)
+        data['modelRequests']=256
+        data['tasks'][0]['requests']=32
+        engine.save(self.engine.read(run),data)
+        limited=self.call('evidence',{'run':run,'task':task['id'],'operation':'checkpoint','arguments':{'modelRequests':1}})
+        self.assertEqual(limited['status'],'error')
+        self.assertEqual(self.call('evidence',{'run':run,'task':task['id'],'operation':'inventory'})['status'],'error')
+        self.call('evidence',{'run':run,'task':task['id'],'operation':'checkpoint','arguments':{'interrupt':True,'reason':'Resume with zero-timeout profile'}})
+        self.engine.resume(run,True)
+        end=time.monotonic()+5
+        while run in self.engine.tasks and time.monotonic()<end:time.sleep(.01)
+        task=self.call('next_task',{'run':run,'disableTaskTimeout':True})['task']
+        data=engine.load(run);data['tasks'][0]['requests']=32
+        engine.save(self.engine.read(run),data)
+        for _ in range(3):
+            receipt=self.call('evidence',{'run':run,'task':task['id'],'operation':'checkpoint','arguments':{'modelRequests':1}})
+            self.assertNotEqual(receipt['status'],'error',receipt)
+            self.assertNotEqual(self.call('evidence',{'run':run,'task':task['id'],'operation':'inventory'})['status'],'error')
+        saved=engine.load(run)
+        self.assertEqual(saved['modelRequests'],259)
+        self.assertEqual(saved['tasks'][0]['requests'],35)
+        self.engine.cancel(run)
+
     def test_no_task_timeout_is_standalone_only_and_does_not_disable_stage_deadlines(self):
         run=self.start()
         self.assertEqual(self.call('next_task',{'run':run,'disableTaskTimeout':True})['status'],'error')

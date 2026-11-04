@@ -141,6 +141,23 @@ class EvaluationTests(unittest.TestCase):
             self.assertNotEqual(response['status'],'error',response)
         self.w.cancel(run)
 
+    def test_unlimited_evaluation_records_requests_beyond_configured_limits(self):
+        run=self.start(mode='standalone-api')
+        self.w.cancel(run);self.w.evaluate(run,True)
+        task=self.call('next_task',run=run,disableTaskTimeout=True)['task']
+        engine=self.w.evaluation_engine();data=engine.load(run)
+        data['modelRequests']=256
+        active=next(t for t in data['tasks'] if t['definition']['id']==task['id'])
+        active['requests']=32
+        engine.save(self.w.read(run),data)
+        receipt=self.call('evidence',run=run,task=task['id'],operation='checkpoint',arguments={'modelRequests':1})
+        self.assertNotEqual(receipt['status'],'error',receipt)
+        self.assertNotEqual(self.read(run,task)['status'],'error')
+        saved=engine.load(run)
+        self.assertEqual(saved['modelRequests'],257)
+        self.assertEqual(next(t for t in saved['tasks'] if t['definition']['id']==task['id'])['requests'],33)
+        self.w.cancel(run)
+
     def test_opt_out_saved_run_and_legacy_configuration(self):
         run=self.start({'evaluation':'off'})
         self.assertEqual(self.w.status(run)['evaluation'],'not_run')

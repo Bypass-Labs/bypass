@@ -364,13 +364,17 @@ per-task and policy/evaluation reasoning-stage timeouts, including on resumed
 tasks. There is no 300-second task cutoff or 1,800-second reasoning-stage cutoff.
 The issued task records `taskTimeoutDisabled: true`,
 `stageTimeoutDisabled: true`, and `expiresAt: 0` (no time expiry).
-Configured model-request, evidence, task-count, attempt-count, and context
-budgets still apply, as does cancellation. Deterministic CodeQL timeouts remain.
+Model-request and per-task evidence-request count limits are also disabled for
+zero-timeout profiles, in both discovery and evaluation. Usage is still counted
+and saved, including across resumes; reaching 256 model calls or 32 evidence
+requests no longer interrupts these profiles. Finite profiles and Muse retain
+their configured request limits. Evidence-byte, task-count, attempt-count, and
+context budgets still apply, as does cancellation. Deterministic CodeQL timeouts remain.
 Finite profiles and Muse-hosted reasoning retain their configured task leases.
 
 Standalone discovery/evaluation tasks have no fixed per-task conversation-turn
 cap. A task can continue requesting evidence until its submission is accepted.
-Applicable task leases and stage deadlines, configured model-request/evidence budgets,
+Applicable task leases, stage deadlines and request limits, evidence-byte budgets,
 conversation-size limits, and cancellation still apply. This does not change
 the separate Docker `scan` worker's turn limits.
 
@@ -385,7 +389,8 @@ Malformed JSON or schema-invalid actions are never executed or silently
 normalized. The driver prints safe response/field diagnostics and returns
 validation feedback to the model so it can correct the action within the same
 task. Every attempted model request, including corrections, counts against the
-existing budgets; applicable leases, context limits, and cancellation still apply. Network
+applicable budgets; zero-timeout profiles have no request-count limits, while
+evidence-byte/context limits and cancellation still apply. Network
 and timeout failures still interrupt immediately. If repeated invalid actions
 ultimately interrupt the task, its manifest message includes the last safe
 rejection feedback. This correction behavior applies to standalone discovery
@@ -393,6 +398,18 @@ and evaluation, not Docker `scan` or Muse-hosted reasoning.
 
 An interrupted scanner run prints its failure message and stores its manifest
 under `.bypass/scanner/<run-id>/manifest.json`, separately from `scan` evidence.
+Standalone start, resume, and evaluate commands print `Scanner run: scan_<id>`
+as soon as the scanner returns the run, before scan/model progress. Final
+summaries repeat `Run: scan_<id>`. Use that full ID for status/resume/cancel;
+the UUID appended to a debug filename identifies the log session, not the run.
+Reasoning progress shows completed/total tasks, remaining policy tasks and
+deferred work, detector signals, and stage model requests. Evaluation also
+shows source-confirmed/refuted/needs-review case counts; its unfinished task
+count includes any tasks not completed, including deferred tasks. Counts refresh
+when tasks are leased or submissions accepted. Totals can grow as mapping and
+follow-ups create tasks; they are not a fixed percentage or ETA. While a model
+request is pending, a 15-second heartbeat shows elapsed time and the latest
+counts, including in buffered mode. Final summaries repeat both stage counts.
 Use `discover status <run-id>` to inspect the saved state and
 `discover resume <run-id>` to retry unfinished tasks when the recorded source,
 runtime, and applicable stage budgets still permit it. Accepted CodeQL signals and completed
@@ -400,6 +417,28 @@ evaluation cases are retained; restarting a run is necessary if its stage budget
 has expired.
 
 ### Explicit JSON-schema responses
+
+To diagnose repeated corrections, add `--debug-log` to standalone `discover`,
+`discover resume`, or `discover evaluate`. The CLI prints a unique local
+`.bypass/debug/<run-id>-<uuid>.jsonl` path. Records include timestamps, task/phase,
+request counts, elapsed response times, response diagnostics, corrections, and
+accepted action/operation names, without source or argument values.
+
+Add `--debug-raw` **together with `--debug-log`** to capture rejected final
+content and all tool argument strings for JSON analysis without log-specific
+truncation; reasoning, request prompts, credentials, and headers
+are not captured. Known environment/registered secrets are redacted, but this
+is not comprehensive sanitization: raw output can repeat sensitive repository
+data. Keep it local, review before sharing, and delete it after analysis.
+Logging is off by default and unavailable in Muse-hosted mode.
+Files are created exclusively with owner-only permissions and are outside
+scanner report artifacts. There is no log-size cap or automatic rotation;
+records continue appending until the command ends. Filesystem write failures
+(such as a full disk) are surfaced explicitly. Monitor disk space during long runs.
+
+```sh
+npm start -- discover --detector both --project "$APP" --debug-log --debug-raw
+```
 
 For a compatible custom server such as local llama.cpp, opt in with
 `--response-mode json-schema` when adding the profile. The default is `tools`.

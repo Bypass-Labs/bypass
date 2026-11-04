@@ -34,6 +34,27 @@ test('scanner status displays manifest errors even without a top-level message',
   assert.match(output.join('\n'),/Saved scanner failure/);assert.match(output.join('\n'),/Model requests: 3/);
 });
 
+test('scanner final summaries always identify the run on completion, interruption, or cancellation',t=>{
+  const output=[];t.mock.method(console,'log',text=>output.push(text));
+  const id='scan_18aa42c25cc7467c84be5a64';
+  for(const status of ['completed','incomplete','interrupted','cancelled','failed']){
+    output.length=0;
+    printResult({status,exitCode:status==='completed'?0:3,run:{id,status,signalCount:0,evaluation:'not_run',executionMode:'standalone-api'}});
+    assert.ok(output.join('\n').includes(`Run: ${id}`),status);
+  }
+});
+
+test('scanner final output includes policy and evaluation task progress',t=>{
+  const output=[];t.mock.method(console,'log',text=>output.push(text));
+  printResult({status:'interrupted',exitCode:3,run:{id:'scan_18aa42c25cc7467c84be5a64',status:'interrupted',signalCount:86,evaluation:'running',
+    policy:{tasks:50,finished:9,deferred:1,modelRequests:76},
+    evaluationSummary:{tasks:64,finished:3,modelRequests:26,confirmed:1,refuted:2,needs_review:20}}});
+  const text=output.join('\n');
+  assert.match(text,/Policy tasks: 9\/50 complete · 40 remaining · 1 deferred/);
+  assert.match(text,/Evaluation tasks: 3\/64 complete · 61 unfinished/);
+  assert.match(text,/1 source-confirmed · 2 refuted · 20 needs review/);
+});
+
 test('completed host scanner output distinguishes host reasoning from independent model requests',t=>{
   const output=[];t.mock.method(console,'log',text=>output.push(text));
   const id='scan_18aa42c25cc7467c84be5a64';

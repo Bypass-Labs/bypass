@@ -6,6 +6,7 @@ import { outcome, need, abortFault, delay } from '../util.mjs';
 import { validateJSON } from '../schema.mjs';
 import { manifest, scannerCapabilities, validateOperation } from './contracts.mjs';
 import { scannerDoctor, prepareScanner, connectScanner, scannerOutput, defaultResources } from './runtime.mjs';
+import { openDebugLog } from './debug-log.mjs';
 
 const sessions = new Map();
 const connecting = new Map();
@@ -156,8 +157,12 @@ async function waitForRun(session,result,context) {
     }
     if(result.run.status==='awaiting_reasoning'){
       const {runAPIDriver}=await import('./api-driver.mjs');
-      return runAPIDriver(context.profileState,{client:session.client,run:result.run,limits:context.policyLimits,evaluationLimits:context.evaluationLimits,
-        signal:context.signal,onProgress:context.onProgress,...(context.scannerSessionFactory?{sessionFactory:context.scannerSessionFactory}:{})});
+      const debugLog=context.debugOptions?openDebugLog(context.debugRoot,id,context.debugOptions):null;
+      try{
+        if(debugLog)context.onProgress?.({stage:'scanner',message:`Local scanner debug log: ${debugLog.filename}${debugLog.raw?' · raw rejected responses enabled; may contain source/sensitive data':''}`});
+        return await runAPIDriver(context.profileState,{client:session.client,run:result.run,limits:context.policyLimits,evaluationLimits:context.evaluationLimits,
+          signal:context.signal,onProgress:context.onProgress,debugLog,...(context.scannerSessionFactory?{sessionFactory:context.scannerSessionFactory}:{})});
+      }finally{debugLog?.close();}
     }
     await session.client.pumpBuild?.(result.run);
     if(result.run.phase!==phase){phase=result.run.phase;context.onProgress?.({stage:'scanner',message:`Scanner ${phase} · ${result.run.signalCount} detector signals · evaluation ${result.run.evaluation}`});}
@@ -178,6 +183,8 @@ export async function scannerService(key,args=[],options={},context={}) {
     return outcome({kind:'scanner-diagnostics',...diagnostics,modelCalls:0},diagnostics.status==='blocked'?3:0);
   }
   const host=executionMode()==='muse-host', ai=host?hostAI():{mode:'deterministic',reasoning:'No LLM is used for CodeQL discovery'};
+  need(!options['debug-raw']||options['debug-log'],'--debug-raw requires --debug-log.',2);
+  need(!host||!options['debug-log'],'Scanner file debugging is available only in standalone CLI mode.',2);
   if(key==='discover'&&options.plan){
     const base=path.resolve(options.project||context.cwd||process.cwd());
     return outcome({plan:discoveryPlan(options,configuration(base,options).config),ai});
@@ -212,6 +219,7 @@ export async function scannerService(key,args=[],options={},context={}) {
     input={run:args[0],...Object.fromEntries(['format','path','offset','cursor','limit','task','sourceRevision','result','operation','arguments'].filter(name=>options[name]!==undefined).map(name=>[name,['offset','cursor','limit'].includes(name)?Number(options[name]):options[name]]))};
   }
   context={...context,detector:config.detectors.includes('codeql')?'codeql':'policy'};
+  if(options['debug-log'])context={...context,debugRoot:root,debugOptions:{raw:!!options['debug-raw']}};
   const reasoning=config.detectors.includes('policy')||config.evaluation==='auto'||operation==='evaluate';
   const executing=['start','resume','evaluate'].includes(operation);
   if(reasoning&&!host&&executing){
@@ -227,6 +235,7 @@ export async function scannerService(key,args=[],options={},context={}) {
     if(operation==='cancel')await session.client.stopBuilds?.(args[0]);
     let result=await session.client.call(operation,input,{signal:context.signal});
     if(result.run){
+      if(executing)context.onProgress?.({stage:'scanner',runId:result.run.id,message:`Scanner run: ${result.run.id}${operation==='resume'?' · resuming':operation==='evaluate'?' · evaluating':''}`});
       session.runs.set(result.run.id,result.run);
       if(executing)session.owned.add(result.run.id);
       if(session.owned.has(result.run.id))await session.client.pumpBuild?.(result.run);
