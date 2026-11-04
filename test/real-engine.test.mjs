@@ -69,7 +69,9 @@ test('combined engine starts broad live work in parallel, hands off source leads
             proof:path.join(root,'.bypass/runs/bx-20261103-a1b2c3d4/poc/proof-1/poc.mjs'),
             title:lead.title,pattern:lead.path,evidence:['ev-1'],confirmation:['ev-2'],
             sourceFinding:{id:lead.id,source:lead.source,hypothesis:lead.hypothesis},
-            assessment:{remediation:lead.remediation}}],sourceFindings:[{id:lead.id,
+            assessment:{impact:'An outsider can read private invoice data.',
+              preconditions:'A known invoice URL is reachable.',
+              remediation:lead.remediation}}],sourceFindings:[{id:lead.id,
               status:'confirmed live',liveReason:'Fresh owner and anonymous controls reproduced it.'}]};
       }} ,report:async()=>{}});
     assert.equal(liveStarted,true);assert.equal(result.simulation,false);
@@ -77,6 +79,8 @@ test('combined engine starts broad live work in parallel, hands off source leads
     assert.deepEqual(result.source.containers.map(container=>container.role),['white-box']);
     assert.equal(read(root).findings.find(item=>item.id===result.confirmed[0]).status,'confirmed');
     assert.equal(read(root).findings.find(item=>item.id===result.confirmed[0]).verification.proofId,'proof-1');
+    assert.equal(read(root).findings.find(item=>item.id===result.confirmed[0]).impact,
+      'An outsider can read private invoice data.');
     assert.equal(read(root).findings.filter(item=>item.lastRunId===run.id).length,1,
       'the live proof enriches the source finding instead of duplicating it');
   }finally{await stopPOC(root);}

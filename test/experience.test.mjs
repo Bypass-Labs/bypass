@@ -16,10 +16,17 @@ test('confirmed live findings point to proof replay, not a legacy demo',t=>{
   const output=[];t.mock.method(console,'log',text=>output.push(text));
   printResult({finding:{id:'finding_live',engine:'blackbox',status:'confirmed',
     title:'Anonymous dossier disclosure',hypothesis:'Anonymous read returned private fields.',
-    recommendation:'Require authentication.',verification:{blackboxRun:'bx-example'}}});
+    severity:'medium',impact:'Private records are readable without login.',
+    recommendation:'Require authentication.',verification:{blackboxRun:'bx-example',
+      status:'confirmed',controls:[{label:'fresh',path:'/user/1',status:200}]}}});
   const text=output.join('\n');
+  assert.match(text,/medium/);
+  assert.match(text,/Impact: Private records are readable without login/);
+  assert.match(text,/Proof: confirmed · 1 replay controls/);
+  assert.match(text,/Fix: Require authentication/);
   assert.match(text,/Next: bypass verify finding_live/);
-  assert.doesNotMatch(text,/bypass demo/);
+  assert.match(text,/Save regression test: bypass test save finding_live/);
+  assert.doesNotMatch(text,/bypass demo|"controls"/);
 });
 
 test('replayed live proof shows status and the saved-test command',t=>{

@@ -187,7 +187,28 @@ export function printResult(data,{interactive=false}={}){
   if(value.target?.challenge){const t=value.target;console.log(`\n${bold(t.name)} · ${t.url}\nOwnership: ${t.ownership?.status||'pending'}\n`);if(t.environment==='local')console.log(`Next: bypass target verify ${t.name} --method local`);else console.log(`Publish TXT record:\n  Name:  ${t.challenge.record}\n  Value: ${t.challenge.token}\n\nOr serve exactly that value at:\n  ${t.url}${t.challenge.httpPath}\n\nThen: bypass target verify ${t.name} --method dns`);if(t.authorization)console.log(`Scope: ${t.authorization.paths.join(', ')} · expires ${t.authorization.expiresAt}`);return;}
   if(value.findings){console.log(`\n${value.findings.length} findings`);for(const f of value.findings)console.log(`  ${bold(f.id)}  ${f.title}\n    ${label(f.status)} · ${f.fixture?'local fixture':f.simulation?'SIMULATED · unproven':'evidence available'}`);return;}
   if(value.checks&&Array.isArray(value.checks)){console.log(`\n${value.checks.length} saved checks`);for(const c of value.checks)console.log(`  ${bold(c.id)}  ${c.title||c.behavior}\n    ${c.status||c.lastResult?.status||'not run'} · ${c.enabled===false?'disabled':c.target}`);if(value.message)console.log(value.message);return;}
-  if(value.finding){const f=value.finding;const next=f.engine==='blackbox'?`bypass verify ${f.id}`:f.fixture||['docker','host'].includes(f.engine)?`bypass ${['confirmed_fixture','confirmed','regression_failed'].includes(f.status)?'retest':'verify'} ${f.id}`:'bypass scan';console.log(`\n${bold(f.title)}\n${f.id} · ${label(f.status)}\n\n${f.hypothesis}\n\n${f.sourceEvidence?.file?`${f.sourceEvidence.file}:${f.sourceEvidence.line}\n${f.sourceEvidence.quote}`:f.sourceEvidence?.message||''}\n\nFix: ${f.recommendation}\n\nNext: ${next}`);if(f.verification)console.log(JSON.stringify(f.verification,null,2));return;}
+  if(value.finding){
+    const f=value.finding;
+    const next=f.engine==='blackbox'?`bypass verify ${f.id}`:
+      f.fixture||['docker','host'].includes(f.engine)?
+        `bypass ${['confirmed_fixture','confirmed','regression_failed'].includes(f.status)?'retest':'verify'} ${f.id}`:
+        'bypass scan';
+    const citation=f.sourceEvidence?.file?
+      `${f.sourceEvidence.file}:${f.sourceEvidence.line}\n${f.sourceEvidence.quote}`:
+      f.sourceEvidence?.message||null;
+    const proof=f.verification;
+    console.log(`\n${bold(f.title)}\n${f.id} · ${label(f.status)} · ${f.severity||'severity pending'}\n`+
+      `\nImpact: ${f.impact||f.hypothesis||'See the saved evidence.'}`+
+      `${f.preconditions?`\nConditions: ${f.preconditions}`:''}`+
+      `${citation?`\n\nSource: ${citation}`:''}`+
+      `${proof?`\n\nProof: ${label(proof.status||proof.verdict||'saved')} · ${proof.controls?.length??0} replay controls`+
+        `${proof.reason?`\n${proof.reason}`:''}`+
+        `${proof.blackboxRun?`\nRun: ${proof.blackboxRun}`:''}`:''}`+
+      `\n\nFix: ${f.recommendation||'Inspect the saved finding evidence before editing.'}`+
+      `\n\nNext: ${next}`+
+      `${f.engine==='blackbox'?`\nSave regression test: bypass test save ${f.id}`:''}`);
+    return;
+  }
   if((value.installed||value.integration)&&value.state&&value.next){
     console.log(`\n${bold('Bypass in Muse Code')} · ${label(value.state)}\n${value.message||'Native plugin status'}\n`);
     for(const capability of value.capabilities||[])console.log(`  ${capability.id?.includes(':hook:')?'Session context':'Security tools'} · ${label(capability.status)}`);

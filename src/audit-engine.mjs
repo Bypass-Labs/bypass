@@ -87,6 +87,8 @@ async function reconcile(root, parentRunId, sourceResult, blackbox) {
         linked.lastRunId = parentRunId;
         linked.severity = finding.severity ?? linked.severity ?? 'unknown';
         linked.engine = 'blackbox';
+        linked.impact = finding.assessment?.impact ?? linked.impact;
+        linked.preconditions = finding.assessment?.preconditions ?? linked.preconditions;
         linked.recommendation = finding.assessment?.remediation ?? finding.remediation ??
           linked.recommendation;
         linked.verification = {status: 'confirmed', at: now(), origin: blackbox.origin,
@@ -108,6 +110,8 @@ async function reconcile(root, parentRunId, sourceResult, blackbox) {
           ...finding.sourceFinding.source} : {kind: 'http', runId: blackbox.run,
           evidence: finding.evidence ?? []},
         hypothesis: finding.rationale ?? finding.sourceFinding?.hypothesis ?? finding.title,
+        impact: finding.assessment?.impact ?? null,
+        preconditions: finding.assessment?.preconditions ?? null,
         recommendation: finding.assessment?.remediation ?? finding.remediation ?? null,
         lastRunId: parentRunId, verification: {status: 'confirmed', at: now(),
           origin: blackbox.origin, blackboxRun: blackbox.run,
