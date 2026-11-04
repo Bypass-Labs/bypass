@@ -107,6 +107,30 @@ test('unreachable or inconclusive proofs remain open and deployment identity is 
   assert.equal(latestRemediation(root)?.review, review);
 });
 
+test('connected full live run saves and replays each proof under one combined checkpoint',async()=>{
+  const {root,origin}=await project(),id='bx-20261104-33333333';
+  const folder=path.join(root,'.bypass','runs',id),proofs=[];
+  for(const [index,finding] of ['finding-one','finding-two'].entries()){
+    const proof=path.join(folder,'poc',`proof-${index}`,'poc.mjs');
+    fs.mkdirSync(path.dirname(proof),{recursive:true});
+    fs.writeFileSync(proof,'// fixture\n');
+    fs.writeFileSync(path.join(path.dirname(proof),'spec.json'),'{}');
+    proofs.push({id:`proof-${index}`,title:`Issue ${index+1}`,verdict:'confirmed',
+      sourceFinding:{id:finding},proof});
+  }
+  fs.writeFileSync(path.join(folder,'findings.json'),JSON.stringify(proofs));
+  fs.writeFileSync(path.join(folder,'run.json'),JSON.stringify({run:id,combinedReviewId:review,
+    scope:{target:{origin}}}));
+  const opened=await remediationCheckpoint(root,{action:'open',review,
+    pr:'https://git.example.test/team/app/pulls/10',branch:'fix/both',runs:[id]});
+  assert.deepEqual(opened.sourceFindings.map(item=>item.proof),['proof-0','proof-1']);
+  const replayed=await remediationCheckpoint(root,{action:'replay',review,
+    mergeRevision:sha,deploymentObserved:true},{verify:async()=>({integrity:{ok:true},
+      proofs:[{id:'proof-0',verdict:'not_reproduced'},
+        {id:'proof-1',verdict:'confirmed'}]})});
+  assert.deepEqual(replayed.results.map(item=>item.status),['not_reproduced','still_vulnerable']);
+});
+
 test('installed MCP exposes the durable PR handoff on a new session', async t => {
   const {root, runs} = await project();
   const client = await mcpClient(root, {stateDir: temp()});

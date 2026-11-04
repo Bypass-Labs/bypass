@@ -6,6 +6,7 @@ import {createServer} from 'node:http';
 import {execute} from '../src/service.mjs';
 import {mcpClient} from './mcp-client.mjs';
 import {temp} from './helpers.mjs';
+import {change,read} from '../src/store.mjs';
 
 function blank(schema) {
   if (schema?.anyOf) return blank(schema.anyOf[0]);
@@ -69,6 +70,55 @@ for(const packaged of [false,true])test(
   assert.equal(final.result.kind,'blackbox-audit');
   assert.equal(final.result.stats.model,'muse-code-session');
   assert.ok(fs.existsSync(path.join(selected,'.bypass/runs',final.result.run,'evidence.jsonl')));
+  assert.equal(await client.close(),0);
+});
+
+test('MCP combined review feeds cited source leads to one full live audit',async t=>{
+  const server=createServer((request,response)=>{
+    response.writeHead(request.url==='/api/public'?200:404,
+      {'content-type':'application/json'});
+    response.end(request.url==='/api/public'?'{"ok":true}':'{}');
+  });
+  await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));
+  t.after(()=>server.close());
+  const url=`http://127.0.0.1:${server.address().port}`,root=temp();
+  fs.writeFileSync(path.join(root,'routes.mjs'),"app.get('/api/public', handler);\n");
+  await execute('init',[root]);
+  await execute('target add',['app'],{project:root,url,environment:'local'});
+  await execute('target verify',['app'],{project:root,method:'local'});
+  await execute('target authorize',['app'],{project:root,paths:'/',methods:'GET,HEAD',rps:10,accept:true});
+  const client=await mcpClient(root,{stateDir:temp(),env:{META_API_KEY:'',MODEL_API_KEY:''}});
+  t.after(()=>client.child.kill());
+  const scan=await client.call('bypass_scan',{mode:'combined',modelCalls:6,minutes:1});
+  const step=await client.call('bypass_review_step',{id:scan.runId,action:'source',candidates:[{
+    title:'Possible anonymous data access',category:'missing-authentication',file:'routes.mjs',line:1,
+    quote:"app.get('/api/public', handler);",resourcePath:'/api/public',
+    hypothesis:'The route may return private data without a session.',
+    recommendation:'Check the caller before returning private data.'}]});
+  assert.equal(step.findings.length,1);
+  await change(root,state=>{state.runs.find(run=>run.id===scan.runId).status='completed';});
+  const setup=await client.call('bypass_blackbox_setup',{url,include:'/',methods:'GET,HEAD',
+    rps:10,'model-calls':6,'max-tasks':2,'max-urls':10,minutes:1});
+  const started=await client.call('bypass_blackbox_start',{url,review:scan.runId,
+    scope:setup.scopeFile,'accept-local':true,'max-tasks':2,'max-urls':10});
+  assert.equal(started.status,'running');
+  let cursor=0,final;
+  const deadline=Date.now()+55000;
+  while(Date.now()<deadline){
+    const state=await client.call('bypass_blackbox_next',{after:cursor});cursor=state.cursor;
+    for(const pending of state.pending)
+      await client.call('bypass_blackbox_submit',{id:pending.id,decision:blank(pending.schema)});
+    if(state.status!=='running'){final=state;break;}
+    await new Promise(resolve=>setTimeout(resolve,100));
+  }
+  assert.equal(final?.status,'completed',JSON.stringify(final?.error));
+  assert.equal(final.result.combinedReviewId,scan.runId);
+  const source=JSON.parse(fs.readFileSync(path.join(final.result.runDir,'source.json'),'utf8'));
+  assert.equal(source.securityLeads[0].id,step.findings[0]);
+  const linked=await client.call('bypass_review_step',{id:scan.runId,action:'status'});
+  assert.equal(linked.liveAudit.runId,final.result.run);
+  assert.equal(linked.nextAction.tool,'bypass_findings');
+  assert.equal(read(root).runs.find(run=>run.id===scan.runId).result.blackbox.run,final.result.run);
   assert.equal(await client.close(),0);
 });
 

@@ -108,18 +108,19 @@ export async function pluginOnboarding(cwd,root,{intent='real',mode,url,environm
         {id:'ten',label:`${savedRate===10?5:10} RPS`,description:'Use this request rate.',arguments:{rps:savedRate===10?5:10}},
         {id:'custom',label:'Custom rate',description:'Enter a positive requests-per-second number.',requiresInput:'rps'}
       ],{custom:'value'}),guidance:'Ask this question once. Send the selected positive number to bypass_onboarding; do not silently reuse a saved rate.'};
-    else if(modelCalls==null)nextAction={id:'model-calls',tool:'bypass_onboarding',question:'How many Muse decision calls may all focused blackbox checks share?',
+    else if(modelCalls==null)nextAction={id:'model-calls',tool:'bypass_onboarding',question:'How many Muse decision calls may the live audit use?',
       input:choiceInput('modelCalls',[
-        {id:'default',label:'120 calls',description:'Use the default total for focused blackbox checks.',arguments:{modelCalls:120}},
-        {id:'more',label:'240 calls',description:'Allow more focused blackbox decisions.',arguments:{modelCalls:240}},
+        {id:'default',label:'120 calls',description:'Use the standard live audit limit.',arguments:{modelCalls:120}},
+        {id:'more',label:'240 calls',description:'Allow more live audit decisions.',arguments:{modelCalls:240}},
         {id:'custom',label:'Custom number',description:'Enter a positive whole number.',requiresInput:'modelCalls'}
-      ],{custom:'value'}),guidance:'Ask this question once. This cap covers focused blackbox decisions across all source findings; Muse Code source-review reasoning is outside this counter.'};
+      ],{custom:'value'}),guidance:'Ask this question once. This cap covers the connected full live audit; Muse Code source-review reasoning is outside this counter.'};
     else if(minutes==null)nextAction={id:'minutes',tool:'bypass_onboarding',question:'What time budget should the combined review use?',
       input:choiceInput('minutes',[
+        {id:'quick',label:'5-minute test',description:'Fast first pass with partial coverage; remaining work is reported.',arguments:{minutes:5}},
         {id:'default',label:'30 minutes',description:'Use the default total duration.',arguments:{minutes:30}},
-        {id:'more',label:'45 minutes',description:'Allow more time for source and focused blackbox checks.',arguments:{minutes:45}},
+        {id:'more',label:'45 minutes',description:'Allow more time for source and live checks.',arguments:{minutes:45}},
         {id:'custom',label:'Custom duration',description:'Enter a positive number of minutes.',requiresInput:'minutes'}
-      ],{custom:'value'}),guidance:'Ask this question once. Elapsed time starts at the source review; Bypass applies the remaining time to each focused check and stops starting new checks when it runs out. The plugin cannot interrupt Muse Code while it is thinking.'};
+      ],{recommended:'default',custom:'value'}),guidance:'Ask this question once. Elapsed time starts at the source review; Bypass applies the remaining time to the connected live audit. Five minutes is a quick pass, not full coverage. The plugin cannot interrupt Muse Code while it is thinking.'};
     else if(!scopeApproved)nextAction={id:'scope',tool:'bypass_authorize_target'};
     else nextAction={id:'review',tool:'bypass_scan',arguments:{mode:'combined',modelCalls,minutes},
       message:'Start the combined source and live review with the selected total Muse-call and time limits.'};

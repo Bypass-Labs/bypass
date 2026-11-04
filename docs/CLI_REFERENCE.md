@@ -8,7 +8,7 @@ Global options: `--project <value>`, `--json`, `--help`, `--version`, `--non-int
 
 Run a scoped black-box audit and save evidence under .bypass/runs/.
 
-Options: `--scope <value>`, `--include <value>`, `--domains <value>`, `--audit-domains <value>`, `--owner-env <value>`, `--other-env <value>`, `--auth <value>`, `--identity-path <value>`, `--model <value>`, `--agents <value>`, `--http-workers <value>`, `--rps <value>`, `--model-calls <value>`, `--max-urls <value>`, `--max-tasks <value>`, `--minutes <value>`, `--dom-script-bytes <value>`, `--out <value>`, `--source <value>`, `--finding <value>`, `--focus-path <value>`, `--revision-path <value>`, `--revision-field <value>`, `--accept-local`, `--no-model`, `--dry-run`, `--no-discovery`, `--offline`
+Options: `--scope <value>`, `--include <value>`, `--domains <value>`, `--audit-domains <value>`, `--owner-env <value>`, `--other-env <value>`, `--auth <value>`, `--identity-path <value>`, `--model <value>`, `--agents <value>`, `--http-workers <value>`, `--rps <value>`, `--model-calls <value>`, `--max-urls <value>`, `--max-tasks <value>`, `--minutes <value>`, `--dom-script-bytes <value>`, `--out <value>`, `--source <value>`, `--review <value>`, `--finding <value>`, `--focus-path <value>`, `--revision-path <value>`, `--revision-field <value>`, `--accept-local`, `--no-model`, `--dry-run`, `--no-discovery`, `--offline`
 
 ## `bypass blackbox scope <url>`
 

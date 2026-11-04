@@ -265,7 +265,7 @@ export async function runAudit({url, root = process.cwd(), scopeFile = null, ove
   noModel = false, dryRun = false, noDiscovery = false, offline = false, modelName = null, infer = modelInfer,
   modelProfileOverride = null,
   resolve = null, ct = null, connectTls = null, osvQuery = null, sourcePath = null,
-  sourceContext = null,
+  sourceContext = null, combinedReviewId = null,
   findingId = null, focusPath = null, revisionPath = null, revisionField = null,
   log = () => {}, out = null,
   signal = null,
@@ -419,6 +419,7 @@ export async function runAudit({url, root = process.cwd(), scopeFile = null, ove
   fs.mkdirSync(runDir, {recursive: true, mode: 0o700});
   const startedAt = now(), started = Date.now();
   atomic(path.join(runDir, 'run-start.json'), {run, status: 'running', scopeHash,
+    ...(combinedReviewId?{combinedReviewId}:{}),
     origin: scope.target.origin, scopeFile: file ? path.resolve(file) : null,
     rps: scope.limits.rps, effectiveLimits: scope.limits,
     startedAt, resumedFrom: resumeFrom,
@@ -2523,6 +2524,7 @@ export async function runAudit({url, root = process.cwd(), scopeFile = null, ove
       storedXssChecks: web.strategyDecisions.filter(item => item.accepted && item.mode === 'stored-xss').length,
     } : null;
     const runState = {run, status: dryRun ? 'dry-run' : exitCode === 3 ? 'incomplete' : 'partial', scopeHash,
+      ...(combinedReviewId?{combinedReviewId}:{}),
       resumedFrom: resumeFrom, scopeFile: file ? path.resolve(file) : null,
       ...(focus ? {focus, revisionPath: effectiveRevisionPath,
         revisionField: effectiveRevisionField} : {}),
@@ -2536,6 +2538,7 @@ export async function runAudit({url, root = process.cwd(), scopeFile = null, ove
     atomic(path.join(runDir, 'run.json'), runState);
     phase('done', 6, 'Report and coverage');
     return {kind: 'blackbox-audit', run, runDir, projectRoot, origin: sessions.scope.target.origin,
+      ...(combinedReviewId?{combinedReviewId}:{}),
       reportPath: path.join(runDir, 'report.md'),
       scopeHash, findings, stats, untested: plan.untested, dropped: plan.dropped, patterns: surface.patterns.length,
       tasks: plan.tasks.length + web.tested, chains: chains.length, discovery: discovery?.stats ?? null, integrity, coverage,

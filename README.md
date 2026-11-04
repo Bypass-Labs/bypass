@@ -122,7 +122,7 @@ Muse Code owns plugin reasoning and billing. Bypass cannot verify subscription b
 | Saved regression replay | `/bypass:tests` | `bypass test run --all` | Saved checks and valid target setup; no model calls |
 | GitHub PR review and smoke tests | Ask Muse Code to generate setup | `bypass ci init --agent` | GitHub Actions; Meta API key for source review |
 
-With **Code + running app**, standalone `scan --mode combined` starts the cited source review and broad scoped live reconnaissance together. Source hypotheses enter the same black-box planning and replay pipeline; only independently replayed HTTP evidence becomes confirmed. One parent scan result links the source evidence, black-box report, coverage, findings, remediation, and regression-proof IDs. Muse keeps its native host-directed review flow but uses the same scoped black-box proof engine for live validation.
+With **Code + running app**, standalone `scan --mode combined` starts the cited source review and broad scoped live reconnaissance together. In Muse Code, the plugin completes its host-directed source worklist, then starts one full scoped black-box audit with those cited source leads and the remaining combined budget. Both paths link source evidence, live coverage, findings, and proof IDs in one review. Only replayed HTTP evidence becomes confirmed.
 
 ## White-box source review
 
@@ -219,7 +219,7 @@ Muse Code connects the app, completes missing ownership/scope setup, and drives 
 
 The URL and paths are run inputs, not permission by themselves. Review the exact scope before testing. The request rate, engine-decision cap, and time limit bound the audit; the displayed “Muse calls” cap does not include every surrounding host turn.
 
-The wizard's **Running app only** choice starts this full audit automatically after scope approval. Its **Code + running app** choice starts `scan --mode combined` immediately: source review and broad live reconnaissance overlap, then source leads join the live plan before testing and proof replay finish. `/bypass:blackbox` remains the explicit app-only command; `--finding` remains the explicit focused-validation command.
+The wizard's **Running app only** choice starts this full audit automatically after scope approval. Its **Code + running app** choice first completes the Muse-directed source review, then hands its cited leads to one full live audit. The wizard offers a **5-minute test** for a quick pass; it reports any remaining coverage as untested. `/bypass:blackbox` remains the explicit app-only command; `--finding` remains an explicit focused-validation command. Muse loads each Bypass tool by its current-session ID, so a logical tool name in a review result is never called as a synthesized MCP identifier.
 
 ### From the CLI
 

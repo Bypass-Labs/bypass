@@ -15,7 +15,7 @@ const leadCategory = finding => finding.privateFields?.length ? 'sensitive-data'
     'authorization' : /inject/i.test(finding.category) ? 'injection' :
       /sensitive|disclos/i.test(finding.category) ? 'sensitive-data' : 'other';
 
-function sourceContext(root, sourceResult) {
+export function sourceContextFromFindings(root, sourceResult) {
   const state = read(root);
   const routeLocations = sourceResult.inventory?.routeLocations ?? [];
   const methodFor = finding => finding.method ?? routeLocations.find(route =>
@@ -61,7 +61,7 @@ function scopeOptions(target, options, bridge, runId) {
     ...(options.httpWorkers != null ? {'http-workers': options.httpWorkers} : {})};
 }
 
-async function reconcile(root, parentRunId, sourceResult, blackbox) {
+export async function reconcileAuditFindings(root, parentRunId, sourceResult, blackbox) {
   const state = read(root), target = state.targets.find(item => item.url === blackbox.origin);
   const sourceOutcomes = new Map((blackbox.sourceFindings ?? []).map(item => [item.id, item]));
   const sourceIds = sourceResult?.findings ?? [];
@@ -156,7 +156,7 @@ export async function executeStandaloneAudit(root, runId, options,
   const sourcePromise = plan.mode === 'combined' ? executeSourceReview(root, runId,
     {...options, mode: 'code', target: plan.target}, {signal, report,
       ...(sourceRuntime ? {runtime: sourceRuntime} : {})})
-    .then(result => ({result, context: sourceContext(root, result)}))
+    .then(result => ({result, context: sourceContextFromFindings(root, result)}))
     .catch(error => {const failure=redact({message: error.message, details: error.details});
       report('white-box', 'Source review could not finish; the independent live audit is continuing.').catch(() => {});
       return {result: {findings: [], confirmed: [], executionFailures: [{stage: 'white-box',
@@ -171,7 +171,7 @@ export async function executeStandaloneAudit(root, runId, options,
       runtime.onBlackboxProgress?.(event);}});
   await progressQueue;
   const source = await sourcePromise;
-  const reconciled = await reconcile(root, runId, source.result, blackbox);
+  const reconciled = await reconcileAuditFindings(root, runId, source.result, blackbox);
   const executionFailures = [...(source.result?.executionFailures ?? []),
     ...(blackbox.modelError ? [{stage: 'blackbox-model', reason: blackbox.modelError}] : [])];
   return {plan, engine: plan.mode, simulation: false, source: source.result,

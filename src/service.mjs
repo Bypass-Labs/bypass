@@ -3,14 +3,14 @@ import { assessmentCoverage, findingSummary } from './review-report.mjs';
 import { createAppProfile, requireSource } from './application-setup.mjs';
 import { rememberOwnership, rememberProjectOwnership, sharedOwnership, revokeOwnership, ownershipVerification, verificationDisabled, ownershipReady } from './ownership-store.mjs';
 import { executionMode, hostAI, requireStandaloneAPI } from './execution-mode.mjs';
-import { beginHostReview, hostPlan, hostReviewStep, combinedFocusBudget } from './host-review.mjs';
+import { beginHostReview, hostPlan, hostReviewStep, combinedFocusBudget, combinedReviewHandoff } from './host-review.mjs';
 import { memorySummary, recallMemory, featureContext, forgetMemory, setMemory, consolidateMemory, rememberBlackboxFindings } from './project-memory.mjs';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { spawn } from 'node:child_process';
 import { commandInvocation } from './command.mjs';
-import { rootFrom, read, change, initStore, repositoryFilePlan, snapshot, atomic, event } from './store.mjs';
+import { rootFrom, read, change, initStore, repositoryFilePlan, snapshot, atomic, event, writeEvidence } from './store.mjs';
 import { need, named, safeName, envName, now, duration, outcome, execFile, Fault, redact } from './util.mjs';
 import { samePluginPackage, museInstallState } from './muse-install-state.mjs';
 import { connectRepository, repositoryInfo, inventory } from './repository.mjs';
@@ -31,6 +31,7 @@ import { dispatchRun, watchRun, startWorker, workerStatus, runMonitor } from './
 import { startDemo, updateDemo, serveDemo, demoConfig, CLI } from './demo.mjs';
 import { prepareScopeTemplate, prepareBlackboxSetup, scopeOutputForOrigin } from './blackbox/setup.mjs';
 import { runAudit } from './blackbox/index.mjs';
+import { reconcileAuditFindings } from './audit-engine.mjs';
 import { verifyRun as verifyBlackboxRun, exportRun as exportBlackboxRun } from './blackbox/poc.mjs';
 import { projectIdentityBridge, projectBlackboxEnvironment } from './blackbox/project-scope.mjs';
 
@@ -38,6 +39,19 @@ export const PACKAGE_ROOT=path.resolve(path.dirname(fileURLToPath(import.meta.ur
 function loadJSON(file){try{return JSON.parse(fs.readFileSync(path.resolve(file),'utf8'));}catch{throw new Fault(`Cannot parse JSON file: ${file}`);}}
 function filter(list,options,keys){return list.filter(item=>keys.every(k=>!options[k]||item[k]===options[k]));}
 const wrap=value=>value?.schemaVersion==='bypass.v1'?value:outcome(value);
+async function recordCombinedBlackbox(projectRoot,result,reviewId){
+  const parent=read(projectRoot).runs.find(run=>run.id===reviewId);
+  need(parent?.host?.mode==='combined','The connected source review is missing.',3);
+  const reconciled=await reconcileAuditFindings(projectRoot,reviewId,
+    {findings:parent.result.findings},result);
+  await change(projectRoot,state=>{const run=state.runs.find(item=>item.id===reviewId);
+    run.result.findings=[...new Set([...run.result.findings,...reconciled.findings])];
+    run.result.blackbox={run:result.run,reportPath:result.reportPath,
+      exitCode:result.exitCode,coverage:result.coverage};
+    run.exitCode=reconciled.confirmed.length?1:3;run.result.exitCode=run.exitCode;});
+  writeEvidence(projectRoot,read(projectRoot).runs.find(run=>run.id===reviewId));
+  return reconciled;
+}
 export function readiness(root){
   const s=read(root),target=s.targets.find(t=>t.name===s.activeTarget),model=s.models.find(m=>m.name===s.activeModel);
   const host=executionMode()==='muse-host';
@@ -104,11 +118,16 @@ export async function execute(key,args=[],o={},context={}){
         acceptLocal:!metadata.scopeFile && loopback(new URL(metadata.origin??
           metadata.scope?.target?.origin).hostname)},
       modelName:o.model||null,offline:!!o.offline,
+      combinedReviewId:metadata.combinedReviewId??null,
+      sourceContext:metadata.combinedReviewId&&fs.existsSync(path.join(priorDir,'source.json'))?
+        JSON.parse(fs.readFileSync(path.join(priorDir,'source.json'),'utf8')):null,
       signal:context.signal, env:auditEnv, infer:context.infer, modelProfileOverride:context.modelProfile,
       log:event=>context.onProgress?.(event)});
-    const memory=fs.existsSync(path.join(projectRoot,'.bypass/state.json'))?
+    const reconciled=metadata.combinedReviewId?
+      await recordCombinedBlackbox(projectRoot,result,metadata.combinedReviewId):null;
+    const memory=fs.existsSync(path.join(projectRoot,'.bypass/state.json'))&&!reconciled?
       await rememberBlackboxFindings(projectRoot,result):null;
-    return outcome({...result,memory},result.exitCode);
+    return outcome({...result,memory,reconciled},result.exitCode);
   }
   if(key==='blackbox scope'){
     const {origin,file,scope}=prepareScopeTemplate(working,args[0],o,{reuse:o.reuse===true});
@@ -124,6 +143,13 @@ export async function execute(key,args=[],o={},context={}){
   }
   if(key==='blackbox setup')return outcome(await prepareBlackboxSetup(working,args[0],o));
   if(key==='blackbox'){
+    let combinedHandoff=null;
+    if(o.review){
+      need(!o.finding,'Choose a connected full audit or a focused finding, not both.',3);
+      need(!o.out,'A connected live audit saves under the project .bypass/runs folder.',3);
+      combinedHandoff=combinedReviewHandoff(rootFrom(working,false),o.review,appOriginInput(args[0]));
+      o={...o,...combinedHandoff.limits};
+    }
     if(executionMode()==='muse-host'&&o.finding){
       const budget=combinedFocusBudget(rootFrom(working,false),o.finding);
       if(budget){
@@ -169,13 +195,17 @@ export async function execute(key,args=[],o={},context={}){
         auditDomains:o['audit-domains'],includes:o.include},
       noModel:!!o['no-model'],dryRun:!!o['dry-run'],noDiscovery:!!o['no-discovery'],offline:!!o.offline,
       modelName:o.model||null,sourcePath:o.source||null,
+      sourceContext:combinedHandoff?.sourceContext??null,
+      combinedReviewId:combinedHandoff?.reviewId??null,
       findingId:o.finding||null,focusPath:o['focus-path']||null,
       revisionPath:o['revision-path']||null,revisionField:o['revision-field']||'revision',
       signal:context.signal, env:auditEnv, infer:context.infer, modelProfileOverride:context.modelProfile,
       log:event=>context.onProgress?.(event)});
-    const memory=fs.existsSync(path.join(projectRoot,'.bypass/state.json'))?
+    const reconciled=combinedHandoff?
+      await recordCombinedBlackbox(projectRoot,result,combinedHandoff.reviewId):null;
+    const memory=fs.existsSync(path.join(projectRoot,'.bypass/state.json'))&&!reconciled?
       await rememberBlackboxFindings(projectRoot,result):null;
-    return outcome({...result,memory},result.exitCode);
+    return outcome({...result,memory,reconciled},result.exitCode);
   }
   if(key==='discover'||key.startsWith('discover ')||key.startsWith('scanner ')){
     const {scannerService}=await import('./scanner/service.mjs');
@@ -186,7 +216,7 @@ export async function execute(key,args=[],o={},context={}){
     if(fixtureRoot&&read(fixtureRoot).poc){const {resumePOC}=await import('./poc.mjs');await resumePOC(fixtureRoot,{automatic:true,signal:context.signal});}
   }
   if(executionMode()==='muse-host'&&['model add','model test','model use'].includes(key))return outcome({ai:hostAI(),message:'Model setup and independent connection tests are disabled in the Muse plugin. Continue in the active host session.'});
-  if(executionMode()==='muse-host'&&key==='scan'&&!read(rootFrom(working)).demo)return o.plan?outcome({plan:hostPlan(read(rootFrom(working)),o)}):beginHostReview(rootFrom(working),o,context);
+  if(executionMode()==='muse-host'&&key==='scan'&&!read(rootFrom(working)).demo)return o.plan?outcome({plan:hostPlan(read(rootFrom(working)),o)}):beginHostReview(rootFrom(working),{...o,broadLive:o.mode==='combined'},context);
   if(key==='host review')return hostReviewStep(rootFrom(working),o,context);
   if(key==='app connect'){
     const url=targetURL(appOriginInput(o.url||args[0]),o.environment||'staging'),profile=await createAppProfile(url);
