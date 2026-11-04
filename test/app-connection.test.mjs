@@ -30,6 +30,15 @@ test('app connection asks for one missing input; never infers a remote environme
   assert.throws(()=>appConnection({mode:'combined',url:'localhost:4173',environment:'production'}),/non-loopback/);
 });
 
+test('Muse plugin instructions use the three-choice remote environment picker',()=>{
+  const skill=fs.readFileSync(new URL('../plugin/skills/bypass/SKILL.md',import.meta.url),'utf8');
+  const command=fs.readFileSync(new URL('../plugin/commands/start.md',import.meta.url),'utf8');
+  assert.match(skill,/use the returned `nextAction\.input\.choices` exactly/);
+  assert.match(skill,/only \*\*Production\*\*, \*\*Staging\*\*, and \*\*Preview\*\*/);
+  assert.doesNotMatch(skill,/\*\*Preview\*\*, and \*\*Local development\*\*/);
+  assert.match(command,/Copy its choices exactly \(at most three\)/);
+});
+
 test('onboarding ignores README ports, reuses saved apps, and keeps code-only review free of live setup',async()=>{
   const root=temp();fs.writeFileSync(path.join(root,'server.mjs'),'export const app = true;');await execute('init',[root]);await execute('config set',['ownershipVerification','dns'],{project:root});
   fs.writeFileSync(path.join(root,'README.md'),'Local app: http://127.0.0.1:4173\n');

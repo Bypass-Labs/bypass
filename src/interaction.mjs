@@ -2,6 +2,7 @@ import { Fault } from './util.mjs';
 
 // Shared presentation contract. A suggestion is never consent or a verified fact.
 export function choiceInput(field,choices,{recommended,custom='instructions',...extra}={}){
+  if(choices.length>3)throw new Fault(`Native picker ${field} supports at most three choices.`);
   return {kind:'choice',field,hostControl:'request_user_input',allowCustom:true,
     choices:choices.map(c=>({...c,...(c.id===recommended?{recommended:true,label:/recommended/i.test(c.label)?c.label:c.label+' (recommended)'}:{})})),
     customInput:{kind:custom,label:custom==='value'?'Enter a custom value':'Custom instructions',optional:true},

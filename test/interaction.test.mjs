@@ -13,6 +13,9 @@ test('native decisions have custom instructions; only grounded choices receive a
   assert.equal(inputs[0].choices.filter(c=>c.recommended).length,1);
   assert.equal(inputs[1].choices.some(c=>c.recommended),false,'Do not guess deployment environment');
   assert.equal(choiceInput('project',[{id:'a',label:'Project A'},{id:'b',label:'Project B'}]).choices.some(c=>c.recommended),false);
+  assert.throws(()=>choiceInput('environment',[
+    {id:'production'},{id:'staging'},{id:'preview'},{id:'local'}]),
+  /at most three choices/);
   assert.equal(registrationStatus(null).nextAction,null,'No premature account question before app selection');
 });
 

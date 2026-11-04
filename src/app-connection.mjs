@@ -9,6 +9,9 @@ export const appEnvironmentChoices=[
   {label:'Preview',id:'preview',description:'A temporary deployment for a branch or pull request.'},
   {label:'Local development',id:'local',description:'An app running on your computer.'}
 ];
+// Muse's native picker accepts at most three options. Loopback selects local
+// automatically; other explicit local choices travel through the custom input.
+const remoteEnvironmentChoices=appEnvironmentChoices.filter(choice=>choice.id!=='local');
 export const appEnvironmentQuestion=url=>`Which environment is this? App: ${url}`;
 export const codeOnlyInput=value=>/^(code[ -]only|source[ -]only|skip)$/i.test(value.trim());
 
@@ -20,7 +23,7 @@ export function appConnection({url,environment}={}){
   const origin=appOriginInput(url);
   const selectedEnvironment=environment||(loopback(new URL(origin).hostname)?'local':null);
   if(!selectedEnvironment)return {id:'environment',tool:'bypass_add_target',url:origin,question:appEnvironmentQuestion(origin),
-    input:choiceInput('environment',appEnvironmentChoices.filter(choice=>choice.id!=='local')),
+    input:choiceInput('environment',remoteEnvironmentChoices),
     guidance:'Open the host selection UI with production, staging and preview. Local is selected automatically for loopback URLs. Ask this only when the user has not already identified the environment. Do not guess a remote environment from its hostname. No choice is preselected. If the host requires a default, put production first; this choice never authorizes requests.'};
   targetURL(origin,selectedEnvironment);
   return {id:'app',tool:'bypass_add_target',automatic:true,arguments:{name:selectedEnvironment,url:origin,environment:selectedEnvironment},
