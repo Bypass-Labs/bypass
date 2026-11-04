@@ -120,11 +120,17 @@ class Workflow:
             self.save(state)
             self.render(state)
 
-    def evaluate(self, run):
+    def reasoning_timeout(self, state, disabled):
+        if disabled and state['executionMode']!='standalone-api':
+            raise ValueError('Disabling reasoning timeouts requires standalone API execution.')
+        state['reasoningTimeoutDisabled']=disabled
+
+    def evaluate(self, run, disable_reasoning_timeout=False):
         with self.guard:
             fd = self.lease()
             try:
                 state = self.read(run)
+                self.reasoning_timeout(state,disable_reasoning_timeout)
                 if state['status'] not in TERMINAL:
                     raise ValueError('Finish or cancel the current discovery/evaluation before evaluating a saved run.')
                 active = self.output/'active-run.json'
@@ -247,6 +253,7 @@ class Workflow:
                      'signalCount': 0, 'sourceReads': 0, 'languages': [], 'coverageComplete': False, 'evaluation': 'not_run',
                      'message': 'Preparing source snapshot.', 'createdAt': now(), 'updatedAt': now(), 'config': config,
                      'importSarif': importing, 'imageIdentity': os.environ.get('BYPASS_SCANNER_IMAGE', 'development')}
+            self.reasoning_timeout(state,arguments.get('disableReasoningTimeout',False))
             self.save(state)
             atomic(active,{'run':run})
             self.launch(state, fd, False)
@@ -255,8 +262,9 @@ class Workflow:
             os.close(fd)
             raise
 
-    def resume(self, run):
+    def resume(self, run, disable_reasoning_timeout=False):
         state = self.read(run)
+        self.reasoning_timeout(state,disable_reasoning_timeout)
         if state['status'] == 'completed' or run in self.tasks:
             return self.status(run)
         fd = self.lease()

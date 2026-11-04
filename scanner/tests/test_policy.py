@@ -98,6 +98,28 @@ class PolicyTests(unittest.TestCase):
             self.assertNotEqual(self.submit(run,task,result)['status'],'error')
         self.engine.cancel(run)
 
+    def test_unlimited_reasoning_stage_can_resume_read_and_submit_past_original_deadline(self):
+        run=self.start(mode='standalone-api');task=self.next(run)
+        deadline=self.engine.policy_engine().load(run)['deadline']
+        self.call('evidence',{'run':run,'task':task['id'],'operation':'checkpoint','arguments':{'interrupt':True,'reason':'Resume unlimited'}})
+        with patch('bypass_scanner.tasks.time.time',return_value=deadline+1):
+            self.engine.resume(run,True)
+            end=time.monotonic()+5
+            while run in self.engine.tasks and time.monotonic()<end:time.sleep(.01)
+            task=self.call('next_task',{'run':run,'disableTaskTimeout':True})['task']
+            self.assertTrue(task['stageTimeoutDisabled']);self.assertEqual(task['expiresAt'],0)
+            ref=self.read(run,task)
+            result={'summary':'Read past the original stage deadline.','assumptions':[],
+                    'openQuestions':[],'reviewedEvidence':[ref],'surfaces':[]}
+            self.assertNotEqual(self.submit(run,task,result)['status'],'error')
+        self.engine.cancel(run)
+
+    def test_muse_cannot_disable_reasoning_stage_timeouts(self):
+        run=self.start()
+        self.engine.cancel(run)
+        self.assertEqual(self.call('resume',{'run':run,'disableReasoningTimeout':True})['status'],'error')
+        self.assertFalse(self.engine.read(run).get('reasoningTimeoutDisabled',False))
+
     def test_no_task_timeout_is_standalone_only_and_does_not_disable_stage_deadlines(self):
         run=self.start()
         self.assertEqual(self.call('next_task',{'run':run,'disableTaskTimeout':True})['status'],'error')

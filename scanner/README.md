@@ -91,9 +91,12 @@ requests can continue until an accepted submission or a remaining budget,
 deadline, or cancellation stops the task. Other workflows retain their own
 turn limits. A standalone profile with `--timeout-ms 0` also disables per-task
 timeouts: the driver leases tasks with `disableTaskTimeout: true`, and the
-issued task records `taskTimeoutDisabled: true`. Its expiry is the stage
-deadline, not the default 300-second task deadline. Finite profiles and
-Muse-hosted tasks retain their leases; stage budgets always remain enforced.
+issued task records `taskTimeoutDisabled: true`. Zero-timeout standalone
+profiles also disable policy/evaluation stage deadlines: tasks record
+`stageTimeoutDisabled: true` and `expiresAt: 0`. Finite profiles and
+Muse-hosted tasks retain their leases and stage deadlines. CodeQL resource
+timeouts, request/evidence/context budgets, attempt limits, and cancellation
+remain enforced.
 
 Standalone tool schemas distinguish evidence (`action`, `operation`,
 `arguments`) from submission (`action`, `result`); unused fields must be absent.

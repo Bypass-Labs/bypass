@@ -105,7 +105,7 @@ test('Muse drives real Python tasks and evidence with a broken API profile and z
   }finally{await closeScannerSessions();}
 });
 
-test('standalone no-timeout profiles disable task deadlines but retain the stage budget',{skip:!available},async()=>{
+test('standalone no-timeout profiles disable model, task, and reasoning-stage deadlines',{skip:!available},async()=>{
   const root=await source();await addTestModel(root);
   await change(root,state=>{state.models[0].timeoutMs=0;});
   let turns=0;
@@ -115,8 +115,8 @@ test('standalone no-timeout profiles disable task deadlines but retain the stage
       turns++;options.onProgress({kind:'phase',phase:'request'});
       task??=JSON.parse(messages[1].content);
       assert.equal(task.taskTimeoutDisabled,true);
-      assert.ok(options.timeoutMs>300000);
-      assert.ok(options.timeoutMs>0&&options.timeoutMs<=task.expiresAt*1000-Date.now()+1000);
+      assert.equal(task.stageTimeoutDisabled,true);
+      assert.equal(options.timeoutMs,0);assert.equal(task.expiresAt,0);
       assert.equal(Number.isInteger(options.timeoutMs),true);
       const last=JSON.parse(messages.at(-1).content);
       if(!last.evidence)return {action:'evidence',operation:'read',arguments:{path:'app.py'}};
@@ -134,7 +134,7 @@ test('standalone no-timeout profiles disable task deadlines but retain the stage
   const saved=JSON.parse(fs.readFileSync(path.join(root,'.bypass/scanner',result.run.id,'policy/state.json')));
   for(const task of saved.tasks){
     assert.equal(task.definition.taskTimeoutDisabled,true);
-    assert.equal(task.definition.expiresAt,saved.deadline);
+    assert.equal(task.definition.expiresAt,0);assert.equal(task.definition.stageTimeoutDisabled,true);
   }
 });
 
@@ -164,8 +164,8 @@ test('resuming with a no-timeout profile replaces old task deadlines without res
       let task;
       return {turn:async(messages,options)=>{
         task??=JSON.parse(messages[1].content);
-        assert.equal(task.taskTimeoutDisabled,true);assert.equal(task.expiresAt,before.deadline);
-        assert.ok(options.timeoutMs>300000);
+        assert.equal(task.taskTimeoutDisabled,true);assert.equal(task.expiresAt,0);
+        assert.equal(task.stageTimeoutDisabled,true);assert.equal(options.timeoutMs,0);
         options.onProgress({kind:'phase',phase:'request'});
         const last=JSON.parse(messages.at(-1).content);
         if(!last.evidence)return {action:'evidence',operation:'read',arguments:{path:'app.py'}};
@@ -232,4 +232,26 @@ test('standalone policy repairs invalid actions beyond ten turns through the rea
   assert.deepEqual([...phaseTurns.values()],[17,17]);
   assert.equal(result.run.reasoning.independentModelRequests,34);
   assert.equal(result.run.signalCount,1);
+});
+
+test('real standalone Python tasks use explicit JSON-schema content with zero inference deadlines',{skip:!available},async t=>{
+  const root=await source();let requests=0;
+  const key='BYPASS_POLICY_JSON_TEST_KEY',previous=process.env[key];process.env[key]='synthetic-key';
+  t.after(()=>{if(previous===undefined)delete process.env[key];else process.env[key]=previous;});
+  const server=http.createServer(async(request,response)=>{
+    let body='';for await(const chunk of request)body+=chunk;
+    const input=JSON.parse(body),task=JSON.parse(input.messages[1].content),last=JSON.parse(input.messages.at(-1).content);
+    assert.equal(input.tools,undefined);assert.equal(input.response_format.type,'json_schema');
+    assert.equal(task.stageTimeoutDisabled,true);assert.equal(task.expiresAt,0);
+    assert.match(input.messages[0].content,/as JSON in final response content/);
+    const action=last.evidence?{action:'submit',result:task.phase==='mapping'?mapping(last.evidence.reference.id):finding(last.evidence.reference.id)}:
+      {action:'evidence',operation:'read',arguments:{path:'app.py'}};
+    validateJSON(input.response_format.json_schema.schema,action);requests++;
+    response.setHeader('content-type','application/json');
+    response.end(JSON.stringify({choices:[{finish_reason:'stop',message:{role:'assistant',content:JSON.stringify(action)}}]}));
+  });
+  await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));t.after(()=>new Promise(resolve=>server.close(resolve)));
+  await execute('model add',['policy-json'],{project:root,provider:'custom','base-url':`http://127.0.0.1:${server.address().port}/v1`,model:'fixture',stream:false,'secret-env':key,'timeout-ms':0,'response-mode':'json-schema'});
+  const result=await execute('discover',[],{project:root,'discovery-only':true,detector:'policy',policy:'authz/object-access'},{scannerConnect:connect});
+  assert.equal(result.run.status,'completed',JSON.stringify(result));assert.equal(requests,4);assert.equal(result.run.signalCount,1);
 });

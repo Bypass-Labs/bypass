@@ -76,6 +76,8 @@ def invoke(operation, arguments, engine=None):
                 run = engine.start(arguments)
             elif operation == 'build_failed':
                 run = engine.build_failed(arguments['run'], arguments['job'])
+            elif operation in ('resume','evaluate'):
+                run = getattr(engine,operation)(arguments['run'],arguments.get('disableReasoningTimeout',False))
             else:
                 run = getattr(engine, operation)(arguments['run'])
             result = response(operation, run['status'], run['message'], run=run)

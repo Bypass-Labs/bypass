@@ -21,6 +21,46 @@ async function endpoint(t,handler,options={}){
 const chat=(res,message)=>{res.setHeader('content-type','application/json');res.end(JSON.stringify({choices:[{finish_reason:message.tool_calls?'tool_calls':'stop',message}]}));};
 const action=(value,id='c1')=>({role:'assistant',content:null,reasoning_content:'opaque-reasoning-state',tool_calls:[{id,type:'function',function:{name:'security_action',arguments:JSON.stringify(value)}}]});
 
+test('explicit JSON-schema profiles persist and send schema constraints without tools in both transports',async t=>{
+  for(const transport of ['chat','responses'])await t.test(transport,async t=>{
+    const {profile,calls}=await endpoint(t,(_req,res)=>{
+      if(transport==='chat')chat(res,{role:'assistant',content:'{"focus":"ok"}'});
+      else{res.setHeader('content-type','application/json');res.end(JSON.stringify({status:'completed',output:[{type:'message',role:'assistant',content:[{type:'output_text',text:'{"focus":"ok"}'}]}]}));}
+    },{transport,'response-mode':'json-schema'});
+    const root=temp();await execute('init',[root]);
+    await execute('model add',['json'],{project:root,provider:'custom','base-url':profile.baseUrl,model:profile.model,'secret-env':profile.secretEnv,transport,'response-mode':'json-schema',stream:false});
+    const saved=read(root).models.find(p=>p.name==='json');assert.equal(saved.responseMode,'json-schema');
+    const session=new ProviderSession(saved);
+    for(let i=0;i<2;i++)assert.deepEqual(await session.turn([{role:'user',content:i?'feedback':'start'}],{schema}),{focus:'ok'});
+    for(const call of calls){
+      assert.equal(call.body.tools,undefined);assert.equal(call.body.tool_choice,undefined);
+      const format=transport==='chat'?call.body.response_format.json_schema:call.body.text.format;
+      assert.equal(format.name,'security_action');assert.equal(format.strict,true);assert.deepEqual(format.schema,schema);
+    }
+    assert.equal((transport==='chat'?calls[1].body.messages:calls[1].body.input).at(-1).role,'user');
+  });
+  assert.throws(()=>apiProfile('bad',{provider:'meta','response-mode':'json-schema'}),/custom provider/);
+  assert.throws(()=>apiProfile('bad',{provider:'meta','response-mode':'invalid'}),/Response mode/);
+});
+
+test('JSON-schema mode fails explicitly on unsupported servers without fallback or retry',async t=>{
+  const {profile,calls}=await endpoint(t,(_req,res)=>{res.statusCode=400;res.setHeader('content-type','application/json');res.end(JSON.stringify({error:{message:'Unsupported format'}}));},{'response-mode':'json-schema'});
+  await assert.rejects(new ProviderSession(profile).turn([{role:'user',content:'x'}],{schema}));
+  assert.equal(calls.length,1);
+});
+
+test('JSON-schema Chat supports streamed content and still rejects schema-invalid JSON',async t=>{
+  for(const valid of [true,false])await t.test(String(valid),async t=>{
+    const {profile}=await endpoint(t,(_req,res)=>{
+      res.writeHead(200,{'content-type':'text/event-stream'});
+      res.end(`data: ${JSON.stringify({choices:[{delta:{content:valid?'{"focus":"ok"}':'{"focus":4}'},finish_reason:'stop'}]})}\n\ndata: [DONE]\n\n`);
+    },{stream:true,'response-mode':'json-schema'});
+    const result=new ProviderSession(profile).turn([{role:'user',content:'x'}],{schema});
+    if(valid)assert.deepEqual(await result,{focus:'ok'});
+    else await assert.rejects(result,error=>error.details.responseDiagnostics.schemaStatus==='invalid');
+  });
+});
+
 test('presets use official destinations, explicit transport and configurable models',()=>{
   const expected={meta:['https://api.meta.ai/v1','responses'],openai:['https://api.openai.com/v1','responses'],anthropic:['https://api.anthropic.com/v1','chat'],moonshot:['https://api.moonshot.ai/v1','chat'],deepseek:['https://api.deepseek.com','chat']};
   for(const [provider,[base,transport]] of Object.entries(expected)){const p=apiProfile('p',{provider});assert.equal(p.baseUrl,base);assert.equal(p.transport,transport);assert.equal(p.executionMode,'standalone-api');assert.equal(apiProfile('p',{provider,model:'explicit-model'}).model,'explicit-model');}

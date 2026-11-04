@@ -55,7 +55,7 @@ export const commands={
   'identity test':command('identity test <name>','Make one authorized request to the configured identity-check path.'),
   'identity update':command('identity update <name>','Update a credential reference.','secret-env check-path'),
   'identity remove':command('identity remove <name>','Remove an identity reference; dependent tests become blocked.'),
-  'model add':command('model add <name>','Add a standalone API-key provider profile.','provider base-url model secret-env allow-private effort transport max-output-tokens timeout-ms stream workspace-env'),
+  'model add':command('model add <name>','Add a standalone API-key provider profile.','provider base-url model secret-env allow-private effort transport response-mode max-output-tokens timeout-ms stream workspace-env'),
   'model list':command('model list','List model profiles and inference destinations.'),
   'model use':command('model use <name>','Select the model profile.'),
   'model test':command('model test [name]','Send a synthetic smoke prompt, without repository content.'),
