@@ -38,6 +38,28 @@ test('observed access-code endpoints are checked for effective throttling withou
   assert.equal(finding?.webProof.attemptCount, 20);
 });
 
+test('queued web checks use reserved execution time after Muse planning ends', async () => {
+  const {scope} = loadScope({origin: 'http://127.0.0.1:4329',
+    overrides: {acceptLocal: true, rps: 20}});
+  const surface = {patterns: [], jsonBodyOperations: [{path: '/api/beta/unlock',
+    method: 'POST', contentType: 'application/json', fields: ['code'],
+    requiredFields: [], source: 'public-js', purpose: 'Beta unlock access code.'}]};
+  let requests = 0;
+  const requester = async () => ({status: 401, type: 'application/json',
+    body: '{}', headers: {}, evidenceId: `ev-${++requests}`});
+  const researchDeadline = Date.now() - 1;
+  const expired = await runWebProbes(surface, scope, {requester, budget: 1,
+    researchDeadline});
+  assert.equal(requests, 0);
+  assert.equal(expired.results[0]?.verdict, 'untested');
+
+  const reserved = await runWebProbes(surface, scope, {requester, budget: 1,
+    researchDeadline, executionDeadline: Date.now() + 10_000});
+  assert.ok(requests > 0);
+  assert.notEqual(reserved.results[0]?.verdict, 'untested');
+  assert.equal(reserved.modelCalls, 0);
+});
+
 test('an access-gate burst replaces one transport failure without exceeding its cap', async () => {
   const {scope} = loadScope({origin: 'http://127.0.0.1:4329',
     overrides: {acceptLocal: true, rps: 20}});

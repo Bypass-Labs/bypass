@@ -2388,7 +2388,8 @@ export async function runWebProbes(surface, scope, {requester, ledger = null, bu
   onJsonResumeCheckpoint = null, onAccessResumeCheckpoint = null,
   onFlowCheckpoint = null, onFlowPageCheckpoint = null,
   flowPagePass = null, onProgressCheckpoint = null,
-  researchDeadline = Infinity, researchDeadlineAfterAuth = null, onConfirmedSession = null,
+  researchDeadline = Infinity, executionDeadline = researchDeadline,
+  researchDeadlineAfterAuth = null, onConfirmedSession = null,
   derivedSession = null, carryForward = [], deferOverflow = false,
   skipLeadKeys = [], priorVerifierResults = [],
   resumeOnly = false, onResumeCheckpoint = null,
@@ -4874,7 +4875,7 @@ export async function runWebProbes(surface, scope, {requester, ledger = null, bu
     if (webFailure) throw webFailure;
   };
   for (const [index, item] of runnableWebLeads.entries()) {
-    if (Date.now() >= researchDeadline) {
+    if (Date.now() >= executionDeadline) {
       await drainActive();
       completed.set(index, {index, lead: item, untested: true});
       commitReady();
@@ -4893,7 +4894,7 @@ export async function runWebProbes(surface, scope, {requester, ledger = null, bu
     }
     if (active.size >= workers) await waitOne();
     if (webFailure) await drainActive();
-    if (Date.now() >= researchDeadline) {
+    if (Date.now() >= executionDeadline) {
       await drainActive();
       completed.set(index, {index, lead: item, untested: true});
       commitReady();
