@@ -25,15 +25,39 @@ test('scanner debug logs are private JSONL files with redacted known credentials
   }finally{if(previous===undefined)delete process.env.BYPASS_DEBUG_TEST_SECRET;else process.env.BYPASS_DEBUG_TEST_SECRET=previous;}
 });
 
-test('scanner debug log refuses symlinks and reports its storage limit',()=>{
+test('scanner debug log refuses symlinks',()=>{
   const root=temp();fs.mkdirSync(path.join(root,'.bypass'));
   fs.symlinkSync(temp(),path.join(root,'.bypass/debug'),'dir');
   assert.throws(()=>openDebugLog(root,'scan_test'),/symlink/);
+});
+
+test('scanner debug log continues beyond 16 MiB without dropping records',()=>{
   const log=openDebugLog(temp(),'scan_test');
-  try{assert.throws(()=>log.write({content:'x'.repeat(16777216)}),/16 MiB/);}finally{log.close();}
+  const content='x'.repeat(1024*1024);
+  try{
+    for(let index=0;index<17;index++)log.write({index,content});
+    log.write({event:'finished'});
+  }finally{log.close();}
+  assert.ok(fs.statSync(log.filename).size>16*1024*1024);
+  const records=fs.readFileSync(log.filename,'utf8').trim().split('\n').map(line=>JSON.parse(line));
+  assert.equal(records.length,18);
+  for(let index=0;index<17;index++){
+    assert.equal(records[index].index,index);
+    assert.equal(records[index].content,content);
+  }
+  assert.equal(records.at(-1).event,'finished');
+});
+
+test('scanner debug log surfaces filesystem write errors',t=>{
+  const log=openDebugLog(temp(),'scan_test');
+  const error=Object.assign(new Error('No space left on device'),{code:'ENOSPC'});
+  t.mock.method(fs,'writeFileSync',()=>{throw error;});
+  try{assert.throws(()=>log.write({event:'request'}),actual=>actual===error);}finally{log.close();}
 });
 
 test('scanner debug captures rejected response content only with explicit raw opt-in',async()=>{
+  const content='PRIVATE_MODEL_OUTPUT'+'x'.repeat(65536)+'END_OF_RESPONSE';
+  const toolArguments=['{"broken":'+'x'.repeat(65536), 'second','third','fourth','fifth'];
   for(const raw of [false,true]){
     const log=openDebugLog(temp(),'scan_test',{raw});
     const profile=apiProfile('test',{provider:'custom','base-url':'http://127.0.0.1:8080/v1',model:'fixture','secret-env':'BYPASS_UNIT_API_KEY'});
@@ -46,7 +70,7 @@ test('scanner debug captures rejected response content only with explicit raw op
         sessionFactory:()=>({turn:async(_messages,options)=>{
           options.onProgress({kind:'phase',phase:'request'});
           if(++turns===1){
-            options.onRejectedResponse({diagnostics:{jsonStatus:'invalid_json'},content:'PRIVATE_MODEL_OUTPUT',toolArguments:['{"broken":']});
+            options.onRejectedResponse({diagnostics:{jsonStatus:'invalid_json'},content,toolArguments});
             throw new Fault('Invalid arguments',3,{reason:'invalid_arguments'});
           }
           return {action:'submit',result:{}};
@@ -56,6 +80,7 @@ test('scanner debug captures rejected response content only with explicit raw op
     }finally{log.close();}
     const text=fs.readFileSync(log.filename,'utf8'),records=text.trim().split('\n').map(line=>JSON.parse(line));
     assert.equal(text.includes('PRIVATE_MODEL_OUTPUT'),raw);
+    assert.deepEqual(records.find(record=>record.event==='rejected_response').raw,raw?{content,toolArguments}:undefined);
     assert.deepEqual(records.map(r=>r.event),['task','request','rejected_response','correction','request','accepted_action']);
   }
 });

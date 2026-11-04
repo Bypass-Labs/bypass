@@ -76,8 +76,8 @@ async function drive(profile,{client,run,limits={},evaluationLimits={},signal,on
         try {
           action=await session.turn(messages,{schema,signal,timeoutMs:remaining,
             ...(debugLog?{onRejectedResponse:response=>log({event:'rejected_response',elapsedMs:Date.now()-started,diagnostics:response.diagnostics,
-              ...(debugLog.raw?{raw:{content:typeof response.content==='string'?response.content.slice(0,65536):null,
-                toolArguments:(response.toolArguments||[]).slice(0,4).map(value=>typeof value==='string'?value.slice(0,65536):null)}}:{})})}:{}),
+              ...(debugLog.raw?{raw:{content:typeof response.content==='string'?response.content:null,
+                toolArguments:(response.toolArguments||[]).map(value=>typeof value==='string'?value:null)}}:{})})}:{}),
             onProgress:event=>{if(event.kind==='phase'&&event.phase==='request'){requested=true;log({event:'request',request:requests[stage]+1,timeoutMs:remaining});}onProgress?.(event);}});
         } catch(error) {
           if(error.details?.reason==='model_timeout'&&!task.stageTimeoutDisabled&&(profile.timeoutMs===0||leaseRemaining<=profile.timeoutMs)){
@@ -124,7 +124,7 @@ async function drive(profile,{client,run,limits={},evaluationLimits={},signal,on
     need(terminal(run),'Policy driver iteration budget exhausted.',3);
     return result;
   }catch(error){
-    if(error.details?.reason!=='debug_log_limit')debugLog?.write({event:'interrupted',reason:error.details?.reason||'scanner_error'});
+    debugLog?.write({event:'interrupted',reason:error.details?.reason||'scanner_error'});
     if(signal?.aborted)return client.call('cancel',{run:run.id});
     if(activeTask){
       const message=error.message+(lastActionRejection?`\n${lastActionRejection}`:'');

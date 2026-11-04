@@ -425,15 +425,16 @@ request counts, elapsed response times, response diagnostics, corrections, and
 accepted action/operation names, without source or argument values.
 
 Add `--debug-raw` **together with `--debug-log`** to capture rejected final
-content and tool argument strings for JSON analysis. These are truncated to
-65,536 characters each; reasoning, request prompts, credentials, and headers
+content and all tool argument strings for JSON analysis without log-specific
+truncation; reasoning, request prompts, credentials, and headers
 are not captured. Known environment/registered secrets are redacted, but this
 is not comprehensive sanitization: raw output can repeat sensitive repository
 data. Keep it local, review before sharing, and delete it after analysis.
 Logging is off by default and unavailable in Muse-hosted mode.
 Files are created exclusively with owner-only permissions and are outside
-scanner report artifacts. Logging stops the run explicitly at 16 MiB rather
-than silently discarding records.
+scanner report artifacts. There is no log-size cap or automatic rotation;
+records continue appending until the command ends. Filesystem write failures
+(such as a full disk) are surfaced explicitly. Monitor disk space during long runs.
 
 ```sh
 npm start -- discover --detector both --project "$APP" --debug-log --debug-raw
