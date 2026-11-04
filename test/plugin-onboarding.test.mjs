@@ -127,6 +127,10 @@ test('combined wizard asks for exact methods, rate and shared audit limits befor
   step=await ask({methods});assert.equal(step.stage,'rps');assert.equal(step.nextAction.input.choices.length,3);
   step=await ask({methods,rps:12});assert.equal(step.stage,'model-calls');assert.equal(step.nextAction.input.choices.length,3);
   step=await ask({methods,rps:12,modelCalls:400});assert.equal(step.stage,'minutes');assert.equal(step.nextAction.input.choices.length,3);
+  assert.deepEqual(step.nextAction.input.choices.find(choice=>choice.id==='quick').arguments,{minutes:10});
+  assert.equal(step.nextAction.input.choices.find(choice=>choice.id==='custom').requiresInput,'minutes');
+  await assert.rejects(ask({methods,rps:12,modelCalls:400,minutes:5}),
+    /at least 10 minutes/);
   step=await ask({methods,rps:12,modelCalls:400,minutes:30});assert.equal(step.stage,'scope');
   assert.deepEqual(step.nextAction.arguments.methods,methods.split(','));
   assert.equal(step.nextAction.arguments.rps,12);

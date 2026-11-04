@@ -38,6 +38,28 @@ test('observed access-code endpoints are checked for effective throttling withou
   assert.equal(finding?.webProof.attemptCount, 20);
 });
 
+test('queued web checks use reserved execution time after Muse planning ends', async () => {
+  const {scope} = loadScope({origin: 'http://127.0.0.1:4329',
+    overrides: {acceptLocal: true, rps: 20}});
+  const surface = {patterns: [], jsonBodyOperations: [{path: '/api/beta/unlock',
+    method: 'POST', contentType: 'application/json', fields: ['code'],
+    requiredFields: [], source: 'public-js', purpose: 'Beta unlock access code.'}]};
+  let requests = 0;
+  const requester = async () => ({status: 401, type: 'application/json',
+    body: '{}', headers: {}, evidenceId: `ev-${++requests}`});
+  const researchDeadline = Date.now() - 1;
+  const expired = await runWebProbes(surface, scope, {requester, budget: 1,
+    researchDeadline});
+  assert.equal(requests, 0);
+  assert.equal(expired.results[0]?.verdict, 'untested');
+
+  const reserved = await runWebProbes(surface, scope, {requester, budget: 1,
+    researchDeadline, executionDeadline: Date.now() + 10_000});
+  assert.ok(requests > 0);
+  assert.notEqual(reserved.results[0]?.verdict, 'untested');
+  assert.equal(reserved.modelCalls, 0);
+});
+
 test('an access-gate burst replaces one transport failure without exceeding its cap', async () => {
   const {scope} = loadScope({origin: 'http://127.0.0.1:4329',
     overrides: {acceptLocal: true, rps: 20}});
@@ -1694,6 +1716,27 @@ test('SQL search tries observed example baselines and prioritizes routes with a 
   assert.equal(run.findings.find(item => item.kind === 'sql-boolean')?.webProof.base, 'present');
   assert.deepEqual(values.slice(0, 2), ['absent', 'present']);
   assert.equal(values.length, 7);
+});
+
+test('Cloudflare challenge is reported as blocked SQL proof, not a negative app result',async()=>{
+  const {scope}=loadScope({origin:'http://127.0.0.1:4329',overrides:{acceptLocal:true}});
+  const surface={patterns:[{pattern:'/api/telemetry/search',params:{q:['present']},
+    source:['public-asset'],responseFacts:{status:200,type:'application/json'},
+    publicIds:['1']}]};
+  let calls=0;
+  const requester=async ({url})=>{
+    calls++;
+    const baseline=new URL(url,scope.target.origin).searchParams.get('q')==='present';
+    const body=baseline?'{"items":[{"id":1}]}':'<title>Attention Required! | Cloudflare</title>';
+    return {status:baseline?200:403,type:baseline?'application/json':'text/html',
+      body,ids:baseline?['1']:[],hash:body,headers:{server:'cloudflare'},
+      evidenceId:`ev-${String(calls).padStart(4,'0')}`};
+  };
+  const run=await runWebProbes(surface,scope,{requester,budget:1});
+  const result=run.results.find(item=>item.kind==='sql-boolean');
+  assert.equal(result?.verdict,'blocked',JSON.stringify(run.results));
+  assert.match(result.reason,/Cloudflare blocked/);
+  assert.equal(run.findings.length,0);
 });
 
 test('Muse reviews late web candidates in bounded pages and cannot rank an unseen page', async () => {

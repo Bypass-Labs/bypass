@@ -278,13 +278,16 @@ export function renderReport({
   const ledger = readLedger(ledgerFile);
   const byTask = new Map(results.map(result => [result.task?.id, result]));
   const assets = mined ?? surface?.mined ?? null;
+  const reportSurface = surfaceSection(surface, assets, results, untested, discovery,
+    credentialAudits, scope.target.origin, advisories);
+  reportSurface.application.sourceFindings = sourceFindingValidation(surface, findings, web);
   const report = {
     schemaVersion: 1,
     kind: 'blackbox-report',
     header: headerSection({ run, scope, scopeHash, stats, integrity }),
     summary: summarySection(findings, results, web),
     scope: scopeSection(scope, surface, stats, dropped, recheck),
-    surface: surfaceSection(surface, assets, results, untested, discovery, credentialAudits, scope.target.origin, advisories),
+    surface: reportSurface,
     findings: findings.map(finding => findingSection(finding, finding.task ? byTask.get(finding.task) : null, scope, ledger)),
     chains,
     inconclusive: [
@@ -323,6 +326,39 @@ export function renderReport({
   };
   report.evidence = citedIds(report).map(id => evidenceRow(id, ledger));
   return { markdown: toMarkdown(report), json: report };
+}
+
+function sourceFindingValidation(surface, findings, web) {
+  return (surface?.sourceReview?.securityLeads ?? []).map(lead => {
+    const finding = findings.find(item => item.sourceFinding?.id === lead.id);
+    const result = (web?.results ?? []).find(item => item.sourceLeadId === lead.id);
+    const relatedKind = /\bsql\b|sql injection/i.test(`${lead.title} ${lead.hypothesis}`) ?
+      'sql-boolean' : /command injection/i.test(`${lead.title} ${lead.hypothesis}`) ?
+        'command-output' : null;
+    const related = !result && relatedKind ? (web?.results ?? []).find(item =>
+      item.kind === relatedKind && item.lead?.path === lead.path &&
+      ['blocked', 'inconclusive'].includes(item.verdict)) : null;
+    let status = 'not tested', liveReason = 'No matching bounded live verifier completed.';
+    if (finding) {
+      status = 'confirmed live';
+      liveReason = finding.rule ?? 'Fresh HTTP proof reproduced the source hypothesis.';
+    } else if (result?.verdict === 'not_reproduced') {
+      status = 'not reproduced';
+      liveReason = result.reason;
+    } else if (result?.verdict === 'inconclusive' || result?.verdict === 'blocked') {
+      status = result.verdict === 'blocked' ? 'blocked' : 'inconclusive';
+      liveReason = result.reason;
+    } else if (result?.verdict === 'confirmed') {
+      status = 'inconclusive';
+      liveReason = 'A positive live signal was recorded, but no final proof survived replay.';
+    } else if (related) {
+      status = related.verdict;
+      liveReason = `A related ${relatedKind} check was ${related.verdict}: ${related.reason}. The source claim was not proved.`;
+    }
+    return {...lead, sourceVerdict: 'unproven', status, liveReason,
+      evidence: finding ? [...(finding.evidence ?? []), ...(finding.confirmation ?? [])] :
+        result?.evidence ?? related?.evidence ?? []};
+  });
 }
 
 function readLedger(file) {
@@ -681,6 +717,7 @@ function citedIds(report) {
       ...(origin.graphql?.bola?.typeAttempts ?? []).map(attempt => attempt.evidenceId),
       ...(origin.graphql?.bola?.listAttempts ?? []).flatMap(attempt => attempt.evidence ?? []),
     ]),
+    ...(report.surface.application.sourceFindings ?? []).flatMap(item => item.evidence ?? []),
     ...(report.surface.external.discoveredHosts ?? []).flatMap(host =>
       (host.graphql?.attempts ?? []).map(attempt => attempt.evidenceId)),
     ...(report.surface.external.advisories?.records ?? []).flatMap(record => record.evidence ?? []),
@@ -934,6 +971,14 @@ function markdownApplication(application) {
     const source = application.sourceReview;
     lines.push(`- Source-assisted context: ${source.stats.files} local files read; ${source.stats.skipped} skipped by size budget; ${source.stats.filesCut ?? 0} beyond file limit; ${source.stats.routesCut ?? 0} route facts beyond route limit. Source alone did not confirm a finding.`);
     if (source.modelCoverage) lines.push(`- Muse source interpretation: ${source.modelCoverage.snippetsSent} of ${source.modelCoverage.snippetsAvailable} route excerpts in ${source.modelCoverage.pagesSent} of ${source.modelCoverage.pagesAvailable} pages.`);
+    if (application.sourceFindings?.length) {
+      lines.push('', 'Source findings and live validation:', '',
+        'Source findings remain unproven unless the status is **confirmed live**. A negative or incomplete live check does not erase the source evidence.', '',
+        ...table(['Source finding', 'Route', 'Source', 'Live status', 'Live result'],
+          application.sourceFindings.map(lead => [lead.title, code(lead.path),
+            `${code(lead.source?.file ?? '-')} ${lead.source?.line ?? '-'}`,
+            lead.status, lead.liveReason])));
+    }
     if (source.secretLeads?.length) {
       lines.push(`- Local source credential leads: ${source.secretLeads.length} credential-shaped value(s). These are review leads; validity and public exposure were not tested. No matched value is saved in this report.`);
       lines.push('', ...table(['File', 'Line', 'Pattern', 'Confidence'], source.secretLeads.slice(0, 20)

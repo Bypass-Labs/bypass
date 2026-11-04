@@ -13,6 +13,9 @@ test('native decisions have custom instructions; only grounded choices receive a
   assert.equal(inputs[0].choices.filter(c=>c.recommended).length,1);
   assert.equal(inputs[1].choices.some(c=>c.recommended),false,'Do not guess deployment environment');
   assert.equal(choiceInput('project',[{id:'a',label:'Project A'},{id:'b',label:'Project B'}]).choices.some(c=>c.recommended),false);
+  assert.throws(()=>choiceInput('environment',[
+    {id:'production'},{id:'staging'},{id:'preview'},{id:'local'}]),
+  /at most three choices/);
   assert.equal(registrationStatus(null).nextAction,null,'No premature account question before app selection');
 });
 
@@ -65,6 +68,15 @@ test('Muse model choices keep Meta naming and do not silently opt into Contribut
   assert.deepEqual(choices.map(item=>item.id),['muse-spark-1.2','muse-spark-1.3-contributor']);
   assert.equal(choices[0].id,'muse-spark-1.2');
   assert.match(choices[1].description,/Prompts, code, context, and responses/);
+});
+
+test('Contributor onboarding uses bounded fast reasoning for its first audit',async t=>{
+  const meta=await metaModelFixture(t,{models:['muse-spark-1.3-contributor']});
+  const result=await promptMuseProfile(async()=>assert.fail('No manual profile fields expected.'),
+    async(_title,items)=>items[0],{metaBaseUrl:meta.baseUrl,write:()=>{}});
+  assert.equal(result.config.model,'muse-spark-1.3-contributor');
+  assert.equal(result.config.effort,'minimal');
+  assert.equal(result.config['timeout-ms'],120000);
 });
 
 test('Meta selection requests a private key immediately when MODEL_API_KEY is absent',async t=>{

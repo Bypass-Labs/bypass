@@ -350,11 +350,62 @@ function sourceModelPages(snippets) {
   return pages;
 }
 
+const SOURCE_LEAD_CATEGORIES = new Set([
+  'authentication-trust', 'authorization', 'authentication-bypass',
+  'injection', 'sensitive-data', 'other',
+]);
+const PRIVATE_RECORD_PATH = /(?:^|\/)(?:users?|accounts?|members?|profiles?|people|staff|employees?|customers?|patients?|dossiers?|crew)(?:\/|$)/i;
+const PRIVATE_RESPONSE_FIELDS = /\b(email|phone|address|ssn|dob|dateOfBirth|clearance|salary|role)\b/g;
+
+function sourceLead(raw, batch) {
+  const path = routeWithoutCredentialValues(raw?.path);
+  const method = String(raw?.method ?? '').toUpperCase();
+  const file = typeof raw?.file === 'string' ? raw.file : '';
+  const line = Number(raw?.line);
+  const quote = maskExcerpt(maskSecrets(String(raw?.quote ?? ''))).trim().slice(0, 300);
+  const snippet = batch.find(item => item.path === path && item.file === file &&
+    Number.isInteger(line) && Number.isInteger(item.line) &&
+    line >= Math.max(1, item.line - 2) && line <= item.line + 18 &&
+    quote.length >= 6 && item.excerpt.includes(quote));
+  if (!snippet || !['GET', 'HEAD', 'POST', 'PUT', 'PATCH', 'DELETE', 'UNKNOWN'].includes(method) ||
+      !SOURCE_LEAD_CATEGORIES.has(raw?.category)) return null;
+  const title = maskExcerpt(maskSecrets(String(raw?.title ?? ''))).trim().slice(0, 160);
+  const hypothesis = maskExcerpt(maskSecrets(String(raw?.hypothesis ?? ''))).trim().slice(0, 500);
+  const remediation = maskExcerpt(maskSecrets(String(raw?.remediation ?? ''))).trim().slice(0, 500);
+  if (!title || !hypothesis || !remediation) return null;
+  const fields = [...new Set((Array.isArray(raw?.fields) ? raw.fields : [])
+    .filter(value => typeof value === 'string' && /^[A-Za-z_][A-Za-z0-9_.-]{0,79}$/.test(value)))]
+    .slice(0, 12);
+  return {id: `source-${hash(JSON.stringify([path, method, file, line, quote, hypothesis])).slice(0, 16)}`,
+    title, category: raw.category, path, method, hypothesis, remediation, fields,
+    source: {file, line, quote}, verdict: 'unproven'};
+}
+
+function privateRecordLead(snippet) {
+  if (!['GET', 'HEAD', 'UNKNOWN'].includes(snippet.method) ||
+      !PRIVATE_RECORD_PATH.test(snippet.path) ||
+      !/(?:[:{][A-Za-z_][A-Za-z0-9_]*}?)/.test(snippet.path)) return null;
+  const fields = [...new Set([...snippet.excerpt.matchAll(PRIVATE_RESPONSE_FIELDS)]
+    .map(match => match[1]))].slice(0, 8);
+  if (!fields.length) return null;
+  const lines = snippet.excerpt.split('\n');
+  const quote = lines.find(line => fields.some(field => new RegExp(`\\b${field}\\b`).test(line)))?.trim() ??
+    lines.find(line => line.includes(snippet.path))?.trim();
+  if (!quote) return null;
+  return {id: `source-${hash(JSON.stringify([snippet.path, snippet.file, snippet.line, fields])).slice(0, 16)}`,
+    title: `Source indicates private record fields may be returned by ${snippet.path}`,
+    category: 'sensitive-data', path: snippet.path, method: snippet.method,
+    hypothesis: `An anonymous caller may be able to read source-identified record fields: ${fields.join(', ')}.`,
+    remediation: 'Require authentication and object-level authorization before returning the record, and return only fields the caller may access.',
+    fields, source: {file: snippet.file, line: snippet.line, quote: quote.slice(0, 300)},
+    verdict: 'unproven', derived: true};
+}
+
 /** Read an explicitly supplied source tree and extract route facts plus optional Muse interpretations. */
 export async function reviewSource(sourcePath, {infer = null, model = null, log = () => {},
   origin = null,
   maxFiles = 120, maxFileBytes = 16 * 1024 * 1024, maxTotalBytes = 64 * 1024 * 1024,
-  maxModelPages = SOURCE_MODEL_MAX_PAGES} = {}) {
+  maxModelPages = SOURCE_MODEL_MAX_PAGES, modelConcurrency = 1} = {}) {
   const root = path.resolve(sourcePath);
   need(fs.existsSync(root) && fs.statSync(root).isDirectory(), `Source path is not a directory: ${root}.`);
   const files = [], endpoints = [], snippets = [], unresolvedSnippets = [], scanned = [], secretLeads = [];
@@ -418,29 +469,54 @@ export async function reviewSource(sourcePath, {infer = null, model = null, log 
     if (!sourceMethods.has(pathname)) sourceMethods.set(pathname, new Set());
     sourceMethods.get(pathname).add(endpoint.method);
   }
-  const notes = [], proposals = [];
+  const notes = [], proposals = [], securityLeads = [];
   let modelCalls = 0, modelError = null, snippetsSent = 0;
   if (infer && model && pages.length) {
-    for (let page = 0; page < Math.min(pages.length, Math.max(0, maxModelPages)); page++) {
-      const batch = pages[page];
-      const known = new Map();
-      for (const route of batch) {
-        if (!route.path) continue;
-        if (!known.has(route.path)) known.set(route.path, {methods: new Set(), params: new Set()});
-        known.get(route.path).methods.add(route.method);
-        for (const param of route.params ?? []) known.get(route.path).params.add(param);
-      }
+    const selected = pages.slice(0, Math.min(pages.length, Math.max(0, maxModelPages)));
+    const width = Math.max(1, Math.min(selected.length, Math.floor(modelConcurrency) || 1));
+    let completed = 0;
+    log({stage: 'source', message: `Muse source review started: ${selected.reduce((sum, batch) => sum + batch.length, 0)} of ${unresolvedSnippets.length + snippets.length} route excerpts · ${selected.length} bounded batches · ${width} parallel workers`});
+    const interpret = async (batch, page) => {
       try {
-        modelCalls++;
-        snippetsSent += batch.length;
-        const answer = await infer(model, [{role: 'system', content: 'Interpret these redacted source route excerpts as hypotheses. Explain accepted methods, parameters, purpose and trust boundaries. Entries with a null path are route declarations whose path expression was not parsed. Infer a GET path from them only when literal constants in the excerpt determine it; include a harmless query value when its parameter is needed, such as ?next=/safe. Never infer a GET path from a non-GET declaration. Propose at most eight GET paths for guarded HTTP verification. Return JSON only. Never include secrets, credentials or executable payloads.'},
+        const answer = await infer(model, [{role: 'system', content: 'Interpret these redacted source route excerpts as hypotheses. Explain accepted methods, parameters, purpose and trust boundaries. Also list concrete source-grounded security leads for authentication trust, authorization, bypass logic, injection, or sensitive-data disclosure. Every lead must cite an exact short quote and line from the supplied excerpt. A source lead is unproven until live verification; do not call it confirmed. Entries with a null path are route declarations whose path expression was not parsed. Infer a GET path from them only when literal constants in the excerpt determine it; include a harmless query value when its parameter is needed, such as ?next=/safe. Never infer a GET path from a non-GET declaration. Propose at most eight GET paths for guarded HTTP verification. Return JSON only. Never include secrets, credentials or executable payloads.'},
           {role: 'user', content: JSON.stringify({page: page + 1, pages: pages.length, snippets: batch})}], {schema: {type: 'object', properties: {
             notes: {type: 'array', maxItems: 12, items: {type: 'object', properties: {path: {type: 'string'},
               purpose: {type: 'string'}, methods: {type: 'array', items: {type: 'string'}},
               parameters: {type: 'array', items: {type: 'string'}}, why: {type: 'string'}},
               required: ['path', 'purpose', 'methods', 'parameters', 'why'], additionalProperties: false}},
-            paths: {type: 'array', maxItems: 8, items: {type: 'string'}}},
-            required: ['notes', 'paths'], additionalProperties: false}});
+            paths: {type: 'array', maxItems: 8, items: {type: 'string'}},
+            securityLeads: {type: 'array', maxItems: 8, items: {type: 'object', properties: {
+              title: {type: 'string'}, category: {type: 'string', enum: [...SOURCE_LEAD_CATEGORIES]},
+              path: {type: 'string'}, method: {type: 'string'}, hypothesis: {type: 'string'},
+              remediation: {type: 'string'}, fields: {type: 'array', items: {type: 'string'}},
+              file: {type: 'string'}, line: {type: 'integer'}, quote: {type: 'string'}},
+              required: ['title', 'category', 'path', 'method', 'hypothesis', 'remediation',
+                'fields', 'file', 'line', 'quote'], additionalProperties: false}}},
+            required: ['notes', 'paths', 'securityLeads'], additionalProperties: false}});
+        completed++;
+        log({stage: 'source', message: `Muse source batch ${completed}/${selected.length} complete · ${batch.length} route excerpts reviewed`});
+        return {batch, answer, page};
+      } catch (error) {
+        completed++;
+        log({stage: 'source', message: `Muse source batch ${completed}/${selected.length} could not finish: ${error.message}`});
+        return {batch, error, page};
+      }
+    };
+    for (let at = 0; at < selected.length; at += width) {
+      const wave = selected.slice(at, at + width);
+      modelCalls += wave.length;
+      snippetsSent += wave.reduce((sum, batch) => sum + batch.length, 0);
+      const interpreted = await Promise.all(wave.map((batch, offset) => interpret(batch, at + offset)));
+      let waveFailed = false;
+      for (const {batch, answer, error} of interpreted) {
+        if (error) {modelError ??= error.message; waveFailed = true; continue;}
+        const known = new Map();
+        for (const route of batch) {
+          if (!route.path) continue;
+          if (!known.has(route.path)) known.set(route.path, {methods: new Set(), params: new Set()});
+          known.get(route.path).methods.add(route.method);
+          for (const param of route.params ?? []) known.get(route.path).params.add(param);
+        }
         for (const note of (answer.notes ?? []).slice(0, 12)) if (known.has(note.path))
           notes.push({...note, purpose: maskExcerpt(maskSecrets(note.purpose)), why: maskExcerpt(maskSecrets(note.why)),
             methods: (Array.isArray(note.methods) ? note.methods : []).filter(value => known.get(note.path).methods.has(value)),
@@ -453,17 +529,24 @@ export async function reviewSource(sourcePath, {infer = null, model = null, log 
           if (methods && !methods.has('GET') && !methods.has('UNKNOWN')) continue;
           proposals.push(redactedPath);
         }
-      } catch (error) {
-        modelError = error.message;
-        log({stage: 'source', message: `Muse source interpretation failed: ${error.message}`});
-        break;
+        for (const raw of (answer.securityLeads ?? []).slice(0, 8)) {
+          const lead = sourceLead(raw, batch);
+          if (lead && !securityLeads.some(item => item.id === lead.id)) securityLeads.push(lead);
+        }
       }
+      if (waveFailed) break;
     }
+    log({stage: 'source', message: `Muse source review complete: ${completed}/${selected.length} bounded batches · ${snippetsSent}/${unresolvedSnippets.length + snippets.length} route excerpts · ${notes.length} route notes · ${securityLeads.length} security leads retained`});
+  }
+  for (const snippet of snippets) {
+    const lead = privateRecordLead(snippet);
+    if (lead && !securityLeads.some(item => item.path === lead.path &&
+        item.category === lead.category)) securityLeads.push(lead);
   }
   const modelCoverage = {pagesAvailable: pages.length, pagesSent: modelCalls,
     snippetsAvailable: unresolvedSnippets.length + snippets.length, snippetsSent};
   log({stage: 'source', message: `${files.length} source files, ${endpoints.length} route facts, ${secretLeads.length} credential-shaped leads, ${unresolvedRoutes} unresolved declarations, ${skipped} skipped by size budget, ${listed.filesCut} cut by file budget`});
-  return {root, files, endpoints, notes, proposals, secretLeads,
+  return {root, files, endpoints, notes, proposals, secretLeads, securityLeads,
     stats: {files: files.length, bytes: total, skipped, filesCut: listed.filesCut, routesCut,
       unresolvedRoutes, unresolvedRoutesCut, secretLeadsCut, traversalCut: listed.traversalCut},
     unresolved: unresolvedSnippets.map(({file, line, method}) => ({file, line, method})),

@@ -61,12 +61,6 @@ Exported independent Node tests contain only environment-variable names. CI supp
 
 The Firebase adapter follows the [official refresh-token exchange](https://firebase.google.com/docs/reference/rest/auth#section-refresh-token), including retaining a replacement refresh token. Token claims are checked for account/project continuity; successful app identity controls establish that the app accepts the credentials.
 
-## Validation for 0.7.0
+## Signup permissions
 
-The packaged MCP integration test starts the server before the credential file exists, imports two accounts, performs local HTTP proof, verifies a fixture fix, replays a saved regression in a separate process, runs a monitor tick, and replaces a token while the same MCP process remains running. It checks that exported tests and project state contain no credentials. Refresh tests cover expiration, rotated refresh tokens, concurrent requests, wrong-account/project responses, redirects, revocation and cancellation. The local full suite passed 133 tests with two Docker-only tests skipped; release CI runs the Docker tests separately.
-
-Both existing Job Radar test accounts also completed a real Firebase refresh and returned HTTP 200 from the already-authorized `/api/profile` endpoint. No resource proof or model calls ran, and the app scope was unchanged. [Redacted production account-validation record](evidence/account-connection-2026-10-27.json). This validates account connection, not production authorization security or live model reasoning.
-
-The actual Muse agent also completed this setup on a local fixture: two private imports, three positive-control GETs and live-ready status in the same session. The temporary audit plugin was removed afterward. This used host reasoning; Bypass made no independent model calls. [Native Muse onboarding evidence](evidence/muse-account-onboarding-2026-10-27.json).
-
-App JSON signup requires POST in the saved method scope as well as explicit account-creation permission. In Muse, reopen the testing-permission picker and select POST alongside the methods needed for identity/access controls. Firebase signup retains its separate bounded project and account-creation permission.
+App JSON signup requires POST in the saved method scope as well as explicit account-creation permission. In Muse, reopen the testing-permission picker and select POST alongside the methods needed for identity/access controls. Firebase signup retains its separate bounded project and account-creation permission. Current account behavior is verified by the packaged credential, refresh and MCP tests rather than old copied run snapshots.

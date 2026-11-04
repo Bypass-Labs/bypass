@@ -134,12 +134,13 @@ export async function proveFindings(findings, results, {runDir, surface, scope, 
     } finally {activeProofs--;}
   };
   const commitProof = ({finding, result, webOrigin, proofDir, specPath, proofPath}, proof) => {
+    const proofReason = proof.result.reason ?? proof.result.verdict;
     const evidenceId = ledger.append({step: 'poc', task: result?.task?.id ?? null, proof: {path: proofPath,
       specHash: hash(fs.readFileSync(specPath)), scriptHash: hash(fs.readFileSync(proofPath)),
       runtimeHash: hash(fs.readFileSync(runtime)),
       oracleHash: hash(fs.readFileSync(boundaryOracle)),
       contentOracleHash: hash(fs.readFileSync(contentOracle)),
-      verdict: proof.result.verdict, exitCode: proof.exitCode}});
+      verdict: proof.result.verdict, exitCode: proof.exitCode, reason: proofReason}});
     if (proof.exitCode === 1 && proof.result.verdict ===
         (finding.kind === 'model-http-sequence' ? 'observed' : 'confirmed')) {
       finding.proof = proofPath;
@@ -148,9 +149,11 @@ export async function proveFindings(findings, results, {runDir, surface, scope, 
     } else {
       fs.rmSync(proofDir, {recursive: true, force: true});
       if (result) {
+        result.initialVerdict ??= result.verdict;
         result.verdict = 'inconclusive';
         result.rule = 'inconclusive/poc';
-        result.reason = `Generated proof did not reproduce: ${proof.result.reason ?? proof.result.verdict}`;
+        result.reason = `Positive signal found; final proof replay was inconclusive: ${proofReason}`;
+        result.proofReplay = {verdict: 'inconclusive', reason: proofReason};
         result.evidence.push(evidenceId);
         log({stage: 'poc', message: `${finding.id} downgraded: ${result.reason}`});
       } else {
@@ -168,13 +171,16 @@ export async function proveFindings(findings, results, {runDir, surface, scope, 
               item.kind === finding.kind &&
                 item.lead.path === finding.webProof.subject?.path :
             PARAMETER_PROOF_KINDS.has(finding.kind) ?
-              item.kind === finding.kind && item.lead.parameter === finding.webProof.parameter :
+              item.kind === finding.kind &&
+                (item.lead.parameter ?? item.lead.field) ===
+                (finding.webProof.parameter ?? finding.webProof.field) :
               finding.kind === 'cors-reflection' ? item.kind === 'cors-reflection' :
               item.lead.parameter === new URL(finding.url).searchParams.keys().next().value));
-          if (lead) Object.assign(lead, {verdict: 'inconclusive',
-            reason: `Generated proof did not reproduce: ${proof.result.reason ?? proof.result.verdict}`});
+          if (lead) Object.assign(lead, {initialVerdict: lead.initialVerdict ?? lead.verdict,
+            verdict: 'inconclusive', proofReplay: {verdict: 'inconclusive', reason: proofReason},
+            reason: `Positive signal found; final proof replay was inconclusive: ${proofReason}`});
         }
-        log({stage: 'poc', message: `${finding.id} proof did not reproduce: ${proof.result.reason ?? proof.result.verdict}`});
+        log({stage: 'poc', message: `${finding.id} proof did not reproduce: ${proofReason}`});
       }
     }
   };

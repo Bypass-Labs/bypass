@@ -18,7 +18,7 @@ async function wizard(t,root, answers, options={}){
     write:value=>output.push(value),
     ask:async(label,fallback)=>{
       prompts.push(label);
-      assert.ok(answers.length,`Unexpected prompt: ${label}`);
+      assert.ok(answers.length,`Unexpected prompt: ${label}; prior prompts: ${prompts.join(' | ')}; output: ${output.slice(-15).join(' | ')}`);
       return answers.shift()||fallback||'';
     }
   });
@@ -40,7 +40,7 @@ test('wizard defers failed DNS and resumes the same challenge through explicit s
   assert.equal(first.result.openDashboard,false);
   assert.equal(saved.models[0].lastTest.status,'connected');
   dns.resolveTxt.mock.mockImplementation(async record=>{assert.equal(record,challenge.record);return [[challenge.token]];});
-  const second=await wizard(t,root,['1','','2','GET,HEAD,POST,PROPFIND','yes','n']);
+  const second=await wizard(t,root,['1','1','','2','GET,HEAD,POST,PROPFIND','yes']);
   const resumed=read(root);
   assert.equal(resumed.project.id,saved.project.id);
   assert.equal(resumed.targets.length,1);assert.equal(resumed.models.length,1);
@@ -55,7 +55,7 @@ test('wizard defers failed DNS and resumes the same challenge through explicit s
 
 test('wizard highlights the recommended complete scope and defaults the single approval to yes',async t=>{
   const root=temp();
-  const result=await wizard(t,root,['1','','http://127.0.0.1:4317','yes','','','','n']);
+  const result=await wizard(t,root,['1','','http://127.0.0.1:4317','yes','','','']);
   const target=read(root).targets[0];
   assert.equal(target.ownership.status,'verified');
   assert.deepEqual(target.authorization.paths,['/']);
@@ -71,11 +71,11 @@ test('wizard production scope uses one explicit confirmation with yes recommende
   await execute('target add',['production'],{project:root,url:'https://app.example.com',environment:'production'});
   t.mock.method(dns,'resolveTxt',async()=>[[read(root).targets[0].challenge.token]]);
   await change(root,state=>{state.models[0].lastTest={status:'connected'};state.models[0].lastAttempt={status:'connected'};});
-  const denied=await wizard(t,root,['1','','no','n']);
+  const denied=await wizard(t,root,['1','','no','n','n']);
   assert.equal(read(root).targets[0].authorization,null);
   assert.equal(denied.prompts.filter(prompt=>/Authorize these checks/.test(prompt)).length,1);
   assert.equal(denied.prompts.some(prompt=>/Do you authorize|Confirm testing/.test(prompt)),false);
-  const result=await wizard(t,root,['','','yes','n']);
+  const result=await wizard(t,root,['','','yes','']);
   assert.equal(read(root).targets[0].authorization.productionAcknowledged,true);
   assert.match(result.output,/No DNS record required/);
   assert.doesNotMatch(result.output,/Add this DNS record/);
@@ -91,7 +91,7 @@ test('failed mandatory Muse preflight stays in the same step and never creates p
 
 test('wizard can configure account references and does not store or request token values',async t=>{
   const root=temp();
-  const result=await wizard(t,root,['1','','','http://127.0.0.1:4317','','yes','','','yes','yes','1','BYPASS_OWNER_TOKEN','','1','BYPASS_OUTSIDER_TOKEN','','n','n'],{flow:'advanced'});
+  const result=await wizard(t,root,['1','','','http://127.0.0.1:4317','','yes','','','yes','yes','1','BYPASS_OWNER_TOKEN','','1','BYPASS_OUTSIDER_TOKEN','','n'],{flow:'advanced'});
   const identities=read(root).identities;
   assert.equal(identities.length,2);
   assert.deepEqual(identities.map(i=>i.secretEnv),['BYPASS_OWNER_TOKEN','BYPASS_OUTSIDER_TOKEN']);
@@ -125,12 +125,13 @@ test('wizard accepts a bare domain directly after a typo and defers DNS on Enter
 
 test('wizard accepts code-only selection and never asks for environment or ownership',async t=>{
   const root=temp();
-  const result=await wizard(t,root,['1','','n'],{mode:'code'});
+  const result=await wizard(t,root,['1',''],{mode:'code'});
   assert.equal(read(root).targets.length,0);
   assert.equal(result.prompts.some(p=>/real users|Paths to test|control|confirm this production/i.test(p)),false);
   assert.ok(result.output.indexOf('Repository file plan')<result.output.indexOf('Repository setup changes'));
   assert.match(result.output,/\.bypassignore.*review and commit/);
-  assert.match(result.output,/code-only review available/);
+  assert.match(result.output,/Starting the code security audit now/);
+  assert.equal(result.result.startReview.mode,'code');
 });
 
 test('wizard invalid flow and noninteractive invocation fail before writing setup',async t=>{
@@ -144,10 +145,10 @@ test('wizard invalid flow and noninteractive invocation fail before writing setu
 
 test('repository setup redirects an accidental tooling checkout to the chosen application',async t=>{
   const tooling=temp(),app=temp();fs.writeFileSync(path.join(tooling,'package.json'),JSON.stringify({name:'@bypass-labs/bypass'}));
-  const result=await wizard(t,app,['1','','n',app,'n'],{repo:tooling,mode:'code'});
+  const result=await wizard(t,app,['1','','n',app],{repo:tooling,mode:'code'});
   assert.equal(result.result.root,app);
   assert.equal(fs.existsSync(path.join(tooling,'.bypass/state.json')),false);
   assert.match(result.output,/Bypass’s own tooling source/);
-  assert.match(result.output,/White-box \/ code: ready/);
-  assert.match(result.output,/Black-box \/ live app: deferred/);
+  assert.match(result.output,/Starting the code security audit now/);
+  assert.equal(result.result.startReview.mode,'code');
 });

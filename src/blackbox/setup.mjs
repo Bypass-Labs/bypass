@@ -10,11 +10,20 @@ import {repositoryInfo} from '../repository.mjs';
 import {ownershipReady, ownershipVerification, verificationDisabled} from '../ownership-store.mjs';
 import {testingApproval} from '../interaction.mjs';
 import {envName, hash, need, safeName} from '../util.mjs';
+import {projectIdentityBridge} from './project-scope.mjs';
 
 const list = value => String(value).split(',').map(item => item.trim()).filter(Boolean);
 const credentialOrigins = (origin, value) => [...new Set([origin, ...list(value).map(appOriginInput)])];
 const quote = value => `'${String(value).replaceAll("'", "'\\''")}'`;
 const current = value => Date.parse(value ?? '') > Date.now();
+
+export function scopeOutputForOrigin(root, origin) {
+  const file=path.join(root,'blackbox.scope.json');
+  if(!fs.existsSync(file))return {};
+  try{if(JSON.parse(fs.readFileSync(file,'utf8')).target?.origin===origin)return {};}
+  catch{}
+  return {out:`blackbox.${hash(origin).slice(0,12)}.scope.json`};
+}
 
 function requestedMatches(options, scope) {
   const same = (input, actual, normalize = value => value) => input == null ||
@@ -46,6 +55,7 @@ export function prepareScopeTemplate(working, rawUrl, options = {}, {reuse = fal
   need(rawUrl, 'Provide an app URL: bypass blackbox setup <url>.');
   const root = rootFrom(working, false);
   const origin = appOriginInput(rawUrl);
+  if(options.out==null)options={...options,...scopeOutputForOrigin(root,origin)};
   const requestedMethods = options.methods == null ? null : httpMethods(options.methods);
   if (options.rps != null) {
     const requestedRate = Number(options.rps);
@@ -223,10 +233,13 @@ function authorizationFile(file, target, scope, {primary, credentialed}) {
 export async function prepareBlackboxSetup(working, rawUrl, options = {}) {
   // A connected app is the source of truth for environment and approved
   // boundaries. This keeps both preview and execution on the same saved plan.
-  const savedRoot=rootFrom(working,false),savedFile=path.resolve(savedRoot,options.out||'blackbox.scope.json');
+  const savedRoot=rootFrom(working,false);
+  if(options.out==null)options={...options,...scopeOutputForOrigin(savedRoot,appOriginInput(rawUrl))};
+  const savedFile=path.resolve(savedRoot,options.out||'blackbox.scope.json');
   if(!fs.existsSync(savedFile)&&fs.existsSync(path.join(savedRoot,'.bypass/state.json'))){
-    const target=read(savedRoot).targets.find(t=>t.url===appOriginInput(rawUrl)),auth=target?.authorization;
-    if(target)options={environment:target.environment,...(auth?{include:auth.paths.join(','),methods:auth.methods.join(','),rps:auth.maxRequestsPerSecond}:{}),...options};
+    const state=read(savedRoot),target=state.targets.find(t=>t.url===appOriginInput(rawUrl)),auth=target?.authorization;
+    const bridge=projectIdentityBridge(state,target);
+    if(target)options={environment:target.environment,...(auth?{include:auth.paths.join(','),methods:auth.methods.join(','),rps:auth.maxRequestsPerSecond}:{}),...(bridge?.options??{}),...options};
   }
   const prepared = prepareScopeTemplate(working, rawUrl, options, {reuse: true});
   const {root, origin, file, scope} = prepared;
@@ -248,7 +261,7 @@ export async function prepareBlackboxSetup(working, rawUrl, options = {}) {
   const auditCommand = `bypass blackbox ${quote(origin)}${scopeFlag}${projectFlag}${rateFlag}${modelCallsFlag}${minutesFlag}`;
   if (scope.target.environment === 'local') return {kind: 'blackbox-setup', root, scopeFile: file,
     origin, methods: scope.methods, credentialOrigins: scope.credentialOrigins, created: prepared.created,
-    updated: prepared.updated ?? false, ready: true,
+    updated: prepared.updated ?? false, ready: true, rate: scope.limits.rps,
     modelCheck,
     targets: [], steps: [{kind: 'run', command: auditCommand}],
     next: auditCommand};
@@ -311,7 +324,8 @@ export async function prepareBlackboxSetup(working, rawUrl, options = {}) {
   steps.push({kind: 'run', command: auditCommand});
   return {kind: 'blackbox-setup', root, scopeFile: file, origin, created: prepared.created,
     updated: prepared.updated ?? false,
-    methods: scope.methods, credentialOrigins: scope.credentialOrigins, ready: steps.length === 1,
+    methods: scope.methods, credentialOrigins: scope.credentialOrigins, rate: scope.limits.rps,
+    ready: steps.length === 1,
     modelCheck,
     targets: registered, steps, next: steps[0].command};
 }

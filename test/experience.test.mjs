@@ -4,13 +4,70 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { guidedDemo } from '../src/guided-demo.mjs';
 import { onboard } from '../src/onboarding.mjs';
-import { terminal, printResult } from '../src/ui.mjs';
+import { terminal, printResult, orderedFindings, replayableFinding, sourceReviewNote } from '../src/ui.mjs';
 import { homeActions } from '../src/experience.mjs';
 import { appOriginInput, safeRequest } from '../src/network.mjs';
 import { read } from '../src/store.mjs';
 import { execute } from '../src/service.mjs';
 import { delay, VERSION } from '../src/util.mjs';
 import { temp, cli } from './helpers.mjs';
+
+test('confirmed live findings point to proof replay, not a legacy demo',t=>{
+  const output=[];t.mock.method(console,'log',text=>output.push(text));
+  printResult({finding:{id:'finding_live',engine:'blackbox',status:'confirmed',
+    title:'Anonymous dossier disclosure',hypothesis:'Anonymous read returned private fields.',
+    severity:'medium',impact:'Private records are readable without login.',
+    recommendation:'Require authentication.',verification:{blackboxRun:'bx-example',
+      status:'confirmed',controls:[{label:'fresh',path:'/user/1',status:200}]}}});
+  const text=output.join('\n');
+  assert.match(text,/medium/);
+  assert.match(text,/Impact: Private records are readable without login/);
+  assert.match(text,/Proof: confirmed · 1 replay controls/);
+  assert.match(text,/Fix: Require authentication/);
+  assert.match(text,/Next: bypass verify finding_live/);
+  assert.match(text,/Save regression test: bypass test save finding_live/);
+  assert.doesNotMatch(text,/bypass demo|"controls"/);
+});
+
+test('results put confirmed evidence first and do not offer replay for source-only leads',t=>{
+  const lead={id:'source-lead',engine:'docker',status:'unproven',title:'Source concern',
+    sourceEvidence:{kind:'source',file:'src/server.js',line:12,quote:'return value;'}};
+  const confirmed={id:'live-proof',engine:'blackbox',status:'confirmed',
+    verification:{blackboxRun:'bx-example'}};
+  assert.deepEqual(orderedFindings([lead,confirmed]).map(item=>item.id),['live-proof','source-lead']);
+  assert.equal(replayableFinding(lead),false);
+  assert.equal(replayableFinding(confirmed),true);
+  const output=[];t.mock.method(console,'log',text=>output.push(text));
+  printResult({finding:lead});
+  assert.match(output.join('\n'),/No saved HTTP proof is available for this source lead/);
+  assert.doesNotMatch(output.join('\n'),/Next: bypass verify source-lead/);
+});
+
+test('combined results explain a paused source review without hiding saved evidence',t=>{
+  const note=sourceReviewNote({executionFailures:[{stage:'white-box',reason:'Model request timed out.'}]});
+  assert.match(note,/Code security review paused: Model request timed out/);
+  assert.match(note,/Partial source evidence is saved/);
+  assert.match(note,/scan --mode code/);
+  assert.equal(sourceReviewNote({executionFailures:[]}), '');
+  const output=[];t.mock.method(console,'log',text=>output.push(text));
+  printResult({run:{kind:'scan',result:{source:{executionFailures:[{stage:'white-box',reason:'Model request timed out.'}]},
+    blackbox:{run:'bx-example',runDir:'/tmp/app/.bypass/runs/bx-example',projectRoot:'/tmp/app',
+      findings:[],coverage:{complete:false},exitCode:3}}}});
+  assert.match(output.join('\n'),/Code security review paused: Model request timed out/);
+  assert.match(output.join('\n'),/Run folder: \/tmp\/app\/\.bypass\/runs\/bx-example/);
+});
+
+test('replayed live proof shows status and the saved-test command',t=>{
+  const output=[];t.mock.method(console,'log',text=>output.push(text));
+  printResult({findingId:'finding_live',status:'confirmed',verification:{status:'confirmed',
+    reason:'Fresh anonymous records still disclosed distinct private fields.',
+    blackboxRun:'bx-example',controls:[{label:'fresh',path:'/v2/api/user/1',status:200}]}});
+  const text=output.join('\n');
+  assert.match(text,/SAVED HTTP PROOF REPLAY/);
+  assert.match(text,/Confirmed again/);
+  assert.match(text,/bypass test save finding_live/);
+  assert.doesNotMatch(text,/"controls"|bypass demo/);
+});
 
 test('scanner interruptions display the saved failure, scanner evidence path, and real usage',t=>{
   const output=[];t.mock.method(console,'log',text=>output.push(text));
@@ -112,6 +169,15 @@ test('home recommends review, results, then saved checks independently of pendin
   state.checks.push({enabled:true});assert.equal(homeActions(state)[0].id,'tests');
 });
 
+test('a model response-shape failure recommends retrying the audit, not testing a working connection',()=>{
+  const state={project:{repository:{kind:'git'}},settings:{analysisEngine:'docker'},targets:[],findings:[],checks:[],
+    activeModel:'meta',models:[{name:'meta',lastAttempt:{status:'connected',checkedAt:'2026-01-01T00:00:00.000Z'}}],
+    runs:[{id:'run_1',status:'failed',finishedAt:'2026-01-01T00:01:00.000Z',result:{details:{stage:'white-box',reason:'model_response'}}}]};
+  assert.equal(homeActions(state)[0].id,'review');
+  state.runs[0].result.details={stage:'connection',reason:'authentication'};
+  assert.equal(homeActions(state)[0].id,'model test');
+});
+
 test('Enter runs review and opens results; help exposes commands; no extra return prompt or Exit 3',async t=>{
   const root=temp();fs.writeFileSync(path.join(root,'app.js'),'export const example = true;');await execute('init',[root]);
   await execute('target add',['production'],{project:root,url:'https://app.example.com',environment:'production'});
@@ -121,7 +187,7 @@ test('Enter runs review and opens results; help exposes commands; no extra retur
   assert.equal(answers.length,0);assert.equal(read(root).findings.length,1);
   assert.equal(read(root).targets[0].ownership.status,'pending');
   const transcript=output.join('\n');
-  assert.match(transcript,/Commands you can type here/);assert.match(transcript,/Review preview complete/);
+  assert.match(transcript,/SECURITY AUDITS/);assert.match(transcript,/\/blackbox\s+Test an authorized running application/);assert.match(transcript,/Review preview complete/);
   assert.match(transcript,/It was not discovered in your code/);assert.match(transcript,/Open review results/);
   assert.match(transcript,/empty directory/);
   assert.doesNotMatch(transcript,/Exit 3|Press Enter to return|Unknown operation/);
@@ -142,6 +208,22 @@ test('a successful preview never hides failed saved-check results',t=>{
   const output=[];t.mock.method(console,'log',text=>output.push(text));
   printResult({run:{kind:'scan',result:{simulation:true,inventory:{sourceFileCount:1},findings:[],regression:[{status:'failed',reason:'Account boundary regressed'}]}}});
   assert.match(output.join('\n'),/Saved check: failed/);
+});
+
+test('interactive black-box setup is a short ordered runbook without repeated absolute paths',t=>{
+  const output=[];t.mock.method(console,'log',text=>output.push(text));
+  const root='/tmp/customer-application';
+  printResult({kind:'blackbox-setup',root,origin:'https://app.example.test',
+    scopeFile:path.join(root,'blackbox.scope.json'),created:true,methods:['GET','POST'],rate:32,
+    steps:[{kind:'authorization',target:'production',file:path.join(root,'blackbox.authorization.json'),production:true,
+      command:`bypass target authorize production --scope-file '${root}/blackbox.authorization.json' --accept --project '${root}'`},
+    {kind:'run',command:`bypass blackbox 'https://app.example.test' --scope '${root}/blackbox.scope.json' --project '${root}' --rps 32`}],
+    modelCheck:`bypass model test --project '${root}'`},{interactive:true});
+  const text=output.join('\n');
+  for(const expected of ['BLACK-BOX SETUP','TARGET       https://app.example.test','SCOPE        ./blackbox.scope.json · created',
+    'ALLOWED      GET, POST · 32 requests/second','01 / AUTHORIZE TESTING','02 / START SECURITY AUDIT'])assert.match(text,new RegExp(expected.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')));
+  assert.match(text,/--scope-file '\.\/blackbox\.authorization\.json'/);
+  assert.doesNotMatch(text,/--project|Optional Muse check|\breal\b/i);
 });
 
 test('opening the tooling checkout asks for the application before any review',async t=>{

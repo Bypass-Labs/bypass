@@ -1,7 +1,7 @@
 // One catalog drives strict CLI parsing, help, and the command reference.
 const command=(usage,description,flags='',extra={})=>({usage,description,flags:flags.split(' ').filter(Boolean),...extra});
 export const commands={
-  blackbox:command('blackbox <url>','Run a scoped black-box audit and save evidence under .bypass/runs/.','scope include domains audit-domains owner-env other-env auth identity-path model agents http-workers rps model-calls max-urls max-tasks minutes dom-script-bytes out source finding focus-path revision-path revision-field accept-local no-model dry-run no-discovery offline'),
+  blackbox:command('blackbox <url>','Run a scoped black-box audit and save evidence under .bypass/runs/.','scope include domains audit-domains owner-env other-env auth identity-path model agents http-workers rps model-calls max-urls max-tasks minutes dom-script-bytes out source review finding focus-path revision-path revision-field accept-local no-model dry-run no-discovery offline'),
   'blackbox scope':command('blackbox scope <url>','Write a reviewable blackbox.scope.json.','include methods domains audit-domains credential-origins never owner-env other-env auth identity-path identity-cookie-name environment agents http-workers rps model-calls max-urls max-tasks minutes dom-script-bytes out force'),
   'blackbox setup':command('blackbox setup <url>','Prepare scope and authorization; --plan previews the approval picker without changes.','plan include methods domains audit-domains credential-origins never owner-env other-env auth identity-path identity-cookie-name environment agents http-workers rps model-calls max-urls max-tasks minutes dom-script-bytes out force'),
   'blackbox verify':command('blackbox verify <run-id>','Re-execute generated proofs and check ledger integrity.'),
@@ -19,12 +19,12 @@ export const commands={
   'scanner policies':command('scanner policies','List exact bundled policy IDs without Docker or inference.','query'),
   'scanner doctor':command('scanner doctor','Inspect the selected detector runtime and image readiness; no inference.','detector'),
   'scanner prepare':command('scanner prepare','Prepare the lightweight policy or pinned SAST runtime.','detector'),
-  poc:command('poc','Open a real-AI, two-container POC with a local test app.','dir model'),
-  'poc start':command('poc start','Create a separate POC app with public accounts and real Docker agents.','dir port model'),
-  'poc resume':command('poc resume','Restart the saved generated local fixture; preserve findings and tests.'),
-  'poc stop':command('poc stop','Stop this POC fixture app; preserve its evidence.'),
-  demo:command('demo','Guided local walkthrough: prove, fix, retest, and catch a regression.','dir'),
-  onboard:command('onboard [path]','Guided QuickStart, resumable app verification, or local demo.','repo dir flow mode'),
+  poc:command('poc','Open an isolated two-container security POC with a local test app.','dir model',{hidden:true}),
+  'poc start':command('poc start','Create a separate POC app with public accounts and containerized audit workers.','dir port model',{hidden:true}),
+  'poc resume':command('poc resume','Restart the saved generated local fixture; preserve findings and tests.','',{hidden:true}),
+  'poc stop':command('poc stop','Stop this POC fixture app; preserve its evidence.','',{hidden:true}),
+  demo:command('demo','Guided local walkthrough: prove, fix, retest, and catch a regression.','dir',{hidden:true}),
+  onboard:command('onboard [path]','Connect code, a running app, or both and start the selected security audit.','repo dir flow mode'),
   init:command('init [path]','Connect a repository and configure a project.','repo dir config name plan tracked-files'),
   'app connect':command('app connect <url>','Connect a running app without a source repository.','environment'),
   'repo show':command('repo show','Inspect the connected repository.'),
@@ -60,9 +60,9 @@ export const commands={
   'model use':command('model use <name>','Select the model profile.'),
   'model test':command('model test [name]','Send a synthetic smoke prompt, without repository content.'),
   'model remove':command('model remove <name>','Remove a model profile.'),
-  'engine use':command('engine use <docker|mock>','Select real Docker agents or the offline mocked preview.'),
+  'engine use':command('engine use <docker|mock>','Select the containerized security audit or offline mocked preview.'),
   'engine doctor':command('engine doctor','Check Docker and the shared inference profile.'),
-  'engine prepare':command('engine prepare','Build the agent image for both Docker services.'),
+  'engine prepare':command('engine prepare','Build the isolated source-review worker image.'),
   'registration discover':command('registration discover','Find public Firebase config in authorized app pages and linked scripts. No accounts created.','target path project-id'),
   'registration choose':command('registration choose','Save the test-account choice: create, existing or skip. Creating accounts requires explicit permission.','target mode accept email-domain'),
   'registration configure':command('registration configure','Authorize up to two dedicated JSON signup attempts on the verified app.','target provider config-file api-key-field project-id path check-path access-path email-domain email-field password-field token-field verified-field identity-field require-verification accept'),
@@ -72,14 +72,14 @@ export const commands={
   'probe discover':command('probe discover','Select owned test IDs from an authorized JSON collection without exposing contents.','target path resource-prefix items-field owner-field id-field resource-id-field identity-field owner outsider'),
   'probe test':command('probe test <name>','Validate both logins and the exact owner resource with three GET requests; zero model calls.','target'),
   'probe list':command('probe list','List approved resources for live agent probes.','target'),
-  scan:command('scan','Replay saved checks, then review with the selected analysis engine.','mode target base full plan detach'),
+  scan:command('scan','Run code, live, or combined security auditing through the canonical engines.','mode target base full plan detach agents http-workers model-calls max-urls max-tasks minutes'),
   'finding list':command('finding list','List findings, with simulation and evidence labels.','target run status severity'),
   'finding show':command('finding show <id>','Show evidence, history, and remediation context.'),
   verify:command('verify <finding-id>','Reproduce a finding using its scoped HTTP controls.','target'),
   retest:command('retest <finding-id>','Check a deployed fix and save a standalone regression.','target build'),
   'test list':command('test list','List saved regression checks.','target'),
   'test show':command('test show <id>','Show a check and environment bindings.'),
-  'test save':command('test save <finding-id>','Save a failing reproduction immediately, or a verified fixed regression.'),
+  'test save':command('test save <finding-id>','Save a portable check or export a confirmed black-box proof as a standalone regression.','out'),
   'test run':command('test run [id]','Replay deterministic checks with zero model calls.','all target detach'),
   'test bind':command('test bind [id]','Bind a saved check to an authorized environment.','all target file'),
   'test export':command('test export [id]','Write ordinary Node tests with no Bypass dependency.','all target out force'),
@@ -106,13 +106,13 @@ export const commands={
   'monitor worker':command('monitor worker','Run the real local scheduler (machine must remain awake).','detach once stop'),
   'ci init':command('ci init','Generate GitHub saved checks, or a Meta API security agent with --agent.','provider target force agent action-ref every revision-path revision-field'),
   'mcp serve':command('mcp serve','Start the typed stdio MCP server.'),
-  'demo start':command('demo start','Create the Ledger Git fixture and start its HTTP server.','dir port'),
-  'demo status':command('demo status','Show the fixture state.'),
-  'demo fix':command('demo fix','Enable ownership enforcement in the local fixture.'),
-  'demo regress':command('demo regress','Reintroduce the local fixture defect.'),
-  'demo add-route':command('demo add-route','Add an uncovered export route to the fixture.'),
-  'demo reset':command('demo reset','Reset fixture behavior while retaining evidence.'),
-  'demo stop':command('demo stop','Stop the local fixture server.'),
+  'demo start':command('demo start','Create the Ledger Git fixture and start its HTTP server.','dir port',{hidden:true}),
+  'demo status':command('demo status','Show the fixture state.','',{hidden:true}),
+  'demo fix':command('demo fix','Enable ownership enforcement in the local fixture.','',{hidden:true}),
+  'demo regress':command('demo regress','Reintroduce the local fixture defect.','',{hidden:true}),
+  'demo add-route':command('demo add-route','Add an uncovered export route to the fixture.','',{hidden:true}),
+  'demo reset':command('demo reset','Reset fixture behavior while retaining evidence.','',{hidden:true}),
+  'demo stop':command('demo stop','Stop the local fixture server.','',{hidden:true}),
   _run:command('_run <id>','Internal detached run entry point.','',{hidden:true}),
   '_demo-serve':command('_demo-serve','Internal fixture server.','',{hidden:true})
 };
@@ -139,9 +139,9 @@ export function parse(argv){
   return {key,args:words,options};
 }
 export function help(key,reference=false){
-  if(!key&&!reference)return `BYPASS  /  security checks that stay with your code\n\nMuse plugin (recommended): /bypass:start inside Muse\n\n  bypass onboard       Connect your application\n  bypass poc           Try the real local demonstration\n  bypass status        See what is done and what comes next\n  bypass scan          Review configured source and live checks\n  bypass discover --plan  Plan deterministic CodeQL discovery (no LLM)\n  bypass test run --all  Replay saved regressions without AI\n\nCredentials are optional. Account-boundary tests need two accounts.\nStandalone AI needs an API-key profile; Muse uses its active session.\n\nFull reference: bypass --help --reference\nCommand details: bypass <command> --help\n`;
+  if(!key&&!reference)return `BYPASS  /  security checks that stay with your code\n\nMuse plugin (recommended): /bypass:start inside Muse\n\n  bypass onboard       Connect code, a running app, or both\n  bypass scan          Run the selected source, live, or combined audit\n  bypass status        See what is done and what comes next\n  bypass finding list  Open findings, impact, and remediation\n  bypass test run --all  Replay saved regressions without AI\n\nStandalone AI uses a Muse model API profile; the Muse plugin uses its active session.\n\nFull reference: bypass --help --reference\nCommand details: bypass <command> --help\n`;
   const selected=commands[key];
   if(selected)return `bypass ${selected.usage}\n\n${selected.description}\n\nOptions: ${selected.flags.map(x=>'--'+x).join(', ')||'(none)'}\nGlobal: --project <path>, --json, --non-interactive, --help\n`;
   const entries=Object.entries(commands).filter(([k,v])=>!v.hidden&&(!key||k.startsWith(key+' ')));
-  return `BYPASS  /  security checks that stay with your code\n\nStart here: bypass demo — complete guided walkthrough; no DNS or login needed.\nYour project: bypass onboard — connect a repository and preview a review.\n\nPOC · real Docker agents via engine use docker; offline mock preview available\n\n${entries.map(([,v])=>`  ${v.usage.padEnd(38)} ${v.description}`).join('\n')}\n\nGlobal: --project <path>, --json, --non-interactive, --help, --version\nExit codes: 0 success · 1 failed regression · 2 usage/config · 3 blocked/incomplete (including mock scan results) · 130 cancelled\n`;
+  return `BYPASS  /  security checks that stay with your code\n\nStart here: bypass onboard — connect code, a running app, or both.\nRun an audit: bypass scan — use the selected source, live, or combined scope.\n\nAudit engine · isolated source review plus authorized HTTP testing\n\n${entries.map(([,v])=>`  ${v.usage.padEnd(38)} ${v.description}`).join('\n')}\n\nGlobal: --project <path>, --json, --non-interactive, --help, --version\nExit codes: 0 success · 1 failed regression · 2 usage/config · 3 blocked/incomplete · 130 cancelled\n`;
 }

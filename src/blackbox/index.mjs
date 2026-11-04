@@ -5,7 +5,7 @@ import {loopback} from '../network.mjs';
 import { atomic, rootFrom } from '../store.mjs';
 import { hash, id, need, now, Fault, abortFault } from '../util.mjs';
 import { modelProfile } from '../models.mjs';
-import { infer as modelInfer } from '../inference.mjs';
+import { infer as modelInfer, withStructuredRepair } from '../inference.mjs';
 import { loadScope, taskAllowance, createLimiter, createRequester, validateUrl } from './scope.mjs';
 import { createLedger, verifyLedger, scrub, maskExcerpt } from './ledger.mjs';
 import { mineOrigin, maskSecrets } from './assets.mjs';
@@ -23,7 +23,7 @@ import { buildFindings, consolidateBrowserXssProofs, consolidateRawBoundaryProof
   renderReport, exitCodeFor } from './report.mjs';
 import { proveFindings } from './poc.mjs';
 import {reviewSource} from './source.mjs';
-import {runWebProbes} from './web-probes.mjs';
+import {runWebProbes, runSourceDisclosureProbes} from './web-probes.mjs';
 import {reconDerivedSession, derivedAnonymousSurface, reconConfirmedAccess} from './derived-session-recon.mjs';
 import {checkDerivedAnonymousAccess} from './derived-access.mjs';
 import {auditDiscoveredHosts, followupResponseHints, mergeResponsePatterns} from './host-audit.mjs';
@@ -42,6 +42,20 @@ const RESEARCH_KINDS = new Set(['model-differential', 'model-json-differential',
 const ACCEPTED_RESEARCH_CHECKPOINT = /^(?:json-experiment|access-boundary)(?:-derived-[0-9a-f]{12})?(?:-queue-[0-9a-f]{12})?-checkpoint\.json$/;
 const HTTP_SEQUENCE_CHECKPOINT = /^http-sequence(?:-derived-[0-9a-f]{12})?(?:-page-[0-9a-f]{12})?(?:-queue-[0-9a-f]{12})?-checkpoint\.json$/;
 const AUDIT_MODEL_DEADLINE_MESSAGE = 'Audit wall-clock deadline cut a Muse research call; remaining work is untested.';
+
+export function describeModelActivity(messages = []) {
+  const instruction=messages.find(message=>message?.role==='system')?.content ?? '';
+  if(/source route excerpts|source-grounded/i.test(instruction))return 'Reviewing source-grounded routes';
+  if(/public (?:JS|assets?)|mined files|asset/i.test(instruction))return 'Interpreting routes from public assets';
+  if(/HTTP sequence|workflow|multi-step/i.test(instruction))return 'Planning an HTTP-sequence check';
+  if(/access-control|access boundary|access-boundary|object authorization|account boundary/i.test(instruction))return 'Planning an access-boundary check';
+  if(/authentication|login|session/i.test(instruction))return 'Planning an authentication check';
+  if(/web-test candidates|observed (?:GET|read-only)|rank only the supplied/i.test(instruction))return 'Ranking observed web checks';
+  if(/response facts|follow-up|revise|repair|experiment|investigat/i.test(instruction))return 'Assessing a bounded research result';
+  if(/independently proved|impact|remediation|assess/i.test(instruction))return 'Writing impact and remediation';
+  if(/hostnames|DNS/i.test(instruction))return 'Interpreting discovered hosts';
+  return 'Analyzing observed security evidence';
+}
 
 const hasPendingPageLeads = page => Array.isArray(page?.pendingLeads) &&
   page.pendingLeads.some(lead =>
@@ -251,6 +265,7 @@ export async function runAudit({url, root = process.cwd(), scopeFile = null, ove
   noModel = false, dryRun = false, noDiscovery = false, offline = false, modelName = null, infer = modelInfer,
   modelProfileOverride = null,
   resolve = null, ct = null, connectTls = null, osvQuery = null, sourcePath = null,
+  sourceContext = null, combinedReviewId = null,
   findingId = null, focusPath = null, revisionPath = null, revisionField = null,
   log = () => {}, out = null,
   signal = null,
@@ -404,6 +419,7 @@ export async function runAudit({url, root = process.cwd(), scopeFile = null, ove
   fs.mkdirSync(runDir, {recursive: true, mode: 0o700});
   const startedAt = now(), started = Date.now();
   atomic(path.join(runDir, 'run-start.json'), {run, status: 'running', scopeHash,
+    ...(combinedReviewId?{combinedReviewId}:{}),
     origin: scope.target.origin, scopeFile: file ? path.resolve(file) : null,
     rps: scope.limits.rps, effectiveLimits: scope.limits,
     startedAt, resumedFrom: resumeFrom,
@@ -457,8 +473,9 @@ export async function runAudit({url, root = process.cwd(), scopeFile = null, ove
   const events = [];
   const say = item => { events.push({at: now(), ...item}); log(item); };
   let liveRequests = 0, liveModelCalls = 0;
-  let currentPhase = {step: 0, title: 'Starting'};
-  const stopRecord = (status, extra = {}) => ({run, status, phase: currentPhase,
+  let currentPhase = {step: 0, title: 'Starting', since: Date.now()};
+  const stopRecord = (status, extra = {}) => ({run, status,
+    phase: {step: currentPhase.step, title: currentPhase.title},
     evidenceEntries: ledger.count(), requests: liveRequests, modelCalls: liveModelCalls,
     startedAt, finishedAt: now(), ...extra});
   const onSignal = signal => {
@@ -474,9 +491,12 @@ export async function runAudit({url, root = process.cwd(), scopeFile = null, ove
   for (const [signal, handler] of Object.entries(signalHandlers)) process.once(signal, handler);
   const phase = (state, step, title) => {
     if (signal?.aborted) throw abortFault(signal);
-    if (state === 'doing') currentPhase = {step, title};
+    const phaseDurationMs=state === 'done' && currentPhase.step === step ?
+      Math.max(0,Date.now()-currentPhase.since) : null;
+    if (state === 'doing') currentPhase = {step, title, since: Date.now()};
     log({stage: 'progress', type: 'phase', state, step,
-      total: 6, title, requests: liveRequests, modelCalls: liveModelCalls});
+      total: 6, title, requests: liveRequests, modelCalls: liveModelCalls,
+      ...(phaseDurationMs!=null?{durationMs:phaseDurationMs}:{})});
   };
   const appendEvidence = ledger.append;
   ledger.append = entry => {
@@ -512,6 +532,7 @@ export async function runAudit({url, root = process.cwd(), scopeFile = null, ove
     atomic(path.join(runDir, 'web-progress.json'), webProgress);
   };
   let web = {findings: [], results: [], cut: 0, tested: 0, strategyDecisions: []};
+  let earlySource = {findings: [], results: [], tested: 0, keys: [], plan: []};
   let assessment = null;
   let stats = {startedAt, model: null, modelCalls: 0, requests: 0, cached: 0, tasks: 0, agents: 0};
   try {
@@ -539,8 +560,9 @@ export async function runAudit({url, root = process.cwd(), scopeFile = null, ove
       if (next) next();
       else modelInFlight--;
     };
-    const invokeModel = async (profile, messages, options = {}) => {
+    const invokeModelOnce = async (profile, messages, options = {}) => {
       await acquireModelSlot();
+      let call=null,callStarted=null,activity='Analyzing observed security evidence';
       try {
         need(modelInvocations < scope.limits.modelCalls, 'Muse model-call budget was exhausted.', 3);
         if (Date.now() >= deadline) {
@@ -548,22 +570,41 @@ export async function runAudit({url, root = process.cwd(), scopeFile = null, ove
           throw new Fault(AUDIT_MODEL_DEADLINE_MESSAGE, 3, {reason: 'research_deadline'});
         }
         modelInvocations++;
+        call=modelInvocations;
+        callStarted=Date.now();
+        activity=describeModelActivity(messages);
         liveModelCalls = modelInvocations;
         stats.modelWorkersPeak = Math.max(stats.modelWorkersPeak ?? 0, modelInFlight);
         log({stage: 'progress', type: 'model', modelCalls: liveModelCalls});
+        log({stage:'progress',type:'model-start',call,activity,active:modelInFlight,
+          configured:modelParallelism});
         const remainingMs = deadline - Date.now();
         const timeoutMs = Math.max(1, Math.min(model.provider === 'muse-host' ? 300000 : 60000, remainingMs));
         try {
-          return await activeInfer(profile, messages, {...options, signal, timeoutMs,
+          const answer=await activeInfer(profile, messages, {...options, signal, timeoutMs,
             onProgress: progress => {if (progress.kind === 'model') stats.model = progress.model;}});
+          log({stage:'progress',type:'model-finish',call,activity,status:'completed',
+            durationMs:Date.now()-callStarted,active:Math.max(0,modelInFlight-1),
+            configured:modelParallelism});
+          return answer;
         } catch (error) {
           const classified = classifyAuditModelDeadline(error,
             {auditLimited: remainingMs <= 60000, deadline});
           if (classified !== error) researchDeadlineCut = true;
+          log({stage:'progress',type:'model-finish',call,activity,
+            status:/timed out|deadline/i.test(classified.message)?'timed out':'failed',
+            durationMs:Date.now()-callStarted,active:Math.max(0,modelInFlight-1),
+            configured:modelParallelism});
           throw classified;
         }
       } finally { releaseModelSlot(); }
     };
+    const invokeModel = (profile, messages, options = {}) => withStructuredRepair(
+      repairMessages=>invokeModelOnce(profile,repairMessages,options),messages,{
+        canRetry:()=>!signal?.aborted&&modelInvocations<scope.limits.modelCalls&&Date.now()<deadline,
+        onRetry:()=>log({stage:'progress',type:'activity',message:
+          'Model returned an invalid structured response; retrying this decision once with the same evidence'})
+      });
     phase('doing', 1, 'Scope and host discovery');
     const auditLimiter = createLimiter(scope.limits.rps);
     const anonymousRequester = createRequester(scope, {ledger, limiter: auditLimiter,
@@ -640,12 +681,30 @@ export async function runAudit({url, root = process.cwd(), scopeFile = null, ove
       const available = Math.max(0, scope.limits.modelCalls - modelInvocations - reserve);
       return Math.min(available, Math.ceil(available / 4));
     };
+    if (sourceContext) sourceReview = await sourceContext;
     if (sourcePath || focus && fs.existsSync(path.join(projectRoot, focus.source.file))) {
-      sourceReview = await reviewSource(sourcePath ?? projectRoot, {
+      const reviewed = await reviewSource(sourcePath ?? projectRoot, {
         infer: !focus && model ? invokeModel : null, model,
         origin: scope.target.origin,
-        maxModelPages: reconModelPages(10), log: say});
-      stats.modelCalls += sourceReview.modelCalls;
+        maxModelPages: reconModelPages(10),
+        modelConcurrency: scope.limits.modelConcurrency,
+        log: say});
+      sourceReview = sourceReview ? {
+        ...reviewed,
+        files: [...sourceReview.files, ...reviewed.files],
+        endpoints: [...sourceReview.endpoints, ...reviewed.endpoints],
+        notes: [...sourceReview.notes, ...reviewed.notes],
+        proposals: [...sourceReview.proposals, ...reviewed.proposals],
+        secretLeads: [...sourceReview.secretLeads, ...reviewed.secretLeads],
+        securityLeads: [...sourceReview.securityLeads, ...reviewed.securityLeads],
+        stats: Object.fromEntries(Object.keys(reviewed.stats).map(key => [key,
+          Number(sourceReview.stats?.[key] ?? 0) + Number(reviewed.stats[key] ?? 0)])),
+        modelCalls: Number(sourceReview.modelCalls ?? 0) + reviewed.modelCalls,
+        modelError: sourceReview.modelError ?? reviewed.modelError,
+      } : reviewed;
+    }
+    if (sourceReview) {
+      stats.modelCalls += sourceReview.modelCalls ?? 0;
       modelError = modelError ?? sourceReview.modelError;
       mined.endpoints.push(...(focus ? sourceReview.endpoints.filter(item =>
         item.file === focus.source.file || item.path === focus.path) :
@@ -653,6 +712,18 @@ export async function runAudit({url, root = process.cwd(), scopeFile = null, ove
       ...(!focus ? sourceReview.proposals.map(path => ({path, method: 'GET',
         params: [], source: 'model:source'})) : []));
       atomic(path.join(runDir, 'source.json'), sourceReview);
+    }
+    if (!dryRun && sourceReview?.securityLeads?.length) {
+      say({stage: 'progress', type: 'activity',
+        message: 'Checking cited private-record routes with fresh anonymous reads'});
+      earlySource = await runSourceDisclosureProbes({sourceReview}, scope,
+        {requester: anonymousRequester, budget: Math.min(3, taskLimit)});
+      atomic(path.join(runDir, 'source-live-probes.json'), earlySource);
+      for (const result of earlySource.results)
+        say({stage: 'progress', type: 'task-done', confirmed: result.verdict === 'confirmed'});
+      if (earlySource.tested) say({stage: 'source-proof', message:
+        `${earlySource.tested} cited route${earlySource.tested === 1 ? '' : 's'} checked early · ` +
+        `${earlySource.findings.length} positive signal${earlySource.findings.length === 1 ? '' : 's'} queued for replay`});
     }
     if (model && !focus) {
       const assetHosts = (discovery?.hosts ?? []).filter(host => host.assets?.files?.length);
@@ -717,7 +788,7 @@ export async function runAudit({url, root = process.cwd(), scopeFile = null, ove
         say({stage: 'identity', message: 'The supplied credentials did not establish distinct account principals; cross-account tasks are withheld.'});
       }
       if (sourceReview) surface.sourceReview = {files: sourceReview.files, notes: sourceReview.notes,
-        secretLeads: sourceReview.secretLeads,
+        secretLeads: sourceReview.secretLeads, securityLeads: sourceReview.securityLeads,
         stats: sourceReview.stats, modelCoverage: model ? sourceReview.modelCoverage : null};
       if (sourceReview?.notes?.length) surface.modelNotes.push(...sourceReview.notes.map(note => ({...note, by: 'source-assisted'})));
       if (assetAnalysis?.notes?.length) surface.modelNotes.push(...assetAnalysis.notes
@@ -800,6 +871,7 @@ export async function runAudit({url, root = process.cwd(), scopeFile = null, ove
           .filter(signal => signal.summaryIndexes.includes(0)),
         sourceReview: sourceReview ?
           {files: sourceReview.files, notes: sourceReview.notes, secretLeads: sourceReview.secretLeads,
+            securityLeads: sourceReview.securityLeads,
             stats: sourceReview.stats,
             modelCoverage: model ? sourceReview.modelCoverage : null} : null};
       const followup = focus ? {patterns: [], coverage: {routesAvailable: 0,
@@ -919,7 +991,7 @@ export async function runAudit({url, root = process.cwd(), scopeFile = null, ove
           verifiedExposures.push({...exposure, confirmationEvidence: fresh.evidenceId, hash: fresh.hash});
       }
       surface.exposures = verifiedExposures;
-      const availableWebTasks = Math.max(0, taskLimit - (plan.tasks?.length ?? 0));
+      const availableWebTasks = Math.max(0, taskLimit - (plan.tasks?.length ?? 0) - earlySource.tested);
       const secretSummaries = [mined,
         ...credentialAudits.map(audit => audit.mined),
         ...(discovery?.hosts ?? []).map(host => host.assets)];
@@ -1402,10 +1474,15 @@ export async function runAudit({url, root = process.cwd(), scopeFile = null, ove
         modelCallsLeft: primaryModelCallsLeft});
       const primaryWeb = await runWebProbes(surface, sessions.scope, {requester, ledger,
         budget: Math.max(0, primaryBudget - resumedPrimary),
+        skipLeadKeys: earlySource.keys,
         onProgressCheckpoint: onWebProgress('primary'),
         env: sessions.env,
         infer: model ? invokeModel : null, model,
         researchDeadline,
+        // A short combined review can finish Muse planning at the research
+        // cutoff and still run already selected checks in the proof reserve.
+        ...(combinedReviewId && scope.limits.minutes <= 10 ?
+          {executionDeadline: deadline - 5_000} : {}),
         researchDeadlineAfterAuth: () => derivedPending.length ?
           protectedPlanningDeadline(Date.now(), primaryAfterSessionDeadline,
             researchDeadline) : researchDeadline,
@@ -1818,10 +1895,11 @@ export async function runAudit({url, root = process.cwd(), scopeFile = null, ove
           ...(run.sessionIndex != null ? {sessionIndex: run.sessionIndex} : {})})));
       web = {descendantFeedbackPending: descendantWeb.responsePathHints.map(({origin, path}) =>
           ({origin, path})),
-        findings: [...keyAudit.findings, ...credentialAudit.findings, ...primaryWeb.findings,
+        findings: [...earlySource.findings, ...keyAudit.findings, ...credentialAudit.findings, ...primaryWeb.findings,
           ...derivedWeb.flatMap(item => item.findings),
           ...credentialWeb.flatMap(item => item.findings), ...descendantWeb.findings],
-        results: [...keyAudit.results, ...credentialAudit.results,
+        results: [...earlySource.results.map(item => ({...item, origin: sessions.scope.target.origin})),
+          ...keyAudit.results, ...credentialAudit.results,
           ...primaryWeb.results.map(item => ({...item, origin: sessions.scope.target.origin})),
           ...derivedResultRows,
           ...credentialWeb.flatMap((item, index) => item.results.map(result =>
@@ -1830,10 +1908,11 @@ export async function runAudit({url, root = process.cwd(), scopeFile = null, ove
           derivedWeb.reduce((count, item) => count +
             (deferredEarlyCuts.get(item) ?? item.cut), 0) +
           credentialWeb.reduce((count, item) => count + item.cut, 0) + descendantWeb.cut,
-        tested: keyAudit.tested + credentialAudit.tested + primaryWeb.tested +
+        tested: earlySource.tested + keyAudit.tested + credentialAudit.tested + primaryWeb.tested +
           derivedResultRows.length + credentialWeb.reduce((count, item) => count + item.tested, 0) +
           descendantWeb.tested,
-        plan: [...keyAudit.plan, ...credentialAudit.plan,
+        plan: [...earlySource.plan.map(item => ({...item, origin: sessions.scope.target.origin})),
+          ...keyAudit.plan, ...credentialAudit.plan,
           ...primaryWeb.plan.map(item => ({...item, origin: sessions.scope.target.origin})),
           ...derivedWeb.flatMap(run => run.plan.map(item => ({...item,
             origin: sessions.scope.target.origin,
@@ -1972,6 +2051,16 @@ export async function runAudit({url, root = process.cwd(), scopeFile = null, ove
       stats.queuedUntested = (stats.queuedUntested ?? 0) +
         web.results.filter(item => item.verdict === 'untested').length;
       stats.beyondBudget = (stats.beyondBudget ?? 0) + web.cut + plan.untested.length;
+      const webVerdictCounts = () => ({
+        confirmed: web.results.filter(item =>
+          item.verdict === 'confirmed' && !RESEARCH_KINDS.has(item.kind)).length,
+        observed: web.results.filter(item =>
+          RESEARCH_KINDS.has(item.kind) && ['confirmed', 'observed'].includes(item.verdict)).length,
+        inconclusive: web.results.filter(item => item.verdict === 'inconclusive').length,
+        blocked: web.results.filter(item => item.verdict === 'blocked').length,
+        notReproduced: web.results.filter(item => item.verdict === 'not_reproduced').length,
+      });
+      const countedWebVerdicts = webVerdictCounts();
       stats.confirmed = (stats.confirmed ?? 0) + web.results.filter(item =>
         item.verdict === 'confirmed' && !RESEARCH_KINDS.has(item.kind)).length;
       stats.observed = (stats.observed ?? 0) + web.results.filter(item =>
@@ -2023,6 +2112,12 @@ export async function runAudit({url, root = process.cwd(), scopeFile = null, ove
         originSurfaces, originContexts: Object.fromEntries(credentialAudits.map(audit =>
           [audit.origin, {scope: audit.scope, env: audit.env, loginSpecs: audit.loginSpecs}])),
         env: sessions.env, loginSpecs: sessions.loginSpecs, ledger, web, log: say});
+      const finalWebVerdicts = webVerdictCounts();
+      for (const [field, statsField] of [['confirmed', 'confirmed'], ['observed', 'observed'],
+        ['inconclusive', 'inconclusive'], ['blocked', 'blocked'],
+        ['notReproduced', 'notReproduced']])
+        stats[statsField] = Math.max(0, (stats[statsField] ?? 0) +
+          finalWebVerdicts[field] - countedWebVerdicts[field]);
       if (credentialsReady) {
         const primaryResults = results.filter(item => !item.origin || item.origin === sessions.scope.target.origin);
         const built = await buildChains(primaryResults, findings, {requester, surface, scope: sessions.scope,
@@ -2433,6 +2528,7 @@ export async function runAudit({url, root = process.cwd(), scopeFile = null, ove
       storedXssChecks: web.strategyDecisions.filter(item => item.accepted && item.mode === 'stored-xss').length,
     } : null;
     const runState = {run, status: dryRun ? 'dry-run' : exitCode === 3 ? 'incomplete' : 'partial', scopeHash,
+      ...(combinedReviewId?{combinedReviewId}:{}),
       resumedFrom: resumeFrom, scopeFile: file ? path.resolve(file) : null,
       ...(focus ? {focus, revisionPath: effectiveRevisionPath,
         revisionField: effectiveRevisionField} : {}),
@@ -2446,9 +2542,13 @@ export async function runAudit({url, root = process.cwd(), scopeFile = null, ove
     atomic(path.join(runDir, 'run.json'), runState);
     phase('done', 6, 'Report and coverage');
     return {kind: 'blackbox-audit', run, runDir, projectRoot, origin: sessions.scope.target.origin,
+      ...(combinedReviewId?{combinedReviewId}:{}),
       reportPath: path.join(runDir, 'report.md'),
       scopeHash, findings, stats, untested: plan.untested, dropped: plan.dropped, patterns: surface.patterns.length,
       tasks: plan.tasks.length + web.tested, chains: chains.length, discovery: discovery?.stats ?? null, integrity, coverage,
+      replayInconclusive: web.results.filter(item => item.proofReplay?.verdict === 'inconclusive')
+        .map(item => ({kind: item.kind, path: item.lead?.path ?? null, reason: item.reason})),
+      sourceFindings: report.json.surface.application.sourceFindings,
       credentialOrigins: sessions.scope.credentialOrigins,
       advisories: {status: advisories.status, ...advisories.stats},
       modelOutput,

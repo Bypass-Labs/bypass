@@ -45,7 +45,6 @@ export async function onboard(options={}, args=[], io={}) {
   say('Press Enter for the recommended next action. Your progress is saved.');
   const flow=options.flow||((options.repo||options.project||args[0])?'quickstart':(await pick('How would you like to start?',[
     {label:'Connect my application (recommended)',id:'quickstart'},
-    {label:'See the full local walkthrough — no login or DNS needed',id:'demo'},
     {label:'Advanced setup — more configuration choices',id:'advanced'}
   ])).id);
   const advanced=flow==='advanced';
@@ -54,7 +53,9 @@ export async function onboard(options={}, args=[], io={}) {
     return {...await guidedDemo(options,io),interactive:true,openDashboard:false};
   }
   let savedMode;try{savedMode=read(options.project||process.cwd()).settings.reviewMode;}catch{}
-  const mode=options.mode||savedMode||(await pick(reviewQuestion,reviewChoices,1)).id;
+  if(savedMode&&!options.mode)say(`Saved review choice: ${reviewChoices.find(item=>item.id===savedMode)?.label||savedMode}. Choose what to audit this time.`);
+  const mode=options.mode||(await pick(reviewQuestion,reviewChoices,
+    Math.max(0,reviewChoices.findIndex(item=>item.id===(savedMode||'combined'))))).id;
   need(['code','combined','live'].includes(mode),'Choose code, combined, or live review.');
   say(mode==='live'
     ? 'A black-box audit uses your Muse connection and does not need Docker. Setup and saved tests need no model.'
@@ -63,18 +64,24 @@ export async function onboard(options={}, args=[], io={}) {
   io.task?.(0,'running');
 
   say('\nStep 1 of 4 / Choose and connect Muse inference');
-  let prepared=null,model=null,replaceMuseKey=false;
+  let prepared=null,model=null,replaceMuseKey=false,preferredMuse=null;
   const candidateRoot=options.project||(!/^https:\/\/|^ssh:\/\/|^git@/.test(args[0]||'')?args[0]:null);
   try{
     const existing=read(candidateRoot||'');model=existing.models.find(item=>item.name===existing.activeModel);
-    if((model?.lastAttempt||model?.lastTest)?.status==='connected'){
+    if((model?.lastAttempt||model?.lastTest)?.status==='connected'&&(!model.secretEnv||process.env[model.secretEnv])){
       prepared={saved:true,check:model.lastAttempt||model.lastTest};
       say(`✓ Keeping ${model.model} · ${model.provider==='meta'?'Meta Model API':'local Muse model'} · connection verified.`);
-    }else model=null;
+    }else{
+      if((model?.lastAttempt||model?.lastTest)?.status==='connected'&&model.provider==='meta'){
+        preferredMuse={connection:'meta',model:model.model,baseUrl:model.baseUrl};
+        say(`Reconnect ${model.model} · enter the Meta Model API key for this terminal.`);
+      }
+      model=null;
+    }
   }catch{/* New application: configure Muse before creating project state. */}
   while(!prepared){
     try{
-      prepared=await promptMuseProfile(ask,pick,{secret:io.secret||io.ask.secret,write:say,activity:io.activity,signal:io.signal,metaBaseUrl:io.metaBaseUrl,forceSecret:replaceMuseKey});
+      prepared=await promptMuseProfile(ask,pick,{secret:io.secret||io.ask.secret,write:say,activity:io.activity,signal:io.signal,metaBaseUrl:preferredMuse?.baseUrl||io.metaBaseUrl,forceSecret:replaceMuseKey,preferred:preferredMuse});
       replaceMuseKey=false;
     }catch(error){
       if(error.code===130||error.name==='AbortError')throw error;
@@ -137,15 +144,24 @@ export async function onboard(options={}, args=[], io={}) {
   io.task?.(1,'done');io.task?.(2,'running');io.setNext?.('Save setup → open your project → run a review');
   say(`\nStep 3 of 4 / ${mode==='code'?'Code-only review — app setup skipped':'App testing permissions'}`);
   let state=read(root), target=mode==='code'?null:state.targets.find(t=>t.name===state.activeTarget);
-  if(mode!=='code'){
-    if(!target&&state.targets.length){target=state.targets[0];await call(root,'target use',[target.name]);}
-    if(target)say(`Continuing ${target.name}: ${target.url}`);
-    else {
+  if(mode==='combined'&&state.targets.length){
+    const choices=[...state.targets.map(saved=>({id:`saved:${saved.name}`,targetName:saved.name,
+      label:`Use ${saved.url} (${saved.environment}${authorized(saved)?', scope saved':', permissions needed'})`})),
+    {id:'connect',label:'Connect a different running app'}];
+    const selected=await pick('Which running app should this audit test?',choices,
+      Math.max(0,state.targets.findIndex(item=>item.name===state.activeTarget)));
+    target=selected.targetName?state.targets.find(item=>item.name===selected.targetName):null;
+    if(target){await call(root,'target use',[target.name]);say(`✓ Selected live app: ${target.url}`);}
+  }
+  if(mode!=='code'&&!target){
       const {url,environment}=await appAddress();
-      const name=advanced?await suggested('Target name',[environment]):unique(environment,read(root).targets);
-      target=(await call(root,'target add',[name],{url,environment})).target;
+      target=read(root).targets.find(item=>item.url===url);
+      if(target)say(`✓ Using saved app: ${target.url} (${target.environment})`);
+      else{
+        const name=advanced?await suggested('Target name',[environment]):unique(environment,read(root).targets);
+        target=(await call(root,'target add',[name],{url,environment})).target;
+      }
       await call(root,'target use',[target.name]);
-    }
   }
   if(target)io.setContext?.({app:`${target.url} · ${authorized(target)?'authorized':verified(target)||verificationDisabled(target)?'scope required':'verification pending'}`});
   if(target&&verificationDisabled(target))say('No DNS record required. Confirm control when you approve the exact testing permissions below. You can require DNS or HTTPS later in Settings → Domain ownership verification.');
@@ -170,7 +186,9 @@ export async function onboard(options={}, args=[], io={}) {
       }
       say('These are environment references for CLI/CI. To connect accounts without shell exports, use identity import; Muse imports known private account files itself. Test connections in Targets & identities.');
     });
-  }else if(mode==='live'&&target&&authorized(target))say('App and testing boundaries are ready. Starting the first audit now. Accounts are optional and can be added later for signed-in checks.');
+  }else if(mode==='code')say('Repository is ready. Starting the first source review now.');
+  else if(mode==='live'&&target&&authorized(target))say('App and testing boundaries are ready. Starting the first audit now.');
+  else if(mode==='combined'&&target&&authorized(target))say('Repository and app testing boundaries are ready. Starting the first combined review now.');
   else say((mode==='live'
     ? 'App-only setup is saved. Testing starts as soon as the app boundaries are authorized.'
     : 'You can review source now. Use /engine for account-boundary probes.')+
@@ -237,18 +255,29 @@ export async function onboard(options={}, args=[], io={}) {
   async function finish(){
     rememberSelection(options.project||process.cwd(),root);
     const info=readiness(root);
-    const startReview=mode==='live'&&info.ready.liveTesting?{id:'blackbox'}:null;
-    io.setContext?.({model:modelDisplay(info.model),app:info.target?`${info.target.url} · ${info.target.authorized?'authorized':info.target.ownership==='verified'||info.target.ownershipVerification==='off'?'scope required':'verification pending'}`:'not connected · source review available'});
-    io.task?.(3,'done');io.setNext?.(startReview?'Starting your first app audit':mode==='live'?'Authorize app boundaries to start testing':'Run /review; type / to see commands');
+    const startReview=mode==='live'&&target&&authorized(target)
+      ? {id:'blackbox'}
+      : mode==='combined'&&target&&authorized(target)
+        ? {id:'review',mode:'combined'}
+        : mode==='code'
+          ? {id:'review',mode:'code'}
+        : null;
+    io.setContext?.({model:modelDisplay(info.model),app:mode==='code'?'not part of this audit':info.target?`${info.target.url} · ${info.target.authorized?'authorized':info.target.ownership==='verified'||info.target.ownershipVerification==='off'?'scope required':'verification pending'}`:'not connected · source review available'});
+    io.task?.(3,'done');io.setNext?.(startReview?.id==='blackbox'?'Starting your first app audit':
+      startReview?.mode==='combined'?'Starting your first combined security audit':
+        startReview?'Starting your first code security audit':
+          mode==='live'?'Authorize app boundaries to start testing':'Run /review; type / to see commands');
     say('\nSetup saved\n');
-    say(`  ${mode==='live'?'App profile   ':'Repository    '}${root}\n  Model         ${info.model?modelDisplay(info.model):'add later'}\n  App           ${info.target?`${info.target.url} · ${info.target.authorized?'authorized':info.target.ownership==='verified'||info.target.ownershipVerification==='off'?'scope required':'verification pending'}`:'add later; code-only review available'}\n  Test accounts ${read(root).identities.length} references\n  Muse plugin   ${museInstalled?'installed; approve in Muse':'optional'}`);
-    if(startReview)say(`\nStarting the audit now with the approved boundaries: ${target.authorization.paths.join(', ')} · ${target.authorization.methods.join(', ')} · ${target.authorization.maxRequestsPerSecond} requests/second.`);
+    say(`  ${mode==='live'?'App profile   ':'Repository    '}${root}\n  Model         ${info.model?modelDisplay(info.model):'add later'}\n  App           ${mode==='code'?'not part of this audit':info.target?`${info.target.url} · ${info.target.authorized?'authorized':info.target.ownership==='verified'||info.target.ownershipVerification==='off'?'scope required':'verification pending'}`:'add later; code-only review available'}\n  Test accounts ${read(root).identities.length} references\n  Muse plugin   ${museInstalled?'installed; approve in Muse':'optional'}`);
+    if(startReview?.mode==='combined')say(`\nStarting one security audit now. Source review and live testing share one result: ${target.authorization.paths.join(', ')} · ${target.authorization.methods.join(', ')} · ${target.authorization.maxRequestsPerSecond} requests/second.`);
+    else if(startReview?.id==='blackbox')say(`\nStarting the audit now with the approved boundaries: ${target.authorization.paths.join(', ')} · ${target.authorization.methods.join(', ')} · ${target.authorization.maxRequestsPerSecond} requests/second.`);
+    else if(startReview)say('\nStarting the code security audit now.');
     else if(mode==='live')say('\nThe selected API model runs without Docker. Authorize app testing boundaries to start the audit.');
-    else say(info.engine.mode==='docker'?'\nReal AI selected. The first review checks your model connection before sending source.':'\nYour saved offline-preview choice is retained. Use /engine to switch to real AI.');
-    say('\nYour review\n'+reviewSummary(info.review));
-    say(mode==='live'
-      ? startReview?'No additional audit setup is required. Progress and coverage will appear next.':'Open the project to finish testing permission; the audit starts immediately after approval.'
-      : 'Press Enter on the next screen to review source. Live checks need verified app scope. Accounts are optional; add them for cross-account checks or authorize registration testing.\nType / for commands; /app resumes DNS and /models changes the model.');
+    else say(info.engine.mode==='docker'?'\nSecurity audit ready. The audit checks your model connection before sending source.':'\nYour saved offline-preview choice is retained. Use /engine to switch to the security audit.');
+    if(!startReview)say('\nYour review\n'+reviewSummary(info.review));
+    if(!startReview)say(mode==='live'
+        ? 'Open the project to finish testing permission; the audit starts immediately after approval.'
+        : 'Press Enter on the next screen to review source. Live checks need verified app scope. Accounts are optional; add them for cross-account checks or authorize registration testing.\nType / for commands; /app resumes DNS and /models changes the model.');
     const openDashboard=!!startReview||io.inDashboard||io.rich||await yes('Open my project?','y');
     return outcome({root,interactive:true,openDashboard,readiness:info,...(startReview?{startReview}:{})});
   }

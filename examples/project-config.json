@@ -1,6 +1,0 @@
-{
-  "name": "My app",
-  "repo": "/absolute/path/to/repository",
-  "model": { "name": "muse", "provider": "muse-code" },
-  "target": { "name": "staging", "url": "https://staging.example.com", "environment": "staging" }
-}

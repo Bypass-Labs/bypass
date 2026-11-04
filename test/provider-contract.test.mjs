@@ -6,7 +6,7 @@ import path from 'node:path';
 import { apiProfile, providers, ProviderSession } from '../src/providers.mjs';
 import { inExecutionMode } from '../src/execution-mode.mjs';
 import { testModel } from '../src/models.mjs';
-import { modelResponseSchema } from '../src/inference.mjs';
+import { modelResponseSchema, withStructuredRepair } from '../src/inference.mjs';
 import { temp } from './helpers.mjs';
 import { execute } from '../src/service.mjs';
 import { read } from '../src/store.mjs';
@@ -218,6 +218,33 @@ test('rejected tool actions retain matching correction outputs in Chat and Respo
     const output=transport==='chat'?calls[1].body.messages.at(-1):calls[1].body.input.at(-1);
     assert.deepEqual(output,transport==='chat'?{role:'tool',tool_call_id:'c1',content:'validation feedback'}:
       {type:'function_call_output',call_id:'c1',output:'validation feedback'});
+  });
+});
+
+test('bounded structured repair discards a rejected tool reply in both transports',async t=>{
+  for(const transport of ['chat','responses'])await t.test(transport,async t=>{
+    const {profile,calls}=await endpoint(t,(_req,res,_call,n)=>{
+      const argumentsText=n===1?'not-json':'{"focus":"corrected"}';
+      if(transport==='chat'){
+        const message=action({},`c${n}`);
+        message.tool_calls[0].function.arguments=argumentsText;
+        chat(res,message);
+      }else{
+        res.setHeader('content-type','application/json');
+        res.end(JSON.stringify({status:'completed',output:[{type:'function_call',call_id:`c${n}`,
+          name:'security_action',arguments:argumentsText}]}));
+      }
+    },{transport});
+    const session=new ProviderSession(profile),messages=[{role:'user',content:'Fixture evidence'}];
+    const result=await withStructuredRepair(repairMessages=>session.turn(repairMessages,{schema}),messages,{
+      continuation:true,onRetry:()=>session.discardRejectedStructuredReply()});
+    assert.deepEqual(result,{focus:'corrected'});
+    assert.equal(calls.length,2);
+    const replay=transport==='chat'?calls[1].body.messages:calls[1].body.input;
+    assert.equal(replay.length,2);
+    assert.deepEqual(replay[0],messages[0]);
+    assert.match(replay[1].content,/exactly one security_action/);
+    assert.equal(session.pending,'c2');
   });
 });
 

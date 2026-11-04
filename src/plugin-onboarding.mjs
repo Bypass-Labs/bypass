@@ -1,9 +1,8 @@
-import fs from 'node:fs';
-import path from 'node:path';
 import { choiceInput, scopeSuggestions, testingApproval } from './interaction.mjs';
 import { hostAI } from './execution-mode.mjs';
 import { read } from './store.mjs';
-import { VERSION, hash, need } from './util.mjs';
+import { VERSION, need } from './util.mjs';
+import { scopeOutputForOrigin } from './blackbox/setup.mjs';
 import { workspaceInfo } from './project-selection.mjs';
 import { scopeReady, appOriginInput, DEFAULT_REQUESTS_PER_SECOND } from './network.mjs';
 import { reviewReadiness } from './review-readiness.mjs';
@@ -15,14 +14,6 @@ import { httpMethods, methodChoices, methodInput, recommendedMethods } from './h
 import { reviewQuestion, reviewInput, sourceStatus, repositoryAction } from './application-setup.mjs';
 import { ownershipReady, verificationDisabled, sharedOwnership } from './ownership-store.mjs';
 import { latestRemediation } from './remediation-checkpoint.mjs';
-
-function blackboxScopeOutput(root,origin){
-  const file=path.join(root,'blackbox.scope.json');
-  if(!fs.existsSync(file))return {};
-  try{if(JSON.parse(fs.readFileSync(file,'utf8')).target?.origin===origin)return {};}
-  catch{}
-  return {out:`blackbox.${hash(origin).slice(0,12)}.scope.json`};
-}
 
 // Setup plans are read-only. The MCP adapter remembers explicitly selected modes.
 export async function pluginOnboarding(cwd,root,{intent='real',mode,url,environment,repository,dir,reviewScope=false,
@@ -78,7 +69,7 @@ export async function pluginOnboarding(cwd,root,{intent='real',mode,url,environm
   const live=mode!=='code'&&authorized&&ready.live&&(!requestedOrigin||target?.url===requestedOrigin);
   const next=steps.find(s=>s.status==='needed');
   let nextAction=next?{id:next.id,tool:next.tool,...(next.id==='ownership'?{question:target.ownershipVerification==='http'?'Publish the HTTPS verification file, then check it.':'Publish the TXT record, then check DNS.',challenge:next.challenge}:{})}:mode==='live'?{
-    id:'review',tool:'bypass_blackbox_setup',arguments:{url:target.url,include:target.authorization.paths.join(','),methods:target.authorization.methods.join(','),rps:target.authorization.maxRequestsPerSecond,environment:target.environment,...blackboxScopeOutput(root,target.url)},
+    id:'review',tool:'bypass_blackbox_setup',arguments:{url:target.url,include:target.authorization.paths.join(','),methods:target.authorization.methods.join(','),rps:target.authorization.maxRequestsPerSecond,environment:target.environment,...scopeOutputForOrigin(root,target.url)},
     message:'Reuse this app and authorized scope, apply the default bounded budgets, and start the blackbox audit immediately. Do not ask another setup question before showing progress.'
   }:{id:'review',tool:'bypass_scan',arguments:{mode},message:'Show the selected source/app and scope, then start the requested review.'};
   if(mode==='code'){
@@ -103,6 +94,8 @@ export async function pluginOnboarding(cwd,root,{intent='real',mode,url,environm
   }
   if(interactiveCombined&&mode==='combined'&&target&&(owned||skipVerification)&&
     (!requestedOrigin||requestedOrigin===target.url)&&['scope','review'].includes(nextAction.id)){
+    if(minutes!=null)need(Number.isFinite(minutes)&&minutes>=10,
+      'The combined wizard needs at least 10 minutes for source and live testing.');
     const savedMethods=target.authorization?.methods||recommendedMethods;
     const savedRate=target.authorization?.maxRequestsPerSecond||DEFAULT_REQUESTS_PER_SECOND;
     if(methods==null)nextAction={id:'methods',tool:'bypass_onboarding',question:'Which HTTP methods may this combined audit use?',
@@ -117,18 +110,18 @@ export async function pluginOnboarding(cwd,root,{intent='real',mode,url,environm
         {id:'ten',label:`${savedRate===10?5:10} RPS`,description:'Use this request rate.',arguments:{rps:savedRate===10?5:10}},
         {id:'custom',label:'Custom rate',description:'Enter a positive requests-per-second number.',requiresInput:'rps'}
       ],{custom:'value'}),guidance:'Ask this question once. Send the selected positive number to bypass_onboarding; do not silently reuse a saved rate.'};
-    else if(modelCalls==null)nextAction={id:'model-calls',tool:'bypass_onboarding',question:'How many Muse decision calls may all focused blackbox checks share?',
+    else if(modelCalls==null)nextAction={id:'model-calls',tool:'bypass_onboarding',question:'How many Muse decision calls may the live audit use?',
       input:choiceInput('modelCalls',[
-        {id:'default',label:'120 calls',description:'Use the default total for focused blackbox checks.',arguments:{modelCalls:120}},
-        {id:'more',label:'240 calls',description:'Allow more focused blackbox decisions.',arguments:{modelCalls:240}},
+        {id:'default',label:'120 calls',description:'Use the standard live audit limit.',arguments:{modelCalls:120}},
+        {id:'more',label:'240 calls',description:'Allow more live audit decisions.',arguments:{modelCalls:240}},
         {id:'custom',label:'Custom number',description:'Enter a positive whole number.',requiresInput:'modelCalls'}
-      ],{custom:'value'}),guidance:'Ask this question once. This cap covers focused blackbox decisions across all source findings; Muse Code source-review reasoning is outside this counter.'};
+      ],{custom:'value'}),guidance:'Ask this question once. This cap covers the connected full live audit; Muse Code source-review reasoning is outside this counter.'};
     else if(minutes==null)nextAction={id:'minutes',tool:'bypass_onboarding',question:'What time budget should the combined review use?',
       input:choiceInput('minutes',[
+        {id:'quick',label:'10-minute test',description:'Fast first pass with partial coverage; remaining work is reported.',arguments:{minutes:10}},
         {id:'default',label:'30 minutes',description:'Use the default total duration.',arguments:{minutes:30}},
-        {id:'more',label:'45 minutes',description:'Allow more time for source and focused blackbox checks.',arguments:{minutes:45}},
-        {id:'custom',label:'Custom duration',description:'Enter a positive number of minutes.',requiresInput:'minutes'}
-      ],{custom:'value'}),guidance:'Ask this question once. Elapsed time starts at the source review; Bypass applies the remaining time to each focused check and stops starting new checks when it runs out. The plugin cannot interrupt Muse Code while it is thinking.'};
+        {id:'custom',label:'Custom duration',description:'Enter at least 10 minutes.',requiresInput:'minutes'}
+      ],{recommended:'default',custom:'value'}),guidance:'Ask this question once. Elapsed time starts at the source review; Bypass applies the remaining time to the connected live audit. Ten minutes is a quick pass, not full coverage. The plugin cannot interrupt Muse Code while it is thinking.'};
     else if(!scopeApproved)nextAction={id:'scope',tool:'bypass_authorize_target'};
     else nextAction={id:'review',tool:'bypass_scan',arguments:{mode:'combined',modelCalls,minutes},
       message:'Start the combined source and live review with the selected total Muse-call and time limits.'};

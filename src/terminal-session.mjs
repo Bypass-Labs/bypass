@@ -6,26 +6,41 @@ import path from 'node:path';
 import { Fault, redact, VERSION } from './util.mjs';
 import { createTheme } from './terminal-theme.mjs';
 
-export const commands = [
-  ['review', 'Review the connected repository'],
-  ['demo', 'Walk through proof, fix and regression'],
-  ['blackbox', 'Audit an authorized running app'],
-  ['engine', 'Real Docker agents and HTTP proof setup'],
-  ['poc', 'Start a real AI POC with a separate local app'],
-  ['results', 'Open results and their next action'],
-  ['tests', 'Replay or export saved tests'],
-  ['repo', 'Choose your application repository'],
-  ['app', 'Connect an app or finish DNS verification'],
-  ['models', 'Choose or test a model connection'],
-  ['status', 'Show the repository and app pairing'],
-  ['memory', 'Inspect remembered security rules and evidence'],
-  ['context', 'Read security context for the next coding session'],
-  ['history', 'Show saved project activity'],
-  ['settings', 'All settings and advanced controls'],
-  ['plugin', 'Check or install the Muse plugin'],
-  ['help', 'Commands and keyboard shortcuts'],
-  ['quit', 'Save this session and exit'],
-].map(([id, description]) => ({ id, label: `/${id}`, description }));
+export const commandGroups = [
+  {title:'SECURITY AUDITS',commands:[
+    ['review','Run the selected code, app, or combined security audit'],
+    ['blackbox','Test an authorized running application'],
+  ]},
+  {title:'PROJECT SETUP',commands:[
+    ['repo','Connect or switch application source'],
+    ['app','Connect an app and manage testing scope'],
+    ['models','Choose or verify the Muse model connection'],
+    ['engine','Configure containerized source review and HTTP proof'],
+    ['plugin','Check or install the Muse Code plugin'],
+  ]},
+  {title:'EVIDENCE AND RESULTS',commands:[
+    ['results','Open findings, impact and remediation'],
+    ['tests','Replay or export saved regression tests'],
+    ['memory','Inspect remembered security rules and evidence'],
+    ['context','Prepare security context for coding work'],
+    ['history','Show saved project activity'],
+  ]},
+  {title:'WORKSPACE',commands:[
+    ['status','Show the repository, app and review scope'],
+    ['settings','Open optional and advanced controls'],
+    ['help','Show commands and keyboard shortcuts'],
+    ['quit','Save this session and exit'],
+  ]},
+];
+export const commands = commandGroups.flatMap(group => group.commands)
+  .map(([id, description]) => ({ id, label: `/${id}`, description }));
+
+export function interactiveHelp() {
+  const width=Math.max(...commands.map(command=>command.label.length));
+  const groups=commandGroups.map(group=>`${group.title}\n${group.commands.map(([id,description])=>
+    `  ${`/${id}`.padEnd(width)}  ${description}`).join('\n')}`).join('\n');
+  return `HELP\nType commands with or without /. q saves and exits the workspace.\n${groups}\nKEYBOARD\n  ↑↓ choose · Enter run · Tab complete · PgUp/PgDn scroll\n  Esc back/stop · Ctrl+O details · Ctrl+T tasks · Ctrl+C exit\nCLI REFERENCE\n  bypass <command> --help · bypass --help --reference`;
+}
 
 // Never interpret terminal controls received from repository names, commands or output.
 export const safeText = value => stripVTControlCharacters(String(value)).replace(/[\x00-\x08\x0b-\x1f\x7f-\x9f]/g, '').replace(/\t/g, '  ');
@@ -59,25 +74,45 @@ function wrapWords(text,width){
   }
   return lines;
 }
+const structuredLine = line => /^(?: {2}\S|\d{2} \/|[A-Z][A-Z ]{2,}(?:$|\s{2,}))/.test(line);
+const wrapColumns = (line,width) => {
+  const columns=/^(\s{2}\S.*?\S|\s{2}\S)(\s{2,})(\S.*)$/.exec(line) ??
+    /^([A-Z][A-Z ]+?)(\s{2,})(\S.*)$/.exec(line);
+  if(!columns)return wrap(line,width);
+  const prefix=columns[1]+columns[2],available=Math.max(8,width-cells(prefix));
+  const body=wrapWords(columns[3],available);
+  return body.map((part,index)=>(index? ' '.repeat(cells(prefix)):prefix)+part);
+};
+const wrapTranscript = (text,width) => safeText(text).split('\n').flatMap(line =>
+  structuredLine(line) ? wrapColumns(line,width) : wrapWords(line,width));
 const shortPath = value => String(value||'').replace(os.homedir()+'/', '~/');
 const duration = ms => ms<60000 ? `${(ms/1000).toFixed(1)}s` : `${Math.floor(ms/60000)}m ${Math.floor(ms/1000)%60}s`;
 const icons = {running:'◈',done:'✓',failed:'!',cancelled:'○',attention:'!',waiting:'◇'};
+const spinnerFrames=['◐','◓','◑','◒'];
+const spinner=(now,reducedMotion=false)=>reducedMotion?'◈':spinnerFrames[Math.floor(now/160)%spinnerFrames.length];
+const taskIcon=(status,now,reducedMotion=false)=>status==='running'?spinner(now,reducedMotion):(icons[status]||'◇');
+const phaseProgress=tasks=>{
+  const total=tasks?.length??0,complete=(tasks??[]).filter(task=>task.status==='done').length;
+  return {total,complete,percent:total?Math.floor(complete/total*100):0};
+};
+const phaseRail=(progress,width=14)=>{
+  const filled=progress.percent===100?width:Math.floor(progress.percent*width/100);
+  return `${'━'.repeat(filled)}${'─'.repeat(Math.max(0,width-filled))}`;
+};
 
-function livePanelLines(status,width,available,now){
+function livePanelLines(status,width,available,now,{expanded=false,reducedMotion=false}={}){
   if(!status||available<3)return [];
-  const fields=available>=9?[
-    ['DONE',status.done],['WORKING',status.working&&`${status.working} · ${duration(now-status.since)}`],
-    ['LIVE',status.metrics&&`${status.metrics} · last evidence ${duration(now-status.updatedAt)} ago`],
-    ['WHY',status.why],['RECOVERED',status.recovered],['NEXT',status.next]
-  ]:[
-    ['WORKING',status.working&&`${status.working} · ${duration(now-status.since)}`],
-    ['LIVE',status.metrics&&`${status.metrics} · last evidence ${duration(now-status.updatedAt)} ago`],
-    ...(status.recovered?[['RECOVERED',status.recovered]]:[])
+  const fields=[
+    ['ACTIVE',status.working&&`${spinner(now,reducedMotion)}  ${status.working} · ${duration(now-status.since)}`],
+    ['EVIDENCE',status.metrics],
+    ...(status.recovered?[['RECOVERED',status.recovered]]:[]),
+    ...(available>=7&&status.next?[['NEXT',status.next]]:[])
   ];
-  const lines=[`─ LIVE AUDIT ${'─'.repeat(Math.max(0,width-13))}`],limit=Math.min(8,Math.max(3,available-1));
+  const heading=`─ AUDIT PULSE${expanded?' · DETAILS ON':''} `;
+  const lines=[`${heading}${'─'.repeat(Math.max(0,width-cells(heading)))}`],limit=Math.min(7,Math.max(3,available-1));
   for(const [label,text] of fields){
     if(!text||lines.length>=limit)continue;
-    const wrapped=wrapWords(`${label.padEnd(10)} ${text}`,width).slice(0,available>=9?2:1);
+    const wrapped=wrapWords(`${label.padEnd(10)} ${text}`,width).slice(0,label==='RECOVERED'?2:1);
     for(const line of wrapped){if(lines.length<limit)lines.push(line);}
   }
   return lines;
@@ -87,11 +122,20 @@ export function transcriptLines(state, width, {expanded=state.expanded, now=Date
   const lines=[];
   for(const entry of state.entries) {
     if(entry.type==='operation') {
-      lines.push(...wrapWords(`${icons[entry.status]} ${entry.label} · ${duration((entry.ended||now)-entry.started)}${entry.status==='cancelled'?' · stopped':entry.status==='attention'?' · needs attention':''}`,width));
-      if(expanded || entry.status==='running' || entry.status==='failed' || entry.status==='attention') {
-        for(const detail of entry.details)lines.push(...wrapWords(detail,width-2).map(line=>'  '+line));
+      lines.push(...wrapWords(`${taskIcon(entry.status,now,state.reducedMotion)} ${entry.label} · ${duration((entry.ended||now)-entry.started)}${entry.status==='cancelled'?' · stopped':entry.status==='attention'?' · needs attention':''}`,width));
+      if(entry.status==='running'&&state.tasks?.length){
+        const progress=phaseProgress(state.tasks),railWidth=Math.max(6,Math.min(18,width-31));
+        lines.push(...wrapWords(`  PHASES  ${phaseRail(progress,railWidth)}  ${progress.percent}% · ${progress.complete}/${progress.total} complete`,width));
+      }
+      if(expanded || entry.status==='failed' || entry.status==='attention') {
+        if(entry.details.length)lines.push(`  ACTIVITY LOG  ${expanded?'all updates':'diagnostic details'}`);
+        for(const detail of entry.details)lines.push(...wrapTranscript(detail,width-2).map(line=>'  '+line));
+      }else if(entry.status==='running'&&entry.details.length){
+        const visible=entry.details.slice(-4),hidden=entry.details.length-visible.length;
+        lines.push(`  ACTIVITY LOG  latest updates${hidden?` · ${hidden} hidden`:''}`);
+        for(const detail of visible)lines.push(...wrapTranscript(detail,width-2).map(line=>'  '+line));
       }else if(entry.details.length)lines.push(`  ${entry.details.length} detail${entry.details.length===1?'':'s'} · Ctrl+O to expand`);
-    }else lines.push(...wrapWords(entry.text,width));
+    }else lines.push(...wrapTranscript(entry.text,width));
     lines.push('');
   }
   return lines;
@@ -104,31 +148,23 @@ export function frame(state, columns, rows, now=Date.now()) {
   const put=(text='',tone='normal')=>lines.push(row(text,tone));
   const join=parts=>({text:parts.map(p=>p.text).join(''),parts,tone:'normal'});
   const divider='─'.repeat(width),wideLayout=width>=108&&height>=26;
-  const project=state.context.title||'Connect your application';
-  const mark=[{text:'▰╲',tone:'brand'},{text:'▰  BYPASS LABS',tone:'title'}];
+  const mark=[{text:'▰╲▰',tone:'brand'},{text:'  BYPASS',tone:'title'},
+    {text:'  /  ',tone:'muted'},{text:'BUILT FOR MUSE MODELS',tone:'title'}];
   const version=`v${VERSION}`;
-  if(width>=42)mark.push({text:' '.repeat(Math.max(2,width-16-version.length))+version,tone:'muted'});
-  lines.push(width>=16?join(mark):row('BYPASS','brand'));
-  const trustBar=state.operation?.label==='Black-box audit'?
-    'LIVE REQUESTS · APPROVED SCOPE ONLY · EVIDENCE SAVED CONTINUOUSLY':
-    state.operation?'WORKING · EVIDENCE SAVED CONTINUOUSLY · ESC STOPS SAFELY':
-      state.pending&&!state.context.repo?'SETUP · CHOICES SAVE AS YOU GO · NO LIVE REQUESTS YET':
-        'READY · EVIDENCE STAYS LOCAL · /HELP SHOWS COMMANDS';
-  const compactBar=state.operation?.label==='Black-box audit'?'AUDIT LIVE · SCOPE GUARDED':
-    state.operation?'WORKING · SAFE TO STOP · EVIDENCE SAVED':
-      state.pending&&!state.context.repo?'SETUP · SAVES EACH CHOICE':'READY · LOCAL EVIDENCE · /HELP';
-  put(wideLayout?trustBar:width>=72?`${project} · ${compactBar} · EVIDENCE SAVING`:compactBar,'muted');
+  const markWidth=mark.reduce((sum,part)=>sum+cells(part.text),0);
+  if(width>=markWidth+version.length+2)mark.push({text:' '.repeat(width-markWidth-version.length)+version,tone:'muted'});
+  lines.push(width>=markWidth+2?join(mark):row(width>=16?'BYPASS / MUSE':'BYPASS','brand'));
   if(height>=20)put('─ ACTIVITY '+ '─'.repeat(Math.max(0,width-11)),'rule');
 
   const bottom=[],add=(text='',tone='normal')=>bottom.push(row(text,tone));
   const activeTask=state.tasks.find(task=>task.status==='running');
-  const completed=state.tasks.filter(task=>task.status==='done').length;
   if(!wideLayout&&state.tasks.length&&height>=24&&state.tasksExpanded!==false){
-    add(`${state.taskTitle} · ${completed}/${state.tasks.length} done`,'accent');
+    const progress=phaseProgress(state.tasks);
+    add(`${state.taskTitle} · ${progress.percent}% · ${progress.complete}/${progress.total} phases complete`,'accent');
     const current=activeTask||state.tasks.find(task=>['failed','attention','cancelled'].includes(task.status))||state.tasks.find(task=>task.status==='waiting')||state.tasks.at(-1);
-    add(` ${icons[current.status]||'◇'} ${current.label}`,taskTone(current.status));
+    add(` ${taskIcon(current.status,now,state.reducedMotion)} ${current.label}`,taskTone(current.status));
   }
-  if(height>=20){
+  if(height>=20&&!state.operation){
     const current=state.operation?.label||activeTask?.label||(state.pending?.kind==='command'?'Ready for your next action':'Waiting for your choice');
     add(`NOW   ${current}${state.operation?` · ${duration(now-state.operation.started)}`:''}`,state.operation?'accent':'normal');
     add(`NEXT  ${state.next||'Choose an action below'}`,'info');
@@ -156,11 +192,13 @@ export function frame(state, columns, rows, now=Date.now()) {
   const shown=clip(visibleInput.slice(offset),budget),composerRow=bottom.length;
   add(`› ${shown||(!state.input?(state.pending?.secret?'Paste key · input is hidden':placeholder):'')}`,state.input?'title':'muted');
   const hint=state.pending?.kind==='command'?'/ commands':state.pending?.kind==='multiselect'?'↑↓ move · Space toggle · Enter confirm':state.pending?.kind==='select'?'↑↓ select':'Enter continue';
-  add(state.operation?`${state.operation.cancelable?'Esc stop':'Finishing step'}${state.operation.skipOnEnter?' · Enter skip':''} · Ctrl+O details · Ctrl+C exit`:height<18?'Ctrl+C exit · Esc back':`${hint} · Ctrl+O details${width>=100?' · Ctrl+T tasks':''} · Esc back · Ctrl+C exit`,'muted');
+  const detailsAction=state.expanded?'hide details':'show details';
+  add(state.operation?`${state.operation.cancelable?'Esc stop':'Finishing step'}${state.operation.skipOnEnter?' · Enter skip':''} · Ctrl+O ${detailsAction} · Ctrl+C exit`:height<18?'Ctrl+C exit · Esc back':`${hint} · Ctrl+O ${detailsAction}${width>=100?' · Ctrl+T tasks':''} · Esc back · Ctrl+C exit`,'muted');
 
   const available=Math.max(0,height-lines.length-bottom.length);
   const sideWidth=wideLayout?32:0,mainWidth=wideLayout?width-sideWidth-3:width;
-  const livePanel=state.operation?livePanelLines(state.liveStatus,mainWidth,available,now):[];
+  const livePanel=state.operation?livePanelLines(state.liveStatus,mainWidth,available,now,
+    {expanded:state.expanded,reducedMotion:state.reducedMotion}):[];
   const transcriptAvailable=Math.max(0,available-livePanel.length);
   const transcript=transcriptLines(state,mainWidth,{now}),maxScroll=Math.max(0,transcript.length-transcriptAvailable);
   const scroll=Math.min(state.scroll,maxScroll),end=transcript.length-scroll;
@@ -173,11 +211,12 @@ export function frame(state, columns, rows, now=Date.now()) {
   if(wideLayout){
     if(state.tasks.length&&state.tasksExpanded!==false){
       side(state.taskTitle.toUpperCase(),'title');
-      const filled=Math.round(completed/state.tasks.length*12);
-      side(`${'━'.repeat(filled)}${'─'.repeat(12-filled)}  ${completed}/${state.tasks.length} done`,'accent');
+      const progress=phaseProgress(state.tasks);
+      side(`${phaseRail(progress,12)}  ${progress.percent}%`,'accent');
+      side(`${progress.complete}/${progress.total} phases complete`,'muted');
       const index=Math.max(0,state.tasks.findIndex(task=>task.status==='running'));
       const tasks=available>=19?state.tasks:state.tasks.slice(Math.max(0,index-1),Math.max(0,index-1)+3);
-      for(const task of tasks)side(`${icons[task.status]||'◇'} ${task.label}`,taskTone(task.status));
+      for(const task of tasks)side(`${taskIcon(task.status,now,state.reducedMotion)} ${task.label}`,taskTone(task.status));
       if(tasks.length<state.tasks.length)side('Ctrl+T hide tasks · /status');
       side();
     }
@@ -185,15 +224,26 @@ export function frame(state, columns, rows, now=Date.now()) {
     side(shortPath(state.context.repo)||(state.context.app?'Running app only · no repository needed':'Choose your application source'));
     side();side('LIVE APP','title');side(state.context.app||'Optional · connect with /app');
     side();side('MODEL','title');side(state.context.model||'API key for CLI · /models');
-    if(state.context.checks!==undefined){side();side(`${state.context.checks} saved tests · ${state.context.memory||0} memories`,'success');}
-    if(!state.tasks.length){side();side('EXPLORE','title');side('/demo     Guided proof loop','info');side('/help     All commands','info');}
+    if(state.context.checks!==undefined){
+      side();side('BYPASS PROJECT','title');
+      side(shortPath(state.context.bypassProject||path.join(state.context.repo,'.bypass')));
+      side(`Saved tests ${state.context.checks} · checks.json`,'success');
+      side(`Memory ${state.context.memory||0} · state.json`,'success');
+    }
+    if(!state.tasks.length){side();side('START','title');side('/review   Run the selected audit','info');side('/help     All commands','info');}
   }
   for(let i=0;i<available;i++){
     const text=clip(visible[i],mainWidth),tone=activityTone(text);
+    const structured=/^(\s{2}\S.*?\S|\s{2}\S)(\s{2,})(\S.*)$/.exec(text) ??
+      /^([A-Z][A-Z ]+?)(\s{2,})(\S.*)$/.exec(text);
+    const main=structured?join([{text:structured[1],tone:'accent'},
+      {text:structured[2],tone:'normal'},{text:structured[3],tone}]):row(text,tone);
     if(wideLayout){
       const right=sidebar[i]||{text:'',tone:'muted'};
-      lines.push(join([{text:text+' '.repeat(Math.max(0,mainWidth-cells(text))),tone},{text:' │ ',tone:'rule'},{text:clip(right.text,sideWidth),tone:right.tone}]));
-    }else put(text,tone);
+      lines.push(join([...(main.parts||[{text:main.text,tone:main.tone}]),
+        {text:' '.repeat(Math.max(0,mainWidth-cells(text))),tone:'normal'},
+        {text:' │ ',tone:'rule'},{text:clip(right.text,sideWidth),tone:right.tone}]));
+    }else lines.push(main);
   }
   const inputRow=lines.length+composerRow+1;
   lines.push(...bottom);
@@ -201,7 +251,10 @@ export function frame(state, columns, rows, now=Date.now()) {
   return {lines:lines.slice(0,height),cursor:{row:Math.min(height,inputRow),column:Math.min(columns,4+cells(cursorText))},maxScroll};
 }
 const taskTone=status=>status==='done'?'success':status==='running'?'accent':status==='failed'?'error':['attention','cancelled'].includes(status)?'warning':'muted';
-const activityTone=text=>/^DONE\s/.test(text)?'success':/^WORKING\s/.test(text)?'accent':/^RECOVERED\s/.test(text)?'info':/^─ LIVE AUDIT/.test(text)?'title':/^LIVE\s/.test(text)?'muted':/^✓/.test(text)?'success':/^!|^Error|failed/i.test(text)?'warning':/^›/.test(text)?'accent':/^Step \d|^BYPASS|^Setup saved/.test(text)?'title':/^  \d+ details?/.test(text)?'muted':'normal';
+const activityTone=text=>{
+  const normalized=text.trimStart();
+  return /^(?:DONE|COMPLETED|CHECKS)\s/.test(normalized)?'success':/^(?:ACTIVE|PHASE|MUSE)\s/.test(normalized)?'accent':/^(?:RECOVERED|RESEARCH)\s/.test(normalized)?'info':/^─ AUDIT PULSE/.test(normalized)?'title':/^(?:EVIDENCE|PURPOSE|ACTIVITY LOG)\s/.test(normalized)?'muted':/^✓/.test(normalized)?'success':/^!|^Error|failed/i.test(normalized)?'warning':/^›/.test(normalized)?'accent':/^(?:Step \d|BYPASS|Setup saved|HELP|SECURITY AUDITS|PROJECT SETUP|EVIDENCE AND RESULTS|WORKSPACE|KEYBOARD|CLI REFERENCE|BLACK-BOX SETUP|\d{2} \/)/.test(normalized)?'title':/^\d+ details?/.test(normalized)?'muted':'normal';
+};
 
 export function paintFrameLine(line,theme,width){
   const parts=line.parts||[{text:line.text,tone:line.tone}];
@@ -211,7 +264,7 @@ export function paintFrameLine(line,theme,width){
 
 export function createTerminalSession({input=process.stdin,output=process.stdout,captureConsole=true,clock=Date.now,env=process.env}={}) {
   const controller=new AbortController();
-  const state={context:{},entries:[],tasks:[],taskTitle:'Progress',next:'Connect your repository, then preview or try /demo',recommended:'/review',input:'',cursor:0,pending:null,operation:null,liveStatus:null,menu:[],selected:0,expanded:false,tasksExpanded:true,scroll:0};
+  const state={context:{},entries:[],tasks:[],taskTitle:'Progress',next:'Connect your application, then run /review',recommended:'/review',input:'',cursor:0,pending:null,operation:null,liveStatus:null,menu:[],selected:0,expanded:false,tasksExpanded:true,scroll:0,reducedMotion:env.BYPASS_REDUCED_MOTION==='1'};
   let closed=false,dirty=true,pasting=false,pasteBuffer='',historyIndex=0,historyDraft='',transcriptPath;
   const history=[],original={log:console.log,error:console.error,warn:console.warn},wasRaw=input.isRaw;
   const mark=()=>{dirty=true;};
@@ -357,7 +410,7 @@ export function createTerminalSession({input=process.stdin,output=process.stdout
     }
     if(transcriptPath)output.write(`Session transcript: ${transcriptPath}\n`);
   };
-  write('Security that stays with your code.\n\nAudit a running app or review a repository. Prove the issue. Keep the fix as a test.\n\n/ commands     /demo guided walkthrough     Ctrl+O activity details');
+  write('Security that stays with your code.\n\nAudit a running app, a repository, or both. Confirm issues with saved evidence.\n\n/review start audit     /help all commands     Ctrl+O activity details');
   render();
   return {rich:true,ask,secret,select,multiselect,write,activity,run:work=>activity('Check model connection',work,{skipOnEnter:true}),signal:controller.signal,
     command:(fallback)=>{state.recommended='/'+fallback;historyIndex=history.length;return question('Choose your next action',fallback,{kind:'command'});},

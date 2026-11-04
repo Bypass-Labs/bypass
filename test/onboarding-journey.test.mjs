@@ -16,6 +16,7 @@ import { execFile } from '../src/util.mjs';
 import { CLI } from '../src/demo.mjs';
 import { carryAppSetup } from '../src/application-setup.mjs';
 import { reviewSummary } from '../src/experience.mjs';
+import { reviewQuestion } from '../src/application-setup.mjs';
 import { recommendedMethods } from '../src/http-methods.mjs';
 
 const source=()=>{const root=temp();fs.writeFileSync(path.join(root,'app.mjs'),'throw new Error("source must not execute");\n');return root;};
@@ -162,6 +163,71 @@ test('authorized app-only CLI setup immediately hands off to the audit without a
   assert.equal(prompts.some(label=>/Open my project|Maximum requests per second|Start black-box audit/.test(label)),false);
   assert.doesNotMatch(output.join('\n'),/Use \/blackbox|Press Enter.*blackbox|choose scope and request rate/i);
   assert.match(output.join('\n'),/Starting the audit now with the approved boundaries/);
+});
+
+test('authorized combined CLI setup immediately hands off to the review without another command',async t=>{
+  const options=isolated(t),old=process.env.BYPASS_PLUGIN_STATE_DIR;process.env.BYPASS_PLUGIN_STATE_DIR=options.stateDir;t.after(()=>{process.env.BYPASS_PLUGIN_STATE_DIR=old;});
+  const root=source(),meta=await metaModelFixture(t),output=[],prompts=[];
+  const result=await onboard({flow:'quickstart',project:root,mode:'combined'},[],{rich:true,metaBaseUrl:meta.baseUrl,
+    filePlanChoice:async items=>items[0],write:value=>output.push(value),
+    select:async(_title,items)=>items.find(item=>item.id==='yes')||items.find(item=>item.id==='meta')||items[0],
+    ask:async(label,fallback)=>{prompts.push(label);if(label==='App URL')return 'http://127.0.0.1:4317';return fallback||'';}});
+  assert.deepEqual(result.startReview,{id:'review',mode:'combined'});assert.equal(result.openDashboard,true);
+  assert.equal(result.readiness.ready.source,true);assert.equal(result.readiness.ready.liveTesting,true);
+  assert.equal(prompts.some(label=>/Open my project|Run my first security audit/.test(label)),false);
+  assert.doesNotMatch(output.join('\n'),/Press Enter on the next screen|Run \/review/);
+  assert.doesNotMatch(output.join('\n'),/Your review\nRepository:/,'automatic handoff should not repeat the project summary');
+  assert.match(output.join('\n'),/Starting one security audit now\. Source review and live testing share one result/);
+});
+
+test('resumed CLI asks for review type and saved live app before starting',async t=>{
+  const root=source(),meta=await metaModelFixture(t),old=process.env.MODEL_API_KEY;
+  process.env.MODEL_API_KEY='fixture-key';
+  t.after(()=>{if(old===undefined)delete process.env.MODEL_API_KEY;else process.env.MODEL_API_KEY=old;});
+  await execute('init',[root]);await execute('engine use',['docker'],{project:root});
+  await execute('model add',['meta'],{project:root,provider:'meta','base-url':meta.baseUrl,
+    'secret-env':'MODEL_API_KEY',model:'muse-spark-1.3-contributor',transport:'responses'});
+  await execute('model use',['meta'],{project:root});
+  await execute('target add',['preview'],{project:root,url:'http://127.0.0.1:4317',environment:'local'});
+  await execute('target verify',['preview'],{project:root,method:'local'});
+  await execute('target authorize',['preview'],{project:root,accept:true,paths:'/',methods:'GET'});
+  await change(root,state=>{state.settings.reviewMode='combined';state.models[0].lastAttempt={status:'connected'};});
+  const seen=[];
+  const io={rich:true,write:()=>{},ask:async(_label,fallback)=>fallback||'',select:async(title,items)=>{
+    seen.push(title);return title===reviewQuestion?items.find(item=>item.id==='code'):items[0];}};
+  const code=await onboard({flow:'quickstart',project:root},[],io);
+  assert.deepEqual(code.startReview,{id:'review',mode:'code'});
+  assert.ok(seen.includes(reviewQuestion));
+  assert.ok(!seen.includes('Which running app should this audit test?'));
+  assert.equal(read(root).activeTarget,'preview','code-only choice does not erase saved app setup');
+
+  seen.length=0;
+  io.select=async(title,items)=>{seen.push(title);return title===reviewQuestion?
+    items.find(item=>item.id==='combined'):items[0];};
+  const both=await onboard({flow:'quickstart',project:root},[],io);
+  assert.deepEqual(both.startReview,{id:'review',mode:'combined'});
+  assert.ok(seen.includes(reviewQuestion));
+  assert.ok(seen.includes('Which running app should this audit test?'));
+  assert.equal(both.readiness.target.url,'http://127.0.0.1:4317');
+});
+
+test('resumed Meta onboarding requests only the missing key and keeps the saved Muse model',async t=>{
+  const root=source(),meta=await metaModelFixture(t,{models:['muse-spark-1.3-contributor']}),previous=process.env.MODEL_API_KEY;delete process.env.MODEL_API_KEY;
+  t.after(()=>{if(previous===undefined)delete process.env.MODEL_API_KEY;else process.env.MODEL_API_KEY=previous;});
+  await execute('init',[root]);
+  await execute('engine use',['docker'],{project:root});
+  await execute('model add',['meta'],{project:root,provider:'meta','base-url':meta.baseUrl,'secret-env':'MODEL_API_KEY',model:'muse-spark-1.3-contributor',transport:'responses'});
+  await execute('model use',['meta'],{project:root});
+  await change(root,state=>{state.models[0].lastAttempt={status:'connected',checkedAt:new Date().toISOString()};state.models[0].lastTest=state.models[0].lastAttempt;});
+  const selections=[],secrets=[];
+  const result=await onboard({flow:'quickstart',project:root,mode:'code'},[],{rich:true,metaBaseUrl:meta.baseUrl,filePlanChoice:async items=>items[0],write:()=>{},
+    select:async(title,items)=>{selections.push(title);return items[0];},secret:async label=>{secrets.push(label);return 'fixture-key';},
+    ask:async(_label,fallback)=>fallback||''});
+  assert.deepEqual(secrets,['Meta Model API key']);
+  assert.equal(selections.includes('Where should Muse inference run?'),false);
+  assert.equal(selections.includes('Choose a Muse model'),false);
+  assert.equal(read(root).models.find(item=>item.name===read(root).activeModel).model,'muse-spark-1.3-contributor');
+  assert.deepEqual(result.startReview,{id:'review',mode:'code'});
 });
 
 test('switching to a different app URL never carries the previous app or its scope',async t=>{

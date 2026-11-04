@@ -1,8 +1,5 @@
 # Architecture and implementation boundaries
 
-For the proposed discovery pipeline, see
-[Vulnerability discovery service](VULNERABILITY_DISCOVERY.md).
-
 The whitebox scanner lives in `scanner/` (Python core, policies, protocol) and
 `src/scanner/` (Node Docker/MCP/API-driver boundaries). Users choose SAST, policy,
 or both, with independent include/exclude filters. Python owns snapshots,
@@ -42,13 +39,15 @@ flowchart LR
   Service --> Pipeline[Saved replay then selected engine]
   Pipeline --> Runner[Deterministic HTTP checks]
   Runner --> Target[Authorized target]
-  Pipeline --> Agents[Two Docker agents and shared model broker]
+  Pipeline --> Source[Isolated Docker source worker]
+  Pipeline --> Blackbox[Broad scoped black-box runner]
+  Source --> Blackbox
   Pipeline --> Mock[Optional offline mock adapter]
   Worker[Local monitor worker] --> Runner
   Store --> Hook[Read-only next-session hook]
 ```
 
-No npm runtime dependencies. Node 22 supplies HTTP/TLS, DNS, child processes, readline, filesystem operations, and the test runner. This keeps the standalone CLI and the Muse-cached plugin package portable and inspectable.
+Node 22 supplies HTTP/TLS, DNS, child processes, readline, filesystem operations and the test runner. The standalone API adapter uses the pinned OpenAI-compatible SDK; the Muse plugin uses its host session instead. Authored source remains shared and the generated Muse runtime is self-contained and inspectable.
 
 | Module | Responsibility |
 | --- | --- |
@@ -62,10 +61,12 @@ No npm runtime dependencies. Node 22 supplies HTTP/TLS, DNS, child processes, re
 | `project-selection.mjs` | Read-only workspace inspection, explicit application selection, and tooling-repository detection |
 | `models.mjs` | Provider profiles and synthetic connection smoke tests |
 | `engine.mjs` | Durable runs, engine selection and evidence-based retesting |
-| `real-engine.mjs` | Source grounding, shared inference, scoped probes and real findings |
-| `agent-runtime.mjs` / `agents/worker.mjs` | Separate constrained Docker services and bounded agent loops |
-| `inference.mjs` | One host-side model connection for orchestrator and both workers |
-| `poc.mjs` | Independent real-AI exercise app and public account setup |
+| `audit-engine.mjs` | Canonical code/live/combined orchestration, source-to-live handoff and finding reconciliation |
+| `real-engine.mjs` | Cited source review and source security memory |
+| `blackbox/` | Broad route discovery, scoped live tests, independent proof replay, report and coverage |
+| `agent-runtime.mjs` / `agents/worker.mjs` | One networkless, constrained Docker source worker and its bounded read loop |
+| `inference.mjs` | Host-side structured model connection for source planning and review |
+| `poc.mjs` | Isolated fixture support for tests and the optional exercise flow |
 | `checks.mjs` | Check bindings, persistence, freshness, and export |
 | `portable-check.mjs` | Independent HTTP regression runtime copied into exported suites |
 | `jobs.mjs` | Durable runs, cancellation, local scheduling |
@@ -76,7 +77,7 @@ No npm runtime dependencies. Node 22 supplies HTTP/TLS, DNS, child processes, re
 
 The Muse server starts with no selected application. `bypass_workspace` inspects its host folder without initialization. `bypass_connect_repository` requires a user-identified local path or Git URL and binds subsequent tools and context reads to that root for the MCP session. The compatibility `bypass_init` tool requires the same explicit selection. Tooling repositories require an explicit request to review the tooling itself. Selecting an application does not move Muse's editor; a differing editor workspace is reported before any source fix. Selection does not copy another project's permissions or evidence.
 
-Scan plans and readiness share repository/remote/branch, app origin/environment, and explicit white-box/black-box statuses. A plan with setup blockers remains a successful MCP plan read; starting an unauthorized live scan is still blocked. Offline code preview needs no model. Real source review needs a model and Docker but can proceed without DNS. Live-only mode skips source inventory. Real combined mode uses exact approved JSON resource probes, while the optional mock engine remains seeded.
+Scan plans and readiness share repository/remote/branch, app origin/environment, and explicit source/live statuses. A plan with setup blockers remains a successful plan read; starting an unauthorized live scan is blocked. Offline code preview needs no model. Real source review needs a model and Docker but can proceed without app authorization. Live-only mode skips source review and invokes the full black-box runner. Combined mode starts source review and live reconnaissance concurrently, waits for cited source leads at the black-box source phase, and finishes through the same broad test/proof/report pipeline as app-only mode. Saved paths, methods, rate and compatible account references are copied into an immutable per-run scope snapshot.
 
 The canonical file is `.bypass/state.json` (local, mode 0600, Git-ignored). Writes are atomic and serialized by a short-lived directory lock. `project.json` and `checks.json` are generated nonsecret summaries, not a second canonical database. Edit configuration through commands; summaries can be regenerated from state.
 
@@ -115,11 +116,13 @@ A failed saved regression wins over other incomplete outcomes. A mock scan alway
 
 ## Real engine and offline preview
 
-`real-engine.mjs` runs the Docker POC. The host orchestrator and both mini agents share one immutable profile snapshot. The source worker reads eligible files and supplies exact citations; the live worker chooses operator-configured GET probes. The host validates every capability and determines findings from observed HTTP controls. The model cannot mark an issue confirmed, execute shell commands, generate a patch for automatic execution, or expand network scope.
+`real-engine.mjs` runs only cited source review. Its networkless worker reads eligible excerpts through a host broker and cannot execute repository code. `blackbox/` is the only live audit implementation: it discovers the authorized surface, executes allowed methods, schedules deterministic and model-assisted checks, and independently replays supported proofs. `audit-engine.mjs` composes them. In combined mode a source hypothesis can prioritize a live test, but the source model cannot confirm a vulnerability, send HTTP itself, execute shell commands, or expand network scope.
 
-`mockCandidate` remains only for the optional offline preview and seeded walkthrough. Mock examples cannot enter the arbitrary-app verification path. Real findings carry `engine: docker`, a scoped binding and genuine HTTP evidence; a fixed result creates the existing standalone regression contract. Two account-login controls prevent expired or identical account sessions from masquerading as passing negative controls.
+One `run_*` record is the user-facing parent. A live or combined parent links one sealed `bx-*` evidence folder and reconciles confirmed black-box findings into project state instead of creating a second competing audit result. `report.md`, `coverage.json`, `evidence.jsonl`, generated proofs and the per-run scope remain under that linked folder. Project identity references are translated into the black-box environment only for the active process; credential values are never written to scope or state.
 
-The POC covers cross-account access and missing authentication for top-level JSON resource identifiers. Source review is bounded by file/read/model budgets and does not imply complete coverage. HTTP-only review can establish an exposure without claiming a source location. Inference failure retains partial evidence and never substitutes a seeded finding. See [real POC architecture, limits and usage](REAL_POC.md).
+`mockCandidate` remains only for the optional offline preview and fixture tests. Mock examples cannot enter the arbitrary-app verification path. Source findings remain unproven until scoped HTTP replay confirms them. Confirmed live findings retain their sealed run and proof IDs, and exported regression tests can check a later fix. Account-boundary checks require valid, distinct identity controls.
+
+Source and live review are bounded by file, request, time and model-call limits; neither implies complete vulnerability coverage. HTTP-only review can establish an exposure without claiming a source location. Inference failure retains partial evidence and never substitutes a seeded finding. See [running-app security audit](BLACKBOX_AUDIT.md).
 
 ## Boundaries deliberately exposed
 

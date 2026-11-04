@@ -41,7 +41,7 @@ export async function startPOC(options={}){
     await change(root,s=>{s.poc={pid:child.pid,url,instanceId,createdAt:now()};s.targets.find(t=>t.name==='poc').pocFixture=true;});
     await execute('probe add',['invoice'],{project:root,path:'/api/invoices/inv-101','resource-id':'inv-101',owner:'owner',outsider:'outsider'});
     await execute('engine use',['docker'],{project:root});
-    return {root,url,pid:child.pid,engine:'docker',message:'Real AI POC ready. Public fixture accounts only. Run scan, inspect evidence, edit policy.mjs, then retest.',fix:'In policy.mjs require account === invoice.ownerId.',next:`bypass --project ${root}`};
+    return {root,url,pid:child.pid,engine:'docker',message:'Isolated security POC ready. Public fixture accounts only. Run scan, inspect evidence, edit policy.mjs, then retest.',fix:'In policy.mjs require account === invoice.ownerId.',next:`bypass --project ${root}`};
   }catch(error){try{process.kill(child.pid,'SIGTERM');}catch{}throw error;}
 }
 export async function stopPOC(root){

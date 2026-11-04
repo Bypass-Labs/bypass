@@ -24,7 +24,7 @@ export async function prepareAgents({signal,onProgress}={}){
   const status=await dockerStatus({signal});need(status.available,status.message,3);
   const tag=agentTag();let inspect=await execFile('docker',['image','inspect',tag,'--format','{{.Id}}'],{signal});
   if(inspect.code!==0){
-    onProgress?.({stage:'containers',message:'Building the two agent services (first run downloads the Node base image)…'});
+    onProgress?.({stage:'containers',message:'Building the isolated source-review worker (first run downloads the Node base image)…'});
     const build=await execFile('docker',['build','--tag',tag,directory],{signal,timeout:300000,killGroup:true});
     need(build.code===0,'Agent image build failed. Check Docker networking and disk space; run engine doctor.',3);
     inspect=await execFile('docker',['image','inspect',tag,'--format','{{.Id}}'],{signal});
@@ -34,6 +34,7 @@ export async function prepareAgents({signal,onProgress}={}){
 }
 export function containerArgs(name,image,role){return ['run','--rm','-i','--name',name,'--label','com.bypass.agent=true','--label',`com.bypass.role=${role}`,'--network','none','--read-only','--cap-drop','ALL','--security-opt','no-new-privileges','--pids-limit','32','--memory','128m','--cpus','1',image,role];}
 export async function runContainer(role,task,rpc,{image,signal,onProgress,timeoutMs=600000}={}){
+  need(role==='white-box','Only the isolated white-box source worker is supported.',3);
   const name=`bypass-${role}-${randomUUID().slice(0,8)}`;
   onProgress?.({stage:role,message:`Starting ${role} agent · ${name} · shared model`});
   let child,result,failure,buffer='',bytes=0,busy=false,requests=0;

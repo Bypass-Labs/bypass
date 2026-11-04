@@ -13,11 +13,12 @@ import { cleanText, redact, Fault, abortFault } from './util.mjs';
 import { onboard } from './onboarding.mjs';
 import { checkModelConnection } from './model-check.mjs';
 import { guidedDemo } from './guided-demo.mjs';
-import { homeActions, previewRun, quickCommands, reviewSummary } from './experience.mjs';
+import { homeActions, previewRun, reviewSummary } from './experience.mjs';
 import { appOriginInput, loopback, DEFAULT_REQUESTS_PER_SECOND } from './network.mjs';
 import { isBypassSource } from './project-selection.mjs';
-import { createTerminalSession } from './terminal-session.mjs';
+import { createTerminalSession, interactiveHelp } from './terminal-session.mjs';
 import { summaryText as blackboxSummary } from './blackbox/report.mjs';
+import { scopeOutputForOrigin } from './blackbox/setup.mjs';
 import { progressLine as blackboxProgressLine } from './blackbox/progress.mjs';
 import { createTheme, brandHeading } from './terminal-theme.mjs';
 import { promptMethods, mayChangeData, recommendedMethods } from './http-methods.mjs';
@@ -32,19 +33,42 @@ const accent=s=>theme.paint('accent',s),muted=s=>theme.paint('muted',s),bold=s=>
 const label=s=>String(s).replace(/_/g,' ');
 const shellArg=value=>`'${String(value).replaceAll("'","'\"'\"'")}'`;
 const RESEARCH_BEHAVIOR=new Set(['model-differential','model-json-differential','model-http-sequence']);
+export const replayableFinding=finding=>finding.engine==='blackbox'
+  ? !!finding.verification?.blackboxRun
+  : !!(finding.fixture||finding.binding);
+export const orderedFindings=findings=>[...findings].sort((a,b)=>{
+  const rank=f=>f.status==='confirmed'||f.status==='confirmed_fixture'?0:
+    f.status==='fixed_verified'?1:f.status==='unproven'?2:3;
+  return rank(a)-rank(b);
+});
+export function sourceReviewNote(source){
+  const failures=source?.executionFailures??[];
+  const timedOut=failures.some(item=>/timed out/i.test(item.reason||''));
+  return failures.length?
+    `\n\nCode security review paused: ${failures.map(item=>item.reason).join('; ')}\n`+
+    `Partial source evidence is saved. ${timedOut?'Check the Muse connection, then retry':'Review the error, then retry'} the code-only audit with scan --mode code.`:
+    '';
+}
 const BLACKBOX_PHASES=[
   {label:'Scope and hosts',working:'Confirming the approved origin, host boundaries and request limits',why:'Every request is checked against the scope before it can leave the CLI.',next:'Inspect public app assets and source facts.'},
-  {label:'Assets and source',working:'Inspecting public pages and client assets for observed route facts',why:'Observed files reveal real routes, methods and sign-in behavior without guessing.',next:'Map reachable routes and their response shapes.'},
-  {label:'Routes and responses',working:'Mapping reachable routes and guarded response facts',why:'Response shapes give later tests safe controls and prevent invented requests.',next:'Plan and execute bounded security checks.'},
-  {label:'Plan and test leads',working:'Reviewing observed candidates and running scope-checked tests',why:'Muse proposes experiments; Bypass validates and executes every HTTP request itself.',next:'Independently replay suspicious behavior before reporting it.'},
+  {label:'Assets and source',working:'Extracting routes, methods, inputs and trust boundaries from source and public assets',why:'Each retained fact becomes a concrete test candidate; source concerns remain unproven until HTTP replay.',next:'Show the route inventory, then test the highest-value candidates.'},
+  {label:'Routes and responses',working:'Requesting reachable routes and recording status, content type and response shape',why:'Real response controls distinguish reachable behavior from source-only hypotheses.',next:'Queue baseline disclosure, authentication and injection checks.'},
+  {label:'Plan and test leads',working:'Running deterministic checks first, then bounded Muse follow-up experiments',why:'The CLI—not the model—validates scope and executes each HTTP request.',next:'Show executed, queued and confirmed counts; replay every suspicious result.'},
   {label:'Replay and assess',working:'Replaying suspicious behavior with fresh controls',why:'A result becomes a finding only after independent HTTP evidence reproduces it.',next:'Write the finding, impact, remediation and coverage report.'},
   {label:'Report and coverage',working:'Building the evidence report and remaining-coverage summary',why:'The result separates confirmed findings from observations and untested work.',next:'Review findings, save regression tests or resume pending research.'}
 ];
-
+const STANDALONE_FIRST_AUDIT_MINUTES=10;
+const STANDALONE_GUIDED_AUDIT_MODEL_CALLS=24;
 export function blackboxOutcomeText(result){
   const findings=(result?.findings??[]).filter(finding=>finding.verdict==='confirmed'&&
     !RESEARCH_BEHAVIOR.has(finding.kind));
-  if(!findings.length)return '\nNo confirmed security finding was produced. Open report.md for coverage gaps and untested work.';
+  if(!findings.length){
+    const replayed=result?.replayInconclusive??[];
+    const source=result?.sourceFindings??[];
+    const sourceSummary=source.length?`\nSource review: ${source.length} unproven lead${source.length===1?'':'s'} · ${source.filter(item=>item.status==='not reproduced').length} not reproduced · ${source.filter(item=>['inconclusive','blocked'].includes(item.status)).length} inconclusive · ${source.filter(item=>item.status==='not tested').length} not tested.`:'';
+    if(replayed.length)return `\nNo confirmed security finding survived final proof replay. ${replayed.length} positive signal${replayed.length===1?' was':'s were'} found, but the final replay was inconclusive; this is not a clean result.${sourceSummary}\nOpen report.md for the signal, replay reason and remaining coverage.`;
+    return `\nThis run did not confirm a new security finding; this is not a security clearance.${sourceSummary}\nOpen report.md for coverage gaps and untested work.`;
+  }
   const cards=findings.map(finding=>{
     const impact=finding.assessment?.impact||finding.rationale||'A replayed HTTP proof confirmed this security boundary failure.';
     const preconditions=finding.assessment?.preconditions;
@@ -58,21 +82,57 @@ export function regressionExportText(value){
   if(!value.files?.length)return `\nNo standalone regression test was saved. ${value.skippedProofs?.length?`${value.skippedProofs.length} proof${value.skippedProofs.length===1?' was':'s were'} not exportable.`:''}`;
   return `\n✓ Saved ${value.files.length} standalone regression test${value.files.length===1?'':'s'}\nLocation: ${value.output}\nRun now:\n  node --test ${value.files.map(shellArg).join(' ')}`;
 }
-export function printResult(data){
+function memoryEntryText(entry){
+  const locations=entry.locations||{},source=locations.sourceFiles?.[0];
+  const details=locations.report||locations.run||locations.evidence;
+  return `  ${entry.title}\n    ${entry.id} · ${entry.validity.status} · ${entry.confidence}\n`+
+    `    ${entry.summary}`+
+    `${source?`\n    Source: ${source.path}${source.line?`:${source.line}`:''}`:''}`+
+    `${details?`\n    Full run details: ${details}`:''}`+
+    `${locations.proof?`\n    Saved proof: ${locations.proof}`:''}`+
+    `${entry.evidence?.remediation?`\n    Fix: ${entry.evidence.remediation}`:''}`+
+    `\n    ${entry.retrievalReason} ${entry.validity.reason}`;
+}
+export function printResult(data,{interactive=false}={}){
   if(!data)return;
   const value=redact(data);
   if(value.error){console.error(paint('31',value.error));if(value.details&&Object.keys(value.details).length)console.error(JSON.stringify(value.details,null,2));return;}
   if(value.kind==='blackbox-audit'){console.log(blackboxSummary(value,{color})+blackboxOutcomeText(value));return;}
+  if(value.run?.kind==='scan'&&value.run.result?.blackbox){
+    const audit={kind:'blackbox-audit',...value.run.result.blackbox};
+    console.log(blackboxSummary(audit,{color})+blackboxOutcomeText(audit)+sourceReviewNote(value.run.result.source));
+    return;
+  }
   if(value.kind==='blackbox-scope'){console.log(`\nScope: ${value.file}\nTarget: ${value.origin}\nIncluded paths: ${value.include.join(', ')}\nCredential origins: ${value.credentialOrigins.join(', ')}\nAccounts: ${value.identities.owner}, ${value.identities.outsider}\nNext: ${value.next}`);return;}
   if(value.kind==='blackbox-setup'){
     const scopeAction = value.created ? 'created' : value.updated ? 'rate updated' : 'reused';
-    console.log(`\n${bold('BYPASS / blackbox setup')}\nTarget  ${value.origin}\nScope   ${value.scopeFile} · ${scopeAction}\n`);
+    const localPath=file=>{
+      const relative=path.relative(value.root,file);
+      return relative&&!relative.startsWith('..')&&!path.isAbsolute(relative)?`./${relative}`:file;
+    };
+    const localCommand=command=>interactive?command
+      .replace(` --project ${shellArg(value.root)}`,'')
+      .replaceAll(value.root+path.sep,'./'):command;
+    const setup=value.steps.filter(step=>step.kind!=='run');
+    console.log(`\n${bold('BLACK-BOX SETUP')}\n`+
+      `TARGET       ${value.origin}\n`+
+      `SCOPE        ${localPath(value.scopeFile)} · ${scopeAction}\n`+
+      `ALLOWED      ${(value.methods??[]).join(', ')||'saved methods'} · ${value.rate??'saved'} requests/second\n`+
+      `STATUS       ${setup.length?`${setup.length} setup action${setup.length===1?'':'s'} before testing`:'Ready to start the audit'}`);
+    let number=0;
     for(const step of value.steps){
-      if(step.kind==='ownership')console.log(`Publish DNS TXT ${step.record} = ${step.value}\nThen: ${step.command}\n`);
-      else if(step.kind==='authorization')console.log(`Review ${step.file}${step.production?' (set productionAcknowledged: true after review)':''}\nThen: ${step.command}\n`);
-      else console.log(`Audit: ${step.command}`);
+      number++;
+      if(step.kind==='ownership')console.log(`\n${String(number).padStart(2,'0')} / VERIFY APP OWNERSHIP\n`+
+        `DNS NAME     ${step.record}\nDNS VALUE    ${step.value}\n`+
+        `${accent('RUN')}          ${localCommand(step.command)}`);
+      else if(step.kind==='authorization')console.log(`\n${String(number).padStart(2,'0')} / AUTHORIZE TESTING\n`+
+        `SCOPE FILE   ${localPath(step.file)}\n`+
+        `ACTION       Review the saved paths, methods and rate${step.production?'; acknowledge production testing':''}.\n`+
+        `${accent('RUN')}          ${localCommand(step.command)}`);
+      else console.log(`\n${String(number).padStart(2,'0')} / START SECURITY AUDIT\n`+
+        `${accent('RUN')}          ${localCommand(step.command)}`);
     }
-    console.log(`\nOptional Muse check: ${value.modelCheck}`);
+    console.log(`\n${muted('The configured Muse connection is checked automatically when the audit starts.')}`);
     return;
   }
   if(value.kind==='blackbox-verify'){console.log(`\n${value.integrity.ok?'Ledger intact':'Ledger broken'} · ${value.reportedFindings??value.proofs.length} findings · ${value.proofs.length} proofs\n${value.proofs.map(item=>`  ${item.id}: ${item.verdict}${item.corroborates?` · corroborates ${item.corroborates}`:''}`).join('\n')}\nExit ${value.exitCode}`);return;}
@@ -81,16 +141,50 @@ export function printResult(data){
     if(value.skippedProofs?.length)console.log(`Skipped ${value.skippedProofs.length} unsupported private-read proof${value.skippedProofs.length===1?'':'s'}`);
     return;
   }
+  if(value.export?.kind==='blackbox-export'){
+    console.log(regressionExportText(value.export));
+    if(value.export.skippedProofs?.length)console.log(`Skipped ${value.export.skippedProofs.length} unsupported private-read proof${value.export.skippedProofs.length===1?'':'s'}`);
+    return;
+  }
+  if(value.findingId&&value.verification){
+    const proof=value.verification,confirmed=proof.status==='confirmed'||proof.verdict==='confirmed';
+    console.log(`\n${bold('SAVED HTTP PROOF REPLAY')}\n`+
+      `${confirmed?'✓ Confirmed again':'! '+label(proof.status||proof.verdict||'inconclusive')} · ${value.findingId}\n`+
+      `${proof.reason||'See the saved run report for proof details.'}\n`+
+      `${(proof.controls??[]).map(item=>`  ${item.label} · ${item.path} · HTTP ${item.status}`).join('\n')}\n`+
+      `Evidence: ${proof.blackboxRun||value.blackboxRun||'saved finding'}\n`+
+      `Next: ${confirmed?`bypass test save ${value.findingId}`:`bypass finding show ${value.findingId}`}`);
+    return;
+  }
   if(value.kind==='feature-security-context'){
     console.log(`\n${bold('Build with security context')}\n${value.task}\nRepository: ${value.repository}\n${value.next}`);
     for(const requirement of value.securityRequirements)console.log(`  Preserve owner access; deny other-account and anonymous access · ${requirement.resourcePath}\n    ${requirement.id} · ${requirement.enabled?'enabled':'disabled'} · last ${requirement.lastResult} · replay required`);
     printResult(value.memory);console.log('\nNext: re-read relevant citations, implement the feature, then test new behavior and replay the relevant saved checks.');return;
   }
+  if(value.kind==='project-context'){
+    console.log(`\n${bold('Security context')}\nRepository: ${value.projectRoot}\n`+
+      `App: ${value.summary?.target?.url||'not selected'}\nMemory file: ${value.storageFile}`);
+    if(value.latestRun)console.log(`Latest audit: ${value.latestRun.id} · ${value.latestRun.status}`+
+      `${value.latestRun.report?`\nFull report: ${value.latestRun.report}`:''}`+
+      `${value.latestRun.file?`\nRun record: ${value.latestRun.file}`:''}`);
+    if(value.attention?.length)console.log(`Saved checks needing attention: ${value.attention.map(check=>check.id).join(', ')}`);
+    console.log(`\nRelevant memory · ${value.memory.entries.length} shown of ${value.memory.records} stored`);
+    for(const entry of value.memory.entries)console.log(memoryEntryText(entry));
+    if(!value.memory.entries.length)console.log('  No relevant memory yet. Review current source and saved tests.');
+    console.log(`\nFor a coding task: context --task ${shellArg('Describe the change')} --files ${shellArg('src/example.js')}\nNext: ${value.next}`);
+    return;
+  }
+  if(value.kind==='memory-record'){
+    console.log(`\n${bold('Security memory record')}\n${memoryEntryText(value.entry)}\n`+
+      `Memory file: ${value.storageFile}`);
+    return;
+  }
   if(value.kind==='project-memory'){
-    console.log(`\n${bold('Security memory')} · ${value.enabled?'on':'off'} · ${value.records} stored · ${value.entries.length} shown`);
-    for(const e of value.entries){console.log(`  ${e.title}\n    ${e.id} · ${e.validity.status} · ${e.confidence}\n    ${e.summary}`);for(const f of e.evidence.files||[])console.log(`    ${f.path}:${f.line} · ${f.quote}`);console.log(`    ${e.retrievalReason} ${e.validity.reason}`);}
-    if(!value.records)console.log('  No security memory yet. A real source review saves cited knowledge; verified fixes add reusable behavior checks.');
-    console.log('\nLocal storage · historical evidence, not a current security verdict\nInspect: memory show <id> · Search: memory --query "auth"\nBuild context: context --task "Add a feature" --files "src/api.js"\nForget: memory forget <id> · Disable: memory use off');return;
+    console.log(`\n${bold('Security memory')} · ${value.enabled?'on':'off'} · ${value.records} stored · ${value.entries.length} shown\nMemory file: ${value.storageFile}`);
+    for(const entry of value.entries)console.log(memoryEntryText(entry));
+    if(!value.records)console.log('  No security memory yet. A source security audit saves cited knowledge; verified fixes add reusable behavior checks.');
+    if(value.omitted)console.log(`  ${value.omitted} more record${value.omitted===1?'':'s'}; search by topic or use memory show <id>.`);
+    console.log('\nHistorical evidence; replay saved checks for current behavior.\nInspect: memory show <id> · Search: memory --query "auth"\nBuild context: context --task "Add a feature" --files "src/api.js"\nForget: memory forget <id> · Disable: memory use off');return;
   }
   if(value.kind==='environment-diagnostics'){console.log(`\nBypass ${value.runtime.version} · ${value.runtime.sourcePath}\nEnvironment checks`);for(const c of value.checks)console.log(`  ${c.ok?'✓':'!'} ${c.name} · ${c.ok?c.version?.trim()||'available':c.message||'unavailable'}${c.optional?' (optional)':''}`);console.log(value.message);return;}
   if(value.models){console.log('\nModel connections');for(const m of value.models)console.log(`  ${m.name===value.active?'●':'○'} ${m.name} · ${m.provider} · ${m.lastAttempt?.status||m.lastTest?.status||'not tested'}\n    ${m.dataDestination}`);return;}
@@ -100,9 +194,9 @@ export function printResult(data){
     const p=value.plan;
     console.log(`\n${bold('Review plan')} · ${p.mode==='code'?'code only':p.mode}\n`);
     console.log(reviewSummary(p));
-    console.log(`  App           ${p.mode==='code'?'no live requests':p.target||'not connected'}\n  Saved checks  ${p.savedChecks}${p.mode==='code'?' · replay requires an authorized app':' · replay first'}\n  Source        ${p.simulation?'local inventory only':'selected excerpts sent to '+p.model?.destination}\n  Analysis      ${p.simulation?'simulated · no model calls':'real Docker agents · shared model'}\n  Evidence      saved locally`);
+    console.log(`  App           ${p.mode==='code'?'no live requests':p.target||'not connected'}\n  Saved checks  ${p.savedChecks}${p.mode==='code'?' · replay requires an authorized app':' · replay first'}\n  Source        ${p.simulation?'local inventory only':'selected excerpts sent to '+p.model?.destination}\n  Analysis      ${p.simulation?'simulated · no model calls':'containerized source review · shared model'}\n  Evidence      saved locally`);
     if(p.blockers.length)console.log(`\n${paint('33','Setup needed:')}\n${p.blockers.map(x=>'  '+x).join('\n')}`);
-    else console.log(p.simulation?'\nReady for a walkthrough review. Simulated results are not a security verdict.':'\nReady for a bounded real review. Model usage applies; HTTP evidence decides confirmation.');
+    else console.log(p.simulation?'\nReady for a walkthrough review. Simulated results are not a security verdict.':'\nReady for a bounded security audit. Model usage applies; HTTP evidence decides confirmation.');
     return;
   }
   if(value.run&&/^scan_[a-f0-9]{24}$/.test(value.run.id)){
@@ -140,7 +234,30 @@ export function printResult(data){
   if(value.target?.challenge){const t=value.target;console.log(`\n${bold(t.name)} · ${t.url}\nOwnership: ${t.ownership?.status||'pending'}\n`);if(t.environment==='local')console.log(`Next: bypass target verify ${t.name} --method local`);else console.log(`Publish TXT record:\n  Name:  ${t.challenge.record}\n  Value: ${t.challenge.token}\n\nOr serve exactly that value at:\n  ${t.url}${t.challenge.httpPath}\n\nThen: bypass target verify ${t.name} --method dns`);if(t.authorization)console.log(`Scope: ${t.authorization.paths.join(', ')} · expires ${t.authorization.expiresAt}`);return;}
   if(value.findings){console.log(`\n${value.findings.length} findings`);for(const f of value.findings)console.log(`  ${bold(f.id)}  ${f.title}\n    ${label(f.status)} · ${f.fixture?'local fixture':f.simulation?'SIMULATED · unproven':'evidence available'}`);return;}
   if(value.checks&&Array.isArray(value.checks)){console.log(`\n${value.checks.length} saved checks`);for(const c of value.checks)console.log(`  ${bold(c.id)}  ${c.title||c.behavior}\n    ${c.status||c.lastResult?.status||'not run'} · ${c.enabled===false?'disabled':c.target}`);if(value.message)console.log(value.message);return;}
-  if(value.finding){const f=value.finding;const next=f.fixture||f.engine==='docker'?`bypass ${['confirmed_fixture','confirmed','regression_failed'].includes(f.status)?'retest':'verify'} ${f.id}`:'bypass demo — complete the proof loop in a separate local app';console.log(`\n${bold(f.title)}\n${f.id} · ${label(f.status)}\n\n${f.hypothesis}\n\n${f.sourceEvidence?.file?`${f.sourceEvidence.file}:${f.sourceEvidence.line}\n${f.sourceEvidence.quote}`:f.sourceEvidence?.message||''}\n\nFix: ${f.recommendation}\n\nNext: ${next}`);if(f.verification)console.log(JSON.stringify(f.verification,null,2));return;}
+  if(value.finding){
+    const f=value.finding;
+    const next=!replayableFinding(f)?
+      'No saved HTTP proof is available for this source lead. Review the audit coverage before treating it as confirmed.':
+      f.engine==='blackbox'?`bypass verify ${f.id}`:
+      f.fixture||['docker','host'].includes(f.engine)?
+        `bypass ${['confirmed_fixture','confirmed','regression_failed'].includes(f.status)?'retest':'verify'} ${f.id}`:
+        'bypass scan';
+    const citation=f.sourceEvidence?.file?
+      `${f.sourceEvidence.file}:${f.sourceEvidence.line}\n${f.sourceEvidence.quote}`:
+      f.sourceEvidence?.message||null;
+    const proof=f.verification;
+    console.log(`\n${bold(f.title)}\n${f.id} · ${label(f.status)} · ${f.severity||'severity pending'}\n`+
+      `\nImpact: ${f.impact||f.hypothesis||'See the saved evidence.'}`+
+      `${f.preconditions?`\nConditions: ${f.preconditions}`:''}`+
+      `${citation?`\n\nSource: ${citation}`:''}`+
+      `${proof?`\n\nProof: ${label(proof.status||proof.verdict||'saved')} · ${proof.controls?.length??0} replay controls`+
+        `${proof.reason?`\n${proof.reason}`:''}`+
+        `${proof.blackboxRun?`\nRun: ${proof.blackboxRun}`:''}`:''}`+
+      `\n\nFix: ${f.recommendation||'Inspect the saved finding evidence before editing.'}`+
+      `\n\nNext: ${next}`+
+      `${f.engine==='blackbox'?`\nSave regression test: bypass test save ${f.id}`:''}`);
+    return;
+  }
   if((value.installed||value.integration)&&value.state&&value.next){
     console.log(`\n${bold('Bypass in Muse Code')} · ${label(value.state)}\n${value.message||'Native plugin status'}\n`);
     for(const capability of value.capabilities||[])console.log(`  ${capability.id?.includes(':hook:')?'Session context':'Security tools'} · ${label(capability.status)}`);
@@ -155,19 +272,23 @@ export function tokenize(line){
   for(const ch of line){if(escaped){word+=ch;escaped=false;started=true;}else if(ch==='\\'&&quote!=="'"){escaped=true;}else if(quote){if(ch===quote)quote=null;else word+=ch;started=true;}else if(ch==='"'||ch==="'"){quote=ch;started=true;}else if(/\s/.test(ch)){if(started){tokens.push(word);word='';started=false;}}else{word+=ch;started=true;}}
   if(quote||escaped)throw new Fault('Unclosed quote or escape in command.');if(started)tokens.push(word);return tokens;
 }
-function createPrompt(){
-  if(process.stdin.isTTY&&process.stdout.isTTY&&process.env.TERM!=='dumb'&&process.env.BYPASS_PLAIN!=='1')return createTerminalSession();
-  const rl=readline.createInterface({input:process.stdin,output:process.stdout});
+export function createPrompt({input=process.stdin,output=process.stdout,env=process.env}={}){
+  if(input.isTTY&&output.isTTY&&env.TERM!=='dumb'&&env.BYPASS_PLAIN!=='1')return createTerminalSession({input,output,env});
+  const rl=readline.createInterface({input,output});
   const controller=new AbortController();
   rl.once('SIGINT',()=>{controller.abort();rl.close();});
   rl.once('close',()=>controller.abort());
   const ask=async(text,defaultValue='')=>{try{const result=await rl.question(`${text}${defaultValue?muted(` [${defaultValue}]`):''}: `,{signal:controller.signal});return result.trim()||defaultValue;}catch(e){if(e.name==='AbortError')throw new Fault('Setup stopped. Saved choices are retained.',130);throw e;}};
   const secret=async text=>{
-    if(!process.stdin.isTTY||!process.stdout.isTTY)throw new Fault('Set MODEL_API_KEY before launching Bypass in a non-interactive environment.',3,{reason:'credential_missing'});
-    rl.pause();const input=process.stdin,output=process.stdout,wasRaw=input.isRaw;let value='';
+    if(!input.isTTY||!output.isTTY)throw new Fault('Set MODEL_API_KEY before launching Bypass in a non-interactive environment.',3,{reason:'credential_missing'});
+    rl.pause();const wasRaw=input.isRaw;let value='';
+    // readline keeps its keypress listener while paused, and that listener
+    // echoes each character. Suspend it while our masked raw listener runs.
+    const pausedKeypressListeners=input.listeners('keypress');
+    for(const listener of pausedKeypressListeners)input.off('keypress',listener);
     emitKeypressEvents(input);input.setRawMode(true);input.resume();output.write(`${text}: `);
     return new Promise((resolve,reject)=>{
-      const finish=(error)=>{input.off('keypress',key);input.setRawMode(Boolean(wasRaw));rl.resume();output.write('\n');if(error)reject(error);else resolve(value);};
+      const finish=(error)=>{input.off('keypress',key);input.setRawMode(Boolean(wasRaw));for(const listener of pausedKeypressListeners)input.on('keypress',listener);rl.resume();output.write('\n');if(error)reject(error);else resolve(value);};
       const key=(str,event={})=>{
         if(event.ctrl&&event.name==='c'){finish(new Fault('Setup stopped. Saved choices are retained.',130));return;}
         if(['return','enter'].includes(event.name)){finish();return;}
@@ -187,7 +308,7 @@ function createPrompt(){
     try{return await work(operation.signal);}
     finally{rl.removeListener('line',skip);controller.signal.removeEventListener('abort',stop);}
   };
-  return {ask,secret,run,signal:controller.signal,close:()=>rl.close()};
+  return {ask,secret,run,write:line=>output.write(cleanText(redact(String(line)))+'\n'),signal:controller.signal,close:()=>rl.close()};
 }
 async function choose(ask,items,title){
   if(ask.select&&items.length)return ask.select(title,items,{back:true});
@@ -218,7 +339,11 @@ export async function modelTestWizard(root,name,{interactive=process.stdin.isTTY
 function updateWorkspace(prompt,root){
   if(!prompt.setContext)return;
   const info=readiness(root);
-  prompt.setContext({demo:false,engine:info.engine.mode,title:info.project.name,repo:root,branch:info.project.repository.branch,app:info.target?`${info.target.url} · ${info.target.authorized?'authorized':info.target.ownership==='verified'||info.target.ownershipVerification==='off'?'scope required':'verification pending'}`:'not connected · code preview available',model:info.model?modelDisplay(info.model):'not configured · /models for API setup',checks:info.checks.enabled,memory:info.memory?.records||0});
+  prompt.setContext({demo:false,engine:info.engine.mode,title:info.project.name,repo:root,
+    bypassProject:path.join(root,'.bypass'),branch:info.project.repository.branch,
+    app:info.target?`${info.target.url} · ${info.target.authorized?'authorized':info.target.ownership==='verified'||info.target.ownershipVerification==='off'?'scope required':'verification pending'}`:'not connected · code preview available',
+    model:info.model?modelDisplay(info.model):'not configured · /models for API setup',
+    checks:info.checks.enabled,memory:info.memory?.records||0});
 }
 async function modelWizard(ask,root,io){
   const setup=await promptAPIProfile(ask,(title,options)=>choose(ask,options,title));if(!setup)return;
@@ -261,7 +386,7 @@ function dashboard(root){
   console.log(`  MODEL        ${info.model?modelDisplay(info.model):'choose a provider'}`);
   console.log(`  EVIDENCE     local · ${info.findings.total} findings · ${info.checks.enabled} saved tests`);
   console.log(`  MONITOR      ${info.worker.status} · ${info.monitors} schedules`);
-  console.log(`\n${theme.paint(info.engine.mode==='docker'?'accent':'warning',info.engine.mode==='docker'?'  REAL AI · Docker agents':'  PREVIEW · simulated discovery')}  ${muted('Evidence and saved checks stay in this project.')}`);
+  console.log(`\n${theme.paint(info.engine.mode==='docker'?'accent':'warning',info.engine.mode==='docker'?'  SECURITY AUDIT · source review + HTTP proof':'  PREVIEW · simulated discovery')}  ${muted('Evidence and saved checks stay in this project.')}`);
   const next=homeActions(read(root))[0].label;
   console.log(`  Next: ${accent(next)}\n`);
 }
@@ -277,87 +402,138 @@ export async function terminal(options={},io){
     if(prompt.rich&&key==='monitor worker'&&!flags.once&&!flags.stop&&!flags.detach)flags={...flags,detach:true};
     let lastStage=-1, blackboxRequests=0, blackboxModelCalls=0, blackboxChecks=0,
       blackboxTotal=0, blackboxEstimate=0, blackboxResearch=0, blackboxUntested=0,
-      blackboxConfirmed=0, blackboxStage='Recon in progress', lastBlackboxLine='';
+      blackboxConfirmed=0, blackboxStage='Recon in progress', lastBlackboxLine='',
+      blackboxModelActive=0;
     const blackboxStages=BLACKBOX_PHASES.map(phase=>phase.label);
+    const auditDuration=ms=>ms<60000?`${(ms/1000).toFixed(1)}s`:
+      `${Math.floor(ms/60000)}m ${Math.floor(ms/1000)%60}s`;
+    const auditLog=(label,text)=>prompt.write?.(`${String(label).toUpperCase().padEnd(12)}  ${text}`);
     let blackboxLive={done:'Approved target and limits loaded; no audit request has been sent yet.',
       ...BLACKBOX_PHASES[0],recovered:''};
     const syncBlackboxLive=overrides=>{
       blackboxLive={...blackboxLive,...overrides};
       prompt.setLiveStatus?.({done:blackboxLive.done,working:blackboxLive.working,why:blackboxLive.why,
         recovered:blackboxLive.recovered,next:blackboxLive.next,
-        metrics:`${blackboxChecks}${blackboxTotal?`/${blackboxTotal}`:''} checks · ${blackboxRequests} HTTP · ${blackboxModelCalls} Muse${blackboxConfirmed?` · ${blackboxConfirmed} confirmed`:''}${blackboxUntested?` · ${blackboxUntested} untested`:''}`});
+        metrics:`${blackboxChecks}${blackboxTotal?`/${blackboxTotal}`:''} checks · ${blackboxRequests} HTTP · ${blackboxModelCalls} Muse${blackboxResearch?` · ${blackboxResearch} research`:''}${blackboxConfirmed?` · ${blackboxConfirmed} confirmed`:''}${blackboxUntested?` · ${blackboxUntested} untested`:''}`});
     };
     const real=read(root).settings.analysisEngine==='docker';
-    const stages=real?['replay','containers','orchestrator',...(flags.mode==='live'?[]:['white-box']),...(flags.mode==='code'?[]:['black-box'])]:['replay','inventory','mock-analysis'];
-    const stageLabels={'replay':'Saved checks / scope','containers':'Docker services','orchestrator':'Shared-model plan','white-box':'White-box source review','black-box':'Black-box HTTP proof','inventory':'Local source inventory','mock-analysis':'Simulated discovery'};
-    if(key==='scan')prompt.setTasks?.(real?'Real AI review':'Review preview',stages.map(stage=>stageLabels[stage]));
+    const scanMode=flags.mode||read(root).settings.reviewMode||'combined';
+    const hasLiveAudit=key==='blackbox'||key==='scan'&&real&&scanMode!=='code';
+    const sourceTaskOffset=key==='scan'&&scanMode==='combined'?1:0;
+    const stages=real?['replay','containers','orchestrator',...(flags.mode==='live'?[]:['white-box'])]:['replay','inventory','mock-analysis'];
+    const stageLabels={'replay':'Saved checks / scope','containers':'Source-review worker','orchestrator':'Source-review plan','white-box':'Code security review','inventory':'Local source inventory','mock-analysis':'Simulated discovery'};
+    if(key==='scan')prompt.setTasks?.(real?'Security audit':'Review preview',hasLiveAudit?
+      [...(sourceTaskOffset?['Code security review']:[]),...blackboxStages]:
+      stages.map(stage=>stageLabels[stage]));
     if(key==='blackbox'){
-      prompt.setTasks?.('Black-box audit',blackboxStages);
+      prompt.setTasks?.(flags.combined?'Combined security audit':'Black-box audit',blackboxStages);
       prompt.setNext?.('Recon in progress · 0 HTTP · 0 Muse');
       syncBlackboxLive();
     }
     const work=async signal=>{
       const result=await execute(key,args,{project:root,...flags},{signal,onProgress:step=>{
-        if(key==='blackbox'){
-          if(step.stage==='progress'&&step.type==='phase'){
-            const index=step.step-1;
-            if(step.state==='doing'){
+        const blackboxStep=key==='blackbox'?step:step.blackbox;
+        if(hasLiveAudit&&blackboxStep){
+          if(blackboxStep.stage==='progress'&&blackboxStep.type==='phase'){
+            const index=blackboxStep.step-1;
+            if(blackboxStep.state==='doing'){
               blackboxStage=blackboxStages[index]||'Audit in progress';
               const phase=BLACKBOX_PHASES[index];
-              if(phase)syncBlackboxLive({...phase,done:index?
+              if(phase)syncBlackboxLive({...phase,recovered:'',done:index?
                 `${index} of ${BLACKBOX_PHASES.length} phases complete · ${BLACKBOX_PHASES[index-1].label}`:
                 'Approved target and limits loaded; beginning the first guarded requests.'});
-              prompt.task?.(index,'running');
+              prompt.task?.(index+sourceTaskOffset,'running');
               prompt.setNext?.(`${blackboxStage} · ${blackboxRequests} HTTP · ${blackboxModelCalls} Muse`);
+              auditLog(`Phase ${blackboxStep.step}/${BLACKBOX_PHASES.length}`,blackboxStage);
+              if(phase?.why)auditLog('Purpose',phase.why);
             }
-            if(step.state==='done'){
-              prompt.task?.(index,'done');
-              syncBlackboxLive({done:`${step.step} of ${BLACKBOX_PHASES.length} phases complete · ${blackboxStage}`});
+            if(blackboxStep.state==='done'){
+              prompt.task?.(index+sourceTaskOffset,'done');
+              syncBlackboxLive({done:`${blackboxStep.step} of ${BLACKBOX_PHASES.length} phases complete · ${blackboxStage}`});
+              auditLog('Completed',`${blackboxStage}${blackboxStep.durationMs!=null?` · ${auditDuration(blackboxStep.durationMs)}`:''}`);
             }
           }
-          if(step.stage==='progress'){
-            if(step.type==='request')blackboxRequests=Math.max(blackboxRequests,step.requests??0);
-            if(step.type==='model')blackboxModelCalls=Math.max(blackboxModelCalls,step.modelCalls??0);
-            if(step.type==='task-done'){blackboxChecks++;if(step.confirmed)blackboxConfirmed++;}
-            if(step.type==='research-attempt')blackboxResearch++;
-            if(step.type==='task-estimate'){
-              blackboxTotal+=Math.max(0,step.total??0)-blackboxEstimate;
-              blackboxEstimate=Math.max(0,step.total??0);
+          if(blackboxStep.stage==='progress'){
+            if(blackboxStep.type==='request')blackboxRequests=Math.max(blackboxRequests,blackboxStep.requests??0);
+            if(blackboxStep.type==='model')blackboxModelCalls=Math.max(blackboxModelCalls,blackboxStep.modelCalls??0);
+            if(blackboxStep.type==='model-start'){
+              blackboxModelActive=Math.max(1,blackboxStep.active??1);
+              syncBlackboxLive({working:`${blackboxStep.activity} · Muse call ${blackboxStep.call} · ${blackboxModelActive}/${blackboxStep.configured||4} active`});
+              auditLog(`Muse ${blackboxStep.call}`,`${blackboxStep.activity} · started · ${blackboxModelActive}/${blackboxStep.configured||4} active`);
             }
-            if(step.type==='task-total'){
-              blackboxTotal+=Math.max(0,step.total??0)-blackboxEstimate;
+            if(blackboxStep.type==='model-finish'){
+              blackboxModelActive=Math.max(0,blackboxStep.active??0);
+              const outcome=blackboxStep.status==='completed'?'finished':blackboxStep.status;
+              auditLog(`Muse ${blackboxStep.call}`,`${outcome} · ${auditDuration(blackboxStep.durationMs||0)}${blackboxModelActive?` · ${blackboxModelActive} still active`:''}`);
+              syncBlackboxLive({working:blackboxModelActive?
+                `${blackboxModelActive} Muse ${blackboxModelActive===1?'call is':'calls are'} still active`:
+                'Applying Muse output to guarded HTTP checks'});
+            }
+            if(blackboxStep.type==='task-done'){
+              blackboxChecks++;if(blackboxStep.confirmed)blackboxConfirmed++;
+              if(!blackboxModelActive)syncBlackboxLive({working:`Testing observed leads · ${blackboxChecks}${blackboxTotal?`/${blackboxTotal}`:''} complete`});
+              if(blackboxStep.confirmed||blackboxChecks===1||blackboxChecks%10===0||blackboxChecks===blackboxTotal)
+                auditLog('Checks',`${blackboxChecks}${blackboxTotal?`/${blackboxTotal}`:''} complete · ${blackboxRequests} HTTP${blackboxStep.confirmed?' · positive signal queued for replay':''}`);
+            }
+            if(blackboxStep.type==='research-attempt'){
+              blackboxResearch++;
+              syncBlackboxLive({working:`Researching a response difference · attempt ${blackboxResearch}`});
+              auditLog('Research',`Attempt ${blackboxResearch} · bounded inputs and fresh controls`);
+            }
+            if(blackboxStep.type==='activity'&&blackboxStep.message){
+              syncBlackboxLive({working:blackboxStep.message});
+              auditLog('Active',blackboxStep.message);
+            }
+            if(blackboxStep.type==='task-estimate'){
+              blackboxTotal+=Math.max(0,blackboxStep.total??0)-blackboxEstimate;
+              blackboxEstimate=Math.max(0,blackboxStep.total??0);
+            }
+            if(blackboxStep.type==='task-total'){
+              blackboxTotal+=Math.max(0,blackboxStep.total??0)-blackboxEstimate;
               blackboxEstimate=0;
             }
-            if(step.type==='task-untested')blackboxUntested++;
-            if(step.type==='task-reconcile'){
-              blackboxTotal=Math.max(0,step.total??0);
-              blackboxChecks=Math.max(0,step.done??0);
-              blackboxUntested=Math.max(0,step.untested??0);
+            if(blackboxStep.type==='task-untested')blackboxUntested++;
+            if(blackboxStep.type==='task-reconcile'){
+              blackboxTotal=Math.max(0,blackboxStep.total??0);
+              blackboxChecks=Math.max(0,blackboxStep.done??0);
+              blackboxUntested=Math.max(0,blackboxStep.untested??0);
             }
-            if(['request','model','task-done','task-estimate','task-total','task-untested','task-reconcile','research-attempt'].includes(step.type))
+            if(['request','model','model-start','model-finish','activity','task-done','task-estimate','task-total','task-untested','task-reconcile','research-attempt'].includes(blackboxStep.type))
               prompt.setNext?.(`${blackboxStage} · ${blackboxChecks}${blackboxTotal?`/${blackboxTotal}`:''} checks${blackboxConfirmed?` · ${blackboxConfirmed} finding${blackboxConfirmed===1?'':'s'}`:''} · ${blackboxRequests} HTTP · ${blackboxModelCalls} Muse${blackboxResearch?` · ${blackboxResearch} research tries`:''}${blackboxUntested?` · ${blackboxUntested} untested`:''}`);
           }
-          const line=blackboxProgressLine(step);
+          const line=blackboxProgressLine(blackboxStep);
           if(line){
-            if(line.label==='Muse recovered')syncBlackboxLive({recovered:line.text,
-              working:'Continuing from saved evidence with a smaller or later bounded batch'});
+            if(line.label==='Muse recovered'){
+              syncBlackboxLive({recovered:line.text,
+                working:'Continuing from saved evidence with a smaller or later bounded batch'});
+              auditLog('Recovered',line.text);
+            }
+            else if(line.label==='Muse source')syncBlackboxLive({working:line.text,
+              why:'Each source batch extracts route facts and security hypotheses; live HTTP proof still decides every finding.',
+              next:'Finish bounded source batches, then execute the highest-value live checks.'});
             else if(line.label==='Muse web')syncBlackboxLive({working:`Muse is reviewing observed test candidates · ${line.text}`});
             else if(line.label==='Muse research')syncBlackboxLive({working:`Running a bounded experiment · ${line.text}`});
             else if(line.label==='Proof')syncBlackboxLive({working:`Independently replaying a suspicious result · ${line.text}`});
-            else if(['Assets','Muse assets','Recon','Routes','Web tests'].includes(line.label))syncBlackboxLive({done:`${line.label}: ${line.text}`});
+            else if(line.label==='Source')syncBlackboxLive({done:`Source inventory: ${line.text}`,
+              next:'Map those routes against reachable app responses, then run live checks.'});
+            else if(line.label==='Web tests')syncBlackboxLive({done:`Live checks: ${line.text}`,
+              working:'Reconciling executed checks, queued work and independently replayed evidence'});
+            else if(['Assets','Muse assets','Recon','Routes'].includes(line.label))syncBlackboxLive({done:`${line.label}: ${line.text}`});
           }
-          if(step.stage==='progress')syncBlackboxLive();
-          const rendered=line?`${line.label}  ${line.text}`:'';
+          if(blackboxStep.stage==='progress')syncBlackboxLive();
+          const rendered=line?`${line.label.toUpperCase().padEnd(12)}  ${line.text}`:'';
           if(rendered&&rendered!==lastBlackboxLine){lastBlackboxLine=rendered;prompt.write?.(rendered);}
         } else prompt.write?.(step.message);
-        if(key==='scan'){const nextStage=stages.indexOf(step.stage);if(nextStage>=0&&nextStage!==lastStage){if(lastStage>=0)prompt.task?.(lastStage,'done');lastStage=nextStage;prompt.task?.(lastStage,'running');}}
+        if(key==='scan'&&sourceTaskOffset&&step.stage==='white-box'){
+          prompt.task?.(0,/source hypothes/i.test(step.message)?'done':'running');
+        }else if(key==='scan'&&!hasLiveAudit){const nextStage=stages.indexOf(step.stage);if(nextStage>=0&&nextStage!==lastStage){if(lastStage>=0)prompt.task?.(lastStage,'done');lastStage=nextStage;prompt.task?.(lastStage,'running');}}
       }});
       if(result.exitCode===130)throw new Fault('Run stopped. Partial evidence is saved.',130,{cancelled:true});
-      if(key==='scan'&&lastStage>=0)prompt.task?.(lastStage,previewRun(result.run)||result.run?.status==='completed'?'done':'attention');
+      if(key==='scan'&&!hasLiveAudit&&lastStage>=0)prompt.task?.(lastStage,previewRun(result.run)||result.run?.status==='completed'?'done':'attention');
       return result;
     };
-    const result=prompt.activity?await prompt.activity(key==='scan'?(real?'Review repository · real Docker agents':'Review repository · simulated discovery'):key==='test run'?'Replay saved checks · no model':key==='blackbox'?'Black-box audit':key,work,{verdict:r=>key.startsWith('blackbox')&&r.exitCode===1?'done':r.exitCode&&!(previewRun(r.run)&&r.exitCode===3)?'attention':'done'}):await work(prompt.signal);
-    if(!(prompt.rich&&key==='blackbox setup'&&result.ready))printResult(result);
+    const result=prompt.activity?await prompt.activity(key==='scan'?(real?'Security audit':'Review preview'):key==='test run'?'Replay saved checks · no model':key==='blackbox'?'Black-box audit':key,work,{verdict:r=>(key.startsWith('blackbox')||key==='scan')&&r.exitCode===1?'done':r.exitCode&&!(previewRun(r.run)&&r.exitCode===3)?'attention':'done'}):await work(prompt.signal);
+    if(!(prompt.rich&&key==='blackbox setup'&&result.ready))printResult(result,{interactive:!!prompt.rich});
     if(key==='blackbox'){
       const confirmed=(result.findings??[]).filter(finding=>finding.verdict==='confirmed'&&
         !RESEARCH_BEHAVIOR.has(finding.kind)).length;
@@ -368,19 +544,21 @@ export async function terminal(options={},io){
   };
   const tour=async(flags={})=>{try{return await guidedDemo(flags,prompt);}finally{if(prompt.rich)updateWorkspace(prompt,root);}};
   const showResults=async()=>{
-    const findings=read(root).findings;
-    if(!findings.length){console.log('\nNo review results yet. Press Enter on the home screen to run the first preview.');return;}
-    const finding=findings.length===1?findings[0]:await choose(ask,findings.map(f=>({...f,label:`${f.title} · ${label(f.status)}`})),'Review results');
+    const findings=orderedFindings(read(root).findings);
+    if(!findings.length){console.log('\nNo audit results yet. Run /review to start the selected security audit.');return;}
+    const finding=findings.length===1?findings[0]:await choose(ask,findings.map(f=>({...f,
+      label:`${f.status==='confirmed'?'CONFIRMED':f.status==='fixed_verified'?'FIXED':f.sourceEvidence?.kind==='source'?'SOURCE LEAD':label(f.status).toUpperCase()} · ${f.title} · ${label(f.status)}`})),'Review results');
     if(!finding)return;
-    if(!finding.fixture&&finding.engine!=='docker'){
-      prompt.setNext?.('Try the local walkthrough to prove the example and save a regression test');
+    if(!finding.fixture&&!['docker','host','blackbox'].includes(finding.engine)){
+      prompt.setNext?.('Run /review against your application to create verified evidence');
       console.log(`\n${bold('Example scenario / account access')}\nCould another account read a resource owned by someone else?\n\nThis sample demonstrates how a finding will look. It was not discovered in your code.\nThe deployed-app investigation engine is not built yet; DNS verification will not turn this sample into a verified vulnerability.`);
-      const action=await choose(ask,[{label:'See the full prove → fix → retest walkthrough in a local app',id:'demo'},{label:'Show saved scenario details',id:'details'}],'Next step');
-      if(action?.id==='demo')await tour();else if(action?.id==='details')printResult({finding});
+      const action=await choose(ask,[{label:'Show saved scenario details',id:'details'}],'Next step');
+      if(action?.id==='details')printResult({finding});
     }else{
       printResult({finding});
-      const action=await choose(ask,[{label:finding.engine==='docker'?'Reproduce with HTTP controls':'Verify this local fixture',id:'verify'},{label:'Retest a fix',id:'retest'},{label:'Follow a fresh guided walkthrough',id:'demo'}],'Next step');
-      if(action?.id==='demo')await tour();else if(action)await run(action.id,[finding.id]);
+      if(!replayableFinding(finding))return;
+      const action=await choose(ask,[{label:finding.engine==='blackbox'?'Replay saved HTTP proof':finding.fixture?'Verify this local fixture':'Run approved HTTP controls',id:'verify'},{label:'Retest a fix',id:'retest'}],'Next step');
+      if(action)await run(action.id,[finding.id]);
     }
   };
   try{
@@ -389,9 +567,8 @@ export async function terminal(options={},io){
     if(prompt.rich){const info=readiness(root);console.log(`\nProject ready · ${info.findings.total} saved result(s) · ${info.checks.enabled} regression test(s)\n${info.latestRun?`Last run: ${info.latestRun.kind} · ${info.latestRun.status}. `:''}Use /history for saved activity, /status for review scope.`);}
     if(isBypassSource(root)){
       console.log(`\nYou opened the Bypass tooling repository:\n${root}\nChoose your application source for white-box review.`);
-      const action=await choose(ask,[{id:'repo',label:'Choose my application repository (recommended)'},{id:'demo',label:'Run the separate local walkthrough'},{id:'tool',label:'Intentionally review Bypass tooling itself'}],'What do you want to review?');
+      const action=await choose(ask,[{id:'repo',label:'Choose my application repository (recommended)'},{id:'tool',label:'Intentionally review Bypass tooling itself'}],'What do you want to review?');
       if(!action)return;
-      if(action.id==='demo'){await tour();if(prompt.rich)await ask('Walkthrough finished — Enter to close');return;}
       if(action.id==='repo'){const result=await onboard({flow:'quickstart'},[],{...prompt,inDashboard:true});root=result.root;queuedStart=result.startReview;}
     }
     while(true){
@@ -399,21 +576,21 @@ export async function terminal(options={},io){
       let choice;
       if(starting)choice=starting.id;
       else if(advanced&&prompt.rich){
-        const action=await choose(ask,[{id:'1',label:'Resume setup'},{id:'2',label:'App ownership & test accounts'},{id:'3',label:'Models & privacy'},{id:'6',label:'Saved tests'},{id:'7',label:'Monitoring'},{id:'8',label:'Session context'},{id:'9',label:'Manual fixture controls'},{id:'10',label:'Muse plugin'},{id:'11',label:'Domain ownership verification'}],'Settings');
+        const action=await choose(ask,[{id:'1',label:'Resume setup'},{id:'2',label:'App ownership & test accounts'},{id:'3',label:'Models & privacy'},{id:'6',label:'Saved tests'},{id:'7',label:'Monitoring'},{id:'8',label:'Session context'},{id:'10',label:'Muse plugin'},{id:'11',label:'Domain ownership verification'}],'Settings');
         advanced=false;if(!action)continue;choice=action.id;
       }else if(advanced){
         dashboard(root);
-        console.log('SETTINGS & ADVANCED\n  1  Resume setup                  6  Saved tests\n  2  App & test accounts           7  Monitoring\n  3  Models                        8  Session context\n  4  Review preview                9  Manual demo controls\n  5  Review results               10  Muse plugin\n 11  Domain ownership verification\n  0  Back to project home\n');
+        console.log('SETTINGS & ADVANCED\n  1  Resume setup                  6  Saved tests\n  2  App & test accounts           7  Monitoring\n  3  Models                        8  Session context\n  4  Security audit              10  Muse plugin\n  5  Review results              11  Domain ownership verification\n  0  Back to project home\n');
         choice=await ask('Choose, or type a command','0');
         if(['0','back'].includes(choice)){advanced=false;continue;}
       }else{
         const state=read(root),info=readiness(root),actions=homeActions(state);
         if(prompt.rich){
           updateWorkspace(prompt,root);
-          prompt.setNext(`${actions[0].label} · /${actions[0].id}   |   /demo for the complete proof loop`);
+          prompt.setNext(`${actions[0].label} · /${actions[0].id}`);
           choice=(await prompt.command(actions[0].id)).replace(/^\//,'');
         }else{
-        console.log(`\n${accent('━'.repeat(Math.min(66,process.stdout.columns||66)))}\n${bold(state.project.name)} / Bypass prototype\n${muted(root)}`);
+        console.log(`\n${accent('━'.repeat(Math.min(66,process.stdout.columns||66)))}\n${bold('BYPASS / '+state.project.name)}\n${muted(root)}`);
         console.log(reviewSummary(info.review));
         console.log(`Model: ${info.model?modelDisplay(info.model):'not configured; mock preview needs no model'} · ${info.findings.total} review result(s)`);
         console.log('\n'+actions.map((action,i)=>`  ${i+1}  ${action.label}${i===0?'  ← Enter':''}`).join('\n'));
@@ -425,12 +602,12 @@ export async function terminal(options={},io){
       }
       choice=choice.replace(/^\//,'');
       if(['q','quit','exit'].includes(choice))break;
-      if(['?','help','commands'].includes(choice)){console.log('\n'+quickCommands);continue;}
+      if(['?','help','commands'].includes(choice)){console.log('\n'+interactiveHelp());continue;}
       if(choice==='help all'){console.log(help());continue;}
       if(choice==='back'){advanced=false;continue;}
       if(choice==='settings'){advanced=true;continue;}
       if(choice==='status'){await run('status');continue;}
-      if(choice==='history'){const s=read(root);console.log('\nSaved project activity\n'+(s.events.slice(-15).map(e=>`${e.at} · ${e.message}`).join('\n')||'No saved activity yet. Start with /review or /demo.'));continue;}
+      if(choice==='history'){const s=read(root);console.log('\nSaved project activity\n'+(s.events.slice(-15).map(e=>`${e.at} · ${e.message}`).join('\n')||'No saved activity yet. Start with /review.'));continue;}
       const aliases={review:'4',results:'5',tests:'6',app:prompt.rich?'app':'1',models:'3',plugin:'10'};
       choice=aliases[choice]||choice;
       try{
@@ -446,8 +623,17 @@ export async function terminal(options={},io){
             out='blackbox.onboarding.scope.json';force=true;
             prompt.write?.(`Starting app audit · ${url} · ${include} · ${methods} · ${rps} requests/second`);
           }else{
-            const input=await promptValue(ask,'App URL',selected?[{value:selected.url,label:selected.url}]:[]);
-            url=appOriginInput(input);const saved=selected?.url===url?selected.authorization:null;
+            const input=await promptValue(ask,'App URL',state.targets.map(target=>
+              ({value:target.url,label:target.url})));
+            url=appOriginInput(input);
+            const matched=state.targets.find(target=>target.url===url);
+            const saved=matched?.authorization;
+            environment=matched?.environment;
+            if(!environment&&!loopback(new URL(url).hostname)){
+              environment=(await choose(ask,appEnvironmentChoices.filter(item=>item.id!=='local'),
+                appEnvironmentQuestion(url)))?.id;
+              if(!environment)continue;
+            }
             include=await promptValue(ask,'Allowed path prefixes',[
               {value:saved?.paths?.join(',')||'/',label:saved?`Saved scope (${saved.paths.join(', ')})`:'Entire app (/)'},
               ...(saved&&saved.paths.join(',')!=='/'?[{value:'/',label:'Entire app (/)' }]:[])],
@@ -456,22 +642,44 @@ export async function terminal(options={},io){
             const rates=[...new Set([saved?.maxRequestsPerSecond,DEFAULT_REQUESTS_PER_SECOND,10,5,1,32].filter(value=>value!=null).map(String))];
             rps=await promptValue(ask,'Maximum requests per second',rates.map(value=>({value,label:`${value} request${value==='1'?'':'s'} per second`})),
             {write:message=>prompt.write?.(message)});
-            environment=selected?.url===url?selected.environment:undefined;
+            out=scopeOutputForOrigin(root,url).out;
           }
           const local=loopback(new URL(url).hostname);
           const limits={agents:options.agents,'http-workers':options['http-workers'],
-            'model-calls':options['model-calls'],'max-urls':options['max-urls'],
-            'max-tasks':options['max-tasks'],minutes:options.minutes,
+            'model-calls':options['model-calls']??STANDALONE_GUIDED_AUDIT_MODEL_CALLS,
+            'max-urls':options['max-urls'],
+            'max-tasks':options['max-tasks'],
+            minutes:options.minutes??STANDALONE_FIRST_AUDIT_MINUTES,
             'dom-script-bytes':options['dom-script-bytes']};
-          const setup=await run('blackbox setup',[url],{include,methods,rps,environment,out,force,...limits});
+          let setup=await run('blackbox setup',[url],{include,methods,rps,environment,out,force,...limits});
+          let approvedHere=false;
+          const pending=setup.steps?.filter(step=>step.kind!=='run')??[];
+          if(!automatic&&!setup.ready&&pending.length===1&&pending[0].kind==='authorization'){
+            const permission=pending[0];
+            console.log(`\nAuthorize testing on ${url}\nPaths: ${include} · methods: ${methods} · limit: ${rps} requests/second`);
+            approvedHere=await confirmChoice(ask,
+              `Do you control ${url} and authorize this ${permission.production?'production ':''}scope?`,
+              {yes:'Authorize and start audit',no:'Save setup only',fallback:true,recommended:'yes',
+                write:message=>prompt.write?.(message)});
+            if(approvedHere){
+              await run('target authorize',[permission.target],{'scope-file':permission.file,
+                accept:true,production:permission.production});
+              setup=await run('blackbox setup',[url],{include,methods,rps,environment,out,force,...limits});
+            }
+          }
           if(!setup.ready){prompt.setNext?.('Complete the displayed ownership and scope steps, then start the audit again');continue;}
           if(prompt.rich)console.log(`Scope: ${path.relative(root,setup.scopeFile)} · ${setup.created?'created':'reused'} · includes ${include}`);
           const profile=state.models.find(model=>model.name===state.activeModel);
           console.log(options['no-model']?'Model: code-only audit':profile?
             `Model: ${profile.provider} · ${profile.model} · ${profile.baseUrl} · key variable ${profile.secretEnv} · ${profile.lastAttempt?.status||profile.lastTest?.status||'not tested'}`:
             'Model: Meta default · muse-spark-1.3 · https://api.meta.ai/v1 · key variable LLM_KEY, META_API_KEY or MODEL_API_KEY');
-          if(!automatic&&!await confirmChoice(ask,`Start black-box audit of ${url} within ${include} at ${rps} rps?`,
+          if(!automatic&&!approvedHere&&!await confirmChoice(ask,`Start black-box audit of ${url} within ${include} at ${rps} rps?`,
             {yes:'Start audit',no:'Return to project',write:message=>prompt.write?.(message)}))continue;
+          const auditedTarget=setup.targets?.find(target=>target.url===url);
+          if(auditedTarget&&auditedTarget.name!==state.activeTarget){
+            await execute('target use',[auditedTarget.name],{project:root});
+            updateWorkspace(prompt,root);
+          }
           const result=await run('blackbox',[url],{scope:setup.scopeFile,rps,...limits,
             'accept-local':local,'no-model':!!options['no-model'],
             'no-discovery':!!options['no-discovery'],offline:!!options.offline,
@@ -536,15 +744,17 @@ export async function terminal(options={},io){
         }
         else if(choice==='4'){
           const ready=readiness(root).ready.liveReview;
-          const mode=read(root).settings.reviewMode||(ready?'combined':'code');
+          const mode=starting?.mode||read(root).settings.reviewMode||(ready?'combined':'code');
           console.log('\n'+reviewSummary(readiness(root).review));
-          console.log(`\nRunning your ${read(root).settings.analysisEngine==='docker'?'real AI review':'review preview'}${mode==='code'?' (code only)':mode==='live'?' (app only)':''}…`);
-          const result=await run('scan',[],{mode});
+          console.log(`\nRunning your ${read(root).settings.analysisEngine==='docker'?'security audit':'security review preview'}${mode==='code'?' (code only)':mode==='live'?' (app only)':''}…`);
+          const result=await run('scan',[],{mode,
+            'model-calls':options['model-calls']??STANDALONE_GUIDED_AUDIT_MODEL_CALLS,
+            minutes:options.minutes??STANDALONE_FIRST_AUDIT_MINUTES});
           if(result.run?.result?.findings?.length)await showResults();
         }
         else if(choice==='5')await showResults();
         else if(choice==='6'){
-          if(!read(root).checks.length){console.log('\nNo saved tests yet. The guided walkthrough creates your first example regression.');if(await choose(ask,[{label:'Start the guided walkthrough',id:'demo'}],'Next step'))await tour();continue;}
+          if(!read(root).checks.length){console.log('\nNo saved regression tests yet. Confirm a finding with /review, then save or export its proof.');continue;}
           await run('test list');const action=await choose(ask,[{label:'Replay all saved tests',id:'run'},{label:'Export standalone Node tests',id:'export'},{label:'Show coverage and gaps',id:'coverage'}],'Saved tests');if(action)await run(action.id==='coverage'?'coverage':`test ${action.id}`,[],action.id==='coverage'?{}:{all:true});
         }
         else if(choice==='7'){
@@ -563,18 +773,18 @@ export async function terminal(options={},io){
       }catch(e){if(e.code===130&&!e.details?.cancelled)throw e;prompt.stopTasks?.(e.code===130?'cancelled':'failed');console.log(`\n${paint('31','!')} ${cleanText(e.message)}`);if(e.details?.challenge)console.log(JSON.stringify(e.details.challenge,null,2));}
     }
   }finally{close?.();}
-  console.log(muted(`\nProject state saved. Reopen from the Bypass checkout with:\n  ./bypass --project ${JSON.stringify(root)}\n`));
+  console.log(muted(`\nProject state saved. Reopen with:\n  bypass --project ${shellArg(root)}\n`));
 }
 
 async function engineWizard(ask,root,run){
-  const mode=await choose(ask,[{id:'docker',label:'Real AI agents · two Docker services · model usage applies'},{id:'mock',label:'Offline preview · simulated discovery · no model usage'}],'Analysis engine');
+  const mode=await choose(ask,[{id:'docker',label:'Security audit · isolated source review + scoped live runner'},{id:'mock',label:'Offline preview · simulated discovery · no model usage'}],'Analysis engine');
   if(!mode)return;
   await run('engine use',[mode.id]);if(mode.id==='mock')return;
   await run('engine doctor');
   let state=read(root);
   if(!state.activeModel){console.log('Choose the shared model in /models before reviewing.');return;}
   const profile=state.models.find(m=>m.name===state.activeModel);
-  console.log(`Orchestrator + white-box + black-box all use ${profile.name} / ${profile.model}. Selected source excerpts go to ${profile.dataDestination}.`);
+  console.log(`Source review and live planning use ${profile.name} / ${profile.model}. Selected source excerpts go to ${profile.dataDestination}; the live runner independently controls every request and proof.`);
   const target=state.targets.find(t=>t.name===state.activeTarget);
   if(!target||!readiness(root).ready.authorized){console.log('Source review is ready. Use /app to finish ownership and scope before HTTP proof.');return;}
   if(target.probes?.length){for(const p of target.probes)await run('probe test',[p.name]);return;}

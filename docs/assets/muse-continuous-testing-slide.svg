@@ -1,0 +1,82 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1920" height="1080" viewBox="0 0 1920 1080" role="img" aria-labelledby="title description">
+  <title id="title">Bypass and Muse Code continuous security testing loop</title>
+  <desc id="description">Muse Code builds a feature. Bypass tests code and the approved running app. Negative controls and fresh proof replay verify a finding. The developer fixes the issue in Muse, then Bypass retests it and saves a supported regression. The saved check replays in CI, after deployment, or on a schedule. Local results and saved security requirements return to Muse for the next change.</desc>
+  <defs>
+    <style>
+      text { font-family: "Helvetica Neue", Arial, sans-serif; }
+      .mono { font-family: Menlo, Consolas, "Liberation Mono", monospace; }
+      .eyebrow { font-size: 21px; font-weight: 700; letter-spacing: 1.2px; }
+      .title { font-size: 60px; font-weight: 700; letter-spacing: -1.5px; }
+      .number { font-size: 23px; font-weight: 700; letter-spacing: 0.8px; }
+      .cardTitle { font-size: 37px; font-weight: 700; letter-spacing: -0.5px; }
+      .cardBody { font-size: 27px; }
+      .railTitle { font-size: 32px; font-weight: 700; }
+      .railBody { font-size: 25px; }
+      .flow { fill: none; stroke: #677176; stroke-width: 3; marker-end: url(#arrow); }
+      .return { fill: none; stroke: #B93632; stroke-width: 4; marker-end: url(#returnArrow); }
+    </style>
+    <marker id="arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="10" markerHeight="10" orient="auto-start-reverse">
+      <path d="M 1 1 L 9 5 L 1 9 Z" fill="#677176"/>
+    </marker>
+    <marker id="returnArrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="10" markerHeight="10" orient="auto-start-reverse">
+      <path d="M 1 1 L 9 5 L 1 9 Z" fill="#B93632"/>
+    </marker>
+  </defs>
+
+  <rect width="1920" height="1080" fill="#FBFAF7"/>
+  <text x="100" y="105" class="mono eyebrow" fill="#B93632">BYPASS / MUSE CODE</text>
+  <text x="100" y="183" class="title" fill="#17191B">Continuous security testing</text>
+  <path d="M 100 213 H 1820" stroke="#BFC5C6" stroke-width="2"/>
+
+  <rect x="100" y="290" width="400" height="330" fill="#FFFFFF" stroke="#AEB6B8" stroke-width="2"/>
+  <text x="130" y="338" class="mono number" fill="#737D81">01 / MUSE CODE</text>
+  <text x="130" y="415" class="cardTitle" fill="#17191B">Build the feature</text>
+  <text x="130" y="474" class="cardBody" fill="#30383B">Muse works in the</text>
+  <text x="130" y="512" class="cardBody" fill="#30383B">application repository.</text>
+  <path d="M 130 573 H 470" stroke="#BFC5C6" stroke-width="2"/>
+
+  <path d="M 509 455 H 531" class="flow"/>
+
+  <rect x="540" y="290" width="400" height="330" fill="#FFFFFF" stroke="#AEB6B8" stroke-width="2"/>
+  <text x="570" y="338" class="mono number" fill="#737D81">02 / BYPASS</text>
+  <text x="570" y="415" class="cardTitle" fill="#17191B">Test the app</text>
+  <text x="570" y="474" class="cardBody" fill="#30383B">Review source and test</text>
+  <text x="570" y="512" class="cardBody" fill="#30383B">the approved live app.</text>
+  <path d="M 570 573 H 910" stroke="#BFC5C6" stroke-width="2"/>
+
+  <path d="M 949 455 H 971" class="flow"/>
+
+  <rect x="980" y="290" width="400" height="330" fill="#FFFFFF" stroke="#AEB6B8" stroke-width="2"/>
+  <path d="M 980 290 H 1380" stroke="#B93632" stroke-width="5"/>
+  <text x="1010" y="338" class="mono number" fill="#B93632">03 / PROOF</text>
+  <text x="1010" y="415" class="cardTitle" fill="#17191B">Verify the finding</text>
+  <text x="1010" y="474" class="cardBody" fill="#30383B">Negative controls.</text>
+  <text x="1010" y="512" class="cardBody" fill="#30383B">Fresh proof replay.</text>
+  <path d="M 1010 573 H 1350" stroke="#BFC5C6" stroke-width="2"/>
+
+  <path d="M 1389 455 H 1411" class="flow"/>
+
+  <rect x="1420" y="290" width="400" height="330" fill="#FFFFFF" stroke="#AEB6B8" stroke-width="2"/>
+  <text x="1450" y="338" class="mono number" fill="#737D81">04 / FIX + RETEST</text>
+  <text x="1450" y="415" class="cardTitle" fill="#17191B">Keep the check</text>
+  <text x="1450" y="474" class="cardBody" fill="#30383B">Developer fixes in Muse.</text>
+  <text x="1450" y="512" class="cardBody" fill="#30383B">Bypass retests and saves</text>
+  <text x="1450" y="550" class="cardBody" fill="#30383B">a supported regression.</text>
+  <path d="M 1450 573 H 1790" stroke="#BFC5C6" stroke-width="2"/>
+
+  <path d="M 1620 621 V 750" class="flow"/>
+  <rect x="100" y="765" width="1720" height="205" fill="#202427"/>
+  <path d="M 960 795 V 940" stroke="#62696C" stroke-width="2"/>
+
+  <text x="180" y="824" class="mono eyebrow" fill="#DBDEDD">LOCAL SECURITY CONTEXT</text>
+  <text x="180" y="878" class="railTitle" fill="#FFFFFF">Available for the next Muse change</text>
+  <text x="180" y="921" class="railBody" fill="#C6CCCD">Finding, saved requirement, and local check result</text>
+
+  <text x="1040" y="824" class="mono eyebrow" fill="#DBDEDD">CONTINUOUS REPLAY</text>
+  <text x="1040" y="878" class="railTitle" fill="#FFFFFF">Run the saved regression</text>
+  <text x="1040" y="921" class="railBody" fill="#C6CCCD">CI, after deployment, or on a schedule</text>
+
+  <path d="M 1015 865 H 980" class="return"/>
+  <path d="M 300 764 V 635" class="return"/>
+  <text x="100" y="1033" class="mono eyebrow" fill="#737D81">SAVED REGRESSIONS REPLAY WITHOUT MODEL CALLS</text>
+</svg>

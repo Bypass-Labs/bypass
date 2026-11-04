@@ -3,14 +3,14 @@ import { assessmentCoverage, findingSummary } from './review-report.mjs';
 import { createAppProfile, requireSource } from './application-setup.mjs';
 import { rememberOwnership, rememberProjectOwnership, sharedOwnership, revokeOwnership, ownershipVerification, verificationDisabled, ownershipReady } from './ownership-store.mjs';
 import { executionMode, hostAI, requireStandaloneAPI } from './execution-mode.mjs';
-import { beginHostReview, hostPlan, hostReviewStep, combinedFocusBudget } from './host-review.mjs';
+import { beginHostReview, hostPlan, hostReviewStep, combinedFocusBudget, combinedReviewHandoff } from './host-review.mjs';
 import { memorySummary, recallMemory, featureContext, forgetMemory, setMemory, consolidateMemory, rememberBlackboxFindings } from './project-memory.mjs';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { spawn } from 'node:child_process';
 import { commandInvocation } from './command.mjs';
-import { rootFrom, read, change, initStore, repositoryFilePlan, snapshot, atomic, event } from './store.mjs';
+import { rootFrom, read, change, initStore, repositoryFilePlan, snapshot, atomic, event, writeEvidence } from './store.mjs';
 import { need, named, safeName, envName, now, duration, outcome, execFile, Fault, redact } from './util.mjs';
 import { samePluginPackage, museInstallState } from './muse-install-state.mjs';
 import { connectRepository, repositoryInfo, inventory } from './repository.mjs';
@@ -29,14 +29,29 @@ import { dockerStatus, prepareAgents } from './agent-runtime.mjs';
 import { specFor, saveCheck, bindCheck, exportChecks } from './checks.mjs';
 import { dispatchRun, watchRun, startWorker, workerStatus, runMonitor } from './jobs.mjs';
 import { startDemo, updateDemo, serveDemo, demoConfig, CLI } from './demo.mjs';
-import { prepareScopeTemplate, prepareBlackboxSetup } from './blackbox/setup.mjs';
+import { prepareScopeTemplate, prepareBlackboxSetup, scopeOutputForOrigin } from './blackbox/setup.mjs';
 import { runAudit } from './blackbox/index.mjs';
+import { reconcileAuditFindings } from './audit-engine.mjs';
 import { verifyRun as verifyBlackboxRun, exportRun as exportBlackboxRun } from './blackbox/poc.mjs';
+import { projectIdentityBridge, projectBlackboxEnvironment } from './blackbox/project-scope.mjs';
 
 export const PACKAGE_ROOT=path.resolve(path.dirname(fileURLToPath(import.meta.url)),'..');
 function loadJSON(file){try{return JSON.parse(fs.readFileSync(path.resolve(file),'utf8'));}catch{throw new Fault(`Cannot parse JSON file: ${file}`);}}
 function filter(list,options,keys){return list.filter(item=>keys.every(k=>!options[k]||item[k]===options[k]));}
 const wrap=value=>value?.schemaVersion==='bypass.v1'?value:outcome(value);
+async function recordCombinedBlackbox(projectRoot,result,reviewId){
+  const parent=read(projectRoot).runs.find(run=>run.id===reviewId);
+  need(parent?.host?.mode==='combined','The connected source review is missing.',3);
+  const reconciled=await reconcileAuditFindings(projectRoot,reviewId,
+    {findings:parent.result.findings},result);
+  await change(projectRoot,state=>{const run=state.runs.find(item=>item.id===reviewId);
+    run.result.findings=[...new Set([...run.result.findings,...reconciled.findings])];
+    run.result.blackbox={run:result.run,reportPath:result.reportPath,
+      exitCode:result.exitCode,coverage:result.coverage};
+    run.exitCode=reconciled.confirmed.length?1:3;run.result.exitCode=run.exitCode;});
+  writeEvidence(projectRoot,read(projectRoot).runs.find(run=>run.id===reviewId));
+  return reconciled;
+}
 export function readiness(root){
   const s=read(root),target=s.targets.find(t=>t.name===s.activeTarget),model=s.models.find(m=>m.name===s.activeModel);
   const host=executionMode()==='muse-host';
@@ -83,7 +98,14 @@ export async function execute(key,args=[],o={},context={}){
       path.join(priorDir,'run.json'):path.join(priorDir,'run-start.json');
     need(fs.existsSync(metadataFile),`Run ${args[0]} has no saved scope metadata.`);
     const metadata=JSON.parse(fs.readFileSync(metadataFile,'utf8'));
-    const result=await runAudit({url:metadata.origin??metadata.scope?.target?.origin,
+    const origin=metadata.origin??metadata.scope?.target?.origin;
+    let auditEnv=process.env;
+    if(fs.existsSync(path.join(projectRoot,'.bypass/state.json'))){
+      const state=read(projectRoot),target=state.targets.find(item=>item.url===origin);
+      const bridge=projectIdentityBridge(state,target);
+      if(bridge)auditEnv=await projectBlackboxEnvironment(state,target,bridge,{signal:context.signal});
+    }
+    const result=await runAudit({url:origin,
       root:working,scopeFile:o.scope||metadata.scopeFile||null,resumeFrom:args[0],
       overrides:{rps:o.rps??metadata.rps??metadata.scope?.limits?.rps,
         modelAgents:o.agents,
@@ -96,11 +118,16 @@ export async function execute(key,args=[],o={},context={}){
         acceptLocal:!metadata.scopeFile && loopback(new URL(metadata.origin??
           metadata.scope?.target?.origin).hostname)},
       modelName:o.model||null,offline:!!o.offline,
-      signal:context.signal, infer:context.infer, modelProfileOverride:context.modelProfile,
+      combinedReviewId:metadata.combinedReviewId??null,
+      sourceContext:metadata.combinedReviewId&&fs.existsSync(path.join(priorDir,'source.json'))?
+        JSON.parse(fs.readFileSync(path.join(priorDir,'source.json'),'utf8')):null,
+      signal:context.signal, env:auditEnv, infer:context.infer, modelProfileOverride:context.modelProfile,
       log:event=>context.onProgress?.(event)});
-    const memory=fs.existsSync(path.join(projectRoot,'.bypass/state.json'))?
+    const reconciled=metadata.combinedReviewId?
+      await recordCombinedBlackbox(projectRoot,result,metadata.combinedReviewId):null;
+    const memory=fs.existsSync(path.join(projectRoot,'.bypass/state.json'))&&!reconciled?
       await rememberBlackboxFindings(projectRoot,result):null;
-    return outcome({...result,memory},result.exitCode);
+    return outcome({...result,memory,reconciled},result.exitCode);
   }
   if(key==='blackbox scope'){
     const {origin,file,scope}=prepareScopeTemplate(working,args[0],o,{reuse:o.reuse===true});
@@ -116,6 +143,13 @@ export async function execute(key,args=[],o={},context={}){
   }
   if(key==='blackbox setup')return outcome(await prepareBlackboxSetup(working,args[0],o));
   if(key==='blackbox'){
+    let combinedHandoff=null;
+    if(o.review){
+      need(!o.finding,'Choose a connected full audit or a focused finding, not both.',3);
+      need(!o.out,'A connected live audit saves under the project .bypass/runs folder.',3);
+      combinedHandoff=combinedReviewHandoff(rootFrom(working,false),o.review,appOriginInput(args[0]));
+      o={...o,...combinedHandoff.limits};
+    }
     if(executionMode()==='muse-host'&&o.finding){
       const budget=combinedFocusBudget(rootFrom(working,false),o.finding);
       if(budget){
@@ -126,10 +160,12 @@ export async function execute(key,args=[],o={},context={}){
       }
     }
     let auditRps=o.rps;
-    if(args[0]&&!o.scope&&
-      !fs.existsSync(path.join(rootFrom(working,false),'blackbox.scope.json'))){
-      const origin=appOriginInput(args[0]);
-      if(loopback(new URL(origin).hostname)){
+    if(args[0]&&!o.scope){
+      const projectRoot=rootFrom(working,false),origin=appOriginInput(args[0]);
+      const scopeName=scopeOutputForOrigin(projectRoot,origin).out||'blackbox.scope.json';
+      const scopePath=path.join(projectRoot,scopeName);
+      if(fs.existsSync(scopePath))o={...o,scope:scopePath};
+      else if(loopback(new URL(origin).hostname)){
         auditRps ??= 5;
         const prepared=prepareScopeTemplate(working,origin,
           {include:o.include||'/',rps:auditRps,'model-calls':o['model-calls'],
@@ -137,9 +173,16 @@ export async function execute(key,args=[],o={},context={}){
             'max-urls':o['max-urls'],
             'max-tasks':o['max-tasks'],
             minutes:o.minutes,
-            'dom-script-bytes':o['dom-script-bytes']},{reuse:true});
+            'dom-script-bytes':o['dom-script-bytes'],out:scopeName},{reuse:true});
+        o={...o,scope:prepared.file};
         context.onProgress?.({stage:'setup',message:`Created local scope ${prepared.file} · includes ${prepared.scope.include.join(', ')} · ${auditRps} rps · ${prepared.scope.limits.minutes} min · ${prepared.scope.limits.modelCalls} Muse calls · ${prepared.scope.limits.maxUrls || 'unlimited'} authenticated recon URLs.`});
-      }
+      }else need(false,`No reviewed scope exists for ${origin}. Run bypass blackbox setup ${origin} --project '${projectRoot}' to review and authorize this app.`,3);
+    }
+    const projectRoot=rootFrom(working,false);let auditEnv=process.env;
+    if(fs.existsSync(path.join(projectRoot,'.bypass/state.json'))){
+      const state=read(projectRoot),target=state.targets.find(item=>item.url===appOriginInput(args[0]));
+      const bridge=projectIdentityBridge(state,target);
+      if(bridge)auditEnv=await projectBlackboxEnvironment(state,target,bridge,{signal:context.signal});
     }
     const result=await runAudit({url:args[0],root:working,scopeFile:o.scope||null,out:o.out||null,
       overrides:{acceptLocal:!!o['accept-local'],ownerEnv:o['owner-env'],otherEnv:o['other-env'],auth:o.auth,
@@ -152,14 +195,17 @@ export async function execute(key,args=[],o={},context={}){
         auditDomains:o['audit-domains'],includes:o.include},
       noModel:!!o['no-model'],dryRun:!!o['dry-run'],noDiscovery:!!o['no-discovery'],offline:!!o.offline,
       modelName:o.model||null,sourcePath:o.source||null,
+      sourceContext:combinedHandoff?.sourceContext??null,
+      combinedReviewId:combinedHandoff?.reviewId??null,
       findingId:o.finding||null,focusPath:o['focus-path']||null,
       revisionPath:o['revision-path']||null,revisionField:o['revision-field']||'revision',
-      signal:context.signal, infer:context.infer, modelProfileOverride:context.modelProfile,
+      signal:context.signal, env:auditEnv, infer:context.infer, modelProfileOverride:context.modelProfile,
       log:event=>context.onProgress?.(event)});
-    const projectRoot=rootFrom(working,false);
-    const memory=fs.existsSync(path.join(projectRoot,'.bypass/state.json'))?
+    const reconciled=combinedHandoff?
+      await recordCombinedBlackbox(projectRoot,result,combinedHandoff.reviewId):null;
+    const memory=fs.existsSync(path.join(projectRoot,'.bypass/state.json'))&&!reconciled?
       await rememberBlackboxFindings(projectRoot,result):null;
-    return outcome({...result,memory},result.exitCode);
+    return outcome({...result,memory,reconciled},result.exitCode);
   }
   if(key==='discover'||key.startsWith('discover ')||key.startsWith('scanner ')){
     const {scannerService}=await import('./scanner/service.mjs');
@@ -170,7 +216,7 @@ export async function execute(key,args=[],o={},context={}){
     if(fixtureRoot&&read(fixtureRoot).poc){const {resumePOC}=await import('./poc.mjs');await resumePOC(fixtureRoot,{automatic:true,signal:context.signal});}
   }
   if(executionMode()==='muse-host'&&['model add','model test','model use'].includes(key))return outcome({ai:hostAI(),message:'Model setup and independent connection tests are disabled in the Muse plugin. Continue in the active host session.'});
-  if(executionMode()==='muse-host'&&key==='scan'&&!read(rootFrom(working)).demo)return o.plan?outcome({plan:hostPlan(read(rootFrom(working)),o)}):beginHostReview(rootFrom(working),o,context);
+  if(executionMode()==='muse-host'&&key==='scan'&&!read(rootFrom(working)).demo)return o.plan?outcome({plan:hostPlan(read(rootFrom(working)),o)}):beginHostReview(rootFrom(working),{...o,broadLive:o.mode==='combined'},context);
   if(key==='host review')return hostReviewStep(rootFrom(working),o,context);
   if(key==='app connect'){
     const url=targetURL(appOriginInput(o.url||args[0]),o.environment||'staging'),profile=await createAppProfile(url);
@@ -375,14 +421,31 @@ export async function execute(key,args=[],o={},context={}){
     case 'model remove':result=await change(root,state=>{named(state.models,args[0],'Model');state.models=state.models.filter(m=>m.name!==args[0]);if(state.activeModel===args[0])state.activeModel=state.models[0]?.name||null;return {removed:args[0]};});break;
     case 'scan':{
       const plan=scanPlan(s,o);if(o.plan)return outcome({plan},plan.blockers.length?3:0);
-      return dispatchRun(root,'scan',{mode:o.mode||s.settings.reviewMode||'combined',target:targetName,base:o.base,full:!!o.full},!!o.detach,context.signal,context.onProgress);
+      return dispatchRun(root,'scan',{mode:o.mode||s.settings.reviewMode||'combined',
+        target:targetName,base:o.base,full:!!o.full,
+        modelCalls:o['model-calls']!=null?Number(o['model-calls']):undefined,
+        minutes:o.minutes!=null?Number(o.minutes):undefined,
+        maxUrls:o['max-urls']!=null?Number(o['max-urls']):undefined,
+        maxTasks:o['max-tasks']!=null?Number(o['max-tasks']):undefined,
+        modelAgents:o.agents!=null?Number(o.agents):undefined,
+        httpWorkers:o['http-workers']!=null?Number(o['http-workers']):undefined},
+      !!o.detach,context.signal,context.onProgress);
     }
     case 'finding list':{const findings=filter(activeFindings(s),{...o,lastRunId:o.run},['target','status','severity','lastRunId']);result={findings,summary:findingSummary(findings)};break;}
     case 'finding show':result={finding:named(s.findings,args[0],'Finding')};break;
     case 'verify':case 'retest':return verifyFinding(root,args[0],{target:o.target,build:o.build,retest:key==='retest',signal:context.signal});
     case 'test list':result={checks:filter(s.checks,o,['target'])};break;
     case 'test show':result={check:named(s.checks,args[0],'Check')};break;
-    case 'test save':result={check:await saveCheck(root,args[0])};break;
+    case 'test save':{
+      const finding=named(s.findings,args[0],'Finding');
+      if(finding.engine==='blackbox'){
+        need(finding.verification?.blackboxRun,'This finding has no linked black-box proof run.',3);
+        result={findingId:finding.id,export:exportBlackboxRun(root,
+          finding.verification.blackboxRun,{out:o.out||null}),
+          message:'Saved the sealed HTTP proof as standalone Node regression test(s).'};
+      }else result={check:await saveCheck(root,args[0])};
+      break;
+    }
     case 'test run':need(o.all||args[0],'Specify a check ID or --all.');need(!(o.all&&args[0]),'Choose a check ID or --all.');return dispatchRun(root,'tests',{checkId:args[0],target:targetName},!!o.detach,context.signal,context.onProgress);
     case 'test bind':need(o.all||args[0],'Specify a check ID or --all.');need(o.file&&o.target,'Supply --file <binding.json> and --target.');result=await bindCheck(root,o.all?'all':args[0],o.target,loadJSON(o.file));break;
     case 'test export':need(o.all||args[0],'Specify a check ID or --all.');result=exportChecks(root,{checkId:args[0],all:o.all,target:o.target,out:o.out,force:o.force});break;
@@ -391,10 +454,20 @@ export async function execute(key,args=[],o={},context={}){
       const inv=await inventory(root);result={scope:'Recorded assessment work and specific HTTP behaviors',complete:false,assessment:assessmentCoverage(s,inv,o),sourceFingerprint:inv.fingerprint,checks:s.checks.filter(c=>!o.target||c.target===o.target).map(c=>({id:c.id,behavior:c.title,target:c.target,status:!c.enabled?'disabled':['failed','blocked'].includes(c.lastResult?.status)?c.lastResult.status:c.sourceFingerprint!==inv.fingerprint?'stale':c.lastResult?.status||'not-run',sourceChanged:c.sourceFingerprint!==inv.fingerprint,lastResult:c.lastResult})),unproven:s.findings.filter(f=>(!o.target||f.target===o.target)&&['unproven','simulated_unproven'].includes(f.status)).map(f=>({id:f.id,title:f.title,simulation:!!f.simulation})),message:'A route is not fully covered just because one behavior on that route has a test. Use assessment.work and nextAction to continue remaining work.'};break;
     }
     case 'memory':case 'memory list':result=await recallMemory(root,{query:o.query,target:o.target});break;
-    case 'memory show':{const packet=await recallMemory(root,{query:args[0],limit:1});result=packet.entries.find(e=>e.id===args[0]);need(result,'Memory record not found in this project.');result={kind:'memory-record',entry:result};break;}
+    case 'memory show':{const packet=await recallMemory(root,{query:args[0],limit:1});result=packet.entries.find(e=>e.id===args[0]);need(result,'Memory record not found in this project.');result={kind:'memory-record',entry:result,storageFile:packet.storageFile,projectRoot:root};break;}
     case 'memory forget':result=await forgetMemory(root,args[0]);break;
     case 'memory use':need(['on','off'].includes(args[0]),'Use memory use on or off.');result=await setMemory(root,args[0]==='on');break;
-    case 'context':if(o.task!==undefined){result=await featureContext(root,{task:o.task,files:o.files,target:o.target});break;}need(!o.files,'Supply --task with --files.');result={project:s.project.name,engine:realEngine(s)?'docker':'mock',summary:readiness(root),memory:await recallMemory(root,{forAgent:true,limit:8,maxBytes:10000}),latestMonitor:monitorSummary(s),finding:o.finding?named(s.findings,o.finding,'Finding'):null,recentEvents:s.events.slice(-15),attention:s.checks.filter(c=>c.enabled&&['failed','blocked','stale'].includes(c.lastResult?.status)),next:readiness(root).next};break;
+    case 'context':if(o.task!==undefined){result=await featureContext(root,{task:o.task,files:o.files,target:o.target});break;}need(!o.files,'Supply --task with --files.');{
+      const latest=s.runs.at(-1),runFile=latest&&path.join(root,'.bypass','runs',`${latest.id}.json`);
+      const liveDir=latest?.result?.blackbox?.runDir;
+      const report=liveDir&&path.join(path.isAbsolute(liveDir)?liveDir:path.resolve(root,liveDir),'report.md');
+      result={kind:'project-context',project:s.project.name,projectRoot:root,
+        storageFile:path.join(root,'.bypass','state.json'),engine:realEngine(s)?'docker':'mock',
+        summary:readiness(root),memory:await recallMemory(root,{forAgent:true,limit:8,maxBytes:12000}),
+        latestRun:latest?{id:latest.id,status:latest.status,file:runFile&&fs.existsSync(runFile)?runFile:null,
+          report:report&&fs.existsSync(report)?report:null}:null,
+        latestMonitor:monitorSummary(s),finding:o.finding?named(s.findings,o.finding,'Finding'):null,
+        recentEvents:s.events.slice(-15),attention:s.checks.filter(c=>c.enabled&&['failed','blocked','stale'].includes(c.lastResult?.status)),next:readiness(root).next};break;}
     case 'report':{
       const r=named(s.runs,o.run||s.runs.at(-1)?.id,'Run'),format=o.format||'json';need(['json','md'].includes(format),'Report format must be json or md.');
       const content=format==='json'?JSON.stringify(redact(r),null,2):`# Bypass run ${r.id}\n\nStatus: ${r.status}. Exit: ${r.exitCode}.\n\nAnalysis simulated: ${r.simulation}. Model calls: ${r.result?.modelCalls??0}.\n\n${r.result?.message||''}\n\n## Evidence\n\n\`\`\`json\n${JSON.stringify(redact(r.result),null,2)}\n\`\`\`\n`;

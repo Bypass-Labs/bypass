@@ -9,9 +9,28 @@ import { read, change } from '../src/store.mjs';
 import { execute } from '../src/service.mjs';
 import { execFile } from '../src/util.mjs';
 import { stopPOC } from '../src/poc.mjs';
-import { beginHostReview, hostReviewStep, combinedFocusBudget } from '../src/host-review.mjs';
+import { beginHostReview, hostReviewStep, combinedFocusBudget, combinedReviewHandoff } from '../src/host-review.mjs';
 import { inExecutionMode } from '../src/execution-mode.mjs';
 import { inventory } from '../src/repository.mjs';
+import { sourceContextFromFindings } from '../src/audit-engine.mjs';
+
+test('combined handoff retains methods from cited source handlers when inventory says UNKNOWN',async()=>{
+  const root=temp();
+  fs.mkdirSync(path.join(root,'src'));
+  fs.writeFileSync(path.join(root,'src/server.ts'),
+    "if (method === 'POST' && path === '/api/auth/verify-2fa') {\n"+
+    "  if (body.rememberDevice) return success();\n}\n");
+  await execute('init',[root]);
+  await change(root,state=>state.findings.push({id:'source-2fa',title:'2FA bypass',
+    category:'authorization',method:'UNKNOWN',resourcePath:'/api/auth/verify-2fa',
+    hypothesis:'Remembered devices may bypass the second factor.',recommendation:'Verify the code.',
+    sourceEvidence:{kind:'source',file:'src/server.ts',line:2,
+      quote:'  if (body.rememberDevice) return success();'}}));
+  const context=sourceContextFromFindings(root,{findings:['source-2fa'],
+    inventory:await inventory(root)});
+  assert.equal(context.endpoints[0].method,'POST');
+  assert.equal(context.securityLeads[0].method,'POST');
+});
 
 function saveFocusedProof(folder,url,route,{verdict='confirmed',spec={}}={}) {
   const proof=path.join(folder,'poc','f-001','poc.mjs');
@@ -21,6 +40,54 @@ function saveFocusedProof(folder,url,route,{verdict='confirmed',spec={}}={}) {
   fs.writeFileSync(path.join(folder,'findings.json'),JSON.stringify([{id:'f-001',
     verdict,url:new URL(route,url).href,proof}]));
 }
+
+test('connected combined handoff carries cited leads into one full live run and reports its proof',async()=>{
+  const root=temp(),url='http://127.0.0.1:4444';
+  fs.writeFileSync(path.join(root,'routes.mjs'),"app.get('/api/one', handler);\n");
+  await execute('init',[root]);
+  await execute('target add',['app'],{project:root,url,environment:'local'});
+  await execute('target verify',['app'],{project:root,method:'local'});
+  const scope=path.join(root,'approved.json');
+  fs.writeFileSync(scope,JSON.stringify({paths:['/'],methods:['GET','HEAD'],maxRequestsPerSecond:7}));
+  await execute('target authorize',['app'],{project:root,'scope-file':scope,accept:true});
+  const started=await beginHostReview(root,{mode:'combined',modelCalls:12,minutes:5,broadLive:true});
+  const proposed=await hostReviewStep(root,{id:started.runId,action:'source',candidates:[{
+    title:'Unprotected route',category:'missing-authentication',file:'routes.mjs',line:1,
+    quote:"app.get('/api/one', handler);",resourcePath:'/api/one',
+    hypothesis:'Anonymous caller may read the route.',recommendation:'Require a session.'}]});
+  await change(root,s=>{s.runs.find(run=>run.id===started.runId).status='completed';});
+  const ready=await hostReviewStep(root,{id:started.runId,action:'status'});
+  assert.equal(ready.nextAction.tool,'bypass_blackbox_setup');
+  assert.equal(ready.liveValidation.length,1);
+  const handoff=combinedReviewHandoff(root,started.runId,url);
+  assert.equal(handoff.limits['model-calls'],12);
+  assert.equal(handoff.sourceContext.securityLeads[0].id,proposed.findings[0]);
+  assert.equal(handoff.sourceContext.endpoints[0].path,'/api/one');
+  assert.equal(handoff.sourceContext.modelCalls,0);
+  const folder=path.join(root,'.bypass','runs','bx-connected');fs.mkdirSync(folder,{recursive:true});
+  fs.writeFileSync(path.join(folder,'run-start.json'),JSON.stringify({run:'bx-connected',
+    status:'running',combinedReviewId:started.runId,origin:url,startedAt:new Date().toISOString()}));
+  const running=await hostReviewStep(root,{id:started.runId,action:'status'});
+  assert.equal(running.nextAction.tool,'bypass_blackbox_next');
+  assert.equal(running.liveAudit.runId,'bx-connected');
+  assert.throws(()=>combinedReviewHandoff(root,started.runId,url),/already has a live audit/);
+  const proof=path.join(folder,'poc','one','poc.mjs');fs.mkdirSync(path.dirname(proof),{recursive:true});
+  fs.writeFileSync(proof,'// fixture\n');
+  fs.writeFileSync(path.join(path.dirname(proof),'spec.json'),JSON.stringify({request:{path:'/api/one'}}));
+  fs.writeFileSync(path.join(folder,'findings.json'),JSON.stringify([{id:'proof-one',verdict:'confirmed',
+    sourceFinding:{id:proposed.findings[0]},url:`${url}/api/one`,proof}]));
+  fs.writeFileSync(path.join(folder,'report.json'),JSON.stringify({surface:{application:{sourceFindings:[{
+    id:proposed.findings[0],path:'/api/one',status:'confirmed live',liveReason:'Fresh proof.'}]}}}));
+  fs.writeFileSync(path.join(folder,'run.json'),JSON.stringify({run:'bx-connected',status:'partial',
+    combinedReviewId:started.runId,scope:{target:{origin:url}},startedAt:new Date().toISOString(),
+    finishedAt:new Date().toISOString(),stats:{modelCalls:3}}));
+  const done=await hostReviewStep(root,{id:started.runId,action:'status'});
+  assert.equal(done.liveValidation[0].status,'confirmed');
+  assert.equal(done.liveValidation[0].runId,'bx-connected');
+  assert.equal(done.liveAudit.confirmed,1);
+  assert.equal(done.combinedBudget.modelCallsUsed,3);
+  assert.equal(done.nextAction.tool,'bypass_findings');
+});
 
 test('combined review retains exact scope and advances every focused source finding',async()=>{
   const root=temp(),url='http://127.0.0.1:4444';

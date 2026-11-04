@@ -13,7 +13,7 @@ export const pluginAliases={
   'app connect':{tool:'bypass_connect_app'},
   init:{tool:'bypass_connect_repository'},'repo connect':{tool:'bypass_connect_repository'},
   'memory list':{tool:'bypass_memory'},
-  scan:{tool:'bypass_scan',note:'Prepare a durable host review. Muse drives bypass_review_step read/source/probe/finish; no independent AI worker.'},
+  scan:{tool:'bypass_scan',note:'Prepare a durable host source review. In combined mode, Muse then starts one full live audit with cited leads and the remaining budget.'},
   'model add':{tool:'bypass_add_model',note:'Explains host-owned reasoning; cannot configure API inference inside Muse. API profiles are standalone-only.'},
   'model use':{tool:'bypass_use_model',note:'Explains host-owned reasoning; choose the active Muse model through host settings.'},
   'model test':{tool:'bypass_test_model',note:'Explains host-owned reasoning without sending an independent model request.'},
@@ -30,7 +30,12 @@ export const flagEquivalents={
   init:{repo:'repository'},
   blackbox:{model:'active Muse session'},
   'blackbox resume':{model:'active Muse session'},
-  scan:{plan:'bypass_prepare_scan',detach:'Host review uses explicit read/source/probe/finish steps'},
+  scan:{plan:'bypass_prepare_scan',detach:'Host review uses explicit read/source/probe/finish steps',
+    'model-calls':'bypass_scan.modelCalls',
+    agents:'Muse host controls decision concurrency',
+    'http-workers':'Each focused black-box run uses its reviewed scope default',
+    'max-urls':'Each focused black-box run uses its reviewed scope limit',
+    'max-tasks':'Each focused black-box run uses its reviewed scope limit'},
   'test run':{detach:'bypass_run_tests returns fast completion or a pending durable run'},
   'monitor worker':{detach:'action=start',once:'action=once',stop:'action=stop'}
 };

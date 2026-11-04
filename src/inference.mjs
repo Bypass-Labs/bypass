@@ -3,18 +3,51 @@ import { ProviderSession } from './providers.mjs';
 export const INFERENCE_TIMEOUT_MS=60000;
 export function modelResponseSchema(role){
   if(role==='orchestrator')return {type:'object',properties:{focus:{type:'string',maxLength:2000}},required:['focus'],additionalProperties:false};
-  const properties={action:{type:'string',enum:role==='white-box'?['read_files','finish']:['probe','finish']},summary:{type:'string'}};
-  if(role==='white-box'){
-    properties.knowledge={type:'array',maxItems:8,items:{type:'object',properties:{topic:{type:'string',enum:['authentication','authorization','data-model','routing','trust-boundary']},title:{type:'string',maxLength:160},summary:{type:'string',maxLength:700},file:{type:'string'},line:{type:'integer',minimum:1},quote:{type:'string',maxLength:2000}},required:['topic','title','summary','file','line','quote'],additionalProperties:false}};
+  need(['white-box','white-box-live'].includes(role),`Unknown model response role: ${role}.`);
+  const live=role==='white-box-live';
+  const properties={action:{type:'string',enum:['read_files','finish']},summary:{type:'string',...(live?{maxLength:300}:{})}};
+  {
+    properties.knowledge={type:'array',maxItems:live?2:8,items:{type:'object',properties:{topic:{type:'string',enum:['authentication','authorization','data-model','routing','trust-boundary']},title:{type:'string',maxLength:160},summary:{type:'string',maxLength:live?300:700},file:{type:'string'},line:{type:'integer',minimum:1},quote:{type:'string',maxLength:2000}},required:['topic','title','summary','file','line','quote'],additionalProperties:false}};
     properties.paths={type:'array',maxItems:8,items:{anyOf:[{type:'string'},{type:'object',properties:{path:{type:'string'},startLine:{type:'integer',minimum:1},endLine:{type:'integer',minimum:1}},required:['path','startLine','endLine'],additionalProperties:false}]}};
-    properties.candidates={type:'array',maxItems:8,items:{type:'object',properties:{title:{type:'string'},category:{type:'string',minLength:1,maxLength:120},file:{type:'string'},line:{type:'integer',minimum:1},quote:{type:'string'},resourcePath:{type:['string','null']},hypothesis:{type:'string'},recommendation:{type:'string'}},required:['title','category','file','line','quote','resourcePath','hypothesis','recommendation'],additionalProperties:false}};
-  }else properties.bindingIndex={type:['integer','null'],minimum:0};
+    const candidateProperties={title:{type:'string',...(live?{maxLength:160}:{})},category:{type:'string',minLength:1,maxLength:120},file:{type:'string'},line:{type:'integer',minimum:1},quote:{type:'string'},resourcePath:live?{type:'string',minLength:1,maxLength:300}:{type:['string','null']},...(live?{method:{type:'string',enum:['GET','HEAD','POST','PUT','PATCH','DELETE','OPTIONS','UNKNOWN']},privateFields:{type:'array',maxItems:8,items:{type:'string',minLength:1,maxLength:80}}}:{}),hypothesis:{type:'string',...(live?{maxLength:500}:{})},recommendation:{type:'string',...(live?{maxLength:500}:{})}};
+    properties.candidates={type:'array',maxItems:live?3:8,items:{type:'object',properties:candidateProperties,required:Object.keys(candidateProperties),additionalProperties:false}};
+  }
   // Every action uses one locally validated schema; unused arrays are empty.
   return {type:'object',properties,required:Object.keys(properties),additionalProperties:false};
 }
 
 export async function infer(profile,messages,options={}) {
   return (options.session || new ProviderSession(profile)).turn(messages,options);
+}
+
+// A malformed structured reply is safe to ask for again: no security action
+// passed local validation. The caller owns the model-call and time budgets, so
+// each attempt goes through its normal counted request path.
+export function recoverableStructuredReply(error) {
+  const diagnostics=error?.details?.responseDiagnostics;
+  return error?.code===3 && !!diagnostics &&
+    (['invalid_json','empty_content'].includes(diagnostics.jsonStatus) ||
+      diagnostics.schemaStatus==='invalid');
+}
+
+const REPAIR_PROMPT='Return exactly one security_action matching the supplied schema. Use the security_action function if available; otherwise return only JSON text. No prose, markdown, or second action. Use only the supplied evidence; leave uncertain fields empty only where the schema permits.';
+function repairPrompt(error) {
+  const diagnostics=error.details.responseDiagnostics;
+  const issue=diagnostics.schemaStatus==='invalid'?'The previous action did not match the required schema.':
+    diagnostics.jsonStatus==='empty_content'?'The previous action was empty.':
+      'The previous action was not valid JSON.';
+  return `${issue} ${REPAIR_PROMPT}`;
+}
+
+export async function withStructuredRepair(attempt,messages,
+  {canRetry=()=>true,onRetry=()=>{},continuation=false}={}) {
+  try{return await attempt(messages);}
+  catch(error){
+    if(!recoverableStructuredReply(error)||!canRetry())throw error;
+    await onRetry(error);
+    const correction={role:'user',content:repairPrompt(error)};
+    return attempt(continuation?[correction]:[...messages,correction]);
+  }
 }
 
 export function parseModelJSON(text){

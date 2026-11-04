@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { PassThrough } from 'node:stream';
-import { createTerminalSession, frame, transcriptLines, cells, safeText } from '../src/terminal-session.mjs';
+import { createTerminalSession, frame, transcriptLines, cells, safeText, commands, interactiveHelp } from '../src/terminal-session.mjs';
 import { execute } from '../src/service.mjs';
 import { createRun } from '../src/engine.mjs';
 import { watchRun } from '../src/jobs.mjs';
@@ -21,13 +21,28 @@ function terminal(t,columns=90,rows=30) {
   return {ui,input,output,key:(name,extra={})=>input.emit('keypress',undefined,{name,...extra}),type:value=>input.write(value),get raw(){return raw;},get bytes(){return bytes;}};
 }
 
+test('help groups every slash command with an aligned description and concrete language',()=>{
+  const help=interactiveHelp(),lines=help.split('\n');
+  for(const heading of ['SECURITY AUDITS','PROJECT SETUP','EVIDENCE AND RESULTS','WORKSPACE','KEYBOARD','CLI REFERENCE'])
+    assert.ok(lines.includes(heading));
+  for(const command of commands)
+    assert.ok(lines.includes(`  ${command.label.padEnd(9)}  ${command.description}`),command.label);
+  assert.doesNotMatch(help,/\breal(?: AI| Docker)?\b/i);
+});
+
+test('structured transcript output preserves aligned columns',()=>{
+  const state={expanded:false,entries:[{type:'message',text:'HELP\n\n  /review    Audit the connected source repository\nTARGET       https://app.test'}]};
+  assert.match(transcriptLines(state,100).join('\n'),/  \/review    Audit/);
+  assert.match(transcriptLines(state,100).join('\n'),/TARGET       https:\/\/app\.test/);
+});
+
 test('slash search, arrow selection, completion and command history work with real key parsing',async t=>{
   const tty=terminal(t);
   let answer=tty.ui.command('review');tty.type('/mod');
   assert.deepEqual(tty.ui.state.menu.map(item=>item.id),['models']);
   tty.key('tab');assert.equal(tty.ui.state.input,'/models');tty.key('return');assert.equal(await answer,'/models');
   answer=tty.ui.command('review');tty.key('up');assert.equal(tty.ui.state.input,'/models');tty.key('return');assert.equal(await answer,'/models');
-  answer=tty.ui.command('review');tty.type('/');tty.key('down');tty.key('return');assert.equal(await answer,'/demo');
+  answer=tty.ui.command('review');tty.type('/');tty.key('down');tty.key('return');assert.equal(await answer,'/blackbox');
   answer=tty.ui.command('review');tty.key('return');assert.equal(await answer,'review');
 });
 
@@ -158,7 +173,7 @@ test('wide task panel can be collapsed without losing the project or active comm
   const answer=tty.ui.command('review');tty.type('/sta');
   let view=frame(tty.ui.state,130,38);
   assert.match(view.lines.map(x=>x.text).join('\n'),/✓ Read source/);
-  assert.match(view.lines.map(x=>x.text).join('\n'),/◈ Verify HTTP/);
+  assert.match(view.lines.map(x=>x.text).join('\n'),/[◐◓◑◒] Verify HTTP/);
   tty.key('t',{ctrl:true});
   view=frame(tty.ui.state,130,38);
   assert.doesNotMatch(view.lines.map(x=>x.text).join('\n'),/✓ Read source/);
@@ -166,9 +181,11 @@ test('wide task panel can be collapsed without losing the project or active comm
   assert.equal(tty.ui.state.input,'/sta');tty.key('return');assert.equal(await answer,'/status');
 });
 
-test('a live audit keeps an explanatory evidence card visible and uses the top bar for trust guarantees',async t=>{
+test('a live audit keeps a compact pulse visible and makes Ctrl+O reveal the full activity log',async t=>{
   const tty=terminal(t,130,38);let finish;
-  tty.ui.setContext({title:'job-radar.app',repo:'/tmp/job-radar',engine:'docker',app:'https://job-radar.app · authorized',model:'muse-spark-1.3 · connected'});
+  tty.ui.setContext({title:'job-radar.app',repo:'/tmp/job-radar',bypassProject:'/tmp/job-radar/.bypass',
+    engine:'docker',app:'https://job-radar.app · authorized',model:'muse-spark-1.3 · connected',
+    checks:4,memory:7});
   tty.ui.setTasks('Black-box audit',['Scope and hosts','Assets and source','Routes and responses','Plan and test leads','Replay and assess','Report and coverage']);
   tty.ui.task(0,'done');tty.ui.task(1,'running');
   const audit=tty.ui.activity('Black-box audit',()=>new Promise(resolve=>{finish=resolve;}));
@@ -178,16 +195,34 @@ test('a live audit keeps an explanatory evidence card visible and uses the top b
     recovered:'One slow batch was split automatically; completed evidence was preserved.',
     next:'Run accepted candidates with scoped HTTP controls.',
     metrics:'20/80 candidates · 148 HTTP · 12 Muse'});
+  for(let index=1;index<=7;index++)tty.ui.write(`MUSE ${index}      Bounded decision ${index} finished`);
   const now=tty.ui.state.liveStatus.updatedAt+18000;
-  const text=frame(tty.ui.state,130,38,now).lines.map(line=>line.text).join('\n');
-  assert.match(text,/LIVE REQUESTS · APPROVED SCOPE ONLY · EVIDENCE SAVED CONTINUOUSLY/);
+  const first=frame(tty.ui.state,130,38,now),text=first.lines.map(line=>line.text).join('\n');
+  assert.match(text,/^▰╲▰  BYPASS  \/  BUILT FOR MUSE MODELS/m);
   assert.doesNotMatch(text,/REAL AI|bounded scope/);
-  for(const value of [/LIVE AUDIT/,/DONE\s+19 assets inspected/,/WORKING\s+Muse is reviewing/,/WHY\s+Muse proposes/,/RECOVERED\s+One slow batch/,/NEXT\s+Run accepted/,/LIVE\s+20\/80 candidates · 148 HTTP · 12 Muse · last evidence 18\.0s ago/])assert.match(text,value);
-  for(const [columns,rows,status] of [[80,24,'job-radar.app · AUDIT LIVE · SCOPE GUARDED · EVIDENCE SAVING'],[40,15,'AUDIT LIVE · SCOPE GUARDED']]){
+  for(const value of [/AUDIT PULSE/,/ACTIVE\s+[◐◓◑◒]\s+Muse is reviewing/,/RECOVERED\s+One slow batch/,/NEXT\s+Run accepted/,/EVIDENCE\s+20\/80 candidates · 148 HTTP · 12 Muse/])assert.match(text,value);
+  assert.match(text,/ACTIVITY LOG\s+latest updates · 3 hidden/);
+  assert.doesNotMatch(text,/Bounded decision 1 finished/);
+  assert.match(text,/Bounded decision 7 finished/);
+  assert.match(text,/Ctrl\+O show details/);
+  assert.match(text,/PHASES\s+━+─+\s+16% · 1\/6 complete/);
+  assert.match(text,/1\/6 phases complete/);
+  for(const value of [/BYPASS PROJECT/,/\/tmp\/job-radar\/\.bypass/,/Saved tests 4 · checks\.json/,
+    /Memory 7 · state\.json/])assert.match(text,value);
+  const activeLine=view=>view.lines.find(line=>line.text.includes('Black-box audit ·'))?.text;
+  assert.notEqual(activeLine(first),activeLine(frame(tty.ui.state,130,38,now+160)),
+    'the running audit marker animates while the phase percentage stays evidence-based');
+  assert.doesNotMatch(text,/last evidence/);
+  tty.key('o',{ctrl:true});
+  const detailed=frame(tty.ui.state,130,38,now).lines.map(line=>line.text).join('\n');
+  assert.match(detailed,/AUDIT PULSE · DETAILS ON/);
+  assert.match(detailed,/Bounded decision 1 finished/);
+  assert.match(detailed,/Ctrl\+O hide details/);
+  for(const [columns,rows,brand] of [[80,24,'▰╲▰  BYPASS  /  BUILT FOR MUSE MODELS'],[40,15,'BYPASS / MUSE']]){
     const compact=frame(tty.ui.state,columns,rows,now);
     assert.equal(compact.lines.length,rows);
     assert.ok(compact.lines.every(line=>cells(line.text)<=columns-2));
-    assert.match(compact.lines[1].text,new RegExp(status.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')));
+    assert.ok(compact.lines[0].text.startsWith(brand));
   }
   finish({});await audit;
 });

@@ -22,7 +22,7 @@ export async function guidedDemo(options={},io={}) {
     return io.activity?io.activity(labels[key]||key,work):work(io.signal);
   };
   let step=-1;
-  const tasks=['Review the source · simulated discovery','Prove the issue · real HTTP','Fix and retest · save a check','Export and run an independent test','Reintroduce the bug · catch regression','Record monitor result · restore fixed app'];
+  const tasks=['Review the source · simulated discovery','Prove the issue · live HTTP controls','Fix and retest · save a check','Export and run an independent test','Reintroduce the bug · catch regression','Record monitor result · restore fixed app'];
   io.setTasks?.('Local walkthrough',tasks);
   const next=async label=>{
     if(step>=0)io.task?.(step,'done');step++;

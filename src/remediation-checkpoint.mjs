@@ -106,22 +106,42 @@ export async function remediationCheckpoint(root, input, {signal, request = safe
       'Provide the opened HTTPS pull-request URL.');
     need(typeof input.branch === 'string' && input.branch.trim(), 'Provide the PR branch.');
     need(Array.isArray(input.runs) && input.runs.length > 0 && input.runs.every(proofRun),
-      'Provide the confirmed focused blackbox run IDs.');
+      'Provide the confirmed blackbox proof run IDs.');
     const proofRuns = [...new Set(input.runs)].sort(), sourceFindings = [];
     for (const id of proofRuns) {
       const file = path.join(root, '.bypass', 'runs', id, 'run.json');
-      need(fs.existsSync(file), `Focused run ${id} is missing.`);
+      need(fs.existsSync(file), `Proof run ${id} is missing.`);
       const saved = JSON.parse(fs.readFileSync(file, 'utf8'));
-      need(run.result?.findings?.includes(saved.focus?.findingId) &&
+      const focused=run.result?.findings?.includes(saved.focus?.findingId);
+      const connected=saved.combinedReviewId===review;
+      need((focused||connected) &&
         (saved.origin ?? saved.scope?.target?.origin) === target.url,
-        `Focused run ${id} does not belong to this review and target.`);
+        `Proof run ${id} does not belong to this review and target.`);
       const poc = path.join(root, '.bypass', 'runs', id, 'poc');
       need(fs.existsSync(poc) && fs.readdirSync(poc).some(name =>
         fs.existsSync(path.join(poc, name, 'spec.json'))),
-        `Focused run ${id} has no saved proof to replay.`);
-      const finding = state.findings.find(item => item.id === saved.focus.findingId);
-      sourceFindings.push({run: id, finding: saved.focus.findingId,
-        title: finding?.title ?? saved.focus.findingId});
+        `Proof run ${id} has no saved proof to replay.`);
+      if(focused){
+        const finding = state.findings.find(item => item.id === saved.focus.findingId);
+        sourceFindings.push({run: id, finding: saved.focus.findingId,
+          title: finding?.title ?? saved.focus.findingId});
+      }else{
+        let proofs=[];
+        try{proofs=JSON.parse(fs.readFileSync(path.join(root,'.bypass','runs',id,'findings.json'),'utf8'));}
+        catch{ /* The proof requirement below reports the missing evidence. */ }
+        const proofRoot=path.resolve(poc)+path.sep;
+        const confirmed=proofs.filter(item=>item.verdict==='confirmed'&&item.id&&item.proof&&
+          path.resolve(item.proof).startsWith(proofRoot)&&
+          path.basename(item.proof)==='poc.mjs'&&fs.existsSync(item.proof)&&
+          fs.existsSync(path.join(path.dirname(item.proof),'spec.json')));
+        need(confirmed.length>0,`Connected run ${id} has no sealed confirmed proof to replay.`);
+        for(const item of confirmed){
+          const linked=state.findings.find(finding=>finding.id===item.sourceFinding?.id||
+            finding.verification?.blackboxRun===id&&finding.verification?.blackboxFindingId===item.id);
+          sourceFindings.push({run:id,finding:linked?.id??null,title:linked?.title??item.title,
+            proof:item.id});
+        }
+      }
     }
     const file = receiptFile(root, review);
     if (fs.existsSync(file)) {
@@ -165,14 +185,19 @@ export async function remediationCheckpoint(root, input, {signal, request = safe
       const replay = await verify(root, id);
       const proofs = replay.proofs.map(proof => ({id: proof.id, verdict: proof.verdict,
         reason: proof.reason ?? null}));
-      const status = replay.integrity?.ok !== true ? 'inconclusive' :
-        proofs.some(proof => proof.verdict === 'confirmed') ? 'still_vulnerable' :
-        proofs.length && proofs.every(proof => proof.verdict === 'not_reproduced') ? 'not_reproduced' : 'inconclusive';
-      results.push({run: id, ...receipt.sourceFindings.find(item => item.run === id), status, proofs,
-        ...(replay.integrity?.ok !== true ? {reason: 'Saved evidence integrity was not verified.'} : {})});
+      const linked=receipt.sourceFindings.filter(item=>item.run===id);
+      for(const item of linked){
+        const matching=item.proof?proofs.filter(proof=>proof.id===item.proof):proofs;
+        const verdict=replay.integrity?.ok!==true?'inconclusive':
+          matching.some(proof=>proof.verdict==='confirmed')?'still_vulnerable':
+          matching.length&&matching.every(proof=>proof.verdict==='not_reproduced')?'not_reproduced':'inconclusive';
+        results.push({run:id,...item,status:verdict,proofs:matching,
+          ...(replay.integrity?.ok!==true?{reason:'Saved evidence integrity was not verified.'}:{}),
+          ...(!matching.length?{reason:'Saved proof was absent from replay results.'}:{})});
+      }
     } catch (error) {
-      results.push({run: id, ...receipt.sourceFindings.find(item => item.run === id),
-        status: 'inconclusive', proofs: [], reason: error.message});
+      for(const item of receipt.sourceFindings.filter(item=>item.run===id))
+        results.push({run:id,...item,status:'inconclusive',proofs:[],reason:error.message});
     }
   }
   receipt.results = results;
