@@ -1,7 +1,7 @@
 # Policy-based signal discovery — design and MVP
 
 Status: MVP implemented, 2026-10-30. Automated host/API responses exercise the
-engine; a real-model quality benchmark has not been established. It extends the design in [VULNERABILITY_DISCOVERY.md](VULNERABILITY_DISCOVERY.md).
+engine; a real-model quality benchmark has not been established.
 
 The goal is an independent AI discovery path that can identify violations of
 security invariants, including authorization mistakes that produce no CodeQL

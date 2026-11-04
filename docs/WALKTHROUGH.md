@@ -1,48 +1,29 @@
-# Walk through Bypass inside Muse
+# First security audit
 
-Setup uses choices with recommendations and a custom-answer/note field. Reuse inputs already given; do not answer the same question twice. For signed-in checks, choose **Create two test accounts**, **Use existing test accounts**, or **Continue without accounts**. The first option records permission for at most two attempts; it does not ask you to find Firebase IDs or keys. Bypass discovers those from authorized public app configuration. Discovery failure offers recovery choices while other checks continue. Arbitrary CLI custom instructions are interpreted by Muse only; standalone pickers accept exact custom values.
+Use the [standalone CLI](../README.md#standalone-cli) or the Muse Code plugin. Both keep project state and evidence local, but they use different model connections: the CLI connects to a Muse model API or local Muse model, while the plugin uses the active Muse session.
 
+## Standalone CLI
 
-Install and approve the plugin using the [README](../README.md), then open a new Muse session. No separate model configuration or Docker is required for this plugin workflow.
+1. Install Bypass, then run `bypass onboard` from your application checkout. You can also enter a local folder or Git URL in the wizard.
+2. Choose **Code only**, **Code + running app**, or **Running app only**. On a saved checkout, the wizard shows the previous choice and asks again. For a combined audit, select the saved app or enter another URL before live requests start.
+3. Choose **Meta Model API** or a local Muse model. Meta Model API asks for its key in the same step, offers available Muse models, and checks the connection. Muse Spark 1.3 Contributor is the lowest-cost guided choice.
+4. For live testing, review the app origin, environment, allowed paths and HTTP methods, then authorize that scope once. DNS or HTTPS ownership proof is an optional project setting. Accounts are optional for anonymous checks.
+5. The first audit starts after setup. Watch the completed phases, HTTP checks, Muse calls, proof replay and coverage. A cited source concern stays unproven until fresh live controls confirm it.
+6. Open `/results` for impact and remediation, `/memory` for saved knowledge, and `/context` for relevant evidence and exact local file locations. `bypass blackbox verify <run-id>` replays sealed live proofs; `bypass blackbox export <run-id>` saves standalone regression tests.
 
-## Your application
+Project memory is in `<checkout>/.bypass/state.json`. Audit reports, coverage, request evidence and proofs are in `<checkout>/.bypass/runs/`. The CLI prints the exact paths for each run. See [CLI commands](COMMANDS.md) and [security memory](SECURITY_MEMORY.md).
 
-1. Type `/bypass:start`, or ask: “Use Bypass to review this app and guide me through the missing setup.”
-2. Choose **Code only**, **Code + running app**, or **Running app only** in Muse's picker. Code review needs the actual application folder or Git URL. Muse connects/clones that source and validates it before calling it ready. An empty parent directory and the Bypass tooling folder are not your application. App-only connects a managed profile with no repository.
-3. Muse surfaces the billing limitation once: MCP does not attest subscription mode. Confirm your host is using its subscription. For confidential/personal code, select Standard mode by turning Contributor mode off in Muse `/settings`. Bypass does not change your settings.
-4. For app review, Muse reuses the supplied app URL and environment. If missing, provide the URL, then choose **Production**, **Staging**, **Preview**, or **Local development** in the environment picker. Localhost is recognized automatically. Bypass reuses valid ownership for the same normalized app origin across checkout changes and new sessions. Otherwise publish its exact TXT record and say “check DNS.” Code review can continue while DNS updates when code was selected.
-5. Choose allowed methods and paths. The scope summary includes the app, environment, rate, expiry and optional anonymous reads of public pages/scripts for sign-in discovery. POST creates test data/jobs; PUT/PATCH modify data; DELETE removes it. Ownership alone does not authorize testing. Existing exact scope carries across a checkout switch for the same selected app; a different app requires its own permission.
-6. Credentials are optional. Muse investigates signup from source or authorized app observations. Once account creation is authorized, Bypass tries up to two dedicated JSON/Firebase signups and stores credentials privately. It first resolves missing Firebase config from existing config or public app pages and linked scripts. A missing `.env` is not a reason to stop and ask for the project ID. Generated config is kept separately from the app's environment. A synthetic email namespace is supplied automatically; existing attempts prevent duplicate users. Existing accounts can also be imported without exports or a restart. Unverified access is an observation unless the route requires verified email.
-7. Muse derives routes/selectors and discovers exact owned IDs from an authorized collection. It reads source, submits cited hypotheses, and executes approved JSON/HTML probes. The saved worklist tracks discovered routes and configured controls. A finding does not end the assessment: Muse continues independent checks, adds newly discovered probes, and records specific reasons for blocked or unsupported routes. An early `finish` returns the next pending action. Each route marked checked requires runtime HTTP evidence; a source assessment cannot manufacture a pass.
-8. During review, Muse shows Done / Now / Next, elapsed time and executed/remaining/blocked counts. Time estimates are based on observed HTTP durations and cover only configured probes; source investigation and resource setup remain uncertain. Progress messages come from Muse while it reasons and from Bypass while tools execute.
-9. Confirmed HTTP findings immediately save failing regressions. The final report includes confirmed and source-only findings, recommendations, saved checks, remaining blockers and cleanup status. A review does not authorize application edits; “keep working” continues the assessment. A separate explicit request to fix an issue can start remediation and replay its saved test. A passing replay closes only its matching previously confirmed finding; blocked credentials cannot count as a fix. Use `/bypass:build` before adding a feature to retrieve the saved context.
+## Muse Code plugin
 
-You stay in Muse after external DNS setup. Muse calls the typed tools; you do not copy JSON or run model-connection commands. `/bypass:status` gives Done / Now / Next; `/bypass:help` discovers actions.
+1. Install and approve the plugin, then open a fresh Muse session in your application folder. Type `/bypass:start` and choose the review type. Supply the repository path or Git URL for code review and the app URL for live testing.
+2. Muse connects the selected source or app profile. For a running app, approve the displayed testing paths, methods, rate and expiry. The plugin uses its current Muse session for reasoning; it does not require a separate Meta API key. Source review can proceed while optional ownership verification is pending.
+3. Use `/bypass:review` for source or combined review, or `/bypass:blackbox` for a running-app audit. Bypass executes scoped requests and independently replays supported proofs. Review the findings, limits and saved evidence before claiming a result.
+4. Use `/bypass:context` or `/bypass:build` for remembered findings and source citations. Their tools return the local memory file and available report/proof paths. Old observations are historical; current behavior needs fresh checks.
 
-## The self-contained demo
+The [plugin command map](PLUGIN_COMMANDS.md) lists all operations. A review request produces evidence and recommendations; application fixes require a separate request.
 
-Type `/bypass:demo`. This request authorizes routine changes to a separate public fixture, not your customer app.
+## Optional local fixture
 
-| Milestone | What you see | Evidence |
-| --- | --- | --- |
-| Setup | Generated app folder, loopback URL, two public accounts | No model profile or API key needed |
-| Source investigation | Muse reads `policy.mjs` and `server.mjs`, identifies missing ownership check | Exact file/line/quote; suspected only |
-| HTTP proof | Muse requests the configured invoice probe | Owner 200; other account 200; anonymous 401; unauthorized access confirmed |
-| Fix | Muse applies a fixture-only policy change | Source edit alone is not a verified fix |
-| Retest | Owner still succeeds; other account and anonymous are denied | Existing failing regression passes; matching finding becomes fixed |
-| Replay/export | Independent Node test and deterministic replay | Zero plugin model calls |
-| Regression | Fixture bug restored and the saved test fails | Expected security result, not an execution error |
-| Restore/stop | Fixed again, verified and stopped | Evidence retained; prior application selection restored |
+`/bypass:demo` in Muse runs a separate sample invoice app to demonstrate a proof, fixture fix and regression replay. It does not assess your application. The fixture is useful for training and product validation; the first customer audit starts with `/bypass:start` or `bypass onboard`.
 
-A demo may also run one monitor tick and retrieve feature context. That is one scheduled execution, not always-on monitoring. An explicitly requested legacy offline preview remains labeled seeded discovery; it never substitutes for a failed real review.
-
-## Recovery
-
-- **Source changed:** start a new review for fresh citations. Existing findings can still be retested after the fix.
-- **App login/resource blocked:** repair the named credential reference or resource. DNS and prior evidence remain saved.
-- **Muse authentication/allowance blocked:** use the host account/usage controls, then resume. No separate API request is made.
-- **Plugin missing/stale:** inspect/approve the installed plugin and open a fresh session; loaded and installed versions are shown separately.
-- **Stopped real fixture:** resume its saved instance; known fixture forms restart without new IDs. A deliberately stopped fixture requires an explicit resume.
-- **Interrupted host review:** ask Muse to inspect its durable review status and continue. HTTP actions are bounded/cancellable; incomplete and not-run checks are explicit.
-
-The standalone wizard is a separate experience: `bypass onboard` asks for an API provider, key reference, model and endpoint, then the selected code/app setup. App-only selections persist across CLI invocations from the same folder; `--project` still overrides the saved selection. [CLI examples and migration](AI_MODES.md).
+Older manual fixture scripts and integration checklists are available in Git history if an investigation needs them; they are not current onboarding instructions.

@@ -324,22 +324,13 @@ bypass scan --mode combined --project /path/to/app  # source + full live audit; 
 
 Run `bypass init /path/to/app` first if the application is not connected. The first-run experience supports **Meta Model API** and local OpenAI-compatible servers running **Muse Spark Open** or **Muse Glimmer**. Explicit legacy provider profiles remain available through advanced commands but are not offered during onboarding. Bypass never changes billing paths or enables Muse Spark Contributor without an explicit model selection. [Provider examples and migration](docs/AI_MODES.md).
 
-## See the complete demo
+## Optional Muse demo
 
 ```text
 /bypass:demo
 ```
 
-Muse Code investigates an isolated invoice app. Bypass proves cross-account access, saves a failing regression, and retests the fixture fix. Reintroducing the bug makes that regression fail again without model calls for replay. This demo explicitly includes fixture remediation; ordinary assessments only report and recommend.
-
-<details>
-<summary>Preview the standalone walkthrough</summary>
-
-![Bypass CLI showing proof, fix verification, regression, and next steps](docs/images/cli-workspace.png)
-
-This screenshot is from the local walkthrough: discovery is seeded; HTTP proof, fix verification, and regression replay are real. [Walkthrough](docs/WALKTHROUGH.md).
-
-</details>
+Muse Code investigates an isolated invoice app. Bypass proves cross-account access, saves a failing regression, and retests the fixture fix. This is a training fixture, separate from your application; start a customer audit with `bypass onboard` or `/bypass:start`. See the [first audit walkthrough](docs/WALKTHROUGH.md).
 
 ## GitHub security agent
 
@@ -412,6 +403,7 @@ For CLI help, use `bypass --help` or `bypass <command> --help`. A local monitor 
 
 ## Documentation
 
+- [Documentation index: current guides and historical records](docs/README.md)
 - [Source scanner: languages, rules, scope, reports, and recovery](scanner/README.md)
 - [AI policy discovery: policies, evidence, coverage, and custom context](docs/POLICY_SIGNAL_DISCOVERY.md)
 - [Black-box audit: supported checks and evidence limits](docs/BLACKBOX_AUDIT.md)
@@ -419,7 +411,7 @@ For CLI help, use `bypass --help` or `bypass <command> --help`. A local monitor 
 - [AI modes: Muse Code, provider APIs, and local/self-hosted models](docs/AI_MODES.md)
 - [Security memory and feature context](docs/SECURITY_MEMORY.md)
 - [GitHub agent setup](docs/GITHUB_AGENT.md)
-- [Architecture](docs/ARCHITECTURE.md) · [Installation](docs/RELEASES.md) · [UAT evidence and open issues](docs/MERGE_UAT_2026_10_30.md)
+- [Architecture](docs/ARCHITECTURE.md) · [Installation](docs/RELEASES.md)
 
 ## Downloads and releases
 

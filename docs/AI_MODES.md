@@ -1,4 +1,4 @@
-# AI execution modes — 0.5
+# Muse model execution modes
 
 ## Architecture
 

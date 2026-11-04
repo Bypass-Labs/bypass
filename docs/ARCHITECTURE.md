@@ -1,8 +1,5 @@
 # Architecture and implementation boundaries
 
-For the proposed discovery pipeline, see
-[Vulnerability discovery service](VULNERABILITY_DISCOVERY.md).
-
 The whitebox scanner lives in `scanner/` (Python core, policies, protocol) and
 `src/scanner/` (Node Docker/MCP/API-driver boundaries). Users choose SAST, policy,
 or both, with independent include/exclude filters. Python owns snapshots,
@@ -69,7 +66,7 @@ Node 22 supplies HTTP/TLS, DNS, child processes, readline, filesystem operations
 | `blackbox/` | Broad route discovery, scoped live tests, independent proof replay, report and coverage |
 | `agent-runtime.mjs` / `agents/worker.mjs` | One networkless, constrained Docker source worker and its bounded read loop |
 | `inference.mjs` | Host-side structured model connection for source planning and review |
-| `poc.mjs` | Independent real-AI exercise app and public account setup |
+| `poc.mjs` | Isolated fixture support for tests and the optional exercise flow |
 | `checks.mjs` | Check bindings, persistence, freshness, and export |
 | `portable-check.mjs` | Independent HTTP regression runtime copied into exported suites |
 | `jobs.mjs` | Durable runs, cancellation, local scheduling |
@@ -123,9 +120,9 @@ A failed saved regression wins over other incomplete outcomes. A mock scan alway
 
 One `run_*` record is the user-facing parent. A live or combined parent links one sealed `bx-*` evidence folder and reconciles confirmed black-box findings into project state instead of creating a second competing audit result. `report.md`, `coverage.json`, `evidence.jsonl`, generated proofs and the per-run scope remain under that linked folder. Project identity references are translated into the black-box environment only for the active process; credential values are never written to scope or state.
 
-`mockCandidate` remains only for the optional offline preview and seeded walkthrough. Mock examples cannot enter the arbitrary-app verification path. Real findings carry `engine: docker`, a scoped binding and genuine HTTP evidence; a fixed result creates the existing standalone regression contract. Two account-login controls prevent expired or identical account sessions from masquerading as passing negative controls.
+`mockCandidate` remains only for the optional offline preview and fixture tests. Mock examples cannot enter the arbitrary-app verification path. Source findings remain unproven until scoped HTTP replay confirms them. Confirmed live findings retain their sealed run and proof IDs, and exported regression tests can check a later fix. Account-boundary checks require valid, distinct identity controls.
 
-The POC covers cross-account access and missing authentication for top-level JSON resource identifiers. Source review is bounded by file/read/model budgets and does not imply complete coverage. HTTP-only review can establish an exposure without claiming a source location. Inference failure retains partial evidence and never substitutes a seeded finding. See [real POC architecture, limits and usage](REAL_POC.md).
+Source and live review are bounded by file, request, time and model-call limits; neither implies complete vulnerability coverage. HTTP-only review can establish an exposure without claiming a source location. Inference failure retains partial evidence and never substitutes a seeded finding. See [running-app security audit](BLACKBOX_AUDIT.md).
 
 ## Boundaries deliberately exposed
 

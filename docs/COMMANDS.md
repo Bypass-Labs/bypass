@@ -8,7 +8,7 @@ Global: --project <path>, --json, --non-interactive, --help, --version.
 
 ## Interactive shortcuts
 
-Run `./bypass --project /path/to/your/app` to open the persistent workspace. Press Enter for the suggested action. Type `/` for a searchable command list: `/review`, `/blackbox`, `/engine`, `/repo`, `/app`, `/models`, `/results`, `/tests`, `/status`, `/memory`, `/context`, `/history`, `/plugin`, `/settings`, `/help`, and `/quit`. The slash is optional. `?`, `back`, and `q` still work. `/help all` shows the complete public catalog.
+Run `bypass --project /path/to/your/app` to open the persistent workspace. Press Enter for the suggested action. Type `/` for a searchable command list: `/review`, `/blackbox`, `/engine`, `/repo`, `/app`, `/models`, `/results`, `/tests`, `/status`, `/memory`, `/context`, `/history`, `/plugin`, `/settings`, `/help`, and `/quit`. The slash is optional. `?`, `back`, and `q` still work. `/help all` shows the complete public catalog.
 
 Use ↑↓ and Enter in menus, Tab to complete a slash command, ↑↓ on an empty command bar to recall session commands, Ctrl+O to show or hide the activity log, Ctrl+T to toggle the task panel, PgUp/PgDn to scroll, and Esc to clear a draft, go back, or stop a running operation. Ctrl+C exits with saved project state retained. Enter skips a running model connection check.
 
@@ -16,7 +16,7 @@ Use ↑↓ and Enter in menus, Tab to complete a slash command, ↑↓ on an emp
 
 These shortcuts belong to the interactive screen; shell commands use the catalog below. Raw catalog commands also work inside the workspace, except processes that need their own terminal (`auth login`, `mcp serve`, internal server commands). A foreground monitor worker requested in the workspace starts detached; `monitor worker --once` runs a single tick. Stopping `run watch` stops watching, not the background job; use `run stop <id>` to request job cancellation.
 
-For a scrolling interface or screen reader, use `BYPASS_PLAIN=1 ./bypass`. `TERM=dumb` also selects the plain interface. `NO_COLOR=1` disables color. JSON and noninteractive output never use the full-screen renderer.
+For a scrolling interface or screen reader, use `BYPASS_PLAIN=1 bypass`. `TERM=dumb` also selects the plain interface. `NO_COLOR=1` disables color. JSON and noninteractive output never use the full-screen renderer.
 
 ## blackbox
 
@@ -370,33 +370,37 @@ Options: --provider, --target, --force, --agent, --action-ref, --every, --revisi
 
 Start the typed stdio MCP server.
 
-## demo start
+## Optional local fixture commands
+
+The `demo` commands operate on the isolated Ledger Git fixture. They do not assess your connected repository or deployed app. Use `bypass onboard` for a first customer audit.
+
+### demo start
 
 Create the Ledger Git fixture and start its HTTP server.
 
 Options: --dir, --port.
 
-## demo status
+### demo status
 
 Show the fixture state.
 
-## demo fix
+### demo fix
 
 Enable ownership enforcement in the local fixture.
 
-## demo regress
+### demo regress
 
 Reintroduce the local fixture defect.
 
-## demo add-route
+### demo add-route
 
 Add an uncovered export route to the fixture.
 
-## demo reset
+### demo reset
 
 Reset fixture behavior while retaining evidence.
 
-## demo stop
+### demo stop
 
 Stop the local fixture server.
 
@@ -414,7 +418,7 @@ See the [generated CLI reference](CLI_REFERENCE.md). It is checked against the s
 
 Run status is `failed` for execution errors, `incomplete` for blocked/bounded results with exit 3, `cancelled` for cancellation and `completed` when the requested execution finished with a conclusive behavior result. `run watch` exits for all terminal statuses. `status` and `context` return a compact latest-run summary; `run show <id>` / `bypass_run` returns the detailed evidence.
 
-## Optional accounts and faster review (0.7.1)
+## Optional accounts and faster review
 
 `bypass --help` shows a short starting menu; `bypass --help --reference` shows every command. The primary plugin flow is `/bypass:start` inside Muse.
 
