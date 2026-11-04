@@ -104,7 +104,7 @@ export const commands={
   'monitor resume':command('monitor resume <name>','Resume a monitor.'),
   'monitor remove':command('monitor remove <name>','Remove a monitor; retain run evidence.'),
   'monitor worker':command('monitor worker','Run the real local scheduler (machine must remain awake).','detach once stop'),
-  'ci init':command('ci init','Generate GitHub saved checks, or a Meta API security agent with --agent.','provider target force agent action-ref every revision-path revision-field'),
+  'ci init':command('ci init','Generate GitHub saved checks, or a Meta API security agent with --agent.','provider target force agent action-ref release-id every revision-path revision-field'),
   'mcp serve':command('mcp serve','Start the typed stdio MCP server.'),
   'demo start':command('demo start','Create the Ledger Git fixture and start its HTTP server.','dir port'),
   'demo status':command('demo status','Show the fixture state.'),
