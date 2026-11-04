@@ -8,6 +8,7 @@ import { manifest, scannerCapabilities, protocolVersion, unavailable, resolveMan
 import { ScannerClient } from '../src/scanner/client.mjs';
 import { scannerContainerArgs, scannerPackageFiles, scannerDirectory, scannerDoctor, prepareScanner, connectScanner, defaultResources } from '../src/scanner/runtime.mjs';
 import { runAPIDriver } from '../src/scanner/api-driver.mjs';
+import { apiProfile } from '../src/providers.mjs';
 import { inExecutionMode } from '../src/execution-mode.mjs';
 import { validateJSON } from '../src/schema.mjs';
 import { parse } from '../src/catalog.mjs';
@@ -19,6 +20,25 @@ import { mcpClient } from './mcp-client.mjs';
 const python = process.env.BYPASS_TEST_PYTHON || 'python3';
 const pythonAvailable = spawnSync(python, ['--version']).status === 0;
 const pythonEnv = { ...process.env, PYTHONPATH: path.join(scannerDirectory, 'src'), PYTHONDONTWRITEBYTECODE: '1' };
+
+test('fractional scanner leases become integer model deadlines without extending the lease',async t=>{
+  const now=Date.now();t.mock.method(Date,'now',()=>now);
+  for(const timeoutMs of [0,60000]){
+    const profile=apiProfile('test',{provider:'custom','base-url':'http://127.0.0.1:8080/v1',model:'fixture','secret-env':'BYPASS_UNIT_API_KEY','timeout-ms':timeoutMs});
+    const run={id:'scan_18aa42c25cc7467c84be5a64',status:'awaiting_reasoning'};
+    const task={id:'fractional',kind:'discovery',phase:'mapping',expiresAt:(now+10000.75)/1000,resultSchema:{type:'object'}};
+    const result=await runAPIDriver({models:[profile],activeModel:'test'},{run,
+      client:{call:async operation=>operation==='next_task'?{run,task}:operation==='submit'?{run:{...run,status:'completed'},status:'completed'}:{run}},
+      sessionFactory:()=>({turn:async(_messages,options)=>{
+        assert.equal(options.timeoutMs,10000);
+        assert.doesNotThrow(()=>AbortSignal.timeout(options.timeoutMs));
+        options.onProgress({kind:'phase',phase:'request'});
+        return {action:'submit',result:{}};
+      }})
+    });
+    assert.equal(result.status,'completed');
+  }
+});
 
 function fakeScanner(t, mode, settings = {}) {
   const directory = temp(), script = path.join(directory, 'scanner.mjs');

@@ -115,6 +115,7 @@ test('standalone retains task leases with a no-timeout provider profile',{skip:!
       turns++;options.onProgress({kind:'phase',phase:'request'});
       task??=JSON.parse(messages[1].content);
       assert.ok(options.timeoutMs>0&&options.timeoutMs<=task.expiresAt*1000-Date.now()+1000);
+      assert.equal(Number.isInteger(options.timeoutMs),true);
       const last=JSON.parse(messages.at(-1).content);
       if(!last.evidence)return {action:'evidence',operation:'read',arguments:{path:'app.py'}};
       const ref=last.evidence.reference.id;
@@ -155,7 +156,7 @@ test('standalone policy uses the real provider transport only at the configured 
     });
   });
   await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));t.after(()=>new Promise(resolve=>server.close(resolve)));
-  await execute('model add',['policy-api'],{project:root,provider:'custom','base-url':`http://127.0.0.1:${server.address().port}/v1`,model:'fixture',stream:false,'secret-env':key,'allow-private':true});
+  await execute('model add',['policy-api'],{project:root,provider:'custom','base-url':`http://127.0.0.1:${server.address().port}/v1`,model:'fixture',stream:false,'secret-env':key,'allow-private':true,'timeout-ms':0});
   const result=await execute('discover',[],{project:root,'discovery-only':true,detector:'policy',policy:'authz/object-access'},{scannerConnect:connect});
   assert.equal(result.run.status,'completed',JSON.stringify(result));assert.equal(requests,4);
   assert.equal(result.run.reasoning.independentModelRequests,4);

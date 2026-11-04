@@ -359,6 +359,14 @@ task leases or overall stage budgets. Slow local generation may still exhaust
 those independent limits; inspect the run's coverage and unresolved cases rather
 than treating it as a completed review.
 
+An interrupted scanner run prints its failure message and stores its manifest
+under `.bypass/scanner/<run-id>/manifest.json`, separately from `scan` evidence.
+Use `discover status <run-id>` to inspect the saved state and
+`discover resume <run-id>` to retry unfinished tasks when the recorded source,
+runtime, and stage budgets still permit it. Accepted CodeQL signals and completed
+evaluation cases are retained; restarting a run is necessary if its stage budget
+has expired.
+
 ## Migration
 
 Existing evidence and app configuration remain valid. Old `muse-code`, `local` and `endpoint` profiles remain visible but are blocked for standalone AI; Bypass never reads a coding-agent credential store or translates a subscription login into an API key. Create a new profile above, explicitly select it with `model use`, then optionally run `model test`. For a self-hosted/local server use `custom` and its API key, or the documented placeholder for a no-auth loopback server. Standalone inference always requires a nonempty credential environment variable.

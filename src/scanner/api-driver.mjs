@@ -51,7 +51,7 @@ async function drive(profile,{client,run,limits={},evaluationLimits={},signal,on
       for(let turn=0;turn<10;turn++){
         need(requests[stage]<budget.maxModelRequests,'Standalone model request budget exhausted.',3);
         const leaseRemaining=task.expiresAt*1000-Date.now();
-        const remaining=profile.timeoutMs===0?leaseRemaining:Math.min(leaseRemaining,profile.timeoutMs);
+        const remaining=Math.floor(profile.timeoutMs===0?leaseRemaining:Math.min(leaseRemaining,profile.timeoutMs));
         need(remaining>0,'Reasoning task lease expired.',3);
         let requested=false,action;
         try {
