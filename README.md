@@ -2,9 +2,11 @@
 
 **Build with Muse. Test the code and the running app. Keep the proof.**
 
-Bypass helps teams find security issues while building an application. Muse Code investigates source and observed behavior; Bypass enforces the approved test scope, executes supported checks, and keeps the evidence. A reproduced issue can become a saved security test that replays without model calls. The same workflow is available through a standalone CLI and MCP tools.
+Bypass turns Muse Code into an application security agent. It combines white-box source review, gray-box investigation informed by code and test identities, and black-box testing of an approved running app. Muse chooses what to investigate next. Bypass enforces the scope, runs the checks, and confirms supported findings from recorded behavior. Supported proofs become repeatable security tests that run without a model and give Muse app-specific context for the next feature.
 
-[Quick start](#start-in-muse-code) · [White-box](#white-box-source-review) · [Black-box](#black-box-audit) · [CLI](#standalone-cli) · [GitHub agent](#github-security-agent) · [Docs](#documentation)
+Run Bypass as a native Muse Code plugin or a standalone CLI on macOS, Linux, and Windows. The plugin uses the active Muse session without a separate Bypass model key. The CLI supports Meta Model API or an explicitly configured compatible endpoint for self-hosted Muse Spark Open. Test a local app, preview, staging, or an authorized production deployment.
+
+[How it works](#how-bypass-works-with-muse) · [What judges can verify](#what-judges-can-verify) · [Quick start](#start-in-muse-code) · [White-box](#white-box-source-review) · [Black-box](#black-box-audit) · [CLI](#standalone-cli) · [GitHub agent](#github-security-agent) · [Docs](#documentation)
 
 ## Choose your experience
 
@@ -15,32 +17,79 @@ Bypass helps teams find security issues while building an application. Muse Code
 
 Windows uses the matching `install.ps1` or `install/muse.ps1` URL. The standalone wizard connects Meta Model API authentication and a Muse model before it asks for your application.
 
-## Overview
+## How Bypass works with Muse
 
 Bypass is a native plugin for **[Muse Code](https://dev.meta.ai/docs/muse-code)**, Meta's coding agent. It adds security skills, slash commands, MCP tools, and saved security context to your existing coding session. Muse Code investigates and explains; Bypass runs scoped operations and keeps the evidence.
 
 Start with the Muse Code plugin. A **standalone CLI** is also available for terminal workflows, and the GitHub integration brings reviews and saved checks into CI. Assessments report findings, recommend fixes, and create supported regression tests; editing application code requires a separate request.
 
-### How the evidence flows
+![Bypass architecture: Muse Code plugin and CLI model access, CodeQL SAST, source-informed testing, black-box DAST, finding validation, regression replay, and GitHub PR review](docs/assets/muse-security-loop.svg)
 
-![Bypass execution and evidence flow across Muse Code, the CLI, source review, running-app testing, saved checks, and GitHub](docs/assets/muse-security-loop.svg)
+The Muse plugin sends decisions through typed MCP tools; the CLI validates model responses against schemas. The shared runner checks origin, methods, paths, credential destinations, rate, and deadline before requests. CodeQL and policy output remain source signals. A confirmed runtime finding requires executed controls and fresh proof replay. Reports preserve incomplete coverage. [Execution modes](docs/AI_MODES.md) · [Black-box design and coverage](docs/BLACKBOX_AUDIT.md).
 
-CodeQL and policy discovery produce source signals. A code review adds cited hypotheses; a combined audit passes those leads to the full running-app audit while also testing other observed routes. A source citation or model suggestion alone is not a confirmed live vulnerability: the report separates reproduced HTTP proofs, inconclusive checks, and untested work. Supported proofs can be replayed after a fix and exported as Node regression tests. [Audit design and coverage](docs/BLACKBOX_AUDIT.md) · [Evaluation contract](docs/AUDIT_EVALUATION.md).
+## Three testing perspectives, one workflow
 
-### Key benefits
+| Perspective | What Bypass does | What the result means |
+| --- | --- | --- |
+| **White box** | Runs CodeQL SAST or policy discovery when selected, then lets Muse inspect bounded source and cite relevant lines. | Finds source signals, trust boundaries, and routes worth testing. Source evidence alone does not prove a live vulnerability. |
+| **Gray box** | Uses source routes, API contracts, observed data, and approved test identities when available to choose targeted runtime checks. | Tests app-specific rules, including who may see a resource and which behavior must be denied. |
+| **Black box** | Discovers public pages, scripts, source maps, API and GraphQL leads; probes the approved app through HTTP and, where needed, isolated Chrome. | Confirms supported issues from observed responses, negative controls, and fresh replay. It works without a repository. |
 
-- **Work inside Muse Code.** Use your active Muse Code account and model, with no separate API key for plugin reasoning.
-- **Inspect code and test behavior.** Choose CodeQL SAST, AI policy discovery, or both; investigate source evidence and use black-box testing to validate supported vulnerabilities against a running app.
-- **Keep the test.** Replay saved HTTP proofs after a fix and export supported checks to Node tests. Regression replay needs no model calls.
-- **Carry security context into feature work.** Retrieve past findings, source citations, and saved behavior requirements with `/bypass:build`. Changed source marks knowledge stale.
-- **Choose where inference runs.** Standalone AI reviews support provider APIs and API-key-protected local or self-hosted compatible endpoints. Evidence is saved locally; selected source and observations are available to the model you choose.
-- **Bring checks into GitHub.** Review PR source, verify saved checks after deployment, and schedule daily regression replay.
+### Implemented test families
 
-## Use cases
+- **Identity and access:** missing authentication, cross-account object and list access, supported GraphQL object authorization, credentialed CORS, unsigned-JWT acceptance, and bounded public-session-token exposure and replay.
+- **Browser and injection:** reflected and reviewed stored XSS, fragment-based DOM XSS, inert HTML injection, SQL boolean injection, bracketed `$eq` operator account bypass, arithmetic SSTI, command-output canaries, path traversal, XML external entities, and CRLF response-header injection.
+- **Discovery and exposure:** open redirects, host-header redirect poisoning, local-target SSRF callbacks, public credential material, private keys and credential-shaped values in client assets, plus app/API route and GraphQL inventory.
+- **Source review:** CodeQL SAST across supported languages and model-guided policy discovery for object access, privileged actions, outbound destinations, and filesystem boundaries.
 
-- **Before shipping:** scan a repository and investigate authentication, access-control, and other source concerns.
-- **Against a running app:** discover exposed routes and test supported vulnerability classes within an approved scope.
-- **After a fix or deployment:** replay the same security behavior and retain the result for future development.
+These are bounded test shapes, not exhaustive coverage of each class. For example, SSRF proof uses an audit-owned local callback; stored-XSS proof uses reviewed local write/read routes; GraphQL authorization proof requires a supported list/item schema and two verified identities. A bracketed-operator bypass does not establish the backend database type. Reports name untested routes, classes, and missing prerequisites. [Executable coverage and limits](docs/BLACKBOX_AUDIT.md) · [Source scanner](scanner/README.md).
+
+## Why this goes beyond a scan
+
+**A source warning is a lead. A confirmed finding is a reproduced behavior. A fixed finding becomes a test.**
+
+CodeQL supplies established static rules. Muse adds app-specific reasoning: what a route is for, which account owns the data, what a response suggests, and which safe follow-up to try. The live engine then tests approved paths with owner, other-account, anonymous, invalid-token, baseline, and canary controls where applicable. It preserves the evidence and retests the fix.
+
+| The developer's question | Bypass's answer |
+| --- | --- |
+| Is this code pattern exploitable in this app? | Keep the source signal separate; test an approved running target before claiming live impact. |
+| Did a response expose another user's data or merely return HTTP 200? | Compare verified identities, resource ownership, and denial controls. |
+| Did the patch fix the issue without breaking intended access? | Replay the original proof and the authorized behavior controls. |
+| Will the issue return after the next feature or deployment? | Save supported proofs as Node regressions; replay approved checks locally, in CI, after deployment, or on a configured schedule. |
+| Will Muse remember the app's security rules while writing code? | Retrieve verified findings, saved checks, and source freshness through plugin context and typed tools. |
+
+The handoff between stages is the product loop: source evidence guides scoped live testing; a proved issue becomes a regression; the result returns to Muse before the next edit. The same evidence and replay are available through the CLI, MCP, and GitHub workflows.
+
+## Secure by default as the app changes
+
+1. **Build and review.** Muse can retrieve source signals and saved security requirements before a change.
+2. **Investigate.** Muse chooses source or running-app work; Bypass limits HTTP checks to the approved resources and identities.
+3. **Fix and verify.** After the developer requests a fix, Muse can change the code and Bypass can replay the original proof and required controls.
+4. **Keep checking.** Supported proofs become saved and exportable Node tests. Replay them locally, in CI, after a verified deployment, or on a configured daily or six-hour GitHub schedule without model calls.
+5. **Build the next feature.** Muse receives relevant local security context. Stale citations and incomplete checks remain labeled.
+
+The GitHub agent uses Meta Model API to review each PR's immutable source revision and cite file-and-line concerns. Approved live checks replay separately after deployment or on the configured schedule. PR concerns are report-only by default; teams can opt into a severity gate. [GitHub agent](docs/GITHUB_AGENT.md) · [Security context](docs/SECURITY_MEMORY.md).
+
+## Meta models do work a scanner cannot pre-script
+
+In the native plugin, the active Muse Code model reads bounded source and observed route facts, selects checks through typed MCP tools, interprets returned evidence, and decides the next step. That can be Muse Spark or Muse Wonder, depending on the developer's session. The plugin uses that session without a second model key.
+
+The CLI's Meta Model API profile defaults to `muse-spark-1.3` and accepts another supported model ID, including Muse Wonder. Muse Spark 1.3 Contributor is an explicit lower-cost onboarding choice. The GitHub PR agent also uses Meta Model API and defaults to `muse-spark-1.3`; teams can configure Muse Wonder. A compatible, key-protected local endpoint can serve Muse Spark Open or Muse Glimmer for the CLI. CodeQL queries, scope enforcement, proof verification, reporting, and saved-test replay do not depend on model verdicts. [AI modes](docs/AI_MODES.md).
+
+## Show the complete loop in three minutes
+
+Start with the real Muse plugin and an authorized app. Show the three testing perspectives, follow one model-selected lead into HTTP or browser evidence, and open the finding with its impact, proof status, and coverage. After an explicit fix request, replay the proof, then show a saved check failing when the bug is reintroduced. Finish with the configured GitHub replay and the local security context Muse sees before another feature. The invoice authorization demo is a training fixture, not the scope of the engine. [First-audit walkthrough](docs/WALKTHROUGH.md) · [Audit evaluation contract](docs/AUDIT_EVALUATION.md).
+
+## What judges can verify
+
+| Area | Evidence in Bypass |
+| --- | --- |
+| **Impact** | Security checks follow development from the Muse session through an approved running app, saved regressions, CI, deployment verification, and future features. The CLI and MCP surface extend the workflow beyond Muse. |
+| **Meta AI tooling** | The plugin uses the active Muse model through skills, commands, MCP tools, and a session hook. The CLI and GitHub agent use Meta Model API; a compatible local Muse Spark Open path is available. Model decisions guide investigation while proof remains independently checked. |
+| **Technical depth** | CodeQL and policy discovery, cited source leads, scoped HTTP and browser checks, verified identities when supplied, evidence replay, coverage accounting, and model-free regression export. |
+| **Demo** | A Muse investigation, live proof, fix, red/green replay, configured future check, and next-feature security context can be shown in one workflow. |
+
+**Push the Frontier:** Muse can test the security of the app it is building, carry forward what it proved, and check whether the next change respects those rules. [Meta hackathon themes](https://dev.meta.ai/events/global-hackathon) · [Hackathon build record](HACKATHON.md).
 
 <a id="start-in-muse"></a>
 
@@ -131,10 +180,6 @@ Muse Code owns plugin reasoning and billing. Bypass cannot verify subscription b
 | GitHub PR review and smoke tests | Ask Muse Code to generate setup | `bypass ci init --agent` | GitHub Actions; Meta API key for source review |
 
 With **Code + running app**, standalone `scan --mode combined` starts the cited source review and broad scoped live reconnaissance together. In Muse Code, the plugin completes its host-directed source worklist, then starts one full scoped black-box audit with those cited source leads and the remaining combined budget. Both paths link source evidence, live coverage, findings, and proof IDs in one review. Only replayed HTTP evidence becomes confirmed.
-
-### Where Muse models take part
-
-The plugin uses the model in the active Muse Code session for source interpretation, test selection, and evidence follow-up; it does not require a second model key. The standalone CLI uses a selected Meta Model API profile or an explicitly configured compatible local server. Its Meta API default is `muse-spark-1.3`; onboarding recommends Muse Wonder when available and offers Muse Spark 1.3 Contributor as an explicit lower-cost choice. The GitHub PR agent separately uses Meta Model API, defaults to `muse-spark-1.3`, and can be configured to use Muse Wonder. Scope enforcement, CodeQL queries, proof checks, reports, and saved-test replay do not depend on a model's verdict. [Model and credential modes](docs/AI_MODES.md) · [GitHub agent](docs/GITHUB_AGENT.md).
 
 ## White-box source review
 
