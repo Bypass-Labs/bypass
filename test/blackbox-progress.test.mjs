@@ -26,6 +26,18 @@ test('Muse recovery and page progress explain preserved work without saying the 
     {label:'Muse web',text:'No new candidates reviewed in this pass · 59 remain available · continuing with saved evidence'});
 });
 
+test('source progress exposes bounded batch work and retained security leads',()=>{
+  assert.deepEqual(progressLine({stage:'source',message:
+    'Muse source review started: 37 of 37 route excerpts · 4 bounded batches · 4 parallel workers'}),
+  {label:'Muse source',text:'Reviewing 37/37 route excerpts in 4 bounded batches · 4 parallel workers'});
+  assert.deepEqual(progressLine({stage:'source',message:
+    'Muse source batch 2/4 complete · 9 route excerpts reviewed'}),
+  {label:'Muse source',text:'Source batch 2/4 complete · 9 route excerpts reviewed'});
+  assert.deepEqual(progressLine({stage:'source',message:
+    'Muse source review complete: 4/4 bounded batches · 37/37 route excerpts · 18 route notes · 6 security leads retained'}),
+  {label:'Muse source',text:'Source review complete · 4/4 batches · 37/37 excerpts · 18 route notes · 6 security leads'});
+});
+
 test('the final audit screen leads with impact, remediation, coding brief and exact replay commands',()=>{
   const text=blackboxOutcomeText({run:'bx-20261103-1234abcd',projectRoot:'/tmp/app',origin:'https://app.test',
     memory:{saved:['memory_1']},findings:[{id:'f-001',verdict:'confirmed',severity:'medium',cwe:'CWE-307',

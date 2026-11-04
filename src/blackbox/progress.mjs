@@ -35,7 +35,16 @@ export function progressLine(event) {
     if (/naming page .*: [1-9]\d* scoped names/.test(message)) return {label: 'Muse hosts', text: message.replace(/^Muse /, '')};
     return null;
   }
-  if (stage === 'source') return /^0 source files, 0 route facts/.test(message) ? null : {label: 'Source', text: message};
+  if (stage === 'source') {
+    const started = /^Muse source review started: (\d+) of (\d+) route excerpts · (\d+) bounded batches · (\d+) parallel workers$/.exec(message);
+    if (started) return {label: 'Muse source', text: `Reviewing ${started[1]}/${started[2]} route excerpts in ${started[3]} bounded batches · ${started[4]} parallel workers`};
+    const batch = /^Muse source batch (\d+)\/(\d+) complete · (\d+) route excerpts reviewed$/.exec(message);
+    if (batch) return {label: 'Muse source', text: `Source batch ${batch[1]}/${batch[2]} complete · ${batch[3]} route excerpts reviewed`};
+    const complete = /^Muse source review complete: (\d+)\/(\d+) bounded batches · (\d+)\/(\d+) route excerpts · (\d+) route notes · (\d+) security leads retained$/.exec(message);
+    if (complete) return {label: 'Muse source', text: `Source review complete · ${complete[1]}/${complete[2]} batches · ${complete[3]}/${complete[4]} excerpts · ${complete[5]} route notes · ${complete[6]} security leads`};
+    if (/^Muse source batch .* could not finish:/.test(message)) return {label: 'Muse attention', text: message};
+    return /^0 source files, 0 route facts/.test(message) ? null : {label: 'Source', text: message};
+  }
   if (stage === 'recon') {
     if (/^Mapped \d+ public GET route candidates$/.test(message)) return {label: 'Recon', text: message};
     if (/^\d+ patterns,/.test(message)) return {label: 'Routes', text: message};

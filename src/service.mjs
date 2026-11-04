@@ -32,6 +32,7 @@ import { startDemo, updateDemo, serveDemo, demoConfig, CLI } from './demo.mjs';
 import { prepareScopeTemplate, prepareBlackboxSetup } from './blackbox/setup.mjs';
 import { runAudit } from './blackbox/index.mjs';
 import { verifyRun as verifyBlackboxRun, exportRun as exportBlackboxRun } from './blackbox/poc.mjs';
+import { projectIdentityBridge, projectBlackboxEnvironment } from './blackbox/project-scope.mjs';
 
 export const PACKAGE_ROOT=path.resolve(path.dirname(fileURLToPath(import.meta.url)),'..');
 function loadJSON(file){try{return JSON.parse(fs.readFileSync(path.resolve(file),'utf8'));}catch{throw new Fault(`Cannot parse JSON file: ${file}`);}}
@@ -83,7 +84,14 @@ export async function execute(key,args=[],o={},context={}){
       path.join(priorDir,'run.json'):path.join(priorDir,'run-start.json');
     need(fs.existsSync(metadataFile),`Run ${args[0]} has no saved scope metadata.`);
     const metadata=JSON.parse(fs.readFileSync(metadataFile,'utf8'));
-    const result=await runAudit({url:metadata.origin??metadata.scope?.target?.origin,
+    const origin=metadata.origin??metadata.scope?.target?.origin;
+    let auditEnv=process.env;
+    if(fs.existsSync(path.join(projectRoot,'.bypass/state.json'))){
+      const state=read(projectRoot),target=state.targets.find(item=>item.url===origin);
+      const bridge=projectIdentityBridge(state,target);
+      if(bridge)auditEnv=await projectBlackboxEnvironment(state,target,bridge,{signal:context.signal});
+    }
+    const result=await runAudit({url:origin,
       root:working,scopeFile:o.scope||metadata.scopeFile||null,resumeFrom:args[0],
       overrides:{rps:o.rps??metadata.rps??metadata.scope?.limits?.rps,
         modelAgents:o.agents,
@@ -96,7 +104,7 @@ export async function execute(key,args=[],o={},context={}){
         acceptLocal:!metadata.scopeFile && loopback(new URL(metadata.origin??
           metadata.scope?.target?.origin).hostname)},
       modelName:o.model||null,offline:!!o.offline,
-      signal:context.signal, infer:context.infer, modelProfileOverride:context.modelProfile,
+      signal:context.signal, env:auditEnv, infer:context.infer, modelProfileOverride:context.modelProfile,
       log:event=>context.onProgress?.(event)});
     const memory=fs.existsSync(path.join(projectRoot,'.bypass/state.json'))?
       await rememberBlackboxFindings(projectRoot,result):null;
@@ -141,6 +149,12 @@ export async function execute(key,args=[],o={},context={}){
         context.onProgress?.({stage:'setup',message:`Created local scope ${prepared.file} · includes ${prepared.scope.include.join(', ')} · ${auditRps} rps · ${prepared.scope.limits.minutes} min · ${prepared.scope.limits.modelCalls} Muse calls · ${prepared.scope.limits.maxUrls || 'unlimited'} authenticated recon URLs.`});
       }
     }
+    const projectRoot=rootFrom(working,false);let auditEnv=process.env;
+    if(fs.existsSync(path.join(projectRoot,'.bypass/state.json'))){
+      const state=read(projectRoot),target=state.targets.find(item=>item.url===appOriginInput(args[0]));
+      const bridge=projectIdentityBridge(state,target);
+      if(bridge)auditEnv=await projectBlackboxEnvironment(state,target,bridge,{signal:context.signal});
+    }
     const result=await runAudit({url:args[0],root:working,scopeFile:o.scope||null,out:o.out||null,
       overrides:{acceptLocal:!!o['accept-local'],ownerEnv:o['owner-env'],otherEnv:o['other-env'],auth:o.auth,
         identityPath:o['identity-path'],modelAgents:o.agents,httpWorkers:o['http-workers'],
@@ -154,9 +168,8 @@ export async function execute(key,args=[],o={},context={}){
       modelName:o.model||null,sourcePath:o.source||null,
       findingId:o.finding||null,focusPath:o['focus-path']||null,
       revisionPath:o['revision-path']||null,revisionField:o['revision-field']||'revision',
-      signal:context.signal, infer:context.infer, modelProfileOverride:context.modelProfile,
+      signal:context.signal, env:auditEnv, infer:context.infer, modelProfileOverride:context.modelProfile,
       log:event=>context.onProgress?.(event)});
-    const projectRoot=rootFrom(working,false);
     const memory=fs.existsSync(path.join(projectRoot,'.bypass/state.json'))?
       await rememberBlackboxFindings(projectRoot,result):null;
     return outcome({...result,memory},result.exitCode);
@@ -375,14 +388,31 @@ export async function execute(key,args=[],o={},context={}){
     case 'model remove':result=await change(root,state=>{named(state.models,args[0],'Model');state.models=state.models.filter(m=>m.name!==args[0]);if(state.activeModel===args[0])state.activeModel=state.models[0]?.name||null;return {removed:args[0]};});break;
     case 'scan':{
       const plan=scanPlan(s,o);if(o.plan)return outcome({plan},plan.blockers.length?3:0);
-      return dispatchRun(root,'scan',{mode:o.mode||s.settings.reviewMode||'combined',target:targetName,base:o.base,full:!!o.full},!!o.detach,context.signal,context.onProgress);
+      return dispatchRun(root,'scan',{mode:o.mode||s.settings.reviewMode||'combined',
+        target:targetName,base:o.base,full:!!o.full,
+        modelCalls:o['model-calls']!=null?Number(o['model-calls']):undefined,
+        minutes:o.minutes!=null?Number(o.minutes):undefined,
+        maxUrls:o['max-urls']!=null?Number(o['max-urls']):undefined,
+        maxTasks:o['max-tasks']!=null?Number(o['max-tasks']):undefined,
+        modelAgents:o.agents!=null?Number(o.agents):undefined,
+        httpWorkers:o['http-workers']!=null?Number(o['http-workers']):undefined},
+      !!o.detach,context.signal,context.onProgress);
     }
     case 'finding list':{const findings=filter(activeFindings(s),{...o,lastRunId:o.run},['target','status','severity','lastRunId']);result={findings,summary:findingSummary(findings)};break;}
     case 'finding show':result={finding:named(s.findings,args[0],'Finding')};break;
     case 'verify':case 'retest':return verifyFinding(root,args[0],{target:o.target,build:o.build,retest:key==='retest',signal:context.signal});
     case 'test list':result={checks:filter(s.checks,o,['target'])};break;
     case 'test show':result={check:named(s.checks,args[0],'Check')};break;
-    case 'test save':result={check:await saveCheck(root,args[0])};break;
+    case 'test save':{
+      const finding=named(s.findings,args[0],'Finding');
+      if(finding.engine==='blackbox'){
+        need(finding.verification?.blackboxRun,'This finding has no linked black-box proof run.',3);
+        result={findingId:finding.id,export:exportBlackboxRun(root,
+          finding.verification.blackboxRun,{out:o.out||null}),
+          message:'Saved the sealed HTTP proof as standalone Node regression test(s).'};
+      }else result={check:await saveCheck(root,args[0])};
+      break;
+    }
     case 'test run':need(o.all||args[0],'Specify a check ID or --all.');need(!(o.all&&args[0]),'Choose a check ID or --all.');return dispatchRun(root,'tests',{checkId:args[0],target:targetName},!!o.detach,context.signal,context.onProgress);
     case 'test bind':need(o.all||args[0],'Specify a check ID or --all.');need(o.file&&o.target,'Supply --file <binding.json> and --target.');result=await bindCheck(root,o.all?'all':args[0],o.target,loadJSON(o.file));break;
     case 'test export':need(o.all||args[0],'Specify a check ID or --all.');result=exportChecks(root,{checkId:args[0],all:o.all,target:o.target,out:o.out,force:o.force});break;

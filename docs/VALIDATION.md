@@ -1,5 +1,11 @@
 # Verification record
 
+## Current canonical audit contract — 2026-11-03
+
+Standalone audit modes now share one contract: `code` is formal cited source review, `live` is the broad scoped black-box runner, and `combined` composes both under one parent run. The focused deterministic suite is `npm run test:audit`; saved real runs are checked with `npm run audit:eval -- --project <path> --run <run-id>`. The evaluator gates parent linkage, selected engines, durable report/coverage/ledger artifacts, authorization fidelity, live request execution, finding reconciliation, proof links and structured progress. See [Audit contract and evaluation](AUDIT_EVALUATION.md).
+
+This section documents the new acceptance mechanism; it does not claim a provider-backed or production pass before local UAT is run. Historical records below retain the architecture and claims that applied to their versions.
+
 ## v0.3.0 — security memory for feature development, 2026-10-27
 
 **94/94 tests pass, zero skipped**, including Docker and real local HTTP checks. Syntax checked 54 modules; Muse's native plugin manifest validator accepts the new `/bypass:build` command. CLI and fresh MCP process tests prove persisted feature-context retrieval without a model or app connection, exact-citation rejection, stale/ignored source handling, credential redaction, target/origin isolation, changed resource bindings, bounded retrieval, disable and forget behavior. The final origin/binding hardening is covered by the automated suite.

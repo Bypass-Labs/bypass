@@ -7,7 +7,8 @@ import path from 'node:path';
 import { runAgent } from '../agents/worker.mjs';
 import { containerArgs } from '../src/agent-runtime.mjs';
 import { parseModelJSON, modelResponseSchema } from '../src/inference.mjs';
-import { sourceReader, groundCandidates, executeRealScan } from '../src/real-engine.mjs';
+import { sourceReader, groundCandidates, executeSourceReview } from '../src/real-engine.mjs';
+import { executeStandaloneAudit } from '../src/audit-engine.mjs';
 import { createRun, verifyFinding, executeRun } from '../src/engine.mjs';
 import { execute } from '../src/service.mjs';
 import { startPOC, stopPOC } from '../src/poc.mjs';
@@ -38,34 +39,47 @@ function controlledRuntime(){
   };
 }
 
-test('real engine consumes source, proves HTTP failure, exports a fixed test, catches regression without AI',async()=>{
+test('combined engine starts broad live work in parallel, hands off source leads and reconciles one parent result',async()=>{
   const root=path.join(temp(),'app');await startPOC({dir:root});await addTestModel(root);
   try{
-    const runtime=controlledRuntime(),run=await createRun(root,'scan',{mode:'combined'});
-    const result=await executeRealScan(root,run.id,{mode:'combined'},{runtime,report:async()=>{}});
-    assert.equal(result.simulation,false);assert.equal(result.confirmed.length,1);assert.equal(result.modelCalls,4);
-    assert.deepEqual(result.containers.map(c=>c.role),['white-box','black-box']);
-    assert.ok(runtime.calls.every(c=>JSON.stringify(c.profile)===JSON.stringify(runtime.calls[0].profile)));
-    assert.equal(result.probes[0].requests,5);
-    assert.deepEqual(result.probes[0].controls.map(c=>c.status),[200,200,200,200,401]);
-    const findingId=result.confirmed[0];assert.equal(read(root).findings[0].sourceEvidence.line,2);
-    fs.writeFileSync(path.join(root,'policy.mjs'),'export function mayReadInvoice(account, invoice) { return account === invoice.ownerId; }\n');
-    const retested=await verifyFinding(root,findingId,{retest:true});
-    assert.equal(retested.status,'fixed_verified');assert.ok(retested.savedCheck);
-    const exported=exportChecks(root,{all:true});
-    const standalone=await execFile(process.execPath,['--test',...exported.files],{timeout:15000,env:{NODE_TEST_CONTEXT:undefined}});
-    assert.equal(standalone.code,0,standalone.stdout+standalone.stderr);
-    fs.writeFileSync(path.join(root,'policy.mjs'),'export function mayReadInvoice(account, invoice) { return Boolean(account); }\n');
-    const regression=await runChecks(root,{all:true});assert.equal(regression.exitCode,1);assert.equal(regression.modelCalls,0);
-    const broken=await execFile(process.execPath,['--test',...exported.files],{timeout:15000,env:{NODE_TEST_CONTEXT:undefined}});
-    assert.equal(broken.code,1);assert.match(broken.stdout,/Another account/);
-    // Invalid second-account login cannot masquerade as a passing negative control.
-    await change(root,s=>{s.identities.find(i=>i.name==='outsider').fixtureValue='invalid-token';});
-    const state=read(root),check=state.checks[0],invalid=await replay(specFor(state,check,'poc'));
-    assert.equal(invalid.status,'blocked');assert.match(invalid.reason,/login controls/);
+    const source=controlledRuntime();let liveStarted=false,releaseSource;
+    const sourceGate=new Promise(resolve=>{releaseSource=resolve;}),sourceInfer=source.infer;
+    source.infer=async(profile,messages,options)=>{
+      if(messages[0].content.startsWith('Plan a bounded'))await sourceGate;
+      return sourceInfer(profile,messages,options);
+    };
+    const run=await createRun(root,'scan',{mode:'combined'});
+    const result=await executeStandaloneAudit(root,run.id,{mode:'combined'},{runtime:{source,
+      runBlackbox:async options=>{
+        liveStarted=true;
+        const scope=JSON.parse(fs.readFileSync(options.scopeFile,'utf8'));
+        assert.deepEqual(scope.include,read(root).targets[0].authorization.paths);
+        assert.deepEqual(scope.methods,read(root).targets[0].authorization.methods);
+        assert.equal(scope.identities.auth,'bearer');
+        assert.equal(scope.identities.identityPath,'/api/me');
+        releaseSource();
+        const context=await options.sourceContext;
+        assert.equal(context.securityLeads.length,1);
+        const lead=context.securityLeads[0];
+        return {kind:'blackbox-audit',run:'bx-20261103-a1b2c3d4',runDir:path.join(root,'.bypass/runs/bx-20261103-a1b2c3d4'),
+          projectRoot:root,origin:read(root).targets[0].url,exitCode:1,stats:{modelCalls:2,
+            finishedAt:new Date().toISOString(),requests:12},coverage:{tested:1},
+          findings:[{id:'live-proof',verdict:'confirmed',kind:'missing-auth',severity:'high',
+            proof:path.join(root,'.bypass/runs/bx-20261103-a1b2c3d4/poc/proof-1/poc.mjs'),
+            title:lead.title,pattern:lead.path,evidence:['ev-1'],confirmation:['ev-2'],
+            sourceFinding:{id:lead.id,source:lead.source,hypothesis:lead.hypothesis},
+            assessment:{remediation:lead.remediation}}],sourceFindings:[{id:lead.id,
+              status:'confirmed live',liveReason:'Fresh owner and anonymous controls reproduced it.'}]};
+      }} ,report:async()=>{}});
+    assert.equal(liveStarted,true);assert.equal(result.simulation,false);
+    assert.equal(result.confirmed.length,1);assert.equal(result.blackbox.run,'bx-20261103-a1b2c3d4');
+    assert.deepEqual(result.source.containers.map(container=>container.role),['white-box']);
+    assert.equal(read(root).findings.find(item=>item.id===result.confirmed[0]).status,'confirmed');
+    assert.equal(read(root).findings.find(item=>item.id===result.confirmed[0]).verification.proofId,'proof-1');
+    assert.equal(read(root).findings.filter(item=>item.lastRunId===run.id).length,1,
+      'the live proof enriches the source finding instead of duplicating it');
   }finally{await stopPOC(root);}
 });
-
 test('combined review continues source analysis when accounts and resource probes are not configured',async()=>{
   const root=temp();fs.writeFileSync(path.join(root,'app.mjs'),'export const publicRoute = true;\n');
   await execute('init',[root]);await execute('engine use',['docker'],{project:root});await addTestModel(root);
@@ -73,17 +87,20 @@ test('combined review continues source analysis when accounts and resource probe
   await execute('target verify',['app'],{project:root,method:'local'});
   await execute('target authorize',['app'],{project:root,accept:true,paths:'/',methods:'GET'});
   assert.equal(Object.hasOwn(read(root).targets[0],'probes'),false);
-  const runtime={
+  const source={
     prepareAgents:async()=>({image:'test-image'}),
     infer:async()=>({focus:'Review the available source without configured account probes.'}),
-    runContainer:async role=>({result:role==='white-box'?{knowledge:[],candidates:[]}:{summary:'No configured HTTP controls.'},container:{role,image:'test-image'}})
+    runContainer:async role=>({result:{knowledge:[],candidates:[]},container:{role,image:'test-image'}})
   };
   const run=await createRun(root,'scan',{mode:'combined'});
-  const result=await executeRealScan(root,run.id,{mode:'combined'},{runtime,report:async()=>{}});
-  assert.deepEqual(result.probes,[]);assert.deepEqual(result.containers.map(container=>container.role),['white-box','black-box']);
+  const result=await executeStandaloneAudit(root,run.id,{mode:'combined'},{runtime:{source,
+    runBlackbox:async options=>{assert.equal(await options.sourceContext!==null,true);return {
+      kind:'blackbox-audit',run:'bx-20261103-b1b2c3d4',runDir:path.join(root,'.bypass/runs/bx-20261103-b1b2c3d4'),
+      projectRoot:root,origin:read(root).targets[0].url,exitCode:3,stats:{modelCalls:0},
+      coverage:{},findings:[],sourceFindings:[]};}},report:async()=>{}});
+  assert.deepEqual(result.source.containers.map(container=>container.role),['white-box']);
   assert.equal(result.modelCalls,1);assert.equal(result.executionFailures.length,0);
 });
-
 test('source citations cannot invent files or lines, and source reads cannot follow escaping symlinks',()=>{
   const root=temp(),outside=temp();fs.writeFileSync(path.join(root,'app.mjs'),'const actual = true;\n');
   fs.writeFileSync(path.join(outside,'secret.mjs'),'secret');fs.symlinkSync(outside,path.join(root,'linked'));
@@ -185,7 +202,7 @@ test('model output is data: reject executable/non-JSON output and unsupported wo
   assert.throws(()=>parseModelJSON('run shell rm -rf ...'),/JSON object/);
   assert.deepEqual(parseModelJSON('```json\n{"action":"finish"}\n```'),{action:'finish'});
   await assert.rejects(runAgent('white-box',{},async()=>({action:'shell',command:'anything'})),/Unsupported/);
-  await assert.rejects(runAgent('black-box',{},async(method)=>method==='model'?{action:'probe',bindingIndex:0}:{}),/eight-turn/);
+  await assert.rejects(runAgent('black-box',{},async()=>{}),/Unknown agent role/);
   const args=containerArgs('named','sha256:abc','white-box');
   for(const flag of ['--network','none','--read-only','--cap-drop','ALL','no-new-privileges','--memory','128m'])assert.ok(args.includes(flag));
   assert.ok(!args.includes('-v')&&!args.includes('--privileged'));
@@ -197,7 +214,7 @@ test('real source-only planning is available without DNS; HTTP proof needs appro
   assert.match(plan.blockers.join(' '),/API-key profile/);
   await execute('model add',['local'],{project:root,provider:'custom','secret-env':'BYPASS_UNIT_API_KEY',stream:false,'base-url':'http://127.0.0.1:1234',model:'test-model'});
   plan=(await execute('scan',[],{project:root,mode:'code',plan:true})).plan;
-  assert.deepEqual(plan.blockers,[]);assert.equal(plan.simulation,false);assert.equal(plan.blackBox.status,'deferred');
+  assert.deepEqual(plan.blockers,[]);assert.equal(plan.simulation,false);assert.equal(plan.blackBox.status,'not_run');
   const combined=(await execute('scan',[],{project:root,mode:'combined',plan:true})).plan;
   assert.ok(combined.blockers.length>=1);
 });
@@ -205,8 +222,6 @@ test('real source-only planning is available without DNS; HTTP proof needs appro
 test('Docker worker protocol completes and cancellation removes the actual container',{skip:process.env.BYPASS_DOCKER_TESTS!=='1'},async()=>{
   const {prepareAgents,runContainer}=await import('../src/agent-runtime.mjs');
   const setup=await prepareAgents();
-  const completed=await runContainer('black-box',{resources:[{resourcePath:'/api/item'}]},async method=>method==='model'?{action:'probe',bindingIndex:0}:{status:'passed',controls:[]},setup);
-  assert.equal(completed.container.role,'black-box');assert.match(completed.container.image,/^sha256:/);
   let attempts=0;const repaired=await runContainer('white-box',{},async(method,params)=>{
     if(method==='read_files')throw new Error('Invalid source range');
     if(++attempts===1)return {action:'read_files',paths:['app.js']};
@@ -218,11 +233,6 @@ test('Docker worker protocol completes and cancellation removes the actual conta
   setTimeout(()=>controller.abort(),600);
   await assert.rejects(running);
   const listed=await execFile('docker',['ps','-a','--filter',`name=${name}`,'--format','{{.Names}}']);assert.equal(listed.stdout,'');
-});
-
-test('black-box skips model calls when all approved behaviors already pass',async()=>{
-  let calls=0;const result=await runAgent('black-box',{resources:[]},async()=>{calls++;throw new Error('Unexpected model call');});
-  assert.equal(calls,0);assert.match(result.summary,/Exact passing checks/);
 });
 
 test('anonymous exposure is confirmed independently of a correctly denied outsider',async()=>{
@@ -240,24 +250,4 @@ test('anonymous exposure is confirmed independently of a correctly denied outsid
     const result=await replay(spec,{env:{OWNER:'owner',OUTSIDER:'outsider'}});
     assert.equal(result.status,'failed');assert.match(result.reason,/Unauthenticated/);assert.deepEqual(result.controls.map(c=>c.status),[200,200,200,403,200]);
   }finally{await new Promise(resolve=>server.close(resolve));}
-});
-
-
-test('standalone engine drains configured controls after early completion or failed orchestration/source/black-box reasoning',async t=>{
-  for(const fail of [false,'black-box','white-box','orchestrator']){
-    const root=path.join(temp(),'app');await startPOC({dir:root});await addTestModel(root);
-    try{
-      const first=read(root).targets[0].probes[0];await execute('probe add',['second'],{project:root,target:'poc',path:first.binding.resourcePath,'resource-id':first.binding.resourceId,owner:first.binding.owner,outsider:first.binding.outsider,'identity-field':first.binding.identityField||'id'});
-      const runtime=controlledRuntime(),base=runtime.runContainer,infer=runtime.infer;
-      runtime.infer=async(profile,messages)=>{if(fail==='orchestrator'&&messages[0].content.startsWith('Plan a bounded'))throw new Error('Controlled planning interruption');return infer(profile,messages);};
-      runtime.runContainer=async(role,task,rpc)=>{if(role===fail)throw new Error('Controlled reasoning interruption');return role==='black-box'?{result:{summary:'Stopped early'},container:{role,image:'test-image'}}:base(role,task,rpc);};
-      const run=await createRun(root,'scan',{mode:'combined'});
-      const executed=fail==='white-box'?await executeRun(root,run.id,null,null,{runtime}):null;
-      if(executed)assert.equal(executed.run.status,'incomplete');
-      const result=executed?.run.result||await executeRealScan(root,run.id,{mode:'combined'},{runtime,report:async()=>{}});
-      assert.equal(result.probes.length,2);assert.ok(result.probes.every(p=>p.status==='failed'));assert.equal(result.configuredScope.executed,2);assert.equal(result.executionFailures.length,fail?1:0);
-      assert.match(result.message,/remediation requires a separate explicit request/);
-      if(fail)assert.match(result.message,/Investigation incomplete/);
-    }finally{await stopPOC(root);}
-  }
 });

@@ -338,6 +338,25 @@ test('source-assisted Muse review reaches late routes through complete bounded p
   assert.deepEqual(result.proposals, ['/api/route-18']);
 });
 
+test('source-assisted review uses the configured bounded model concurrency', async t => {
+  const root = temp();
+  t.after(() => fs.rmSync(root, {recursive: true, force: true}));
+  fs.writeFileSync(path.join(root, 'server.js'), Array.from({length: 24}, (_, index) =>
+    `app.get('/api/concurrent-${index}', (req, res) => res.json({next: req.query.next}));`).join('\n'));
+  let active = 0, peak = 0;
+  const infer = async () => {
+    active++;
+    peak = Math.max(peak, active);
+    await new Promise(resolve => setTimeout(resolve, 15));
+    active--;
+    return {notes: [], paths: [], securityLeads: []};
+  };
+  const result = await reviewSource(root, {
+    model: {provider: 'test'}, infer, modelConcurrency: 2});
+  assert.ok(result.modelCalls > 1);
+  assert.equal(peak, 2);
+});
+
 test('source-assisted review accounts for file, route and model page limits', async t => {
   const root = temp();
   t.after(() => fs.rmSync(root, {recursive: true, force: true}));

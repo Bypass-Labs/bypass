@@ -105,7 +105,7 @@ CLI global `--project` maps to the selected repository; `--json` maps to structu
 | `retest` | `bypass_retest` | Check a deployed fix and save a standalone regression. |
 | `test list` | `bypass_tests` | List saved regression checks. |
 | `test show` | `bypass_test` | Show a check and environment bindings. |
-| `test save` | `bypass_save_test` | Save a failing reproduction immediately, or a verified fixed regression. |
+| `test save` | `bypass_save_test` | Save a portable check or export a confirmed black-box proof as a standalone regression. |
 | `test run` | `bypass_run_tests` | Replay deterministic checks with zero model calls. |
 | `test bind` | `bypass_bind_tests` | Bind a saved check to an authorized environment. |
 | `test export` | `bypass_export_tests` | Write ordinary Node tests with no Bypass dependency. |

@@ -13,9 +13,11 @@
   "scripts": {
     "start": "node bin/bypass.mjs",
     "test": "node --import ./test/legacy-muse-env.mjs --test --test-concurrency=1 test/*.test.mjs",
+    "test:audit": "node --import ./test/legacy-muse-env.mjs --test --test-concurrency=1 test/audit-evaluation.test.mjs test/inference-progress.test.mjs test/real-engine.test.mjs test/blackbox-reconciliation.test.mjs",
+    "audit:eval": "node scripts/audit-eval.mjs",
     "test:scanner": "node scripts/test-scanner.mjs",
     "test:codeql": "node scripts/codeql-smoke.mjs && node scripts/codeql-boundaries.mjs && node scripts/codeql-scope-smoke.mjs && node scripts/policy-smoke.mjs --combined",
-    "check": "node scripts/check.mjs && node scripts/check-plugin-parity.mjs",
+    "check": "node scripts/check.mjs && node scripts/check-cli-reference.mjs && node scripts/check-plugin-parity.mjs",
     "demo": "node bin/bypass.mjs demo",
     "plugin:build": "node scripts/build-plugin.mjs",
     "plugin:validate": "MUSE_NO_AUTO_UPDATE=1 muse plugins validate plugin --json",

@@ -23,7 +23,7 @@ bypass scan --mode combined --project /tmp/bypass-api-fixture
 
 The environment variable must already contain your privately supplied API key. The POC copies the explicitly selected profile, creates a separate local fixture, and configures its public accounts and authorized resource. It never picks a subscription backend. Without a profile you can create the fixture, but must explicitly configure a provider before an AI scan.
 
-The orchestrator and two bounded Docker workers use the same profile. Workers have no network, credentials, source mount or Docker socket. They ask the broker for model responses, bounded source excerpts or approved HTTP probes. Containers are removed on completion/error/cancellation. HTTP requests recheck current ownership and testing authorization.
+The source planner and one bounded Docker source worker use the selected profile. The worker has no network, credentials, source mount or Docker socket; it requests bounded excerpts through the broker and is removed on completion/error/cancellation. The host black-box runner performs all HTTP discovery and proof under the saved scope, rechecking current ownership and testing authorization.
 
 Inspect `finding list` / `finding show <id>`. Fix the generated fixture's `policy.mjs` to require `account === invoice.ownerId`, then run:
 

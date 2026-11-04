@@ -6,26 +6,43 @@ import path from 'node:path';
 import { Fault, redact, VERSION } from './util.mjs';
 import { createTheme } from './terminal-theme.mjs';
 
-export const commands = [
-  ['review', 'Review the connected repository'],
-  ['demo', 'Walk through proof, fix and regression'],
-  ['blackbox', 'Audit an authorized running app'],
-  ['engine', 'Real Docker agents and HTTP proof setup'],
-  ['poc', 'Start a real AI POC with a separate local app'],
-  ['results', 'Open results and their next action'],
-  ['tests', 'Replay or export saved tests'],
-  ['repo', 'Choose your application repository'],
-  ['app', 'Connect an app or finish DNS verification'],
-  ['models', 'Choose or test a model connection'],
-  ['status', 'Show the repository and app pairing'],
-  ['memory', 'Inspect remembered security rules and evidence'],
-  ['context', 'Read security context for the next coding session'],
-  ['history', 'Show saved project activity'],
-  ['settings', 'All settings and advanced controls'],
-  ['plugin', 'Check or install the Muse plugin'],
-  ['help', 'Commands and keyboard shortcuts'],
-  ['quit', 'Save this session and exit'],
-].map(([id, description]) => ({ id, label: `/${id}`, description }));
+export const commandGroups = [
+  {title:'SECURITY AUDITS',commands:[
+    ['review','Audit the connected source repository'],
+    ['demo','Practice proof → fix → regression locally'],
+    ['blackbox','Test an authorized running application'],
+    ['poc','Launch an isolated two-container security demo'],
+  ]},
+  {title:'PROJECT SETUP',commands:[
+    ['repo','Connect or switch application source'],
+    ['app','Connect an app and manage testing scope'],
+    ['models','Choose or verify the Muse model connection'],
+    ['engine','Configure containerized source review and HTTP proof'],
+    ['plugin','Check or install the Muse Code plugin'],
+  ]},
+  {title:'EVIDENCE AND RESULTS',commands:[
+    ['results','Open findings, impact and remediation'],
+    ['tests','Replay or export saved regression tests'],
+    ['memory','Inspect remembered security rules and evidence'],
+    ['context','Prepare security context for coding work'],
+    ['history','Show saved project activity'],
+  ]},
+  {title:'WORKSPACE',commands:[
+    ['status','Show the repository, app and review scope'],
+    ['settings','Open optional and advanced controls'],
+    ['help','Show commands and keyboard shortcuts'],
+    ['quit','Save this session and exit'],
+  ]},
+];
+export const commands = commandGroups.flatMap(group => group.commands)
+  .map(([id, description]) => ({ id, label: `/${id}`, description }));
+
+export function interactiveHelp() {
+  const width=Math.max(...commands.map(command=>command.label.length));
+  const groups=commandGroups.map(group=>`${group.title}\n${group.commands.map(([id,description])=>
+    `  ${`/${id}`.padEnd(width)}  ${description}`).join('\n')}`).join('\n');
+  return `HELP\nType commands with or without /. q saves and exits the workspace.\n${groups}\nKEYBOARD\n  ↑↓ choose · Enter run · Tab complete · PgUp/PgDn scroll\n  Esc back/stop · Ctrl+O details · Ctrl+T tasks · Ctrl+C exit\nCLI REFERENCE\n  bypass <command> --help · bypass --help --reference`;
+}
 
 // Never interpret terminal controls received from repository names, commands or output.
 export const safeText = value => stripVTControlCharacters(String(value)).replace(/[\x00-\x08\x0b-\x1f\x7f-\x9f]/g, '').replace(/\t/g, '  ');
@@ -59,6 +76,17 @@ function wrapWords(text,width){
   }
   return lines;
 }
+const structuredLine = line => /^(?: {2}\S|\d{2} \/|[A-Z][A-Z ]{2,}(?:$|\s{2,}))/.test(line);
+const wrapColumns = (line,width) => {
+  const columns=/^(\s{2}\S.*?\S|\s{2}\S)(\s{2,})(\S.*)$/.exec(line) ??
+    /^([A-Z][A-Z ]+?)(\s{2,})(\S.*)$/.exec(line);
+  if(!columns)return wrap(line,width);
+  const prefix=columns[1]+columns[2],available=Math.max(8,width-cells(prefix));
+  const body=wrapWords(columns[3],available);
+  return body.map((part,index)=>(index? ' '.repeat(cells(prefix)):prefix)+part);
+};
+const wrapTranscript = (text,width) => safeText(text).split('\n').flatMap(line =>
+  structuredLine(line) ? wrapColumns(line,width) : wrapWords(line,width));
 const shortPath = value => String(value||'').replace(os.homedir()+'/', '~/');
 const duration = ms => ms<60000 ? `${(ms/1000).toFixed(1)}s` : `${Math.floor(ms/60000)}m ${Math.floor(ms/1000)%60}s`;
 const icons = {running:'◈',done:'✓',failed:'!',cancelled:'○',attention:'!',waiting:'◇'};
@@ -67,11 +95,11 @@ function livePanelLines(status,width,available,now){
   if(!status||available<3)return [];
   const fields=available>=9?[
     ['DONE',status.done],['WORKING',status.working&&`${status.working} · ${duration(now-status.since)}`],
-    ['LIVE',status.metrics&&`${status.metrics} · last evidence ${duration(now-status.updatedAt)} ago`],
+    ['LIVE',status.metrics],
     ['WHY',status.why],['RECOVERED',status.recovered],['NEXT',status.next]
   ]:[
     ['WORKING',status.working&&`${status.working} · ${duration(now-status.since)}`],
-    ['LIVE',status.metrics&&`${status.metrics} · last evidence ${duration(now-status.updatedAt)} ago`],
+    ['LIVE',status.metrics],
     ...(status.recovered?[['RECOVERED',status.recovered]]:[])
   ];
   const lines=[`─ LIVE AUDIT ${'─'.repeat(Math.max(0,width-13))}`],limit=Math.min(8,Math.max(3,available-1));
@@ -89,9 +117,9 @@ export function transcriptLines(state, width, {expanded=state.expanded, now=Date
     if(entry.type==='operation') {
       lines.push(...wrapWords(`${icons[entry.status]} ${entry.label} · ${duration((entry.ended||now)-entry.started)}${entry.status==='cancelled'?' · stopped':entry.status==='attention'?' · needs attention':''}`,width));
       if(expanded || entry.status==='running' || entry.status==='failed' || entry.status==='attention') {
-        for(const detail of entry.details)lines.push(...wrapWords(detail,width-2).map(line=>'  '+line));
+        for(const detail of entry.details)lines.push(...wrapTranscript(detail,width-2).map(line=>'  '+line));
       }else if(entry.details.length)lines.push(`  ${entry.details.length} detail${entry.details.length===1?'':'s'} · Ctrl+O to expand`);
-    }else lines.push(...wrapWords(entry.text,width));
+    }else lines.push(...wrapTranscript(entry.text,width));
     lines.push('');
   }
   return lines;
@@ -190,10 +218,16 @@ export function frame(state, columns, rows, now=Date.now()) {
   }
   for(let i=0;i<available;i++){
     const text=clip(visible[i],mainWidth),tone=activityTone(text);
+    const structured=/^(\s{2}\S.*?\S|\s{2}\S)(\s{2,})(\S.*)$/.exec(text) ??
+      /^([A-Z][A-Z ]+?)(\s{2,})(\S.*)$/.exec(text);
+    const main=structured?join([{text:structured[1],tone:'accent'},
+      {text:structured[2],tone:'normal'},{text:structured[3],tone}]):row(text,tone);
     if(wideLayout){
       const right=sidebar[i]||{text:'',tone:'muted'};
-      lines.push(join([{text:text+' '.repeat(Math.max(0,mainWidth-cells(text))),tone},{text:' │ ',tone:'rule'},{text:clip(right.text,sideWidth),tone:right.tone}]));
-    }else put(text,tone);
+      lines.push(join([...(main.parts||[{text:main.text,tone:main.tone}]),
+        {text:' '.repeat(Math.max(0,mainWidth-cells(text))),tone:'normal'},
+        {text:' │ ',tone:'rule'},{text:clip(right.text,sideWidth),tone:right.tone}]));
+    }else lines.push(main);
   }
   const inputRow=lines.length+composerRow+1;
   lines.push(...bottom);
@@ -201,7 +235,10 @@ export function frame(state, columns, rows, now=Date.now()) {
   return {lines:lines.slice(0,height),cursor:{row:Math.min(height,inputRow),column:Math.min(columns,4+cells(cursorText))},maxScroll};
 }
 const taskTone=status=>status==='done'?'success':status==='running'?'accent':status==='failed'?'error':['attention','cancelled'].includes(status)?'warning':'muted';
-const activityTone=text=>/^DONE\s/.test(text)?'success':/^WORKING\s/.test(text)?'accent':/^RECOVERED\s/.test(text)?'info':/^─ LIVE AUDIT/.test(text)?'title':/^LIVE\s/.test(text)?'muted':/^✓/.test(text)?'success':/^!|^Error|failed/i.test(text)?'warning':/^›/.test(text)?'accent':/^Step \d|^BYPASS|^Setup saved/.test(text)?'title':/^  \d+ details?/.test(text)?'muted':'normal';
+const activityTone=text=>{
+  const normalized=text.trimStart();
+  return /^DONE\s/.test(normalized)?'success':/^WORKING\s/.test(normalized)?'accent':/^RECOVERED\s/.test(normalized)?'info':/^─ LIVE AUDIT/.test(normalized)?'title':/^LIVE\s/.test(normalized)?'muted':/^✓/.test(normalized)?'success':/^!|^Error|failed/i.test(normalized)?'warning':/^›/.test(normalized)?'accent':/^(?:Step \d|BYPASS|Setup saved|HELP|SECURITY AUDITS|PROJECT SETUP|EVIDENCE AND RESULTS|WORKSPACE|KEYBOARD|CLI REFERENCE|BLACK-BOX SETUP|\d{2} \/)/.test(normalized)?'title':/^\d+ details?/.test(normalized)?'muted':'normal';
+};
 
 export function paintFrameLine(line,theme,width){
   const parts=line.parts||[{text:line.text,tone:line.tone}];

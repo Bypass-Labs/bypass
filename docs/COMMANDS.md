@@ -1,6 +1,6 @@
-# Command reference
+# Command and workflow guide
 
-Generated from the parser catalog. Add --help to any command. Values are required for flags unless listed as booleans below.
+Use this guide for behavior, safety boundaries and common workflows. The [exact generated CLI reference](CLI_REFERENCE.md) lists every public command and every accepted option directly from the parser catalog; CI fails when it becomes stale. Add `--help` to any command for terminal help.
 
 **Muse is the primary experience.** Use `/bypass:help` to discover these operations conversationally. Every public CLI command and option has an explicit [plugin mapping](PLUGIN_COMMANDS.md), checked by CI. `/bypass:demo` runs the complete real demonstration inside Muse; `/bypass:status` shows Done / Now / Next.
 
@@ -20,7 +20,7 @@ For a scrolling interface or screen reader, use `BYPASS_PLAIN=1 ./bypass`. `TERM
 
 ## blackbox
 
-`bypass blackbox <url>` audits an authorized running app. For loopback targets it creates a reviewable `blackbox.scope.json` when needed; `--accept-local` confirms the local target. A deployed target needs `blackbox setup <url>`, scope review, ownership verification and authorization before the audit. `blackbox scope <url>` writes the scope file without registering the target.
+`bypass blackbox <url>` audits an authorized running app. For loopback targets it creates a reviewable `blackbox.scope.json` when needed; `--accept-local` confirms the local target. A deployed target needs `blackbox setup <url>`, scope review and testing authorization. DNS/HTTPS ownership proof is feature-flagged off by default; when a project explicitly enables `ownershipVerification` or requests discovered apex domains, setup also returns the required ownership step. `blackbox scope <url>` writes the scope file without registering the target.
 
 The standalone audit uses the selected API model profile or the Meta default (`META_API_KEY`, then `LLM_KEY`, then `MODEL_API_KEY`). New terminal profiles suggest the generic `LLM_KEY` name while keeping existing provider-specific variable names available. The key value stays in the launching environment. `--no-model` runs the code-only path. `--rps` limits shared HTTP rate; `--agents` controls concurrent Muse decisions and `--http-workers` controls concurrent HTTP tasks. `--model-calls`, `--max-urls`, `--max-tasks`, `--minutes` and `--dom-script-bytes` set the recorded limits; zero means unlimited only for URL and task counts. Optional `--source <dir>` supplies source for hypothesis generation, while HTTP behavior remains the proof boundary.
 
@@ -28,11 +28,11 @@ The standalone audit uses the selected API model profile or the Meta default (`M
 
 ## poc / poc start / poc stop
 
-`poc` creates a separate local app and opens the workspace with real Docker agents selected. Docker and a configured model are required for review. The fixture uses two public accounts; model calls analyze actual source, and HTTP controls determine the findings. `--dir` must be empty; `--model` overrides the selected standalone API profile model; the Muse plugin uses its active host model. Existing active project profiles are reused when `--project` is supplied. `poc start` is the scriptable setup and also supports `--port`; it returns the project root. `poc stop --project <root>` stops the fixture app and preserves evidence.
+`poc` creates a separate local app and opens the workspace with the real audit engine selected. Docker isolates source review; the broad black-box runner performs the scoped HTTP work. The fixture uses two public accounts. `--dir` must be empty; `--model` overrides the selected standalone API profile model; the Muse plugin uses its active host model. Existing active project profiles are reused when `--project` is supplied. `poc start` is the scriptable setup and also supports `--port`; it returns the project root. `poc stop --project <root>` stops the fixture app and preserves evidence.
 
 ## engine use <docker|mock> / engine doctor / engine prepare
 
-Select real agents or offline preview. `engine doctor` checks Docker and the shared model profile; `engine prepare` builds the image. All three roles share one model profile. Source excerpts go to that provider. Docker services have no direct network, credentials or repository mounts. No mock fallback occurs on failure.
+Select the real audit or offline preview. `engine doctor` checks Docker and the selected model profile; `engine prepare` builds the isolated source-worker image. Source excerpts go to that provider. The Docker worker has no network, credentials or repository mount. Live HTTP is executed only by the scoped black-box runner. No mock fallback occurs on failure.
 
 ## probe add <name> / probe list
 
@@ -48,13 +48,13 @@ Options: --dir.
 
 Application repository and app setup (recommended opening choice), guided local walkthrough, or advanced setup. Requires an interactive terminal. `--flow quickstart`, `--flow advanced`, or `--flow demo` skips the opening choice. Supplying a repository path, `--repo`, or `--project` defaults to QuickStart. Existing settings and evidence are retained. App fields accept bare domains; pending DNS defaults to continuing the review preview. For automation, use `init --non-interactive` and explicit commands below.
 
-Options: --repo, --dir, --flow.
+Options: --repo, --dir, --flow, --mode.
 
 ## init [path]
 
 Connect a repository and configure a project.
 
-Options: --repo, --dir, --config, --name.
+Options: --repo, --dir, --config, --name, --plan, --tracked-files.
 
 ## repo show
 
@@ -64,7 +64,7 @@ Inspect the connected repository.
 
 Connect or clone a repository.
 
-Options: --dir, --name.
+Options: --dir, --name, --plan, --tracked-files.
 
 ## status
 
@@ -138,7 +138,7 @@ Options: --method, --wait, --renew.
 
 Record explicit, expiring testing scope.
 
-Options: --scope-file, --paths, --methods, --accept, --production.
+Options: --scope-file, --paths, --methods, --rps, --accept, --production, --public-config.
 
 The interactive `/app` → **Edit allowed methods & paths** picker supports GET, HEAD, POST, PUT, PATCH, DELETE, OPTIONS and custom comma-separated input. Use ↑↓ and Space to select, Enter to confirm. Plain terminals accept names or numbers separated by commas. Existing grants are retained until explicitly changed. Methods apply to every listed path prefix.
 
@@ -200,7 +200,7 @@ Remove an identity reference; dependent tests become blocked.
 
 Add local, self-hosted endpoint, or Muse Code provider.
 
-Options: --provider, --base-url, --model, --secret-env, --allow-private, --effort. Muse effort defaults to minimal; accepts minimal, low, medium, high.
+Options: --provider, --base-url, --model, --secret-env, --allow-private, --effort, --transport, --max-output-tokens, --timeout-ms, --stream, --workspace-env. Muse effort defaults to minimal; accepts minimal, low, medium, high.
 
 ## model list
 
@@ -224,9 +224,9 @@ Remove a model profile.
 
 ## scan
 
-Replay saved checks, then run the selected engine. Real mode uses shared-model Docker agents and scoped HTTP controls. Code-only review does not make HTTP requests. Confirmation and failed regressions return exit 1; bounded/no-confirmation and blocked reviews return exit 3. Human-readable output calls a completed mock scan a review preview and explicitly marks the example as unverified. Scripted exit code 3 is retained because mocked discovery provides no real security verdict. Saved-check failures remain visible separately.
+Run the canonical security audit. `--mode code` performs cited source review and makes no app request. `--mode live` invokes the full broad black-box runner and skips source. `--mode combined` starts source review and live reconnaissance together, hands cited hypotheses into live planning, and returns one parent result linked to the sealed black-box report. The saved target authorization supplies paths, HTTP methods and rate; compatible owner/outsider references are reused automatically. Confirmation returns exit 1; incomplete, blocked or no-confirmation coverage returns exit 3. The optional mock engine remains explicitly simulated.
 
-Options: --mode, --target, --base, --full, --plan, --detach.
+Options: --mode, --target, --base, --full, --plan, --detach, --agents, --http-workers, --model-calls, --max-urls, --max-tasks, --minutes.
 
 ## finding list
 
@@ -262,7 +262,7 @@ Show a check and environment bindings.
 
 ## test save <finding-id>
 
-Save a regression after a verified fix.
+Save a portable regression after a verified fix, or export a confirmed black-box proof immediately. Use `--out` to choose the export directory.
 
 ## test run [id]
 
@@ -410,9 +410,9 @@ Reset fixture behavior while retaining evidence.
 
 Stop the local fixture server.
 
-## Boolean flags
+## Exact syntax and flags
 
---json, --help, --version, --non-interactive, --plan, --full, --detach, --all, --force, --accept, --production, --renew, --once, --stop, --device, --replace, --allow-private.
+See the [generated CLI reference](CLI_REFERENCE.md). It is checked against the same catalog used for strict parsing and terminal help, including boolean/value distinctions.
 
 ## Exit codes
 
@@ -420,7 +420,7 @@ Stop the local fixture server.
 
 ## Account/resource preflight
 
-`~/bypass-for-muse/bypass probe test <name> --project /path/to/app` checks the two signed-in account IDs and owner resource with three authorized GET requests, no model calls. The plugin performs this through `bypass_test_probe`. Status `ready` means those positive controls succeeded; it is not a security verdict. Every combined/live scan repeats this check before AI.
+`bypass probe test <name> --project /path/to/app` checks the two signed-in account IDs and owner resource with three authorized GET requests and no model calls. The plugin performs this through `bypass_test_probe`. Status `ready` means those exact positive controls succeeded; it is not a security verdict. The broad live audit independently validates any compatible account references it uses; a configured legacy probe is not a prerequisite for starting a live or combined audit.
 
 Run status is `failed` for execution errors, `incomplete` for blocked/bounded results with exit 3, `cancelled` for cancellation and `completed` when the requested execution finished with a conclusive behavior result. `run watch` exits for all terminal statuses. `status` and `context` return a compact latest-run summary; `run show <id>` / `bypass_run` returns the detailed evidence.
 

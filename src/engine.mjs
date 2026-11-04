@@ -5,10 +5,13 @@ import { read, change, event, writeEvidence } from './store.mjs';
 import { inventory } from './repository.mjs';
 import { runChecks, saveCheck, specFor } from './checks.mjs';
 import { replay } from './portable-check.mjs';
-import { id, now, hash, named, need, outcome, aggregate, delay, redact } from './util.mjs';
+import { id, now, hash, named, need, outcome, delay, redact } from './util.mjs';
 import { scopeReady } from './network.mjs';
 import { demoConfig } from './demo.mjs';
-import { realEngine, realPlan, executeRealScan } from './real-engine.mjs';
+import { realEngine, realPlan } from './real-engine.mjs';
+import { executeStandaloneAudit } from './audit-engine.mjs';
+import { verifyRun as verifyBlackboxRun } from './blackbox/poc.mjs';
+import { projectIdentityBridge, projectBlackboxEnvironment } from './blackbox/project-scope.mjs';
 
 export function scanPlan(state,options={}){
   need(!(options.base&&options.full),'Choose --base or --full, not both.');
@@ -51,7 +54,10 @@ function mockCandidate(state,inv,targetName){
 export async function executeRun(root,runId,externalSignal,onProgress,{runtime}={}){
   if(read(root).runs.find(r=>r.id===runId)?.kind==='scan'&&realEngine(read(root)))requireStandaloneAPI();
   const controller=new AbortController();
-  const report=async(stage,message)=>{await progress(root,runId,stage,message);onProgress?.({stage,message});};
+  const report=async(stage,message,details={})=>{
+    await progress(root,runId,stage,message);
+    onProgress?.({stage,message,...details});
+  };
   const cancel=()=>controller.abort();externalSignal?.addEventListener('abort',cancel,{once:true});
   if(externalSignal?.aborted)cancel();
   const timer=setInterval(()=>{try{if(named(read(root).runs,runId,'Run').cancelRequested)controller.abort();}catch{controller.abort();}},150);
@@ -63,7 +69,8 @@ export async function executeRun(root,runId,externalSignal,onProgress,{runtime}=
       await report('replay','Running saved checks without a model.');
       result=await runChecks(root,{all:!options.checkId,checkId:options.checkId,target:options.target,signal:controller.signal,runId});
     }else if(realEngine(initial)){
-      result=await executeRealScan(root,runId,options,{signal:controller.signal,report,...(runtime?{runtime}:{})});
+      result=await executeStandaloneAudit(root,runId,options,{signal:controller.signal,report,
+        ...(runtime?{runtime}:{})});
     }else{
       const plan=scanPlan(initial,options);
       need(!plan.blockers.length,plan.blockers.join(' '),3,{plan});
@@ -111,6 +118,26 @@ export async function verifyFinding(root,findingId,{target,build,retest=false,si
   target=target||finding.target||state.activeTarget;
   const t=named(state.targets,target,'Target');scopeReady(t);
   need(finding.target===target,'Finding is bound to another target. Add an explicit saved-test binding for another environment.',3);
+  if(finding.engine==='blackbox'){
+    need(finding.verification?.blackboxRun,'This finding has no linked black-box proof run.',3);
+    const bridge=projectIdentityBridge(state,t);
+    const env=await projectBlackboxEnvironment(state,t,bridge,{signal});
+    const replayed=await verifyBlackboxRun(root,finding.verification.blackboxRun,{env});
+    const proof=replayed.proofs.find(item=>item.id===finding.verification.proofId)??
+      (replayed.proofs.length===1?replayed.proofs[0]:null);
+    need(proof,'The linked proof is not present in the sealed black-box run.',3);
+    const reproduced=['confirmed','observed'].includes(proof.verdict);
+    const status=reproduced?'confirmed':proof.verdict==='not_reproduced'?
+      (retest?'fixed_verified':'not_reproduced'):'blocked';
+    const verification={...proof,status,origin:t.url,blackboxRun:finding.verification.blackboxRun,
+      at:now(),build:build?{value:build,source:'operator-supplied, not attested'}:null};
+    await change(root,s=>{const current=named(s.findings,findingId,'Finding');current.status=status;
+      current.verification=verification;current.history.push({action:retest?'retest':'verify',...verification});
+      event(s,status,`${current.title}: ${status}`,{findingId,blackboxRun:verification.blackboxRun});});
+    await consolidateMemory(root);
+    return outcome({findingId,status,verification,blackboxRun:verification.blackboxRun},
+      reproduced?1:proof.verdict==='not_reproduced'?0:3);
+  }
   if(!['docker','host'].includes(finding.engine)&&(!finding.fixture||!state.demo||target!==state.demo.target)){
     const verification={status:'simulated_unproven',simulation:true,requests:0,modelCalls:0,reason:'The live verification engine is mocked. No exploit was sent to this deployed application.'};
     await change(root,s=>{const f=named(s.findings,findingId,'Finding');f.history.push({at:now(),action:retest?'retest':'verify',...verification});f.verification=verification;});

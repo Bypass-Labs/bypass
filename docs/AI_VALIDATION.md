@@ -2,6 +2,8 @@
 
 Checked on **2026-10-27**. This report separates execution evidence from compatibility claims. The implementation and migration guide are in [AI_MODES.md](AI_MODES.md).
 
+This is versioned historical evidence. Its two-worker standalone topology was replaced on 2026-11-03 by one isolated source worker plus the canonical broad black-box runner; see [ARCHITECTURE.md](ARCHITECTURE.md) and [AUDIT_EVALUATION.md](AUDIT_EVALUATION.md) for the current contract.
+
 ## Actual Muse host: passed
 
 Muse Code **1.4.13** installed and approved a temporary native plugin under a distinct audit ID. The test used a fresh workspace, normal host permission handling, Contributor mode off for that invocation, and the public local invoice fixture. The customer's installed plugin and account settings were left unchanged by the audit.
