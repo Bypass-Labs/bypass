@@ -1,5 +1,7 @@
 # Bypass for Muse Code
 
+![Before Bypass Muse: a developer overwhelmed by scanner findings. After Bypass Muse: a calmer review with source-to-sink context.](docs/assets/bypass-muse-before-after.png)
+
 **Build with Muse. Test the code and the running app. Keep the proof.**
 
 Bypass turns Muse Code into an application security agent. It combines white-box source review, gray-box investigation informed by code and test identities, and black-box testing of an approved running app. Muse chooses what to investigate next. Bypass enforces the scope, runs the checks, and confirms supported findings from recorded behavior. Supported proofs become repeatable security tests that run without a model and give Muse app-specific context for the next feature.
@@ -139,6 +141,8 @@ recommendations. Do not edit application code.
 ```
 
 Setup offers **Code only**, **Code + running app**, or **Running app only**. Supply a local source folder or Git URL for code; supply an app URL for live testing. To return later, use `/bypass:start`.
+
+> **Try the Aegis demo:** Test with the [repository](https://github.com/Bypass-Labs/aegis-mission-control-demo-fork-1) and [running app](https://demo-app-fork-1.bypasslabs.ai/).
 
 For a running app, supply its URL and choose its environment if unknown. Bypass shows one compact testing plan with **Approve**, **Decline**, and **Custom instructions**. Approve confirms that you control the app and authorize the displayed paths, methods, request rate and expiry. The audit then starts immediately with that exact plan and shows live progress; there is no second scope questionnaire or start confirmation. Custom instructions lets you change the plan before approval. Accounts are optional for anonymous checks; authenticated checks need usable test identities.
 
