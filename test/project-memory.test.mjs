@@ -12,7 +12,7 @@ import { createRun, verifyFinding } from '../src/engine.mjs';
 import { runAgent } from '../agents/worker.mjs';
 import { startPOC, stopPOC } from '../src/poc.mjs';
 import { runChecks } from '../src/checks.mjs';
-import { rememberSource, recallMemory, featureContext, forgetMemory, setMemory, consolidateMemory, MEMORY_LIMIT } from '../src/project-memory.mjs';
+import { rememberSource, rememberBlackboxFindings, recallMemory, featureContext, forgetMemory, setMemory, consolidateMemory, MEMORY_LIMIT } from '../src/project-memory.mjs';
 
 const line='export const mayRead = (user, row) => user.id === row.ownerId;';
 const fact=(extra={})=>({topic:'authorization',title:'Rows use account ownership',summary:'Compare the authenticated user with row.ownerId before returning data.',file:'policy.mjs',line:1,quote:line,...extra});
@@ -30,6 +30,21 @@ test('source knowledge needs exact read citations and survives a fresh CLI proce
   assert.equal(result.data.memory.entries[0].confidence,'source-supported interpretation');assert.equal(result.data.securityRequirements.length,0);
   assert.equal(fs.readFileSync(path.join(root,'.bypass/state.json'),'utf8'),before,'context must not write state');
   assert.equal(read(root).models.length,0);assert.equal(read(root).targets.length,0);assert.equal(read(root).runs.length,0);
+});
+
+test('confirmed black-box proofs become compact security memory without response bodies',async()=>{
+  const root=await app();
+  await execute('target add',['production'],{project:root,url:'https://app.example.test',environment:'production'});
+  const memory=await rememberBlackboxFindings(root,{run:'bx-20261103-1234abcd',origin:'https://app.example.test',
+    stats:{finishedAt:'2026-11-03T00:00:00.000Z'},findings:[{id:'f-001',verdict:'confirmed',kind:'rate-limit-auth-gate',
+      severity:'medium',title:'Login attempts are not throttled',pattern:'/api/login',url:'https://app.example.test/api/login',
+      cwe:'CWE-307',owasp:'A07',rule:'20 failures without 429',confirmation:['ev-1'],proof:'/local/poc.mjs',
+      assessment:{impact:'Attackers can automate password guessing.',remediation:'Return 429 and add progressive delays.'}}]});
+  assert.equal(memory.saved.length,1);assert.equal(memory.records,1);
+  const [entry]=(await recallMemory(root,{query:'login'})).entries;
+  assert.equal(entry.outcome,'confirmed');assert.equal(entry.target.origin,'https://app.example.test');
+  assert.equal(entry.resourcePath,'/api/login');assert.equal(entry.evidence.cwe,'CWE-307');
+  assert.match(entry.summary,/password guessing/);assert.doesNotMatch(JSON.stringify(entry),/responseBody|password value/);
 });
 
 test('dependency edits mark facts stale, and ignored source never reaches a coding agent through memory',async()=>{

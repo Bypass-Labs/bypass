@@ -6,14 +6,29 @@ import {fileURLToPath} from 'node:url';
 import {temp, cli} from './helpers.mjs';
 import {execFile} from '../src/util.mjs';
 import {createBlackboxProgress, progressLine} from '../src/blackbox/progress.mjs';
+import {blackboxOutcomeText, regressionExportText} from '../src/ui.mjs';
 
 test('web progress separates executed, queued untested and beyond budget', () => {
   assert.deepEqual(progressLine({stage: 'web-probes', message:
     '181 web leads executed; 8 queued untested; 2 confirmed security findings; 7 beyond budget'}),
-  {label: 'Web tests', text: '181 leads executed · 8 queued untested · 7 beyond budget'});
+  {label: 'Web tests', text: '181 leads executed · 8 queued untested · 2 confirmed findings · 7 beyond budget',confirmed:2});
   assert.deepEqual(progressLine({stage: 'web-probes', message:
     '2 web leads executed; 0 queued untested; 0 confirmed security findings; 25 deferred to later pass'}),
-  {label: 'Web tests', text: '2 leads executed · 25 deferred to later pass'});
+  {label: 'Web tests', text: '2 leads executed · 25 deferred to later pass',confirmed:0});
+});
+
+test('the final audit screen leads with impact, remediation, coding brief and exact replay commands',()=>{
+  const text=blackboxOutcomeText({run:'bx-20261103-1234abcd',projectRoot:'/tmp/app',origin:'https://app.test',
+    memory:{saved:['memory_1']},findings:[{id:'f-001',verdict:'confirmed',severity:'medium',cwe:'CWE-307',
+      title:'Login attempts are not throttled',pattern:'/api/login',rule:'20 failures without 429',
+      assessment:{impact:'Attackers can automate guessing.',preconditions:'The endpoint is public.',
+        remediation:'Return 429 and add progressive delays.'}}]});
+  assert.match(text,/MEDIUM · CWE-307/);assert.match(text,/Business impact\nAttackers can automate guessing/);
+  assert.match(text,/Recommended fix\nReturn 429/);assert.match(text,/COPY FOR YOUR CODING AGENT/);
+  assert.match(text,/bypass blackbox verify 'bx-20261103-1234abcd' --project '\/tmp\/app'/);
+  assert.match(text,/✓ Saved 1 confirmed finding/);
+  const exported=regressionExportText({output:'/tmp/app/tests',files:["/tmp/app/tests/f-001.test.mjs"]});
+  assert.match(exported,/✓ Saved 1 standalone regression test/);assert.match(exported,/node --test '\/tmp\/app\/tests\/f-001\.test\.mjs'/);
 });
 
 const CLI = fileURLToPath(new URL('../bin/bypass.mjs', import.meta.url));
@@ -45,10 +60,10 @@ test('plain CLI shows audit milestones, replay commands, and an honest coverage 
   assert.match(run.stderr, /1\/6  Doing  Scope and host discovery/);
   assert.match(run.stderr, /3\/6  Doing  Recon: routes and responses/);
   assert.match(run.stderr, /6\/6  Done   Report and coverage/);
-  assert.match(run.stderr, /\d+ HTTP · 0 Muse · \d+\/\d+ checks/);
+  assert.match(run.stderr, /\d+ HTTP · 0 Muse(?: · \d+ findings?)? · \d+\/\d+ checks/);
   assert.match(run.stderr, /Accounts\s+Anonymous only/);
   assert.match(run.stderr, /Web tests\s+\d+ leads/);
-  assert.doesNotMatch(run.stderr, /Web tests[^\n]*confirmed/);
+  assert.match(run.stderr, /Web tests[^\n]*1 confirmed finding/);
   assert.doesNotMatch(run.stderr, /\x1b\[/);
   assert.doesNotMatch(run.stderr, /none of OWNER_TOKEN|No test accounts:|0 schemas, 0 root fields|0 public private-key candidates|off-origin script not fetched/);
   assert.match(run.stdout, /Findings: 1 confirmed/);

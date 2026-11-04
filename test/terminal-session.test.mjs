@@ -82,6 +82,8 @@ test('permission pickers default to defer and custom text cannot grant consent',
 
 test('HTTP method picker toggles multiple choices with real keys, supports custom input and remains visible on resize',async t=>{
   const tty=terminal(t);let answer=promptMethods(tty.ui.ask,tty.ui.write,['GET','HEAD']);
+  assert.match(frame(tty.ui.state,100,30).lines.map(x=>x.text).join('\n'),/Allow all.*Customize/s);
+  tty.key('down');tty.key('return');await new Promise(resolve=>setImmediate(resolve));
   tty.type('\x1b[B\x1b[B ');assert.deepEqual(tty.ui.state.pending.values,['GET','HEAD','POST']);
   for(const [columns,rows] of [[100,30],[80,24],[40,15]]){
     const view=frame(tty.ui.state,columns,rows),text=view.lines.map(x=>x.text).join('\n');
@@ -90,6 +92,7 @@ test('HTTP method picker toggles multiple choices with real keys, supports custo
   }
   tty.type('\r');assert.deepEqual(await answer,['GET','HEAD','POST']);
   answer=promptMethods(tty.ui.ask,tty.ui.write,['GET','POST','PROPFIND']);
+  tty.key('down');tty.key('return');await new Promise(resolve=>setImmediate(resolve));
   assert.match(frame(tty.ui.state,100,30).lines.map(x=>x.text).join('\n'),/Selected: GET, POST, PROPFIND/);
   tty.type('GET,PATCH,PROPFIND\r');assert.deepEqual(await answer,['GET','PATCH','PROPFIND']);
   answer=tty.ui.multiselect('Methods',methodChoices);tty.type('\r');assert.ok(tty.ui.state.pending,'empty selection cannot silently grant a default');

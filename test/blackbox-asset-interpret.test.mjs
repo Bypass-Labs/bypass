@@ -143,6 +143,42 @@ test('an output-limited asset page is retried in smaller pages', async () => {
   assert.equal(result.modelError, null);
 });
 
+test('a multi-action asset page is retried in smaller pages', async () => {
+  const mined = fixture();
+  let calls = 0;
+  const result = await interpretAssets(mined, {model: {model: 'fixture'}, maxPages: 4,
+    infer: async (_model, messages) => {
+      if (++calls === 1) {
+        const error = new Error('Model returned more than one security action for a single page.');
+        error.details = {reason: 'multiple_actions'};
+        throw error;
+      }
+      const files = JSON.parse(messages[1].content).files;
+      return {files: files.map(file => ({id: file.id, role: 'app', why: 'Client route',
+        authFlow: '', routes: file.routes.map(route => ({path: route.path,
+          method: route.method, purpose: 'Observed record read', parameters: []})), proposals: []}))};
+    }});
+  assert.equal(calls, 4);
+  assert.equal(result.coverage.filesSent, 5);
+  assert.equal(result.modelError, null);
+});
+
+test('a singleton multi-action asset page gets one concise automatic retry', async () => {
+  const mined = fixture();mined.files=mined.files.slice(0,1);mined.endpoints=mined.endpoints.slice(0,1);
+  let calls = 0;
+  const result = await interpretAssets(mined, {model: {model: 'fixture'}, maxPages: 2,
+    infer: async (_model, messages) => {
+      if (++calls === 1) {
+        const error = new Error('Model returned more than one security action for a single page.');
+        error.details = {reason: 'multiple_actions'};throw error;
+      }
+      const files = JSON.parse(messages[1].content).files;
+      return {files: files.map(file => ({id:file.id,role:'app',why:'Client route',authFlow:'',
+        routes:file.routes.map(route=>({path:route.path,method:route.method,purpose:'Observed read',parameters:[]})),proposals:[]}))};
+    }});
+  assert.equal(calls,2);assert.equal(result.coverage.filesSent,1);assert.equal(result.modelError,null);
+});
+
 test('a malformed multi-file asset answer is retried in smaller pages', async () => {
   const mined = fixture();
   let calls = 0;

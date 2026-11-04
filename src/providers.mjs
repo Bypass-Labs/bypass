@@ -139,7 +139,7 @@ export class ProviderSession {
         // Preserve provider reasoning_content and exact tool calls for multi-turn replay.
         this.history.push(message);text=message.content||'';calls=(message.tool_calls||[]).map(x=>({id:x.id,...x.function}));
       }
-      need(calls.length<=1,'Only one bounded security action per turn is supported.',3);
+      need(calls.length<=1,'Model returned more than one security action for a single page.',3,{reason:'multiple_actions'});
       if(!schema){need(!calls.length,'Unexpected model tool call.',3);return text;}
       let value;
       if(calls.length){const call=calls[0];need(call.name==='security_action'&&typeof call.id==='string'&&call.id.length&&typeof call.arguments==='string'&&call.arguments.length<=64000,'Invalid security tool call.',3);this.pending=call.id;try{value=JSON.parse(call.arguments);}catch{throw new Fault('Malformed tool arguments; no action executed.',3,{reason:'invalid_arguments'});}}

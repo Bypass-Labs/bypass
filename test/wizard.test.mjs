@@ -40,7 +40,7 @@ test('wizard defers failed DNS and resumes the same challenge through explicit s
   assert.equal(first.result.openDashboard,false);
   assert.equal(saved.models[0].lastTest.status,'connected');
   dns.resolveTxt.mock.mockImplementation(async record=>{assert.equal(record,challenge.record);return [[challenge.token]];});
-  const second=await wizard(t,root,['1','','GET,HEAD,POST,PROPFIND','yes','n']);
+  const second=await wizard(t,root,['1','','2','GET,HEAD,POST,PROPFIND','yes','n']);
   const resumed=read(root);
   assert.equal(resumed.project.id,saved.project.id);
   assert.equal(resumed.targets.length,1);assert.equal(resumed.models.length,1);
@@ -53,26 +53,29 @@ test('wizard defers failed DNS and resumes the same challenge through explicit s
   assert.doesNotMatch(second.output,/What address do you open/,'saved app must not be asked for again');
 });
 
-test('wizard never turns local ownership acknowledgment into testing permission by default',async t=>{
+test('wizard highlights the recommended complete scope and defaults the single approval to yes',async t=>{
   const root=temp();
   const result=await wizard(t,root,['1','','http://127.0.0.1:4317','yes','','','','n']);
   const target=read(root).targets[0];
   assert.equal(target.ownership.status,'verified');
-  assert.equal(target.authorization,null);
-  assert.match(result.output,/scope required/);
-  assert.equal(result.result.readiness.ready.liveTesting,false);
+  assert.deepEqual(target.authorization.paths,['/']);
+  assert.deepEqual(target.authorization.methods,['GET','HEAD','POST','PUT','PATCH','DELETE','OPTIONS']);
+  assert.match(result.output,/Testing scope authorized/);
+  assert.equal(result.result.readiness.ready.liveTesting,true);
 });
 
-test('wizard production scope requires the separate production confirmation',async t=>{
+test('wizard production scope uses one explicit confirmation with yes recommended',async t=>{
   const root=temp();await execute('init',[root]);
   await change(root,state=>{delete state.settings.ownershipVerification;});
   await execute('model add',['muse'],{project:root,provider:'meta','secret-env':'BYPASS_UNIT_API_KEY',model:'test-model',stream:false});
   await execute('target add',['production'],{project:root,url:'https://app.example.com',environment:'production'});
   t.mock.method(dns,'resolveTxt',async()=>[[read(root).targets[0].challenge.token]]);
   await change(root,state=>{state.models[0].lastTest={status:'connected'};state.models[0].lastAttempt={status:'connected'};});
-  await wizard(t,root,['1','','yes','no','n']);
+  const denied=await wizard(t,root,['1','','no','n']);
   assert.equal(read(root).targets[0].authorization,null);
-  const result=await wizard(t,root,['','','yes','yes','n']);
+  assert.equal(denied.prompts.filter(prompt=>/Authorize these checks/.test(prompt)).length,1);
+  assert.equal(denied.prompts.some(prompt=>/Do you authorize|Confirm testing/.test(prompt)),false);
+  const result=await wizard(t,root,['','','yes','n']);
   assert.equal(read(root).targets[0].authorization.productionAcknowledged,true);
   assert.match(result.output,/No DNS record required/);
   assert.doesNotMatch(result.output,/Add this DNS record/);

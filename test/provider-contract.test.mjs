@@ -78,6 +78,19 @@ test('malformed arguments, unknown fields and unsupported tool names cannot exec
   }
 });
 
+test('multiple bounded actions are classified for an automatic smaller-page retry',async t=>{
+  const {profile}=await endpoint(t,(_req,res)=>{
+    const first=action({focus:'one'},'c1').tool_calls[0];
+    const second=action({focus:'two'},'c2').tool_calls[0];
+    chat(res,{role:'assistant',content:null,tool_calls:[first,second]});
+  });
+  await assert.rejects(new ProviderSession(profile).turn([{role:'user',content:'x'}],{schema}),error=>{
+    assert.equal(error.details.reason,'multiple_actions');
+    assert.match(error.message,/more than one security action/);
+    return true;
+  });
+});
+
 test('auth/billing/rate failures have actionable categories, no body/key leakage and no retries',async t=>{
   for(const [status,reason] of [[401,'authentication'],[403,'authorization'],[402,'billing'],[429,'rate_limit'],[400,'unsupported_request'],[503,'provider_unavailable']]){
     const {profile,calls}=await endpoint(t,(_req,res)=>{res.writeHead(status,{'content-type':'application/json'});res.end('{"error":{"message":"PRIVATE_BODY contract-test-value"}}');});

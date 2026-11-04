@@ -21,6 +21,7 @@ import { summaryText as blackboxSummary } from './blackbox/report.mjs';
 import { progressLine as blackboxProgressLine } from './blackbox/progress.mjs';
 import { createTheme, brandHeading } from './terminal-theme.mjs';
 import { promptMethods, mayChangeData, recommendedMethods } from './http-methods.mjs';
+import { modelDisplay } from './model-display.mjs';
 
 const theme=createTheme();
 const color=!!process.stdout.isTTY&&!process.env.NO_COLOR;
@@ -28,11 +29,31 @@ const tones={'31':'error','33':'warning','90':'muted','1':'title'};
 const paint=(n,s)=>theme.paint(tones[n]||'accent',s);
 const accent=s=>theme.paint('accent',s),muted=s=>theme.paint('muted',s),bold=s=>theme.paint('title',s);
 const label=s=>String(s).replace(/_/g,' ');
+const shellArg=value=>`'${String(value).replaceAll("'","'\"'\"'")}'`;
+const RESEARCH_BEHAVIOR=new Set(['model-differential','model-json-differential','model-http-sequence']);
+
+export function blackboxOutcomeText(result){
+  const findings=(result?.findings??[]).filter(finding=>finding.verdict==='confirmed'&&
+    !RESEARCH_BEHAVIOR.has(finding.kind));
+  if(!findings.length)return '\nNo confirmed security finding was produced. Open report.md for coverage gaps and untested work.';
+  const cards=findings.map(finding=>{
+    const impact=finding.assessment?.impact||finding.rationale||'A replayed HTTP proof confirmed this security boundary failure.';
+    const preconditions=finding.assessment?.preconditions;
+    const remediation=finding.assessment?.remediation||finding.remediation||'Review the affected server-side security control and add a regression test.';
+    return `\n${String(finding.severity||'unrated').toUpperCase()} · ${finding.cwe||'Unclassified'} · ${finding.id}\n${finding.title}\nAffected: ${finding.pattern||finding.url||result.origin}\n\nBusiness impact\n${impact}${preconditions?`\n\nRequired conditions\n${preconditions}`:''}\n\nRecommended fix\n${remediation}\n\nCOPY FOR YOUR CODING AGENT\nFix ${finding.title} at ${finding.pattern||finding.url||result.origin}. The confirmed evidence rule is ${finding.rule||'a replayed HTTP proof'}. ${remediation} Add an automated regression test that proves the vulnerable behavior is no longer reproducible without weakening legitimate access.`;
+  }).join('\n\n');
+  return `\n${bold(findings.length===1?'CONFIRMED SECURITY FINDING':`${findings.length} CONFIRMED SECURITY FINDINGS`)}${cards}\n\nVerify the fix\n  bypass blackbox verify ${shellArg(result.run)} --project ${shellArg(result.projectRoot)}\nSave standalone tests\n  bypass blackbox export ${shellArg(result.run)} --project ${shellArg(result.projectRoot)}\n\nSecurity memory\n${result.memory?.saved?.length?`✓ Saved ${result.memory.saved.length} confirmed finding${result.memory.saved.length===1?'':'s'} for future coding context.`:'No new confirmed finding was saved.'}`;
+}
+
+export function regressionExportText(value){
+  if(!value.files?.length)return `\nNo standalone regression test was saved. ${value.skippedProofs?.length?`${value.skippedProofs.length} proof${value.skippedProofs.length===1?' was':'s were'} not exportable.`:''}`;
+  return `\n✓ Saved ${value.files.length} standalone regression test${value.files.length===1?'':'s'}\nLocation: ${value.output}\nRun now:\n  node --test ${value.files.map(shellArg).join(' ')}`;
+}
 export function printResult(data){
   if(!data)return;
   const value=redact(data);
   if(value.error){console.error(paint('31',value.error));if(value.details&&Object.keys(value.details).length)console.error(JSON.stringify(value.details,null,2));return;}
-  if(value.kind==='blackbox-audit'){console.log(blackboxSummary(value,{color}));return;}
+  if(value.kind==='blackbox-audit'){console.log(blackboxSummary(value,{color})+blackboxOutcomeText(value));return;}
   if(value.kind==='blackbox-scope'){console.log(`\nScope: ${value.file}\nTarget: ${value.origin}\nIncluded paths: ${value.include.join(', ')}\nCredential origins: ${value.credentialOrigins.join(', ')}\nAccounts: ${value.identities.owner}, ${value.identities.outsider}\nNext: ${value.next}`);return;}
   if(value.kind==='blackbox-setup'){
     const scopeAction = value.created ? 'created' : value.updated ? 'rate updated' : 'reused';
@@ -47,9 +68,8 @@ export function printResult(data){
   }
   if(value.kind==='blackbox-verify'){console.log(`\n${value.integrity.ok?'Ledger intact':'Ledger broken'} · ${value.reportedFindings??value.proofs.length} findings · ${value.proofs.length} proofs\n${value.proofs.map(item=>`  ${item.id}: ${item.verdict}${item.corroborates?` · corroborates ${item.corroborates}`:''}`).join('\n')}\nExit ${value.exitCode}`);return;}
   if(value.kind==='blackbox-export'){
-    console.log(`\nExported ${value.files.length} regression tests for ${value.reportedFindings??value.files.length} findings to ${value.output}`);
+    console.log(regressionExportText(value));
     if(value.skippedProofs?.length)console.log(`Skipped ${value.skippedProofs.length} unsupported private-read proof${value.skippedProofs.length===1?'':'s'}`);
-    if(value.files.length)console.log(`Run: node --test ${value.output}/*.test.mjs`);
     return;
   }
   if(value.kind==='feature-security-context'){
@@ -174,7 +194,7 @@ export async function modelTestWizard(root,name,{interactive=process.stdin.isTTY
 function updateWorkspace(prompt,root){
   if(!prompt.setContext)return;
   const info=readiness(root);
-  prompt.setContext({demo:false,engine:info.engine.mode,title:info.project.name,repo:root,branch:info.project.repository.branch,app:info.target?`${info.target.url} · ${info.target.authorized?'authorized':info.target.ownership==='verified'||info.target.ownershipVerification==='off'?'scope required':'verification pending'}`:'not connected · code preview available',model:info.model?`${info.model.name} · ${info.model.provider} · ${info.model.connection}`:'not configured · /models for API setup',checks:info.checks.enabled,memory:info.memory?.records||0});
+  prompt.setContext({demo:false,engine:info.engine.mode,title:info.project.name,repo:root,branch:info.project.repository.branch,app:info.target?`${info.target.url} · ${info.target.authorized?'authorized':info.target.ownership==='verified'||info.target.ownershipVerification==='off'?'scope required':'verification pending'}`:'not connected · code preview available',model:info.model?modelDisplay(info.model):'not configured · /models for API setup',checks:info.checks.enabled,memory:info.memory?.records||0});
 }
 async function modelWizard(ask,root,io){
   const setup=await promptAPIProfile(ask,(title,options)=>choose(ask,options,title));if(!setup)return;
@@ -200,9 +220,12 @@ async function authorizeWizard(ask,root,name){
   console.log(`Methods: ${methods.join(', ')} · Paths: ${paths} · Limit: ${DEFAULT_REQUESTS_PER_SECOND} requests/second`);
   console.log('Also read public app pages/scripts for sign-in setup (anonymous GET only).');
   if(mayChangeData(methods))console.log('These methods can change test data or start jobs. Only explicitly configured requests will run.');
-  if(!await confirmChoice(ask,verificationDisabled(target)?'Confirm you control this app and authorize these methods and paths?':'Do you authorize these methods and paths?',{yes:'Authorize the displayed scope',no:'Keep testing disabled'}))return;
-  let production=false;if(target?.environment==='production')production=await confirmChoice(ask,'Confirm testing on this production app',{yes:'Authorize the displayed production scope',no:'Keep production testing disabled'});
-  if(target?.environment==='production'&&!production)return;
+  const production=target?.environment==='production';
+  if(!await confirmChoice(ask,production?
+    `Authorize these checks on the production app ${target.url}?`:
+    verificationDisabled(target)?`Confirm you control ${target.url} and authorize these checks?`:`Authorize these checks on ${target.url}?`,
+    {yes:production?'Yes, authorize this production scope':'Yes, authorize these checks',
+      no:'Not now — keep testing disabled',fallback:true,recommended:'yes'}))return;
   printResult(await execute('target authorize',[name],{project:root,paths,methods,rps:DEFAULT_REQUESTS_PER_SECOND,accept:true,production,'public-config':true}));
 }
 function dashboard(root){
@@ -211,7 +234,7 @@ function dashboard(root){
   console.log(`${bold(info.project.name)}\n${muted(root)}\n`);
   console.log(`  REPOSITORY   ${info.project.repository.kind==='app'?'App only · no source repository':info.project.repository.kind==='git'?'Git connected':'Directory connected'}`);
   console.log(`  LIVE APP     ${info.target?`${info.target.url} · ${info.target.authorized?'authorized':info.target.ownership}`:'not connected'}`);
-  console.log(`  MODEL        ${info.model?`${info.model.name} · ${info.model.provider} · ${info.model.connection}`:'choose a provider'}`);
+  console.log(`  MODEL        ${info.model?modelDisplay(info.model):'choose a provider'}`);
   console.log(`  EVIDENCE     local · ${info.findings.total} findings · ${info.checks.enabled} saved tests`);
   console.log(`  MONITOR      ${info.worker.status} · ${info.monitors} schedules`);
   console.log(`\n${theme.paint(info.engine.mode==='docker'?'accent':'warning',info.engine.mode==='docker'?'  REAL AI · Docker agents':'  PREVIEW · simulated discovery')}  ${muted('Evidence and saved checks stay in this project.')}`);
@@ -229,7 +252,8 @@ export async function terminal(options={},io){
     if(prompt.rich&&['auth login','mcp serve','_run','_demo-serve'].includes(key))throw new Fault('Run this process in a separate shell. Type /help for commands available in this workspace.');
     if(prompt.rich&&key==='monitor worker'&&!flags.once&&!flags.stop&&!flags.detach)flags={...flags,detach:true};
     let lastStage=-1, blackboxRequests=0, blackboxModelCalls=0, blackboxChecks=0,
-      blackboxTotal=0, blackboxEstimate=0, blackboxResearch=0, blackboxUntested=0;
+      blackboxTotal=0, blackboxEstimate=0, blackboxResearch=0, blackboxUntested=0,
+      blackboxConfirmed=0, blackboxStage='Recon in progress', lastBlackboxLine='';
     const blackboxStages=['Scope and hosts','Assets and source','Routes and responses',
       'Plan and test leads','Replay and assess','Report and coverage'];
     const real=read(root).settings.analysisEngine==='docker';
@@ -246,15 +270,16 @@ export async function terminal(options={},io){
           if(step.stage==='progress'&&step.type==='phase'){
             const index=step.step-1;
             if(step.state==='doing'){
+              blackboxStage=blackboxStages[index]||'Audit in progress';
               prompt.task?.(index,'running');
-              prompt.setNext?.(`${blackboxStages[index]||'Audit in progress'} · ${blackboxRequests} HTTP · ${blackboxModelCalls} Muse`);
+              prompt.setNext?.(`${blackboxStage} · ${blackboxRequests} HTTP · ${blackboxModelCalls} Muse`);
             }
             if(step.state==='done')prompt.task?.(index,'done');
           }
           if(step.stage==='progress'){
             if(step.type==='request')blackboxRequests=Math.max(blackboxRequests,step.requests??0);
             if(step.type==='model')blackboxModelCalls=Math.max(blackboxModelCalls,step.modelCalls??0);
-            if(step.type==='task-done')blackboxChecks++;
+            if(step.type==='task-done'){blackboxChecks++;if(step.confirmed)blackboxConfirmed++;}
             if(step.type==='research-attempt')blackboxResearch++;
             if(step.type==='task-estimate'){
               blackboxTotal+=Math.max(0,step.total??0)-blackboxEstimate;
@@ -271,10 +296,11 @@ export async function terminal(options={},io){
               blackboxUntested=Math.max(0,step.untested??0);
             }
             if(['request','model','task-done','task-estimate','task-total','task-untested','task-reconcile','research-attempt'].includes(step.type))
-              prompt.setNext?.(`${blackboxRequests} HTTP · ${blackboxModelCalls} Muse · ${blackboxChecks}${blackboxTotal?`/${blackboxTotal}`:''} checks${blackboxResearch?` · ${blackboxResearch} research tries`:''}${blackboxUntested?` · ${blackboxUntested} untested`:''}`);
+              prompt.setNext?.(`${blackboxStage} · ${blackboxChecks}${blackboxTotal?`/${blackboxTotal}`:''} checks${blackboxConfirmed?` · ${blackboxConfirmed} finding${blackboxConfirmed===1?'':'s'}`:''} · ${blackboxRequests} HTTP · ${blackboxModelCalls} Muse${blackboxResearch?` · ${blackboxResearch} research tries`:''}${blackboxUntested?` · ${blackboxUntested} untested`:''}`);
           }
           const line=blackboxProgressLine(step);
-          if(line)prompt.write?.(`${line.label}  ${line.text}`);
+          const rendered=line?`${line.label}  ${line.text}`:'';
+          if(rendered&&rendered!==lastBlackboxLine){lastBlackboxLine=rendered;prompt.write?.(rendered);}
         } else prompt.write?.(step.message);
         if(key==='scan'){const nextStage=stages.indexOf(step.stage);if(nextStage>=0&&nextStage!==lastStage){if(lastStage>=0)prompt.task?.(lastStage,'done');lastStage=nextStage;prompt.task?.(lastStage,'running');}}
       }});
@@ -284,6 +310,12 @@ export async function terminal(options={},io){
     };
     const result=prompt.activity?await prompt.activity(key==='scan'?(real?'Review repository · real Docker agents':'Review repository · simulated discovery'):key==='test run'?'Replay saved checks · no model':key==='blackbox'?'Black-box audit':key,work,{verdict:r=>key.startsWith('blackbox')&&r.exitCode===1?'done':r.exitCode&&!(previewRun(r.run)&&r.exitCode===3)?'attention':'done'}):await work(prompt.signal);
     if(!(prompt.rich&&key==='blackbox setup'&&result.ready))printResult(result);
+    if(key==='blackbox'){
+      const confirmed=(result.findings??[]).filter(finding=>finding.verdict==='confirmed'&&
+        !RESEARCH_BEHAVIOR.has(finding.kind)).length;
+      if(confirmed)prompt.setNext?.(`${confirmed} confirmed finding${confirmed===1?'':'s'} · review impact and remediation below`);
+    }
+    if(key==='blackbox export'&&result.files?.length)prompt.setNext?.(`Regression test saved · node --test ${result.files.map(shellArg).join(' ')}`);
     return result;
   };
   const tour=async(flags={})=>{try{return await guidedDemo(flags,prompt);}finally{if(prompt.rich)updateWorkspace(prompt,root);}};
@@ -335,7 +367,7 @@ export async function terminal(options={},io){
         }else{
         console.log(`\n${accent('━'.repeat(Math.min(66,process.stdout.columns||66)))}\n${bold(state.project.name)} / Bypass prototype\n${muted(root)}`);
         console.log(reviewSummary(info.review));
-        console.log(`Model: ${info.model?`${info.model.name} · ${info.model.modelId||info.model.provider} · ${info.model.connection}`:'not configured; mock preview needs no model'} · ${info.findings.total} review result(s)`);
+        console.log(`Model: ${info.model?modelDisplay(info.model):'not configured; mock preview needs no model'} · ${info.findings.total} review result(s)`);
         console.log('\n'+actions.map((action,i)=>`  ${i+1}  ${action.label}${i===0?'  ← Enter':''}`).join('\n'));
         console.log('  0  Exit\n\n? commands · repo change repository · app verification · q quit');
         const selected=await ask('Choose or type a command','1');
@@ -372,11 +404,7 @@ export async function terminal(options={},io){
               {value:saved?.paths?.join(',')||'/',label:saved?`Saved scope (${saved.paths.join(', ')})`:'Entire app (/)'},
               ...(saved&&saved.paths.join(',')!=='/'?[{value:'/',label:'Entire app (/)' }]:[])],
             {write:message=>prompt.write?.(message)});
-            const savedMethods=saved?.methods?.join(',');
-            methods=await promptValue(ask,'Allowed HTTP methods',[
-              ...(savedMethods?[{value:savedMethods,label:`Saved authorization (${savedMethods})`}]:[]),
-              ...(!savedMethods||savedMethods!==recommendedMethods.join(',')?[{value:recommendedMethods.join(','),label:recommendedMethods.join(', ')}]:[])],
-            {write:message=>prompt.write?.(message)});
+            methods=(await promptMethods(ask,message=>prompt.write?.(message),saved?.methods)).join(',');
             const rates=[...new Set([saved?.maxRequestsPerSecond,DEFAULT_REQUESTS_PER_SECOND,10,5,1,32].filter(value=>value!=null).map(String))];
             rps=await promptValue(ask,'Maximum requests per second',rates.map(value=>({value,label:`${value} request${value==='1'?'':'s'} per second`})),
             {write:message=>prompt.write?.(message)});
@@ -406,7 +434,7 @@ export async function terminal(options={},io){
               const actions=[
                 ...(auditResult.findings?.length?[
                   {id:'verify',label:'Replay confirmed finding proofs'},
-                  {id:'export',label:'Export regression tests'}]:[]),
+                  {id:'export',label:'Save standalone regression tests'}]:[]),
                 ...(auditResult.coverage?.pendingResearchCheckpoints?[{id:'resume',label:'Resume pending research'}]:[]),
                 {id:'home',label:'Return to project'}];
               if(actions.length<=1)break;
