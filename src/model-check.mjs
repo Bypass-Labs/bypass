@@ -1,13 +1,16 @@
 import { execute } from './service.mjs';
 import { MODEL_CHECK_TIMEOUT_MS } from './models.mjs';
-import { read } from './store.mjs';
+import fs from 'node:fs';
+import path from 'node:path';
+import { FILE, read, rootFrom } from './store.mjs';
 import { cleanText, redact, named } from './util.mjs';
 
 // Human feedback stays out of the service layer and machine-readable CLI output.
 export async function checkModelConnection(root, name, io={}) {
   const say=value=>(io.write||console.log)(cleanText(redact(value)));
-  const state=read(root),profile=named(state.models,name||state.activeModel,'Model');
-  say(`\nChecking the model connection (${profile.timeoutMs===0?'no timeout; cancel to stop':`up to ${MODEL_CHECK_TIMEOUT_MS/1000} seconds`}). No repository content is sent.`);
+  const projectRoot=rootFrom(root,false),state=fs.existsSync(path.join(projectRoot,FILE))?read(projectRoot):null;
+  const profile=state?named(state.models,name||state.activeModel,'Model'):null;
+  say(`\nChecking the model connection (${profile?.timeoutMs===0?'no timeout; cancel to stop':`up to ${MODEL_CHECK_TIMEOUT_MS/1000} seconds`}). No repository content is sent.`);
   if(io.run)say('Press Enter to skip this check and continue setup. Ctrl+C exits; your choices stay saved.');
   const work=signal=>execute('model test',name?[name]:[],{project:root},{signal,onProgress:progress=>{
     const timing=Number.isFinite(progress.elapsedSeconds)&&Number.isFinite(progress.timeoutSeconds)?` (${progress.elapsedSeconds}s / ${progress.timeoutSeconds}s)`:'';

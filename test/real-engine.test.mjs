@@ -80,6 +80,23 @@ test('source citations cannot invent files or lines, and source reads cannot fol
   assert.equal(modelResponseSchema('white-box').properties.candidates.items.properties.category.enum,undefined);
 });
 
+test('citation diagnostics distinguish unread evidence, invalid quotes, and formatting without source disclosure',()=>{
+  const reader={readFiles:new Map([['app.js',new Map([[1,'  sensitiveSource();']])]])};
+  const base={category:'authorization',file:'app.js',line:1,quote:'sensitiveSource();',title:'A',hypothesis:'B',recommendation:'C'};
+  for(const [fields,issue] of [[{file:'unread.js'},'file_not_read'],[{line:2},'line_not_read'],[{line:0},'line_not_read'],[{quote:null},'invalid_quote'],[{quote:'1: sensitiveSource();'},'quote_mismatch'],[{quote:'sensitiveSource();\nmoreSource();'},'quote_mismatch']]){
+    assert.throws(()=>groundCandidates([{...base,...fields}],reader,{fingerprint:'test'}),error=>{
+      assert.equal(error.details.citation.issue,issue);
+      if(issue==='quote_mismatch'||issue==='invalid_quote'){
+        assert.equal(error.details.citation.includesLineNumber,!!fields.quote?.startsWith('1:'));
+        assert.equal(error.details.citation.multiline,!!fields.quote?.includes('\n'));
+      }
+      assert.doesNotMatch(error.message+JSON.stringify(error.details),/sensitiveSource|moreSource/);
+      return true;
+    });
+  }
+  assert.equal(groundCandidates([base],reader,{fingerprint:'test'})[0].sourceEvidence.quote,base.quote);
+});
+
 test('large application files are paged and only delivered lines can support a hypothesis',async()=>{
   const root=temp(),lines=Array.from({length:900},(_,i)=>`// line ${i+1}: ${'context '.repeat(15)}`);
   lines[650]="app.get('/api/run/:id', async () => getRun(id));";

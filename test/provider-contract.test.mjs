@@ -8,6 +8,8 @@ import { inExecutionMode } from '../src/execution-mode.mjs';
 import { testModel } from '../src/models.mjs';
 import { modelResponseSchema } from '../src/inference.mjs';
 import { temp } from './helpers.mjs';
+import { execute } from '../src/service.mjs';
+import { read } from '../src/store.mjs';
 
 const schema=modelResponseSchema('orchestrator');
 async function endpoint(t,handler,options={}){
@@ -29,6 +31,41 @@ test('presets use official destinations, explicit transport and configurable mod
   assert.equal(apiProfile('p',{provider:'meta','timeout-ms':'0'}).timeoutMs,0);
   assert.equal(apiProfile('p',{provider:'meta'}).timeoutMs,60000);
   for(const timeout of [-1,1,999,180001,'invalid'])assert.throws(()=>apiProfile('p',{provider:'meta','timeout-ms':timeout}),/Model timeout/);
+});
+
+test('custom profiles persist explicit reasoning effort and forward the selected protocol field',async t=>{
+  for(const transport of ['chat','responses'])await t.test(transport,async t=>{
+    const {profile,calls}=await endpoint(t,(_req,res)=>{
+      if(transport==='chat')chat(res,action({focus:'test'}));
+      else{res.setHeader('content-type','application/json');res.end(JSON.stringify({status:'completed',output:[{type:'function_call',name:'security_action',call_id:'c1',arguments:'{"focus":"test"}'}]}));}
+    },{transport,effort:'minimal'});
+    const root=temp();await execute('init',[root]);
+    await execute('model add',['glimmer-minimal'],{project:root,provider:'custom','base-url':profile.baseUrl,model:profile.model,'secret-env':profile.secretEnv,transport,effort:'minimal',stream:false});
+    await execute('model use',['glimmer-minimal'],{project:root});
+    const saved=read(root).models.find(model=>model.name===read(root).activeModel);
+    assert.equal(saved.effort,'minimal');
+    assert.equal((await new ProviderSession(saved).turn([{role:'user',content:'Synthetic check'}],{schema})).focus,'test');
+    if(transport==='chat'){assert.equal(calls[0].body.reasoning_effort,'minimal');assert.equal(calls[0].body.reasoning,undefined);}
+    else{assert.deepEqual(calls[0].body.reasoning,{effort:'minimal'});assert.equal(calls[0].body.reasoning_effort,undefined);}
+    for(const effort of ['minimal','low','medium','high','xhigh','max'])assert.equal(apiProfile('test',{provider:'custom','base-url':profile.baseUrl,model:profile.model,effort}).effort,effort);
+    for(const effort of ['none','invalid'])assert.throws(()=>apiProfile('test',{provider:'custom','base-url':profile.baseUrl,model:profile.model,effort}),/Unsupported reasoning/);
+  });
+});
+
+test('custom profiles omit reasoning overrides by default and never retry unsupported efforts',async t=>{
+  for(const transport of ['chat','responses'])await t.test(transport,async t=>{
+    const {profile,calls}=await endpoint(t,(_req,res)=>{
+      if(transport==='chat')chat(res,action({focus:'test'}));
+      else{res.setHeader('content-type','application/json');res.end(JSON.stringify({status:'completed',output:[{type:'function_call',name:'security_action',call_id:'c1',arguments:'{"focus":"test"}'}]}));}
+    },{transport});
+    await new ProviderSession(profile).turn([{role:'user',content:'Synthetic check'}],{schema});
+    assert.equal(calls[0].body.reasoning_effort,undefined);assert.equal(calls[0].body.reasoning,undefined);
+    const rejected=await endpoint(t,(_req,res)=>{res.writeHead(400,{'content-type':'application/json'});res.end('{"error":{"message":"PRIVATE_UNSUPPORTED_SETTING"}}');},{transport,effort:'minimal'});
+    await assert.rejects(new ProviderSession(rejected.profile).turn([{role:'user',content:'Synthetic check'}],{schema}),error=>{
+      assert.equal(error.details.reason,'unsupported_request');assert.doesNotMatch(error.message,/PRIVATE_UNSUPPORTED_SETTING/);return true;
+    });
+    assert.equal(rejected.calls.length,1);
+  });
 });
 
 test('no-timeout profiles retain SDK parsing without deadline or socket timers',async t=>{
@@ -120,6 +157,63 @@ test('malformed arguments, unknown fields and unsupported tool names cannot exec
     const {profile}=await endpoint(t,(_req,res)=>{const a=action({});a.tool_calls[0].function.arguments=value;chat(res,a);});
     await assert.rejects(new ProviderSession(profile).turn([{role:'user',content:'x'}],{schema}));
   }
+});
+
+test('rejected actions record safe response shape and parse classifications in both Chat modes',async t=>{
+  for(const stream of [false,true])for(const content of ['',null,'PRIVATE_OUTPUT prose','{"focus":','{"focus":4}']){
+    await t.test(`${stream?'streamed':'buffered'} ${content===null?'null':content.length}`,async t=>{
+      const {profile}=await endpoint(t,(_req,res)=>{
+        if(!stream)chat(res,{role:'assistant',content,reasoning_content:'PRIVATE_REASONING'});
+        else{
+          res.writeHead(200,{'content-type':'text/event-stream'});
+          res.end(`data: ${JSON.stringify({choices:[{delta:{content,reasoning_content:'PRIVATE_REASONING'},finish_reason:'stop'}]})}\n\ndata: [DONE]\n\n`);
+        }
+      },{stream});
+      const progress=[];
+      await assert.rejects(new ProviderSession(profile).turn([{role:'user',content:'x'}],{schema,onProgress:event=>progress.push(event)}),error=>{
+        const d=error.details.responseDiagnostics;
+        assert.equal(d.contentType,content===null&&!stream?'null':'string');
+        assert.equal(d.contentCharacters,content?.length??0);assert.equal(d.reasoningCharacters,17);
+        assert.equal(d.toolCallCount,0);assert.equal(d.finishReason,'stop');
+        assert.equal(d.jsonStatus,content==='{"focus":4}'?'parsed':content?'invalid_json':'empty_content');
+        if(content==='{"focus":4}')assert.equal(d.schemaStatus,'invalid');
+        assert.deepEqual(progress.at(-1).diagnostics,d);
+        assert.doesNotMatch(JSON.stringify(d)+progress.at(-1).message,/PRIVATE_OUTPUT|PRIVATE_REASONING|contract-test-value/);
+        return true;
+      });
+    });
+  }
+});
+
+test('tool argument failures record counts and syntax failure without arguments or tool names',async t=>{
+  const {profile}=await endpoint(t,(_req,res)=>chat(res,{role:'assistant',content:null,tool_calls:[{id:'c1',type:'function',function:{name:'security_action',arguments:'PRIVATE_ARGUMENTS'}}]}));
+  await assert.rejects(new ProviderSession(profile).turn([{role:'user',content:'x'}],{schema}),error=>{
+    const d=error.details.responseDiagnostics;
+    assert.equal(d.toolCallCount,1);assert.deepEqual(d.toolArgumentCharacters,[17]);
+    assert.equal(d.finishReason,'tool_calls');assert.equal(d.jsonSource,'tool_arguments');assert.equal(d.jsonStatus,'invalid_json');
+    assert.doesNotMatch(JSON.stringify(d),/PRIVATE_ARGUMENTS|security_action/);
+    return true;
+  });
+});
+
+test('Responses invalid JSON records protocol status without generated text',async t=>{
+  const {profile}=await endpoint(t,(_req,res)=>{res.setHeader('content-type','application/json');res.end(JSON.stringify({status:'completed',output:[{type:'message',content:[{type:'output_text',text:'PRIVATE_OUTPUT'}]}]}));},{transport:'responses'});
+  await assert.rejects(new ProviderSession(profile).turn([{role:'user',content:'x'}],{schema}),error=>{
+    const d=error.details.responseDiagnostics;
+    assert.equal(d.transport,'responses');assert.equal(d.finishReason,'completed');assert.equal(d.jsonStatus,'invalid_json');
+    assert.equal(d.contentCharacters,14);assert.doesNotMatch(JSON.stringify(d),/PRIVATE_OUTPUT/);
+    return true;
+  });
+});
+
+test('unknown finish reasons are classified instead of logged verbatim',async t=>{
+  const {profile}=await endpoint(t,(_req,res)=>{res.setHeader('content-type','application/json');res.end(JSON.stringify({choices:[{finish_reason:'PRIVATE_FINISH',message:{role:'assistant',content:'PRIVATE_OUTPUT'}}]}));});
+  await assert.rejects(new ProviderSession(profile).turn([{role:'user',content:'x'}],{schema}),error=>{
+    assert.equal(error.details.responseDiagnostics.finishReason,'unknown');
+    assert.equal(error.details.reason,'incomplete_output');
+    assert.doesNotMatch(JSON.stringify(error.details),/PRIVATE_FINISH|PRIVATE_OUTPUT/);
+    return true;
+  });
 });
 
 test('auth/billing/rate failures have actionable categories, no body/key leakage and no retries',async t=>{

@@ -25,7 +25,7 @@ for(const relative of scannerPackageFiles(path.join(root,'scanner'))){
 }
 // Bundle the official SDK to keep native Muse install hashing/copying bounded.
 fs.mkdirSync(path.join(runtime,'vendor'),{recursive:true});
-await build({stdin:{contents:"export {default} from 'openai';",resolveDir:root},bundle:true,platform:'node',format:'esm',target:'node22',outfile:path.join(runtime,'vendor/openai.mjs'),minify:true});
+await build({stdin:{contents:"export {default} from 'openai'; export {APIPromise} from 'openai/core/api-promise';",resolveDir:root},bundle:true,platform:'node',format:'esm',target:'node22',outfile:path.join(runtime,'vendor/openai.mjs'),minify:true});
 fs.copyFileSync(path.join(root,'node_modules/openai/LICENSE'),path.join(runtime,'vendor/OPENAI_SDK_LICENSE'));
 // The SDK contains vendored dependencies with their own attribution obligations.
 // Keep all upstream license/notice files, including those whose code is bundled.
@@ -41,6 +41,6 @@ function copySDKNotices(directory,relative=''){
 }
 copySDKNotices(path.join(root,'node_modules/openai'));
 const providerFile=path.join(runtime,'src/providers.mjs');
-fs.writeFileSync(providerFile,fs.readFileSync(providerFile,'utf8').replace("from 'openai'","from '../vendor/openai.mjs'"));
+fs.writeFileSync(providerFile,fs.readFileSync(providerFile,'utf8').replace("from 'openai'","from '../vendor/openai.mjs'").replace("from 'openai/core/api-promise'","from '../vendor/openai.mjs'"));
 fs.copyFileSync(path.join(root,'package.json'),path.join(runtime,'package.json'));
 console.log(JSON.stringify({built:true,plugin:path.join(root,'plugin'),runtimeDependencies:1}));

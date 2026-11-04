@@ -30,7 +30,7 @@ Official contracts checked **2026-10-27**. Defaults are explicit configuration v
 | `anthropic` | `https://api.anthropic.com/v1` / `ANTHROPIC_API_KEY` | `claude-opus-5-5` | Chat only | Official OpenAI SDK compatibility path. No extended thinking through this adapter; `reasoning_effort`, strict schemas and `response_format` are ignored by the compatibility layer. Bypass rejects effort overrides, omits response_format, uses automatic tool choice and validates locally. Some account keys also need a workspace header. [Official compatibility](https://platform.claude.com/docs/en/cli-sdks-libraries/libraries/openai-sdk) |
 | `moonshot` | `https://api.moonshot.ai/v1` / `MOONSHOT_API_KEY` | `kimi-k3.1-pro` | Chat | Kimi is Moonshot's model family. Preserve `reasoning_content` with tool messages. Use model defaults; explicit effort overrides and Moonshot Responses are not enabled in this adapter yet. [Official quickstart](https://platform.kimi.ai/docs/get-your-api-key) |
 | `deepseek` | `https://api.deepseek.com` / `DEEPSEEK_API_KEY` | `deepseek-flash` | Chat default; Responses optional | Preserve Chat reasoning_content; Responses is stateless and replays all output items. Explicit effort accepts none/low/high/max. [Quickstart](https://api-docs.deepseek.com/quick_start), [thinking](https://api-docs.deepseek.com/guides/thinking_mode/), [Responses](https://api-docs.deepseek.com/api/create-response/) |
-| `custom` | Explicit `--base-url` / `BYPASS_MODEL_API_KEY` | Required | Explicit Chat or Responses | Requires a nonempty credential variable; a no-auth loopback server can use the placeholder below. No inferred capabilities or proprietary reasoning parameters. HTTPS remotely; HTTP permitted on explicit loopback. Private networks require explicit opt-in. |
+| `custom` | Explicit `--base-url` / `BYPASS_MODEL_API_KEY` | Required | Explicit Chat or Responses | Requires a nonempty credential variable; a no-auth loopback server can use the placeholder below. Explicit effort accepts minimal/low/medium/high/xhigh/max when supported by your endpoint; no capability inference or proprietary reasoning parameters. HTTPS remotely; HTTP permitted on explicit loopback. Private networks require explicit opt-in. |
 
 All presets use the pinned official OpenAI JavaScript SDK. Release builds bundle it into a portable module with its license. Each provider session uses one model and destination, zero automatic retries, a bounded timeout/output budget, streamed completion assembly, cancellation and locally validated arguments/results. SDK debug logging is disabled. Implicit SDK organization, project, alternate credentials and custom headers are not forwarded; only the configured key and optional explicit Anthropic workspace header reach the chosen endpoint. Truncated, malformed, unknown or multiple actions do not execute. Chat replays exact tool IDs/results and provider reasoning state; Responses replays output items and matching function outputs without relying on server persistence. Reasoning stays ephemeral and is never included in progress or saved reports.
 
@@ -107,6 +107,43 @@ Before scanning, confirm that `model list` shows `"active": "glimmer-local-180s"
 and that profile has `"timeoutMs": 180000`. The scan should name
 `glimmer-local-180s / Muse-Glimmer-30B`, with waiting messages ending in `/ 180s`.
 The timeout is per model request, not the total scan duration.
+
+### Select minimal reasoning for local Glimmer
+
+Glimmer's server-side template can default to high reasoning strength. If
+generation is slow or returns reasoning without a final action, explicitly try
+`--effort minimal`. Bypass forwards this as `reasoning_effort: "minimal"` for Chat
+or `reasoning: {"effort": "minimal"}` for Responses. Custom profiles accept
+`minimal`, `low`, `medium`, `high`, `xhigh`, and `max`; the endpoint must support
+the chosen value. No override is sent when `--effort` is omitted, and unsupported
+settings fail explicitly without automatic retries or fallback.
+
+From the checkout, with `APP` and `BYPASS_LOCAL_MUSE_KEY` exported:
+
+```bash
+npm start -- model add glimmer-local-minimal \
+  --provider custom \
+  --base-url http://127.0.0.1:8080/v1 \
+  --model meta-models/Muse-Glimmer-30B-GGUF:Q4_K_M \
+  --secret-env BYPASS_LOCAL_MUSE_KEY \
+  --transport chat \
+  --effort minimal \
+  --stream false \
+  --timeout-ms 0 \
+  --project "$APP"
+
+npm start -- model use glimmer-local-minimal --project "$APP"
+npm start -- model list --project "$APP" --json
+npm start -- model test glimmer-local-minimal --project "$APP"
+npm start -- engine use docker --project "$APP"
+npm start -- scan --mode code --project "$APP"
+```
+
+Use your server's exact model ID. Verify `"active": "glimmer-local-minimal"`
+and that the selected profile has `"effort": "minimal"`. Restart existing scans
+after switching profiles. This changes reasoning strength, not schema enforcement
+or validation; it does not guarantee a successful review. The combination above
+also selects buffered output and unlimited waiting.
 
 If the scan still names `local-muse`, explicitly run `model use` for the new
 profile. Stop and restart any scan already in progress; changing profiles cannot
@@ -204,6 +241,123 @@ If buffered mode succeeds, that supports (but does not prove) the streaming
 overhead diagnosis. If it still fails, inspect server logs for context errors,
 generation failures, memory pressure, or disconnected clients. Do not treat
 partial evidence from an interrupted review as a completed security result.
+
+### Source citation validation stopped the review
+
+`Source citation did not match the actual line` means inference returned a
+candidate, but its quote was not an exact match (ignoring surrounding whitespace)
+for the cited line actually delivered to the model. This is not a timeout or
+network error. Saving source interpretations to memory does not establish that
+the candidate findings have valid citations.
+
+The CLI reports the candidate number, known source file and cited line, and
+whether the file/line was unread, the quote was invalid, or the quote mismatched.
+For mismatches it also reports exact matches on other already-read lines, a
+line-number prefix, or a multi-line quote when applicable. These are diagnostic
+hints only; Bypass never silently changes the citation or accepts an unsupported
+finding.
+
+Structured diagnostics are saved in `.bypass/runs/<run-id>.json` under
+`result.details.citation`, with `result.details.reason` set to
+`source_citation_invalid` and the failure stage set to `white-box`. Diagnostics
+include quote/line character counts but not source text or model quotes. Valid
+memory interpretations remain saved even when subsequent finding validation
+fails. Inspect the indicated source location locally and rerun the review;
+partial evidence is not a completed security result.
+
+### Model returned no valid security action
+
+This means the completed model response had no usable `security_action` tool
+call and its text could not be parsed as JSON. A simple `model test` checks an
+exact reply marker, not reliable tool calling or schema compliance.
+
+Rejected completed responses now print a `Response diagnostics:` progress line.
+The same object is saved in `.bypass/runs/<run-id>.json` under
+`result.details.responseDiagnostics` and, for Docker source reviews, the failed
+entry in `agentEvidence.modelUsage[].responseDiagnostics`.
+
+Diagnostics include transport/streaming mode, content type and character count,
+reasoning character count, tool-call count, up to four tool-argument character
+counts, and an allowlisted finish reason (`unknown` for unrecognized values).
+`jsonSource` distinguishes response content from tool arguments. `jsonStatus`
+is `not_attempted`, `empty_content`, `invalid_json`, or `parsed`; `schemaStatus:
+"invalid"` means JSON parsed but failed the security-action schema. Raw content,
+reasoning, arguments, tool names, and JSON parser exception messages are not
+logged.
+
+For example, zero tool calls plus `jsonStatus: "invalid_json"` indicates
+non-JSON or malformed JSON text; `empty_content` with a positive reasoning count
+indicates reasoning was returned without a final text action. `finishReason:
+"length"` indicates truncated generation. Inspect the local server's chat
+template/tool support and generation settings accordingly. Diagnostics do not
+change action validation, retry automatically, or accept unsupported findings.
+
+## CodeQL and policy discovery with local Glimmer
+
+`scan --mode code` is a separate bounded AI source-review workflow focused on
+authentication and cross-account access. It does not run CodeQL or the bundled
+policy catalog. To use those detectors, run `discover` with the same initialized
+application and explicitly selected local model profile.
+
+With `APP` and `BYPASS_LOCAL_MUSE_KEY` exported and the
+`glimmer-local-minimal` profile created above:
+
+```bash
+npm start -- model use glimmer-local-minimal --project "$APP"
+
+# Preview detector selection without Docker or inference.
+npm start -- discover --detector both --plan --project "$APP"
+
+# CodeQL SAST plus AI policy discovery, followed by source-only evaluation.
+npm start -- discover --detector both --project "$APP"
+```
+
+Other detector choices:
+
+```bash
+# Bundled AI policies only; no CodeQL.
+npm start -- discover --detector policy --project "$APP"
+
+# CodeQL discovery only; no model calls or automatic evaluation.
+npm start -- discover --detector sast --discovery-only --project "$APP"
+```
+
+Discovery uses Docker; the selected local model handles policy reasoning and
+automatic evaluation. CodeQL queries themselves are deterministic. Run
+`npm start -- scanner policies` or `npm start -- scanner rules` to inspect the
+available policies/rules. See the [scanner guide](../scanner/README.md) for exact
+selectors, source exclusions, CodeQL licensing, and stage budgets.
+
+**Evaluation is enabled by default**, for SAST, policy, combined discovery, and
+SARIF import. Each candidate is evaluated against cited source and classified as:
+
+- `confirmed`: supported by source evidence, not runtime reproduction.
+- `refuted`: affirmative source evidence disproves the candidate.
+- `needs_review`: missing evidence or unresolved conditions.
+
+To defer evaluation for either detector, pass `--discovery-only`. Use the run ID
+printed by discovery to inspect or evaluate a saved run:
+
+```bash
+npm start -- discover status <run-id> --project "$APP"
+npm start -- discover report <run-id> --format md --project "$APP"
+npm start -- discover evaluate <run-id> --project "$APP"
+```
+
+Explicit evaluation requires unchanged source and the recorded scanner runtime.
+Neither discovery nor evaluation tests the running app or proves exploitability.
+Unresolved evaluation cases can keep a run incomplete; zero signals or completed
+evaluation does not establish complete security coverage.
+
+In Muse Code, `/bypass:discover` runs the same detector/evaluation workflow, but
+reasoning uses the **active Muse session**, not your standalone local profile.
+Use standalone `discover` to keep reasoning on local Glimmer. In Muse, pass
+`discovery-only: true` to `bypass_discover` to skip evaluation.
+
+The model profile's `--timeout-ms 0` does **not** disable discovery/evaluation
+task leases or overall stage budgets. Slow local generation may still exhaust
+those independent limits; inspect the run's coverage and unresolved cases rather
+than treating it as a completed review.
 
 ## Migration
 

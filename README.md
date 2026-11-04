@@ -292,6 +292,10 @@ For **local Muse Glimmer without authentication**, see the [complete local sourc
 
 If a no-timeout review reports a connection interruption, try the [buffered-mode diagnostic](docs/AI_MODES.md#connection-interrupted-despite-no-timeout) with `--stream false`. Streaming overhead can hit the separate response-size limit; server failures can produce the same error.
 
+For slow local Glimmer reasoning or reasoning-only responses, [select minimal reasoning explicitly](docs/AI_MODES.md#select-minimal-reasoning-for-local-glimmer) with `--effort minimal`. Custom profiles keep the server default unless an effort is selected.
+
+For CodeQL and bundled policy checks, use [local Glimmer discovery](docs/AI_MODES.md#codeql-and-policy-discovery-with-local-glimmer) with `bypass discover --detector both --project /path/to/app`. Unlike `scan --mode code`, this runs the scanner detectors and source-only evaluation by default; it does not reproduce vulnerabilities against a running app.
+
 Run `bypass init /path/to/app` first if the application is not connected. The first-run experience supports **Meta Model API** and local OpenAI-compatible servers running **Muse Spark Open** or **Muse Glimmer**. Explicit legacy provider profiles remain available through advanced commands but are not offered during onboarding. Bypass never changes billing paths or enables Muse Spark Contributor without an explicit model selection. [Provider examples and migration](docs/AI_MODES.md).
 
 ## See the complete demo

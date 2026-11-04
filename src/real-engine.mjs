@@ -69,13 +69,24 @@ export function sourceReader(root,inv,{maxBytes=192000}={}){
 }
 export function groundCandidates(candidates,reader,inv){
   need(Array.isArray(candidates)&&candidates.length<=8,'Agent returned too many or invalid source hypotheses.',3);
-  return candidates.map(candidate=>{
+  return candidates.map((candidate,index)=>{
     need(candidate&&typeof candidate.category==='string'&&
       candidate.category.trim().length>0&&candidate.category.length<=120,
       'Hypothesis category must be a short name.',3);
     const lines=reader.readFiles.get(candidate.file);
-    need(Number.isInteger(candidate.line)&&candidate.line>0&&lines?.has(candidate.line),'Hypothesis must cite a line actually read.',3);
-    need(typeof candidate.quote==='string'&&candidate.quote.trim().length>0&&lines.get(candidate.line).trim()===candidate.quote.trim(),'Source citation did not match the actual line. No finding accepted.',3);
+    const location=lines?`${candidate.file}:${Number.isInteger(candidate.line)?candidate.line:'invalid line'}`:'unread file';
+    const citation={candidateNumber:index+1,file:lines?candidate.file:null,line:Number.isInteger(candidate.line)?candidate.line:null};
+    need(Number.isInteger(candidate.line)&&candidate.line>0&&lines?.has(candidate.line),
+      `Hypothesis must cite a line actually read. Candidate ${index+1} at ${location}: ${lines?'line was not read':'file was not read'}. No finding accepted.`,
+      3,{stage:'white-box',reason:'source_citation_invalid',citation:{...citation,issue:lines?'line_not_read':'file_not_read'}});
+    const actual=lines.get(candidate.line).trim(),quote=typeof candidate.quote==='string'?candidate.quote.trim():null;
+    if(!quote||actual!==quote){
+      const matchingReadLines=quote?[...lines].filter(([,text])=>text.trim()===quote).map(([line])=>line).slice(0,8):[];
+      const issue=quote?'quote_mismatch':'invalid_quote';
+      const includesLineNumber=!!quote&&/^\d+:\s/.test(quote),multiline=!!quote&&/[\r\n]/.test(quote);
+      need(false,`Source citation did not match the actual line. No finding accepted. Candidate ${index+1} at ${location}: ${issue}${matchingReadLines.length?`; quote matches read line(s) ${matchingReadLines.join(', ')}`:''}${includesLineNumber?'; quote includes a line-number prefix':''}${multiline?'; quote spans multiple lines':''}.`,
+        3,{stage:'white-box',reason:'source_citation_invalid',citation:{...citation,issue,quoteCharacters:quote?.length??0,actualLineCharacters:actual.length,matchingReadLines,includesLineNumber,multiline}});
+    }
     for(const key of ['title','hypothesis','recommendation'])need(typeof candidate[key]==='string'&&candidate[key].length>0&&candidate[key].length<=2000,'Hypothesis text is invalid.',3);
     return {title:candidate.title,category:candidate.category.trim(),hypothesis:candidate.hypothesis,recommendation:candidate.recommendation,resourcePath:typeof candidate.resourcePath==='string'?candidate.resourcePath:null,sourceEvidence:{kind:'source',file:candidate.file,line:candidate.line,quote:candidate.quote,sourceFingerprint:inv.fingerprint}};
   });
@@ -95,12 +106,13 @@ export async function executeRealScan(root,runId,options,{signal,report,runtime=
     const timeoutLabel=profile.timeoutMs===0?'no timeout':`${(profile.timeoutMs??INFERENCE_TIMEOUT_MS)/1000}s`;
     const heartbeat=setInterval(()=>{report(role,`${role}: waiting for ${profile.name} · ${Math.floor((Date.now()-started)/1000)}s / ${timeoutLabel} · cancel to stop`).catch(()=>{});},10000);
     try{const result=await runtime.infer(profile,messages,{signal:activeSignal,schema:modelResponseSchema(role),session:sessions.get(role),onProgress:event=>{
+      if(event.diagnostics)usage.responseDiagnostics=event.diagnostics;
       if(event.kind==='model'){
         usage.resolvedModel=event.model;
 
       }else if(event.phase!==lastPhase){lastPhase=event.phase;usage.lastPhase=event.phase;if(event.httpStatus)usage.httpStatus=event.httpStatus;progress.push(report(role,`${role}: ${event.message}`));}
     }});usage.status='completed';return result;}
-    catch(error){usage.status='failed';usage.reason=error.details?.reason||'model_response';error.details={...error.details,stage:role,call:modelCalls,lastPhase:usage.lastPhase,...(usage.httpStatus?{httpStatus:usage.httpStatus}:{}),next:'model test'};throw error;}
+    catch(error){usage.status='failed';usage.reason=error.details?.reason||'model_response';if(error.details?.responseDiagnostics)usage.responseDiagnostics=error.details.responseDiagnostics;error.details={...error.details,stage:role,call:modelCalls,lastPhase:usage.lastPhase,...(usage.httpStatus?{httpStatus:usage.httpStatus}:{}),next:'model test'};throw error;}
     finally{clearInterval(heartbeat);usage.elapsedMs=Date.now()-started;usage.finishedAt=now();await Promise.allSettled(progress);await persist();}
   };
   await report('replay',plan.mode==='code'?'Code review selected; HTTP replay deferred.':'Replaying saved tests before spending model calls.');
@@ -176,6 +188,8 @@ export async function executeRealScan(root,runId,options,{signal,report,runtime=
     });
     const learned=await rememberSource(root,worker.result.knowledge||[],reader,inv,runId);
     memoryReceipt.learned=learned;await report('memory',`Saved ${learned.saved.length} cited source interpretations for future feature work${learned.rejected?`; rejected ${learned.rejected} unsupported records`:''}.`);
+    await persist();
+    await report('white-box','Validating source hypothesis citations against lines actually read.');
     candidates=groundCandidates(worker.result.candidates,reader,inv).filter(candidate=>!scope.exactPassingChecks.some(check=>check.binding?.resourcePath===candidate.resourcePath));await persist();
     await report('white-box',`${candidates.length} source hypothesis(es) grounded in actual file lines.`);
     }catch(error){if(signal?.aborted||plan.mode==='code')throw error;executionFailures.push({stage:'white-box reasoning',reason:redact(error.message),details:redact(error.details||{})});await report('white-box','Source investigation blocked; continuing independent configured HTTP controls.');await persist();}

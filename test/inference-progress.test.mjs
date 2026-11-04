@@ -2,9 +2,10 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
-import { modelResponseSchema } from '../src/inference.mjs';
+import http from 'node:http';
+import { modelResponseSchema, infer } from '../src/inference.mjs';
 import { executeRealScan } from '../src/real-engine.mjs';
-import { createRun } from '../src/engine.mjs';
+import { createRun, executeRun } from '../src/engine.mjs';
 import { execute } from '../src/service.mjs';
 import { read, change } from '../src/store.mjs';
 import { Fault } from '../src/util.mjs';
@@ -62,4 +63,57 @@ test('no-timeout scans remove connection and worker deadlines and display cancel
   assert.equal(result.modelCalls,2);
   assert.ok(progress.some(message=>message.includes('one small prompt · no timeout')));
   assert.ok(progress.some(message=>message.includes('waiting for local · 10s / no timeout · cancel to stop')));
+});
+
+test('citation failures persist safe diagnostics and attribute validation to white-box, not memory',async()=>{
+  const root=temp();await execute('init',[root]);
+  fs.writeFileSync(path.join(root,'app.js'),'const actual = true;\nconst other = false;\n');
+  await execute('model add',['local'],{project:root,provider:'meta','secret-env':'BYPASS_UNIT_API_KEY'});
+  await execute('engine use',['docker'],{project:root});
+  await change(root,s=>{s.models[0].lastAttempt={status:'connected',checkedAt:new Date().toISOString()};});
+  const run=await createRun(root,'scan',{mode:'code'});
+  const result=await executeRun(root,run.id,undefined,undefined,{runtime:{
+    prepareAgents:async()=>({image:'test'}),infer:async()=>({focus:'Review source'}),
+    runContainer:async(_role,_task,rpc)=>{
+      await rpc('read_files',{paths:['app.js']});
+      return {container:{role:'white-box'},result:{
+        knowledge:[{topic:'data-model',title:'Actual value',summary:'A cited interpretation.',file:'app.js',line:1,quote:'const actual = true;'}],
+        candidates:[{title:'Candidate',category:'authorization',hypothesis:'Hypothesis',recommendation:'Review ownership',file:'app.js',line:1,quote:'const other = false;'}]
+      }};
+    }
+  }});
+  assert.equal(result.exitCode,3);assert.equal(result.run.result.details.stage,'white-box');
+  assert.equal(result.run.result.details.reason,'source_citation_invalid');
+  assert.deepEqual(result.run.result.details.citation,{candidateNumber:1,file:'app.js',line:1,issue:'quote_mismatch',quoteCharacters:20,actualLineCharacters:20,matchingReadLines:[2],includesLineNumber:false,multiline:false});
+  assert.match(result.run.result.message,/Candidate 1 at app.js:1.*quote matches read line\(s\) 2/);
+  const saved=JSON.parse(fs.readFileSync(path.join(root,'.bypass','runs',run.id+'.json'),'utf8'));
+  assert.deepEqual(saved.result.details,result.run.result.details);
+  assert.equal(saved.stage,'white-box');assert.equal(saved.agentEvidence.memory.learned.saved.length,1);
+  assert.equal(read(root).findings.length,0);
+  assert.doesNotMatch(JSON.stringify(saved.result.details)+saved.result.message,/const actual|const other/);
+});
+
+test('invalid model actions persist response diagnostics in run results and usage and print safe progress',async t=>{
+  let requests=0;
+  const server=http.createServer((req,res)=>{
+    req.resume();res.setHeader('content-type','application/json');
+    res.end(JSON.stringify({choices:[{finish_reason:'stop',message:{role:'assistant',content:++requests===1?'{"focus":"Review source"}':'PRIVATE_OUTPUT prose',reasoning_content:'PRIVATE_REASONING'}}]}));
+  });
+  await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));
+  t.after(()=>{server.closeAllConnections();server.close();});
+  const root=temp();await execute('init',[root]);
+  await execute('model add',['local'],{project:root,provider:'custom','base-url':`http://127.0.0.1:${server.address().port}/v1`,model:'test-model','secret-env':'BYPASS_UNIT_API_KEY',stream:false});
+  await execute('engine use',['docker'],{project:root});
+  const run=await createRun(root,'scan',{mode:'code'}),progress=[];
+  const result=await executeRun(root,run.id,undefined,event=>progress.push(event),{runtime:{
+    infer,prepareAgents:async()=>({image:'test'}),
+    runContainer:async(_role,_task,rpc)=>rpc('model',{messages:[{role:'user',content:'Review source'}]})
+  }});
+  assert.equal(result.exitCode,3);assert.equal(result.run.result.details.stage,'white-box');
+  const saved=JSON.parse(fs.readFileSync(path.join(root,'.bypass','runs',run.id+'.json'),'utf8'));
+  const d=saved.result.details.responseDiagnostics;
+  assert.equal(d.jsonStatus,'invalid_json');assert.equal(d.contentCharacters,20);assert.equal(d.toolCallCount,0);
+  assert.deepEqual(saved.agentEvidence.modelUsage.at(-1).responseDiagnostics,d);
+  assert.ok(progress.some(event=>event.message.includes('Response diagnostics:')&&event.message.includes('invalid_json')));
+  assert.doesNotMatch(JSON.stringify(saved.result.details)+JSON.stringify(progress),/PRIVATE_OUTPUT|PRIVATE_REASONING/);
 });

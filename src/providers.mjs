@@ -12,7 +12,7 @@ export const providers = Object.freeze({
   anthropic:{label:'Anthropic / Claude',baseUrl:'https://api.anthropic.com/v1',model:'claude-opus-5-5',secretEnv:'ANTHROPIC_API_KEY',transport:'chat',transports:['chat'],efforts:[]},
   moonshot:{label:'Moonshot / Kimi',baseUrl:'https://api.moonshot.ai/v1',model:'kimi-k3.1-pro',secretEnv:'MOONSHOT_API_KEY',transport:'chat',transports:['chat'],efforts:[]},
   deepseek:{label:'DeepSeek',baseUrl:'https://api.deepseek.com',model:'deepseek-flash',secretEnv:'DEEPSEEK_API_KEY',transport:'chat',transports:['chat','responses'],efforts:['none','low','high','max']},
-  custom:{label:'Custom OpenAI-compatible',baseUrl:null,model:null,secretEnv:'BYPASS_MODEL_API_KEY',transport:'chat',transports:['chat','responses'],efforts:[]}
+  custom:{label:'Custom OpenAI-compatible',baseUrl:null,model:null,secretEnv:'BYPASS_MODEL_API_KEY',transport:'chat',transports:['chat','responses'],efforts:['minimal','low','medium','high','xhigh','max']}
 });
 export function apiProfile(name, options) {
   const preset=providers[options.provider];
@@ -107,6 +107,17 @@ function incompleteResponse(response) {
   return new Fault(`Provider response incomplete${safeReason?` (${safeReason})`:''}; no action executed.`,3,
     {reason:'incomplete_output',...(safeReason?{providerReason:safeReason}:{})});
 }
+function responseShape(text,reasoning,calls,finish,profile) {
+  const knownFinish=['stop','tool_calls','length','content_filter','function_call','completed','incomplete','failed','cancelled'];
+  return {transport:profile.transport,stream:profile.stream,
+    contentType:text===null?'null':Array.isArray(text)?'array':typeof text,
+    contentCharacters:typeof text==='string'?text.length:0,
+    reasoningCharacters:typeof reasoning==='string'?reasoning.length:0,
+    toolCallCount:calls.length,
+    toolArgumentCharacters:calls.slice(0,4).map(call=>typeof call.arguments==='string'?call.arguments.length:0),
+    finishReason:finish==null?null:knownFinish.includes(finish)?finish:'unknown',
+    jsonStatus:'not_attempted'};
+}
 export class ProviderSession {
   constructor(profile){this.profile=profile;this.history=[];this.pending=null;this.turns=0;}
   async turn(messages,{schema,signal,onProgress,timeoutMs}={}) {
@@ -117,7 +128,7 @@ export class ProviderSession {
     const requestTimeout=timeoutMs??p.timeoutMs;
     const deadline=requestTimeout===0?null:AbortSignal.timeout(requestTimeout),active=signal&&deadline?AbortSignal.any([signal,deadline]):signal||deadline;
     if(active?.aborted)throw abortFault(active);
-    let client;
+    let client,diagnostics;
     try {
       const workspace=p.workspaceEnv?need(process.env[p.workspaceEnv],`Set ${p.workspaceEnv} for the selected Anthropic workspace.`,3):null;
       const Client=requestTimeout===0?DeadlineFreeOpenAI:OpenAI;
@@ -141,6 +152,7 @@ export class ProviderSession {
         this.history.push(...response.output); // Includes opaque/encrypted reasoning replay; never persisted or logged.
         calls=response.output.filter(x=>x.type==='function_call').map(x=>({id:x.call_id,name:x.name,arguments:x.arguments}));
         text=response.output.filter(x=>x.type==='message').flatMap(x=>x.content||[]).filter(x=>x.type==='output_text').map(x=>x.text).join('');
+        diagnostics=responseShape(text,null,calls,response.status,p);
       } else {
         const request={...common,messages:this.history,...(p.provider==='openai'?{max_completion_tokens:p.maxTokens}:{max_tokens:p.maxTokens}),...(p.effort?(p.provider==='deepseek'&&p.effort==='none'?{thinking:{type:'disabled'}}:{reasoning_effort:p.effort}):{})};
         let response=await client.chat.completions.create(request,{signal:active}),message,finish;
@@ -149,20 +161,29 @@ export class ProviderSession {
             for(const tc of d.tool_calls||[]){need(Number.isInteger(tc.index)&&tc.index>=0&&tc.index<4,'Invalid streamed tool index.',3);const current=message.tool_calls[tc.index]??={id:'',type:'function',function:{name:'',arguments:''}};current.id+=tc.id||'';current.function.name+=tc.function?.name||'';current.function.arguments+=tc.function?.arguments||'';}
           }if(reasoning)message.reasoning_content=reasoning;if(!message.tool_calls.length)delete message.tool_calls;
         }else{message=response.choices?.[0]?.message;finish=response.choices?.[0]?.finish_reason;}
+        const responseCalls=(message?.tool_calls||[]).map(x=>({id:x.id,...x.function}));
+        diagnostics=responseShape(message?.content,message?.reasoning_content,responseCalls,finish,p);
         need(message&&['stop','tool_calls'].includes(finish),'Model output incomplete or filtered; no action executed.',3,{reason:'incomplete_output'});
         // Preserve provider reasoning_content and exact tool calls for multi-turn replay.
-        this.history.push(message);text=message.content||'';calls=(message.tool_calls||[]).map(x=>({id:x.id,...x.function}));
+        this.history.push(message);text=message.content||'';calls=responseCalls;
       }
       need(calls.length<=1,'Only one bounded security action per turn is supported.',3);
       if(!schema){need(!calls.length,'Unexpected model tool call.',3);return text;}
       let value;
-      if(calls.length){const call=calls[0];need(call.name==='security_action'&&typeof call.id==='string'&&call.id.length&&typeof call.arguments==='string'&&call.arguments.length<=64000,'Invalid security tool call.',3);this.pending=call.id;try{value=JSON.parse(call.arguments);}catch{throw new Fault('Malformed tool arguments; no action executed.',3,{reason:'invalid_arguments'});}}
-      else{need(typeof text==='string'&&text.length<=64000,'Invalid structured result.',3);try{value=JSON.parse(text.trim().replace(/^```(?:json)?\s*/,'').replace(/\s*```$/,''));}catch{throw new Fault('Model returned no valid security action. Retry or choose a compatible model explicitly.',3,{reason:'invalid_arguments'});}}
-      return validateJSON(schema,value,'security_action');
+      if(calls.length){const call=calls[0];need(call.name==='security_action'&&typeof call.id==='string'&&call.id.length&&typeof call.arguments==='string'&&call.arguments.length<=64000,'Invalid security tool call.',3);this.pending=call.id;diagnostics.jsonSource='tool_arguments';try{value=JSON.parse(call.arguments);}catch{diagnostics.jsonStatus='invalid_json';throw new Fault('Malformed tool arguments; no action executed.',3,{reason:'invalid_arguments'});}}
+      else{need(typeof text==='string'&&text.length<=64000,'Invalid structured result.',3);diagnostics.jsonSource='content';try{value=JSON.parse(text.trim().replace(/^```(?:json)?\s*/,'').replace(/\s*```$/,''));}catch{diagnostics.jsonStatus=text.trim()?'invalid_json':'empty_content';throw new Fault('Model returned no valid security action. Retry or choose a compatible model explicitly.',3,{reason:'invalid_arguments'});}}
+      diagnostics.jsonStatus='parsed';
+      try{return validateJSON(schema,value,'security_action');}
+      catch(error){diagnostics.schemaStatus='invalid';throw error;}
     } catch(error) {
       if(signal?.aborted)throw abortFault(signal);
       if(deadline?.aborted)throw new Fault('Model request timed out. Earlier evidence is saved; retry explicitly.',3,{reason:'model_timeout'});
-      throw providerFailure(error,p.provider);
+      const failure=providerFailure(error,p.provider);
+      if(diagnostics){
+        failure.details={...failure.details,responseDiagnostics:diagnostics};
+        onProgress?.({kind:'phase',phase:'diagnostics',message:`Response diagnostics: ${JSON.stringify(diagnostics)}`,diagnostics});
+      }
+      throw failure;
     }
   }
 }
