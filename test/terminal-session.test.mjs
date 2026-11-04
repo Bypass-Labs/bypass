@@ -166,6 +166,32 @@ test('wide task panel can be collapsed without losing the project or active comm
   assert.equal(tty.ui.state.input,'/sta');tty.key('return');assert.equal(await answer,'/status');
 });
 
+test('a live audit keeps an explanatory evidence card visible and uses the top bar for trust guarantees',async t=>{
+  const tty=terminal(t,130,38);let finish;
+  tty.ui.setContext({title:'job-radar.app',repo:'/tmp/job-radar',engine:'docker',app:'https://job-radar.app · authorized',model:'muse-spark-1.3 · connected'});
+  tty.ui.setTasks('Black-box audit',['Scope and hosts','Assets and source','Routes and responses','Plan and test leads','Replay and assess','Report and coverage']);
+  tty.ui.task(0,'done');tty.ui.task(1,'running');
+  const audit=tty.ui.activity('Black-box audit',()=>new Promise(resolve=>{finish=resolve;}));
+  tty.ui.setLiveStatus({done:'19 assets inspected · 37 route facts retained',
+    working:'Muse is reviewing 80 observed test candidates',
+    why:'Muse proposes experiments; Bypass validates and executes every HTTP request itself.',
+    recovered:'One slow batch was split automatically; completed evidence was preserved.',
+    next:'Run accepted candidates with scoped HTTP controls.',
+    metrics:'20/80 candidates · 148 HTTP · 12 Muse'});
+  const now=tty.ui.state.liveStatus.updatedAt+18000;
+  const text=frame(tty.ui.state,130,38,now).lines.map(line=>line.text).join('\n');
+  assert.match(text,/LIVE REQUESTS · APPROVED SCOPE ONLY · EVIDENCE SAVED CONTINUOUSLY/);
+  assert.doesNotMatch(text,/REAL AI|bounded scope/);
+  for(const value of [/LIVE AUDIT/,/DONE\s+19 assets inspected/,/WORKING\s+Muse is reviewing/,/WHY\s+Muse proposes/,/RECOVERED\s+One slow batch/,/NEXT\s+Run accepted/,/LIVE\s+20\/80 candidates · 148 HTTP · 12 Muse · last evidence 18\.0s ago/])assert.match(text,value);
+  for(const [columns,rows,status] of [[80,24,'job-radar.app · AUDIT LIVE · SCOPE GUARDED · EVIDENCE SAVING'],[40,15,'AUDIT LIVE · SCOPE GUARDED']]){
+    const compact=frame(tty.ui.state,columns,rows,now);
+    assert.equal(compact.lines.length,rows);
+    assert.ok(compact.lines.every(line=>cells(line.text)<=columns-2));
+    assert.match(compact.lines[1].text,new RegExp(status.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')));
+  }
+  finish({});await audit;
+});
+
 test('terminal palette respects NO_COLOR, redirected output and color capability',()=>{
   const output={isTTY:true,getColorDepth:()=>24};
   assert.match(createTheme({output,env:{TERM:'xterm'}}).paint('brand','Bypass'),/38;2;255;74;44/);

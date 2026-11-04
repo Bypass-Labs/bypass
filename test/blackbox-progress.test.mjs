@@ -17,6 +17,15 @@ test('web progress separates executed, queued untested and beyond budget', () =>
   {label: 'Web tests', text: '2 leads executed · 25 deferred to later pass',confirmed:0});
 });
 
+test('Muse recovery and page progress explain preserved work without saying the audit paused',()=>{
+  assert.deepEqual(progressLine({stage:'web-plan',message:'Muse web planning failed on page 2: Model request timed out. Earlier evidence is saved; retry explicitly.'}),
+    {label:'Muse recovered',text:'A bounded Muse batch exceeded 60 seconds. Earlier evidence is saved; the audit continues with available and later work.'});
+  assert.deepEqual(progressLine({stage:'web-plan',message:'Muse reviewed 20 of 80 web candidates in 1 of 3 pages'}),
+    {label:'Muse web',text:'20 of 80 candidates reviewed · 1/3 bounded batches completed'});
+  assert.deepEqual(progressLine({stage:'web-plan',message:'Muse reviewed 0 of 59 remaining web candidates in 0 of 3 pages'}),
+    {label:'Muse web',text:'No new candidates reviewed in this pass · 59 remain available · continuing with saved evidence'});
+});
+
 test('the final audit screen leads with impact, remediation, coding brief and exact replay commands',()=>{
   const text=blackboxOutcomeText({run:'bx-20261103-1234abcd',projectRoot:'/tmp/app',origin:'https://app.test',
     memory:{saved:['memory_1']},findings:[{id:'f-001',verdict:'confirmed',severity:'medium',cwe:'CWE-307',

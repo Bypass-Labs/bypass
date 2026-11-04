@@ -31,6 +31,14 @@ const accent=s=>theme.paint('accent',s),muted=s=>theme.paint('muted',s),bold=s=>
 const label=s=>String(s).replace(/_/g,' ');
 const shellArg=value=>`'${String(value).replaceAll("'","'\"'\"'")}'`;
 const RESEARCH_BEHAVIOR=new Set(['model-differential','model-json-differential','model-http-sequence']);
+const BLACKBOX_PHASES=[
+  {label:'Scope and hosts',working:'Confirming the approved origin, host boundaries and request limits',why:'Every request is checked against the scope before it can leave the CLI.',next:'Inspect public app assets and source facts.'},
+  {label:'Assets and source',working:'Inspecting public pages and client assets for observed route facts',why:'Observed files reveal real routes, methods and sign-in behavior without guessing.',next:'Map reachable routes and their response shapes.'},
+  {label:'Routes and responses',working:'Mapping reachable routes and guarded response facts',why:'Response shapes give later tests safe controls and prevent invented requests.',next:'Plan and execute bounded security checks.'},
+  {label:'Plan and test leads',working:'Reviewing observed candidates and running scope-checked tests',why:'Muse proposes experiments; Bypass validates and executes every HTTP request itself.',next:'Independently replay suspicious behavior before reporting it.'},
+  {label:'Replay and assess',working:'Replaying suspicious behavior with fresh controls',why:'A result becomes a finding only after independent HTTP evidence reproduces it.',next:'Write the finding, impact, remediation and coverage report.'},
+  {label:'Report and coverage',working:'Building the evidence report and remaining-coverage summary',why:'The result separates confirmed findings from observations and untested work.',next:'Review findings, save regression tests or resume pending research.'}
+];
 
 export function blackboxOutcomeText(result){
   const findings=(result?.findings??[]).filter(finding=>finding.verdict==='confirmed'&&
@@ -254,8 +262,15 @@ export async function terminal(options={},io){
     let lastStage=-1, blackboxRequests=0, blackboxModelCalls=0, blackboxChecks=0,
       blackboxTotal=0, blackboxEstimate=0, blackboxResearch=0, blackboxUntested=0,
       blackboxConfirmed=0, blackboxStage='Recon in progress', lastBlackboxLine='';
-    const blackboxStages=['Scope and hosts','Assets and source','Routes and responses',
-      'Plan and test leads','Replay and assess','Report and coverage'];
+    const blackboxStages=BLACKBOX_PHASES.map(phase=>phase.label);
+    let blackboxLive={done:'Approved target and limits loaded; no audit request has been sent yet.',
+      ...BLACKBOX_PHASES[0],recovered:''};
+    const syncBlackboxLive=overrides=>{
+      blackboxLive={...blackboxLive,...overrides};
+      prompt.setLiveStatus?.({done:blackboxLive.done,working:blackboxLive.working,why:blackboxLive.why,
+        recovered:blackboxLive.recovered,next:blackboxLive.next,
+        metrics:`${blackboxChecks}${blackboxTotal?`/${blackboxTotal}`:''} checks · ${blackboxRequests} HTTP · ${blackboxModelCalls} Muse${blackboxConfirmed?` · ${blackboxConfirmed} confirmed`:''}${blackboxUntested?` · ${blackboxUntested} untested`:''}`});
+    };
     const real=read(root).settings.analysisEngine==='docker';
     const stages=real?['replay','containers','orchestrator',...(flags.mode==='live'?[]:['white-box']),...(flags.mode==='code'?[]:['black-box'])]:['replay','inventory','mock-analysis'];
     const stageLabels={'replay':'Saved checks / scope','containers':'Docker services','orchestrator':'Shared-model plan','white-box':'White-box source review','black-box':'Black-box HTTP proof','inventory':'Local source inventory','mock-analysis':'Simulated discovery'};
@@ -263,6 +278,7 @@ export async function terminal(options={},io){
     if(key==='blackbox'){
       prompt.setTasks?.('Black-box audit',blackboxStages);
       prompt.setNext?.('Recon in progress · 0 HTTP · 0 Muse');
+      syncBlackboxLive();
     }
     const work=async signal=>{
       const result=await execute(key,args,{project:root,...flags},{signal,onProgress:step=>{
@@ -271,10 +287,17 @@ export async function terminal(options={},io){
             const index=step.step-1;
             if(step.state==='doing'){
               blackboxStage=blackboxStages[index]||'Audit in progress';
+              const phase=BLACKBOX_PHASES[index];
+              if(phase)syncBlackboxLive({...phase,done:index?
+                `${index} of ${BLACKBOX_PHASES.length} phases complete · ${BLACKBOX_PHASES[index-1].label}`:
+                'Approved target and limits loaded; beginning the first guarded requests.'});
               prompt.task?.(index,'running');
               prompt.setNext?.(`${blackboxStage} · ${blackboxRequests} HTTP · ${blackboxModelCalls} Muse`);
             }
-            if(step.state==='done')prompt.task?.(index,'done');
+            if(step.state==='done'){
+              prompt.task?.(index,'done');
+              syncBlackboxLive({done:`${step.step} of ${BLACKBOX_PHASES.length} phases complete · ${blackboxStage}`});
+            }
           }
           if(step.stage==='progress'){
             if(step.type==='request')blackboxRequests=Math.max(blackboxRequests,step.requests??0);
@@ -299,6 +322,15 @@ export async function terminal(options={},io){
               prompt.setNext?.(`${blackboxStage} · ${blackboxChecks}${blackboxTotal?`/${blackboxTotal}`:''} checks${blackboxConfirmed?` · ${blackboxConfirmed} finding${blackboxConfirmed===1?'':'s'}`:''} · ${blackboxRequests} HTTP · ${blackboxModelCalls} Muse${blackboxResearch?` · ${blackboxResearch} research tries`:''}${blackboxUntested?` · ${blackboxUntested} untested`:''}`);
           }
           const line=blackboxProgressLine(step);
+          if(line){
+            if(line.label==='Muse recovered')syncBlackboxLive({recovered:line.text,
+              working:'Continuing from saved evidence with a smaller or later bounded batch'});
+            else if(line.label==='Muse web')syncBlackboxLive({working:`Muse is reviewing observed test candidates · ${line.text}`});
+            else if(line.label==='Muse research')syncBlackboxLive({working:`Running a bounded experiment · ${line.text}`});
+            else if(line.label==='Proof')syncBlackboxLive({working:`Independently replaying a suspicious result · ${line.text}`});
+            else if(['Assets','Muse assets','Recon','Routes','Web tests'].includes(line.label))syncBlackboxLive({done:`${line.label}: ${line.text}`});
+          }
+          if(step.stage==='progress')syncBlackboxLive();
           const rendered=line?`${line.label}  ${line.text}`:'';
           if(rendered&&rendered!==lastBlackboxLine){lastBlackboxLine=rendered;prompt.write?.(rendered);}
         } else prompt.write?.(step.message);

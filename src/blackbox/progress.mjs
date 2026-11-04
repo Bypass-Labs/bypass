@@ -18,7 +18,7 @@ export function progressLine(event) {
       const routes = /, (\d+ of \d+) route facts/.exec(message)?.[1] ?? '?';
       return {label: 'Muse assets', text: `${files} files · ${routes} route facts · ${accepted[1]} notes and ${accepted[2]} paths accepted`};
     }
-    if (/retrying .* automatically/.test(message)) return {label: 'Muse retry', text: message.replace(/^Muse /,'')};
+    if (/retrying .* automatically/.test(message)) return {label: 'Muse recovered', text: message.replace(/^Muse /,'')};
     return /failed:/.test(message) ? {label: 'Muse attention', text: message} : null;
   }
   if (stage === 'identity') {
@@ -53,9 +53,15 @@ export function progressLine(event) {
     return null;
   }
   if (stage === 'web-plan') {
-    if (message.startsWith('Muse reviewed')) return {label: 'Muse web', text: message.replace(/^Muse reviewed /, '')};
-    if (/retrying .* automatically/.test(message)) return {label: 'Muse retry', text: message.replace(/^Muse /,'')};
-    if (/Model request timed out/.test(message)) return {label: 'Muse paused', text: 'This planning pass timed out; earlier evidence is saved.'};
+    if (message.startsWith('Muse reviewed')) {
+      const reviewed=/^Muse reviewed (\d+) of (\d+) (remaining )?web candidates in (\d+) of (\d+) pages(.*)$/.exec(message);
+      if(reviewed)return {label:'Muse web',text:Number(reviewed[1])?
+        `${reviewed[1]} of ${reviewed[2]} ${reviewed[3]||''}candidates reviewed · ${reviewed[4]}/${reviewed[5]} bounded batches completed${reviewed[6]}`:
+        `No new candidates reviewed in this pass · ${reviewed[2]} remain available · continuing with saved evidence`};
+      return {label: 'Muse web', text: message.replace(/^Muse reviewed /, '')};
+    }
+    if (/retrying .* automatically/.test(message)) return {label: 'Muse recovered', text: message.replace(/^Muse /,'')};
+    if (/Model request timed out/.test(message)) return {label: 'Muse recovered', text: 'A bounded Muse batch exceeded 60 seconds. Earlier evidence is saved; the audit continues with available and later work.'};
     return /failed/.test(message) ? {label: 'Muse attention', text: message} : null;
   }
   if (stage === 'web-probes') {
