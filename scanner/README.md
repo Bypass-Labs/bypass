@@ -10,6 +10,17 @@ CodeQL CLI is downloaded separately under [GitHub's usage terms](https://github.
 Bypass's license does not grant CodeQL rights for private or commercial code.
 Policy-only mode does not use CodeQL. [Dependency notices](../THIRD_PARTY_NOTICES.md).
 
+## Prerequisites
+
+A running Docker daemon is required for `scanner doctor`, `scanner prepare`,
+and every discovery run. Plans (`--plan`) and `scanner policies` need none.
+On macOS the `docker` CLI is only a client; start Docker Desktop
+(`open -a Docker`) or Colima (`colima start [profile]`, then
+`docker context use colima[-<profile>]`) and confirm `docker version` prints a
+Server version. Bypass never auto-starts a VM. When the daemon is unreachable,
+`scanner doctor` returns `docker.reason` plus exact `docker.remediation`
+commands for the detected setup instead of a generic "start Docker" message.
+
 ## Select detectors and rules
 
 `--detector sast` is the default; `codeql` remains an alias. Select `policy` for

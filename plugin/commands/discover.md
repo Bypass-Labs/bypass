@@ -16,6 +16,14 @@ Capabilities inspect Docker/image availability without building it.
 features.codeqlReady=false can mean the local image needs preparation; it does
 not mean CodeQL discovery is unimplemented. This flag concerns SAST only. For policy-only runtime diagnostics use bypass_scanner_doctor with detector=policy; do not prepare CodeQL for a policy-only scan.
 
+If bypass_scanner_doctor reports Docker blocked, relay its `docker.reason`
+and every `docker.remediation` command verbatim. Never assume Docker Desktop:
+on macOS the daemon may be a stopped Colima profile (`colima start <profile>`
+then `docker context use colima-<profile>`) or an already-running daemon
+behind an inactive Docker context. Do not start a VM or switch the Docker
+context yourself without the user's OK; present the exact commands, let the
+user run or approve them, then re-run bypass_scanner_doctor and continue.
+
 Use bypass_discover with plan=true to explain scope/prerequisites when requested.
 If the user has not selected a discovery mode, present SAST / Policy / Both in a native choice prompt and reuse their answer. CLI defaults to SAST for compatibility. Do not ask again when the user already chose a mode.
 For a scan, select an explicit source repository using Bypass project tools, then
