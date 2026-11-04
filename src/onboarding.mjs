@@ -53,7 +53,9 @@ export async function onboard(options={}, args=[], io={}) {
     return {...await guidedDemo(options,io),interactive:true,openDashboard:false};
   }
   let savedMode;try{savedMode=read(options.project||process.cwd()).settings.reviewMode;}catch{}
-  const mode=options.mode||savedMode||(await pick(reviewQuestion,reviewChoices,1)).id;
+  if(savedMode&&!options.mode)say(`Saved review choice: ${reviewChoices.find(item=>item.id===savedMode)?.label||savedMode}. Choose what to audit this time.`);
+  const mode=options.mode||(await pick(reviewQuestion,reviewChoices,
+    Math.max(0,reviewChoices.findIndex(item=>item.id===(savedMode||'combined'))))).id;
   need(['code','combined','live'].includes(mode),'Choose code, combined, or live review.');
   say(mode==='live'
     ? 'A black-box audit uses your Muse connection and does not need Docker. Setup and saved tests need no model.'
@@ -142,15 +144,24 @@ export async function onboard(options={}, args=[], io={}) {
   io.task?.(1,'done');io.task?.(2,'running');io.setNext?.('Save setup → open your project → run a review');
   say(`\nStep 3 of 4 / ${mode==='code'?'Code-only review — app setup skipped':'App testing permissions'}`);
   let state=read(root), target=mode==='code'?null:state.targets.find(t=>t.name===state.activeTarget);
-  if(mode!=='code'){
-    if(!target&&state.targets.length){target=state.targets[0];await call(root,'target use',[target.name]);}
-    if(target)say(`Continuing ${target.name}: ${target.url}`);
-    else {
+  if(mode==='combined'&&state.targets.length){
+    const choices=[...state.targets.map(saved=>({id:`saved:${saved.name}`,targetName:saved.name,
+      label:`Use ${saved.url} (${saved.environment}${authorized(saved)?', scope saved':', permissions needed'})`})),
+    {id:'connect',label:'Connect a different running app'}];
+    const selected=await pick('Which running app should this audit test?',choices,
+      Math.max(0,state.targets.findIndex(item=>item.name===state.activeTarget)));
+    target=selected.targetName?state.targets.find(item=>item.name===selected.targetName):null;
+    if(target){await call(root,'target use',[target.name]);say(`✓ Selected live app: ${target.url}`);}
+  }
+  if(mode!=='code'&&!target){
       const {url,environment}=await appAddress();
-      const name=advanced?await suggested('Target name',[environment]):unique(environment,read(root).targets);
-      target=(await call(root,'target add',[name],{url,environment})).target;
+      target=read(root).targets.find(item=>item.url===url);
+      if(target)say(`✓ Using saved app: ${target.url} (${target.environment})`);
+      else{
+        const name=advanced?await suggested('Target name',[environment]):unique(environment,read(root).targets);
+        target=(await call(root,'target add',[name],{url,environment})).target;
+      }
       await call(root,'target use',[target.name]);
-    }
   }
   if(target)io.setContext?.({app:`${target.url} · ${authorized(target)?'authorized':verified(target)||verificationDisabled(target)?'scope required':'verification pending'}`});
   if(target&&verificationDisabled(target))say('No DNS record required. Confirm control when you approve the exact testing permissions below. You can require DNS or HTTPS later in Settings → Domain ownership verification.');
@@ -251,13 +262,13 @@ export async function onboard(options={}, args=[], io={}) {
         : mode==='code'
           ? {id:'review',mode:'code'}
         : null;
-    io.setContext?.({model:modelDisplay(info.model),app:info.target?`${info.target.url} · ${info.target.authorized?'authorized':info.target.ownership==='verified'||info.target.ownershipVerification==='off'?'scope required':'verification pending'}`:'not connected · source review available'});
+    io.setContext?.({model:modelDisplay(info.model),app:mode==='code'?'not part of this audit':info.target?`${info.target.url} · ${info.target.authorized?'authorized':info.target.ownership==='verified'||info.target.ownershipVerification==='off'?'scope required':'verification pending'}`:'not connected · source review available'});
     io.task?.(3,'done');io.setNext?.(startReview?.id==='blackbox'?'Starting your first app audit':
       startReview?.mode==='combined'?'Starting your first combined security audit':
         startReview?'Starting your first code security audit':
           mode==='live'?'Authorize app boundaries to start testing':'Run /review; type / to see commands');
     say('\nSetup saved\n');
-    say(`  ${mode==='live'?'App profile   ':'Repository    '}${root}\n  Model         ${info.model?modelDisplay(info.model):'add later'}\n  App           ${info.target?`${info.target.url} · ${info.target.authorized?'authorized':info.target.ownership==='verified'||info.target.ownershipVerification==='off'?'scope required':'verification pending'}`:'add later; code-only review available'}\n  Test accounts ${read(root).identities.length} references\n  Muse plugin   ${museInstalled?'installed; approve in Muse':'optional'}`);
+    say(`  ${mode==='live'?'App profile   ':'Repository    '}${root}\n  Model         ${info.model?modelDisplay(info.model):'add later'}\n  App           ${mode==='code'?'not part of this audit':info.target?`${info.target.url} · ${info.target.authorized?'authorized':info.target.ownership==='verified'||info.target.ownershipVerification==='off'?'scope required':'verification pending'}`:'add later; code-only review available'}\n  Test accounts ${read(root).identities.length} references\n  Muse plugin   ${museInstalled?'installed; approve in Muse':'optional'}`);
     if(startReview?.mode==='combined')say(`\nStarting one security audit now. Source review and live testing share one result: ${target.authorization.paths.join(', ')} · ${target.authorization.methods.join(', ')} · ${target.authorization.maxRequestsPerSecond} requests/second.`);
     else if(startReview?.id==='blackbox')say(`\nStarting the audit now with the approved boundaries: ${target.authorization.paths.join(', ')} · ${target.authorization.methods.join(', ')} · ${target.authorization.maxRequestsPerSecond} requests/second.`);
     else if(startReview)say('\nStarting the code security audit now.');

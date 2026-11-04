@@ -65,6 +65,17 @@ export function regressionExportText(value){
   if(!value.files?.length)return `\nNo standalone regression test was saved. ${value.skippedProofs?.length?`${value.skippedProofs.length} proof${value.skippedProofs.length===1?' was':'s were'} not exportable.`:''}`;
   return `\n✓ Saved ${value.files.length} standalone regression test${value.files.length===1?'':'s'}\nLocation: ${value.output}\nRun now:\n  node --test ${value.files.map(shellArg).join(' ')}`;
 }
+function memoryEntryText(entry){
+  const locations=entry.locations||{},source=locations.sourceFiles?.[0];
+  const details=locations.report||locations.run||locations.evidence;
+  return `  ${entry.title}\n    ${entry.id} · ${entry.validity.status} · ${entry.confidence}\n`+
+    `    ${entry.summary}`+
+    `${source?`\n    Source: ${source.path}${source.line?`:${source.line}`:''}`:''}`+
+    `${details?`\n    Full run details: ${details}`:''}`+
+    `${locations.proof?`\n    Saved proof: ${locations.proof}`:''}`+
+    `${entry.evidence?.remediation?`\n    Fix: ${entry.evidence.remediation}`:''}`+
+    `\n    ${entry.retrievalReason} ${entry.validity.reason}`;
+}
 export function printResult(data,{interactive=false}={}){
   if(!data)return;
   const value=redact(data);
@@ -133,11 +144,30 @@ export function printResult(data,{interactive=false}={}){
     for(const requirement of value.securityRequirements)console.log(`  Preserve owner access; deny other-account and anonymous access · ${requirement.resourcePath}\n    ${requirement.id} · ${requirement.enabled?'enabled':'disabled'} · last ${requirement.lastResult} · replay required`);
     printResult(value.memory);console.log('\nNext: re-read relevant citations, implement the feature, then test new behavior and replay the relevant saved checks.');return;
   }
+  if(value.kind==='project-context'){
+    console.log(`\n${bold('Security context')}\nRepository: ${value.projectRoot}\n`+
+      `App: ${value.summary?.target?.url||'not selected'}\nMemory file: ${value.storageFile}`);
+    if(value.latestRun)console.log(`Latest audit: ${value.latestRun.id} · ${value.latestRun.status}`+
+      `${value.latestRun.report?`\nFull report: ${value.latestRun.report}`:''}`+
+      `${value.latestRun.file?`\nRun record: ${value.latestRun.file}`:''}`);
+    if(value.attention?.length)console.log(`Saved checks needing attention: ${value.attention.map(check=>check.id).join(', ')}`);
+    console.log(`\nRelevant memory · ${value.memory.entries.length} shown of ${value.memory.records} stored`);
+    for(const entry of value.memory.entries)console.log(memoryEntryText(entry));
+    if(!value.memory.entries.length)console.log('  No relevant memory yet. Review current source and saved tests.');
+    console.log(`\nFor a coding task: context --task ${shellArg('Describe the change')} --files ${shellArg('src/example.js')}\nNext: ${value.next}`);
+    return;
+  }
+  if(value.kind==='memory-record'){
+    console.log(`\n${bold('Security memory record')}\n${memoryEntryText(value.entry)}\n`+
+      `Memory file: ${value.storageFile}`);
+    return;
+  }
   if(value.kind==='project-memory'){
-    console.log(`\n${bold('Security memory')} · ${value.enabled?'on':'off'} · ${value.records} stored · ${value.entries.length} shown`);
-    for(const e of value.entries){console.log(`  ${e.title}\n    ${e.id} · ${e.validity.status} · ${e.confidence}\n    ${e.summary}`);for(const f of e.evidence.files||[])console.log(`    ${f.path}:${f.line} · ${f.quote}`);console.log(`    ${e.retrievalReason} ${e.validity.reason}`);}
+    console.log(`\n${bold('Security memory')} · ${value.enabled?'on':'off'} · ${value.records} stored · ${value.entries.length} shown\nMemory file: ${value.storageFile}`);
+    for(const entry of value.entries)console.log(memoryEntryText(entry));
     if(!value.records)console.log('  No security memory yet. A source security audit saves cited knowledge; verified fixes add reusable behavior checks.');
-    console.log('\nLocal storage · historical evidence, not a current security verdict\nInspect: memory show <id> · Search: memory --query "auth"\nBuild context: context --task "Add a feature" --files "src/api.js"\nForget: memory forget <id> · Disable: memory use off');return;
+    if(value.omitted)console.log(`  ${value.omitted} more record${value.omitted===1?'':'s'}; search by topic or use memory show <id>.`);
+    console.log('\nHistorical evidence; replay saved checks for current behavior.\nInspect: memory show <id> · Search: memory --query "auth"\nBuild context: context --task "Add a feature" --files "src/api.js"\nForget: memory forget <id> · Disable: memory use off');return;
   }
   if(value.kind==='environment-diagnostics'){console.log(`\nBypass ${value.runtime.version} · ${value.runtime.sourcePath}\nEnvironment checks`);for(const c of value.checks)console.log(`  ${c.ok?'✓':'!'} ${c.name} · ${c.ok?c.version?.trim()||'available':c.message||'unavailable'}${c.optional?' (optional)':''}`);console.log(value.message);return;}
   if(value.models){console.log('\nModel connections');for(const m of value.models)console.log(`  ${m.name===value.active?'●':'○'} ${m.name} · ${m.provider} · ${m.lastAttempt?.status||m.lastTest?.status||'not tested'}\n    ${m.dataDestination}`);return;}

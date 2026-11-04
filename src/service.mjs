@@ -421,10 +421,20 @@ export async function execute(key,args=[],o={},context={}){
       const inv=await inventory(root);result={scope:'Recorded assessment work and specific HTTP behaviors',complete:false,assessment:assessmentCoverage(s,inv,o),sourceFingerprint:inv.fingerprint,checks:s.checks.filter(c=>!o.target||c.target===o.target).map(c=>({id:c.id,behavior:c.title,target:c.target,status:!c.enabled?'disabled':['failed','blocked'].includes(c.lastResult?.status)?c.lastResult.status:c.sourceFingerprint!==inv.fingerprint?'stale':c.lastResult?.status||'not-run',sourceChanged:c.sourceFingerprint!==inv.fingerprint,lastResult:c.lastResult})),unproven:s.findings.filter(f=>(!o.target||f.target===o.target)&&['unproven','simulated_unproven'].includes(f.status)).map(f=>({id:f.id,title:f.title,simulation:!!f.simulation})),message:'A route is not fully covered just because one behavior on that route has a test. Use assessment.work and nextAction to continue remaining work.'};break;
     }
     case 'memory':case 'memory list':result=await recallMemory(root,{query:o.query,target:o.target});break;
-    case 'memory show':{const packet=await recallMemory(root,{query:args[0],limit:1});result=packet.entries.find(e=>e.id===args[0]);need(result,'Memory record not found in this project.');result={kind:'memory-record',entry:result};break;}
+    case 'memory show':{const packet=await recallMemory(root,{query:args[0],limit:1});result=packet.entries.find(e=>e.id===args[0]);need(result,'Memory record not found in this project.');result={kind:'memory-record',entry:result,storageFile:packet.storageFile,projectRoot:root};break;}
     case 'memory forget':result=await forgetMemory(root,args[0]);break;
     case 'memory use':need(['on','off'].includes(args[0]),'Use memory use on or off.');result=await setMemory(root,args[0]==='on');break;
-    case 'context':if(o.task!==undefined){result=await featureContext(root,{task:o.task,files:o.files,target:o.target});break;}need(!o.files,'Supply --task with --files.');result={project:s.project.name,engine:realEngine(s)?'docker':'mock',summary:readiness(root),memory:await recallMemory(root,{forAgent:true,limit:8,maxBytes:10000}),latestMonitor:monitorSummary(s),finding:o.finding?named(s.findings,o.finding,'Finding'):null,recentEvents:s.events.slice(-15),attention:s.checks.filter(c=>c.enabled&&['failed','blocked','stale'].includes(c.lastResult?.status)),next:readiness(root).next};break;
+    case 'context':if(o.task!==undefined){result=await featureContext(root,{task:o.task,files:o.files,target:o.target});break;}need(!o.files,'Supply --task with --files.');{
+      const latest=s.runs.at(-1),runFile=latest&&path.join(root,'.bypass','runs',`${latest.id}.json`);
+      const liveDir=latest?.result?.blackbox?.runDir;
+      const report=liveDir&&path.join(path.isAbsolute(liveDir)?liveDir:path.resolve(root,liveDir),'report.md');
+      result={kind:'project-context',project:s.project.name,projectRoot:root,
+        storageFile:path.join(root,'.bypass','state.json'),engine:realEngine(s)?'docker':'mock',
+        summary:readiness(root),memory:await recallMemory(root,{forAgent:true,limit:8,maxBytes:12000}),
+        latestRun:latest?{id:latest.id,status:latest.status,file:runFile&&fs.existsSync(runFile)?runFile:null,
+          report:report&&fs.existsSync(report)?report:null}:null,
+        latestMonitor:monitorSummary(s),finding:o.finding?named(s.findings,o.finding,'Finding'):null,
+        recentEvents:s.events.slice(-15),attention:s.checks.filter(c=>c.enabled&&['failed','blocked','stale'].includes(c.lastResult?.status)),next:readiness(root).next};break;}
     case 'report':{
       const r=named(s.runs,o.run||s.runs.at(-1)?.id,'Run'),format=o.format||'json';need(['json','md'].includes(format),'Report format must be json or md.');
       const content=format==='json'?JSON.stringify(redact(r),null,2):`# Bypass run ${r.id}\n\nStatus: ${r.status}. Exit: ${r.exitCode}.\n\nAnalysis simulated: ${r.simulation}. Model calls: ${r.result?.modelCalls??0}.\n\n${r.result?.message||''}\n\n## Evidence\n\n\`\`\`json\n${JSON.stringify(redact(r.result),null,2)}\n\`\`\`\n`;

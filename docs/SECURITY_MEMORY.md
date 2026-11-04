@@ -55,21 +55,21 @@ Typed tools for the coding agent:
 Standalone CLI (substitute your paths):
 
 ```bash
-~/bypass-for-muse/bypass context --project /path/to/app \
+bypass context --project /path/to/app \
   --task "Add invoice export" --files "src/routes.js,src/auth.js" --json
-~/bypass-for-muse/bypass memory --project /path/to/app
-~/bypass-for-muse/bypass memory --project /path/to/app --query ownership
-~/bypass-for-muse/bypass memory show memory_ID --project /path/to/app
-~/bypass-for-muse/bypass memory forget memory_ID --project /path/to/app
-~/bypass-for-muse/bypass memory use off --project /path/to/app
-~/bypass-for-muse/bypass memory use on --project /path/to/app
+bypass memory --project /path/to/app
+bypass memory --project /path/to/app --query ownership
+bypass memory show memory_ID --project /path/to/app
+bypass memory forget memory_ID --project /path/to/app
+bypass memory use off --project /path/to/app
+bypass memory use on --project /path/to/app
 ```
 
 JSON/stdio MCP can supply other coding agents; dedicated integrations for other products are not included. When the project has no knowledge yet, the response says so and directs the agent to current source and tests rather than inventing a history.
 
 ## Storage, privacy and control
 
-Memory is enabled by default and stored in the local project's `.bypass/state.json`, already excluded from Git by initialization, with owner-only file permissions. It stays with that checkout; separate clones do not automatically synchronize memory. Existing real evidence is consolidated when the project is reconnected or a real review/retest/replay runs. No external database, cloud sync or embedding call is added.
+Memory is enabled by default and stored in the local project's `.bypass/state.json`, already excluded from Git by initialization, with owner-only file permissions. `/memory`, `/context`, and their JSON/tool equivalents show that absolute path, plus existing source citations, run records, reports, and proof files for retrieved entries. It stays with that checkout; separate clones do not automatically synchronize memory. Existing real evidence is consolidated when the project is reconnected or a real review/retest/replay runs. No external database, cloud sync or embedding call is added.
 
 Each project retains up to 500 records. Existing records can be updated; new entries are refused when full and `capacitySkipped` reports this. Records are not silently evicted. Forget a record to free capacity. Forgetting creates a tombstone for that record identity so the same evidence is not immediately reimported. A new citation or new investigation may create a different record. Disabling stops recording and automatic agent retrieval but leaves stored records inspectable and regression replay functional.
 

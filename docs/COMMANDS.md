@@ -288,13 +288,13 @@ Show behavior-level checks, gaps, stale, and blocked evidence.
 
 ## context
 
-Read current session evidence. Add `--task "Add invoice export"` and optionally `--files "src/routes.js,src/auth.js"` / `--target staging` for feature-specific security context. No model call, Docker or app request. Use `--json` to pass the packet to a coding agent. Source knowledge, prior investigations, saved behavior requirements and freshness are explicit. The host agent implements the feature; new routes need new tests.
+Read current session evidence in a readable summary, including relevant memory, freshness, and absolute paths to the local memory file and full run report. Add `--task "Add invoice export"` and optionally `--files "src/routes.js,src/auth.js"` / `--target staging` for feature-specific security context. No model call, Docker or app request. Use `--json` to pass the packet, including evidence file locations, to a coding agent. The host agent implements the feature; new routes need new tests.
 
 Options: --finding, --task, --files, --target.
 
 ## memory / memory list
 
-Inspect local memory, including disabled memory. Filter with `--query` or inspect target applicability with `--target`. Records show citations, provenance and freshness. Automatic retrieval excludes another origin and source now outside the eligible inventory.
+Inspect local memory, including disabled memory. Filter with `--query` or inspect target applicability with `--target`. Records show citations, provenance, freshness, and existing absolute paths to cited source, full run reports, and saved proofs. The memory itself is stored in the project's `.bypass/state.json`. Automatic retrieval excludes another origin and source now outside the eligible inventory.
 
 ## memory show <id> / memory forget <id>
 

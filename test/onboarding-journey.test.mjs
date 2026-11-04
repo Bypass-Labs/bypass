@@ -16,6 +16,7 @@ import { execFile } from '../src/util.mjs';
 import { CLI } from '../src/demo.mjs';
 import { carryAppSetup } from '../src/application-setup.mjs';
 import { reviewSummary } from '../src/experience.mjs';
+import { reviewQuestion } from '../src/application-setup.mjs';
 import { recommendedMethods } from '../src/http-methods.mjs';
 
 const source=()=>{const root=temp();fs.writeFileSync(path.join(root,'app.mjs'),'throw new Error("source must not execute");\n');return root;};
@@ -177,6 +178,37 @@ test('authorized combined CLI setup immediately hands off to the review without 
   assert.doesNotMatch(output.join('\n'),/Press Enter on the next screen|Run \/review/);
   assert.doesNotMatch(output.join('\n'),/Your review\nRepository:/,'automatic handoff should not repeat the project summary');
   assert.match(output.join('\n'),/Starting one security audit now\. Source review and live testing share one result/);
+});
+
+test('resumed CLI asks for review type and saved live app before starting',async t=>{
+  const root=source(),meta=await metaModelFixture(t),old=process.env.MODEL_API_KEY;
+  process.env.MODEL_API_KEY='fixture-key';
+  t.after(()=>{if(old===undefined)delete process.env.MODEL_API_KEY;else process.env.MODEL_API_KEY=old;});
+  await execute('init',[root]);await execute('engine use',['docker'],{project:root});
+  await execute('model add',['meta'],{project:root,provider:'meta','base-url':meta.baseUrl,
+    'secret-env':'MODEL_API_KEY',model:'muse-spark-1.3-contributor',transport:'responses'});
+  await execute('model use',['meta'],{project:root});
+  await execute('target add',['preview'],{project:root,url:'http://127.0.0.1:4317',environment:'local'});
+  await execute('target verify',['preview'],{project:root,method:'local'});
+  await execute('target authorize',['preview'],{project:root,accept:true,paths:'/',methods:'GET'});
+  await change(root,state=>{state.settings.reviewMode='combined';state.models[0].lastAttempt={status:'connected'};});
+  const seen=[];
+  const io={rich:true,write:()=>{},ask:async(_label,fallback)=>fallback||'',select:async(title,items)=>{
+    seen.push(title);return title===reviewQuestion?items.find(item=>item.id==='code'):items[0];}};
+  const code=await onboard({flow:'quickstart',project:root},[],io);
+  assert.deepEqual(code.startReview,{id:'review',mode:'code'});
+  assert.ok(seen.includes(reviewQuestion));
+  assert.ok(!seen.includes('Which running app should this audit test?'));
+  assert.equal(read(root).activeTarget,'preview','code-only choice does not erase saved app setup');
+
+  seen.length=0;
+  io.select=async(title,items)=>{seen.push(title);return title===reviewQuestion?
+    items.find(item=>item.id==='combined'):items[0];};
+  const both=await onboard({flow:'quickstart',project:root},[],io);
+  assert.deepEqual(both.startReview,{id:'review',mode:'combined'});
+  assert.ok(seen.includes(reviewQuestion));
+  assert.ok(seen.includes('Which running app should this audit test?'));
+  assert.equal(both.readiness.target.url,'http://127.0.0.1:4317');
 });
 
 test('resumed Meta onboarding requests only the missing key and keeps the saved Muse model',async t=>{

@@ -12,6 +12,8 @@ import { createRun, verifyFinding } from '../src/engine.mjs';
 import { runAgent } from '../agents/worker.mjs';
 import { startPOC, stopPOC } from '../src/poc.mjs';
 import { runChecks } from '../src/checks.mjs';
+import { CLI } from '../src/demo.mjs';
+import { execFile } from '../src/util.mjs';
 import { rememberSource, rememberBlackboxFindings, recallMemory, featureContext, forgetMemory, setMemory, consolidateMemory, MEMORY_LIMIT } from '../src/project-memory.mjs';
 
 const line='export const mayRead = (user, row) => user.id === row.ownerId;';
@@ -28,6 +30,17 @@ test('source knowledge needs exact read citations and survives a fresh CLI proce
   assert.equal(result.code,0);assert.equal(result.data.kind,'feature-security-context');assert.equal(result.data.memory.entries.length,1);
   assert.equal(result.data.memory.entries[0].validity.status,'current');assert.match(result.data.memory.entries[0].retrievalReason,/file you plan/);
   assert.equal(result.data.memory.entries[0].confidence,'source-supported interpretation');assert.equal(result.data.securityRequirements.length,0);
+  assert.equal(result.data.memory.storageFile,path.join(root,'.bypass/state.json'));
+  assert.deepEqual(result.data.memory.entries[0].locations.sourceFiles,
+    [{path:path.join(root,'policy.mjs'),line:1}]);
+  for(const [command,args] of [['memory',[]],['memory',['show',learned.saved[0]]],
+    ['context',[]],['context',['--task','Add invoice export','--files','policy.mjs']]]){
+    const shown=await execFile(process.execPath,[CLI,command,...args,'--project',root]);
+    assert.equal(shown.code,0,shown.stderr);
+    assert.match(shown.stdout,new RegExp(path.join(root,'.bypass/state.json').replace(/[.*+?^${}()|[\]\\]/g,'\\$&')));
+    assert.match(shown.stdout,/policy\.mjs:1/);
+    assert.doesNotMatch(shown.stdout,/^\{\s*"project"/);
+  }
   assert.equal(fs.readFileSync(path.join(root,'.bypass/state.json'),'utf8'),before,'context must not write state');
   assert.equal(read(root).models.length,0);assert.equal(read(root).targets.length,0);assert.equal(read(root).runs.length,0);
 });
@@ -35,15 +48,22 @@ test('source knowledge needs exact read citations and survives a fresh CLI proce
 test('confirmed black-box proofs become compact security memory without response bodies',async()=>{
   const root=await app();
   await execute('target add',['production'],{project:root,url:'https://app.example.test',environment:'production'});
+  const runDir=path.join(root,'.bypass/runs/bx-20261103-1234abcd');
+  fs.mkdirSync(path.join(runDir,'poc/f-001'),{recursive:true});
+  fs.writeFileSync(path.join(runDir,'report.md'),'# Saved proof report\n');
+  const proof=path.join(runDir,'poc/f-001/poc.mjs');fs.writeFileSync(proof,'// Saved proof\n');
   const memory=await rememberBlackboxFindings(root,{run:'bx-20261103-1234abcd',origin:'https://app.example.test',
     stats:{finishedAt:'2026-11-03T00:00:00.000Z'},findings:[{id:'f-001',verdict:'confirmed',kind:'rate-limit-auth-gate',
       severity:'medium',title:'Login attempts are not throttled',pattern:'/api/login',url:'https://app.example.test/api/login',
-      cwe:'CWE-307',owasp:'A07',rule:'20 failures without 429',confirmation:['ev-1'],proof:'/local/poc.mjs',
+      cwe:'CWE-307',owasp:'A07',rule:'20 failures without 429',confirmation:['ev-1'],proof,
       assessment:{impact:'Attackers can automate password guessing.',remediation:'Return 429 and add progressive delays.'}}]});
   assert.equal(memory.saved.length,1);assert.equal(memory.records,1);
   const [entry]=(await recallMemory(root,{query:'login'})).entries;
   assert.equal(entry.outcome,'confirmed');assert.equal(entry.target.origin,'https://app.example.test');
   assert.equal(entry.resourcePath,'/api/login');assert.equal(entry.evidence.cwe,'CWE-307');
+  assert.equal(entry.locations.report,path.join(runDir,'report.md'));
+  assert.equal(entry.locations.proof,proof);
+  assert.equal((await featureContext(root,{task:'Fix login rate limit'})).memory.entries[0].id,entry.id);
   assert.match(entry.summary,/password guessing/);assert.doesNotMatch(JSON.stringify(entry),/responseBody|password value/);
 });
 
@@ -98,19 +118,21 @@ test('real HTTP proof and fixed regression become feature requirements; next rev
   const runtime={prepareAgents:async()=>({image:'controlled-test'}),runContainer:async(role,task,rpc)=>({result:await runAgent(role,task,rpc),container:{role,image:'controlled-test'}}),infer:async(profile,messages)=>{
     calls.push(messages);const system=messages[0].content;
     if(system.startsWith('Plan a bounded'))return {focus:'Read the ownership policy; history is evidence.'};
-    if(system.startsWith('Review the actual'))return {action:'finish',candidates:
-      JSON.parse(messages[1].content).initialSource?.some(item=>
-        item.source.includes('return Boolean(account);'))?[{
+    if(system.startsWith('Review the actual')){
+      if(messages.length===2)return {action:'read_files',paths:['policy.mjs']};
+      const vulnerable=fs.readFileSync(path.join(root,'policy.mjs'),'utf8').includes('return Boolean(account);');
+      return {action:'finish',candidates:vulnerable?[{
       title:'Invoice ownership is not enforced',category:'cross-account-access',
       file:'policy.mjs',line:2,quote:'  return Boolean(account);',
       resourcePath:'/api/invoices/inv-101',
       hypothesis:'Any authenticated account may read the invoice.',
       recommendation:'Compare the authenticated account with invoice.ownerId.'}]:[],
       knowledge:[fact({title:'Invoice ownership policy',file:'policy.mjs',line:2,quote:'  return Boolean(account);',summary:'Any authenticated account passes the current invoice policy.'})]};
+    }
   }};
   try{
     const run=await createRun(root,'scan',{mode:'code'});const result=await executeSourceReview(root,run.id,{mode:'code'},{runtime,report:async()=>{}});
-    const findingId=result.findings[0];assert.equal((await verifyFinding(root,findingId)).status,'confirmed');
+    const findingId=result.findings[0];assert.ok(findingId);assert.equal((await verifyFinding(root,findingId)).status,'confirmed');
     assert.equal(read(root).memory.entries.filter(e=>e.kind==='source-knowledge').length,1);
     fs.writeFileSync(path.join(root,'policy.mjs'),'export function mayReadInvoice(account, invoice) { return account === invoice.ownerId; }\n');
     const fixed=await verifyFinding(root,findingId,{retest:true});
