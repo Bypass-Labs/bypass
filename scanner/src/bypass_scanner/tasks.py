@@ -71,14 +71,20 @@ class TaskEngine:
                     data['coverage'].append({'workUnitId':task['definition']['workUnitId'], 'outcome':'deferred', 'reason':'run deadline'})
             self.finish(state, data, expired=True)
 
-    def next_task(self, run):
+    def next_task(self, run, disable_task_timeout=False):
         with self.locked(run) as (state, data):
+            if disable_task_timeout and state['executionMode']!='standalone-api':
+                raise ValueError('Disabling task timeouts requires standalone API execution.')
             self.expire(state, data)
             if state['status'] in TERMINAL:
                 return self.w.public(state), None
             self.verify_source(state)
             for task in data['tasks']:
                 if task['status']=='leased' and task['definition']['expiresAt']>time.time():
+                    if task['definition'].get('taskTimeoutDisabled',False)!=disable_task_timeout:
+                        task['definition'].update(taskTimeoutDisabled=disable_task_timeout,
+                                                  expiresAt=data['deadline'] if disable_task_timeout else min(time.time()+data['limits']['taskTimeoutSeconds'],data['deadline']))
+                        self.save(state,data)
                     return self.w.public(state), task['definition']
                 if task['status']=='leased':
                     task['status']='pending'
@@ -90,7 +96,8 @@ class TaskEngine:
                     continue
                 task.update(attempts=task['attempts']+1, requests=0, bytes=0, status='leased')
                 task['evidenceIds']=[r['id'] for r in task['definition']['inputEvidence']]
-                task['definition'].update(id='task_'+uuid4().hex, expiresAt=min(time.time()+data['limits']['taskTimeoutSeconds'],data['deadline']))
+                task['definition'].update(id='task_'+uuid4().hex, taskTimeoutDisabled=disable_task_timeout,
+                                          expiresAt=data['deadline'] if disable_task_timeout else min(time.time()+data['limits']['taskTimeoutSeconds'],data['deadline']))
                 state.update(status='awaiting_reasoning', phase=self.namespace+'/'+task['definition']['phase'],
                              message='Source-only task leased; read evidence and submit its declared result.')
                 self.save(state,data)

@@ -76,6 +76,17 @@ export function printResult(data){
     else console.log(p.simulation?'\nReady for a walkthrough review. Simulated results are not a security verdict.':'\nReady for a bounded real review. Model usage applies; HTTP evidence decides confirmation.');
     return;
   }
+  if(value.run&&/^scan_[a-f0-9]{24}$/.test(value.run.id)){
+    const r=value.run,status=value.status||r.status;
+    const incomplete=['failed','incomplete','interrupted','error'].includes(status);
+    console.log(`\n${bold(incomplete?'Discovery incomplete':'Discovery')} · ${label(status)}\nRun: ${r.id}`);
+    if(value.message||r.message)console.log(`\n${value.message||r.message}`);
+    console.log(`\nStage: ${r.phase||r.stage||'discovery'}\nDetector signals: ${r.signalCount}\nEvaluation: ${r.evaluation}`);
+    console.log(r.executionMode==='muse-host'?'Reasoning: active Muse session · usage unavailable':`Model requests: ${r.reasoning?.independentModelRequests??((r.policy?.modelRequests||0)+(r.evaluationSummary?.modelRequests||0))}`);
+    console.log(`Evidence: .bypass/scanner/${r.id}/manifest.json`);
+    console.log(`Next: bypass discover ${status==='interrupted'?`resume ${r.id}`:`report ${r.id} --format md`}`);
+    console.log(muted(`Exit ${value.exitCode} · source-only analysis; no runtime reproduction`));return;
+  }
   if(value.run){
     const r=value.run;
     if(previewRun(r)){

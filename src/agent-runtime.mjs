@@ -30,7 +30,7 @@ export async function runContainer(role,task,rpc,{image,signal,onProgress,timeou
   onProgress?.({stage:role,message:`Starting ${role} agent · ${name} · shared model`});
   let child,result,failure,buffer='',bytes=0,busy=false,requests=0;
   const controller=new AbortController(),combined=signal?AbortSignal.any([signal,controller.signal]):controller.signal;
-  const timer=setTimeout(()=>controller.abort(new Fault(`${role} exceeded ten minutes.`,3)),timeoutMs);
+  const timer=timeoutMs===0?null:setTimeout(()=>controller.abort(new Fault(`${role} exceeded ten minutes.`,3)),timeoutMs);
   try{
     if(combined.aborted)throw abortFault(combined);
     // Await creation before attaching: killing `docker run` while its create request

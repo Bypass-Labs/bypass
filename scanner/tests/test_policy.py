@@ -85,6 +85,50 @@ class PolicyTests(unittest.TestCase):
             receipt=self.call('artifact',{'run':run,'path':path})
             self.assertIn('request.invoice_id',receipt['text'])
 
+    def test_standalone_no_task_timeout_keeps_evidence_and_submission_valid_after_300_seconds(self):
+        run=self.start(mode='standalone-api')
+        task=self.call('next_task',{'run':run,'disableTaskTimeout':True})['task']
+        data=self.engine.policy_engine().load(run)
+        self.assertTrue(task['taskTimeoutDisabled'])
+        self.assertEqual(task['expiresAt'],data['deadline'])
+        with patch('bypass_scanner.tasks.time.time',return_value=time.time()+301):
+            ref=self.read(run,task)
+            result={'summary':'Read source after the default task deadline.','assumptions':[],
+                    'openQuestions':[],'reviewedEvidence':[ref],'surfaces':[]}
+            self.assertNotEqual(self.submit(run,task,result)['status'],'error')
+        self.engine.cancel(run)
+
+    def test_no_task_timeout_is_standalone_only_and_does_not_disable_stage_deadlines(self):
+        run=self.start()
+        self.assertEqual(self.call('next_task',{'run':run,'disableTaskTimeout':True})['status'],'error')
+        task=self.next(run)
+        self.assertFalse(task['taskTimeoutDisabled'])
+        self.assertLess(task['expiresAt'],self.engine.policy_engine().load(run)['deadline'])
+        self.engine.cancel(run)
+        run=self.start(mode='standalone-api')
+        task=self.call('next_task',{'run':run,'disableTaskTimeout':True})['task']
+        with patch('bypass_scanner.tasks.time.time',return_value=task['expiresAt']+1):
+            self.assertEqual(self.call('evidence',{'run':run,'task':task['id'],'operation':'read','arguments':{'path':'app.py'}})['status'],'error')
+        self.assertEqual(self.engine.status(run)['status'],'incomplete')
+
+    def test_disabling_a_preexisting_lease_and_resuming_preserve_usage_and_stage_deadline(self):
+        run=self.start(mode='standalone-api');task=self.next(run)
+        deadline=self.engine.policy_engine().load(run)['deadline']
+        unlimited=self.call('next_task',{'run':run,'disableTaskTimeout':True})['task']
+        self.assertEqual(task['id'],unlimited['id'])
+        self.assertEqual(unlimited['expiresAt'],deadline)
+        self.call('evidence',{'run':run,'task':task['id'],'operation':'checkpoint','arguments':{'modelRequests':1,'interrupt':True,'reason':'Explicit resume test'}})
+        self.engine.resume(run)
+        end=time.monotonic()+5
+        while run in self.engine.tasks and time.monotonic()<end:time.sleep(.01)
+        resumed=self.call('next_task',{'run':run,'disableTaskTimeout':True})['task']
+        self.assertEqual(resumed['expiresAt'],deadline)
+        self.assertEqual(self.engine.policy_engine().load(run)['modelRequests'],1)
+        restored=self.next(run)
+        self.assertFalse(restored['taskTimeoutDisabled'])
+        self.assertLess(restored['expiresAt'],deadline)
+        self.engine.cancel(run)
+
     def test_filters_and_unknown_or_empty_selection_do_not_issue_tasks(self):
         with self.assertRaisesRegex(ValueError,'empty'):self.start({'excludePolicies':['authz/object-access']})
         with self.assertRaisesRegex(ValueError,'Unknown policy'):self.start({'includePolicies':['missing']})
