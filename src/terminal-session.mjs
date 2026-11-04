@@ -90,6 +90,17 @@ const wrapTranscript = (text,width) => safeText(text).split('\n').flatMap(line =
 const shortPath = value => String(value||'').replace(os.homedir()+'/', '~/');
 const duration = ms => ms<60000 ? `${(ms/1000).toFixed(1)}s` : `${Math.floor(ms/60000)}m ${Math.floor(ms/1000)%60}s`;
 const icons = {running:'◈',done:'✓',failed:'!',cancelled:'○',attention:'!',waiting:'◇'};
+const spinnerFrames=['◐','◓','◑','◒'];
+const spinner=(now,reducedMotion=false)=>reducedMotion?'◈':spinnerFrames[Math.floor(now/160)%spinnerFrames.length];
+const taskIcon=(status,now,reducedMotion=false)=>status==='running'?spinner(now,reducedMotion):(icons[status]||'◇');
+const phaseProgress=tasks=>{
+  const total=tasks?.length??0,complete=(tasks??[]).filter(task=>task.status==='done').length;
+  return {total,complete,percent:total?Math.floor(complete/total*100):0};
+};
+const phaseRail=(progress,width=14)=>{
+  const filled=progress.percent===100?width:Math.floor(progress.percent*width/100);
+  return `${'━'.repeat(filled)}${'─'.repeat(Math.max(0,width-filled))}`;
+};
 
 function livePanelLines(status,width,available,now){
   if(!status||available<3)return [];
@@ -115,7 +126,11 @@ export function transcriptLines(state, width, {expanded=state.expanded, now=Date
   const lines=[];
   for(const entry of state.entries) {
     if(entry.type==='operation') {
-      lines.push(...wrapWords(`${icons[entry.status]} ${entry.label} · ${duration((entry.ended||now)-entry.started)}${entry.status==='cancelled'?' · stopped':entry.status==='attention'?' · needs attention':''}`,width));
+      lines.push(...wrapWords(`${taskIcon(entry.status,now,state.reducedMotion)} ${entry.label} · ${duration((entry.ended||now)-entry.started)}${entry.status==='cancelled'?' · stopped':entry.status==='attention'?' · needs attention':''}`,width));
+      if(entry.status==='running'&&state.tasks?.length){
+        const progress=phaseProgress(state.tasks),railWidth=Math.max(6,Math.min(18,width-31));
+        lines.push(...wrapWords(`  PHASES  ${phaseRail(progress,railWidth)}  ${progress.percent}% · ${progress.complete}/${progress.total} complete`,width));
+      }
       if(expanded || entry.status==='running' || entry.status==='failed' || entry.status==='attention') {
         for(const detail of entry.details)lines.push(...wrapTranscript(detail,width-2).map(line=>'  '+line));
       }else if(entry.details.length)lines.push(`  ${entry.details.length} detail${entry.details.length===1?'':'s'} · Ctrl+O to expand`);
@@ -150,11 +165,11 @@ export function frame(state, columns, rows, now=Date.now()) {
 
   const bottom=[],add=(text='',tone='normal')=>bottom.push(row(text,tone));
   const activeTask=state.tasks.find(task=>task.status==='running');
-  const completed=state.tasks.filter(task=>task.status==='done').length;
   if(!wideLayout&&state.tasks.length&&height>=24&&state.tasksExpanded!==false){
-    add(`${state.taskTitle} · ${completed}/${state.tasks.length} done`,'accent');
+    const progress=phaseProgress(state.tasks);
+    add(`${state.taskTitle} · ${progress.percent}% · ${progress.complete}/${progress.total} phases complete`,'accent');
     const current=activeTask||state.tasks.find(task=>['failed','attention','cancelled'].includes(task.status))||state.tasks.find(task=>task.status==='waiting')||state.tasks.at(-1);
-    add(` ${icons[current.status]||'◇'} ${current.label}`,taskTone(current.status));
+    add(` ${taskIcon(current.status,now,state.reducedMotion)} ${current.label}`,taskTone(current.status));
   }
   if(height>=20){
     const current=state.operation?.label||activeTask?.label||(state.pending?.kind==='command'?'Ready for your next action':'Waiting for your choice');
@@ -201,11 +216,12 @@ export function frame(state, columns, rows, now=Date.now()) {
   if(wideLayout){
     if(state.tasks.length&&state.tasksExpanded!==false){
       side(state.taskTitle.toUpperCase(),'title');
-      const filled=Math.round(completed/state.tasks.length*12);
-      side(`${'━'.repeat(filled)}${'─'.repeat(12-filled)}  ${completed}/${state.tasks.length} done`,'accent');
+      const progress=phaseProgress(state.tasks);
+      side(`${phaseRail(progress,12)}  ${progress.percent}%`,'accent');
+      side(`${progress.complete}/${progress.total} phases complete`,'muted');
       const index=Math.max(0,state.tasks.findIndex(task=>task.status==='running'));
       const tasks=available>=19?state.tasks:state.tasks.slice(Math.max(0,index-1),Math.max(0,index-1)+3);
-      for(const task of tasks)side(`${icons[task.status]||'◇'} ${task.label}`,taskTone(task.status));
+      for(const task of tasks)side(`${taskIcon(task.status,now,state.reducedMotion)} ${task.label}`,taskTone(task.status));
       if(tasks.length<state.tasks.length)side('Ctrl+T hide tasks · /status');
       side();
     }
@@ -248,7 +264,7 @@ export function paintFrameLine(line,theme,width){
 
 export function createTerminalSession({input=process.stdin,output=process.stdout,captureConsole=true,clock=Date.now,env=process.env}={}) {
   const controller=new AbortController();
-  const state={context:{},entries:[],tasks:[],taskTitle:'Progress',next:'Connect your repository, then preview or try /demo',recommended:'/review',input:'',cursor:0,pending:null,operation:null,liveStatus:null,menu:[],selected:0,expanded:false,tasksExpanded:true,scroll:0};
+  const state={context:{},entries:[],tasks:[],taskTitle:'Progress',next:'Connect your repository, then preview or try /demo',recommended:'/review',input:'',cursor:0,pending:null,operation:null,liveStatus:null,menu:[],selected:0,expanded:false,tasksExpanded:true,scroll:0,reducedMotion:env.BYPASS_REDUCED_MOTION==='1'};
   let closed=false,dirty=true,pasting=false,pasteBuffer='',historyIndex=0,historyDraft='',transcriptPath;
   const history=[],original={log:console.log,error:console.error,warn:console.warn},wasRaw=input.isRaw;
   const mark=()=>{dirty=true;};

@@ -173,7 +173,7 @@ test('wide task panel can be collapsed without losing the project or active comm
   const answer=tty.ui.command('review');tty.type('/sta');
   let view=frame(tty.ui.state,130,38);
   assert.match(view.lines.map(x=>x.text).join('\n'),/✓ Read source/);
-  assert.match(view.lines.map(x=>x.text).join('\n'),/◈ Verify HTTP/);
+  assert.match(view.lines.map(x=>x.text).join('\n'),/[◐◓◑◒] Verify HTTP/);
   tty.key('t',{ctrl:true});
   view=frame(tty.ui.state,130,38);
   assert.doesNotMatch(view.lines.map(x=>x.text).join('\n'),/✓ Read source/);
@@ -194,10 +194,15 @@ test('a live audit keeps an explanatory evidence card visible and uses the top b
     next:'Run accepted candidates with scoped HTTP controls.',
     metrics:'20/80 candidates · 148 HTTP · 12 Muse'});
   const now=tty.ui.state.liveStatus.updatedAt+18000;
-  const text=frame(tty.ui.state,130,38,now).lines.map(line=>line.text).join('\n');
+  const first=frame(tty.ui.state,130,38,now),text=first.lines.map(line=>line.text).join('\n');
   assert.match(text,/LIVE REQUESTS · APPROVED SCOPE ONLY · EVIDENCE SAVED CONTINUOUSLY/);
   assert.doesNotMatch(text,/REAL AI|bounded scope/);
   for(const value of [/LIVE AUDIT/,/DONE\s+19 assets inspected/,/WORKING\s+Muse is reviewing/,/WHY\s+Muse proposes/,/RECOVERED\s+One slow batch/,/NEXT\s+Run accepted/,/LIVE\s+20\/80 candidates · 148 HTTP · 12 Muse/])assert.match(text,value);
+  assert.match(text,/PHASES\s+━+─+\s+16% · 1\/6 complete/);
+  assert.match(text,/1\/6 phases complete/);
+  const activeLine=view=>view.lines.find(line=>line.text.includes('Black-box audit ·'))?.text;
+  assert.notEqual(activeLine(first),activeLine(frame(tty.ui.state,130,38,now+160)),
+    'the running audit marker animates while the phase percentage stays evidence-based');
   assert.doesNotMatch(text,/last evidence/);
   for(const [columns,rows,status] of [[80,24,'job-radar.app · AUDIT LIVE · SCOPE GUARDED · EVIDENCE SAVING'],[40,15,'AUDIT LIVE · SCOPE GUARDED']]){
     const compact=frame(tty.ui.state,columns,rows,now);
