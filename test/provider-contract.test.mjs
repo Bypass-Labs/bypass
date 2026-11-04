@@ -150,6 +150,26 @@ test('Responses replays opaque reasoning and function results without previous_r
   assert.equal(calls[1].body.input[1].encrypted_content,'opaque');assert.deepEqual(calls[1].body.input.at(-1),{type:'function_call_output',call_id:'c1',output:'result'});
 });
 
+test('rejected tool actions retain matching correction outputs in Chat and Responses',async t=>{
+  for(const transport of ['chat','responses'])for(const argumentsText of ['{"focus":4}','{"focus":'])await t.test(`${transport} ${argumentsText}`,async t=>{
+    const {profile,calls}=await endpoint(t,(_req,res,_call,n)=>{
+      const argumentsValue=n===1?argumentsText:'{"focus":"corrected"}';
+      if(transport==='chat'){
+        const message=action({},`c${n}`);message.tool_calls[0].function.arguments=argumentsValue;chat(res,message);
+      }else{
+        res.setHeader('content-type','application/json');
+        res.end(JSON.stringify({status:'completed',output:[{type:'function_call',call_id:`c${n}`,name:'security_action',arguments:argumentsValue}]}));
+      }
+    },{transport});
+    const session=new ProviderSession(profile);
+    await assert.rejects(session.turn([{role:'user',content:'start'}],{schema}));
+    assert.deepEqual(await session.turn([{role:'user',content:'validation feedback'}],{schema}),{focus:'corrected'});
+    const output=transport==='chat'?calls[1].body.messages.at(-1):calls[1].body.input.at(-1);
+    assert.deepEqual(output,transport==='chat'?{role:'tool',tool_call_id:'c1',content:'validation feedback'}:
+      {type:'function_call_output',call_id:'c1',output:'validation feedback'});
+  });
+});
+
 test('Responses reports a safe incomplete-output reason without response contents',async t=>{
   const {profile}=await endpoint(t,(_req,res)=>{
     res.setHeader('content-type','application/json');
@@ -169,6 +189,17 @@ test('malformed arguments, unknown fields and unsupported tool names cannot exec
     const {profile}=await endpoint(t,(_req,res)=>{const a=action({});a.tool_calls[0].function.arguments=value;chat(res,a);});
     await assert.rejects(new ProviderSession(profile).turn([{role:'user',content:'x'}],{schema}));
   }
+});
+
+test('schema failures report only declared field names and unknown-field counts, never values or unknown names',async t=>{
+  const {profile}=await endpoint(t,(_req,res)=>chat(res,{role:'assistant',content:'{"focus":4,"PRIVATE_FIELD":"PRIVATE_VALUE"}'}));
+  const progress=[];
+  await assert.rejects(new ProviderSession(profile).turn([{role:'user',content:'x'}],{schema,onProgress:event=>progress.push(event)}),error=>{
+    const d=error.details.responseDiagnostics;
+    assert.deepEqual(d.actionFields,['focus']);assert.equal(d.unknownFieldCount,1);assert.equal(d.schemaStatus,'invalid');
+    assert.doesNotMatch(JSON.stringify(d)+JSON.stringify(progress),/PRIVATE_FIELD|PRIVATE_VALUE/);
+    return true;
+  });
 });
 
 test('rejected actions record safe response shape and parse classifications in both Chat modes',async t=>{

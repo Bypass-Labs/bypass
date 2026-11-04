@@ -80,6 +80,15 @@ requests can continue until an accepted submission or a remaining budget,
 deadline, or cancellation stops the task. Other workflows retain their own
 turn limits.
 
+Standalone tool schemas distinguish evidence (`action`, `operation`,
+`arguments`) from submission (`action`, `result`); unused fields must be absent.
+Malformed JSON and schema-invalid actions receive explicit model correction
+feedback without executing them. Correction requests consume the same model
+budgets and task lease, with no new turn cap. Safe diagnostics identify declared
+fields only, never source or argument values. If invalid actions continue until
+interruption, the manifest message retains the last rejection feedback.
+Transport and timeout failures still interrupt immediately.
+
 Task leases, retry counts, model requests, evidence requests/bytes, follow-up
 levels, and run deadlines are bounded. Exact submissions are idempotent. Resume
 checks source/runtime/policy identity; expired run budgets require a new run.

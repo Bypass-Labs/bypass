@@ -140,8 +140,24 @@ test('API driver failure persists an interrupted run and retains usage receipts'
   assert.equal(result.run.signalCount,0);
 });
 
-test('standalone policy completes tasks beyond ten turns through the real provider transport',{skip:!available},async t=>{
-  const root=await source();let requests=0;const phaseTurns=new Map();
+test('an interrupted real scanner retains safe rejection feedback and correction usage',{skip:!available},async()=>{
+  const root=await source();await addTestModel(root);let turns=0;
+  const result=await execute('discover',[],{project:root,detector:'policy',policy:'authz/object-access'},
+    {scannerConnect:connect,scannerSessionFactory:()=>({turn:async(_messages,options)=>{
+      turns++;options.onProgress({kind:'phase',phase:'request'});
+      if(turns===1)return {action:'submit',operation:'read',arguments:{path:'PRIVATE_SOURCE'},result:{}};
+      throw new Error('Synthetic provider interruption');
+    }})});
+  assert.equal(result.status,'interrupted');assert.equal(result.run.reasoning.independentModelRequests,2);
+  assert.equal(result.run.signalCount,0);
+  const saved=JSON.parse(fs.readFileSync(path.join(root,'.bypass/scanner',result.run.id,'manifest.json')));
+  assert.match(saved.message,/Synthetic provider interruption/);assert.match(saved.message,/Last rejected security action/);
+  assert.match(saved.message,/"receivedFields":\["action","operation","arguments","result"\]/);
+  assert.doesNotMatch(saved.message,/PRIVATE_SOURCE/);
+});
+
+test('standalone policy repairs invalid actions beyond ten turns through the real provider transport',{skip:!available},async t=>{
+  const root=await source();let requests=0;const phaseTurns=new Map(),references=new Map();
   const key='BYPASS_POLICY_TRANSPORT_TEST_KEY',previous=process.env[key];process.env[key]='synthetic-policy-key';
   t.after(()=>{if(previous===undefined)delete process.env[key];else process.env[key]=previous;});
   const server=http.createServer((request,response)=>{
@@ -149,17 +165,33 @@ test('standalone policy completes tasks beyond ten turns through the real provid
     let body='';request.on('data',chunk=>body+=chunk);request.on('end',()=>{
       requests++;const message=JSON.parse(body),task=JSON.parse(message.messages[1].content),last=JSON.parse(message.messages.at(-1).content);
       const turns=(phaseTurns.get(task.phase)||0)+1;phaseTurns.set(task.phase,turns);
+      if(last.evidence)references.set(task.phase,last.evidence.reference.id);
       assert.equal(message.tools[0].function.parameters.type,'object');
-      const action=turns>11?{action:'submit',result:task.phase==='mapping'?mapping(last.evidence.reference.id):finding(last.evidence.reference.id)}:
-        {action:'evidence',operation:'read',arguments:{path:'app.py'}};
+      const schema=message.tools[0].function.parameters;
+      const completed={action:'submit',result:task.phase==='mapping'?mapping(references.get(task.phase)):finding(references.get(task.phase))};
+      const action=turns===12?{...completed,operation:'read',arguments:{}}:turns===13?{action:'submit'}:
+        turns===14?{action:'evidence',operation:'read',arguments:{path:'app.py'},result:{},PRIVATE_FIELD:'PRIVATE_VALUE'}:
+        turns===16?{action:'submit',result:null}:turns>=17?completed:{action:'evidence',operation:'read',arguments:{path:'app.py'}};
+      if([12,13,14,16].includes(turns))assert.throws(()=>validateJSON(schema,action));
+      if(turns>=13&&turns<=17){
+        assert.equal(last.status,'error');assert.match(last.message,/correct the rejected action/);
+        assert.doesNotMatch(JSON.stringify(last),/PRIVATE_FIELD|PRIVATE_VALUE/);
+      }
+      if(turns===13||turns===16){
+        assert.equal(message.messages.at(-1).role,'tool');
+        assert.equal(message.messages.at(-1).tool_call_id,`rejected-${task.phase}-${turns-1}`);
+      }
+      const assistant=[12,15].includes(turns)?{role:'assistant',content:null,tool_calls:[{id:`rejected-${task.phase}-${turns}`,type:'function',
+        function:{name:'security_action',arguments:turns===15?'{"action":':JSON.stringify(action)}}]}:{role:'assistant',content:JSON.stringify(action)};
       response.setHeader('content-type','application/json');
-      response.end(JSON.stringify({id:'fixture',object:'chat.completion',choices:[{index:0,finish_reason:'stop',message:{role:'assistant',content:JSON.stringify(action)}}]}));
+      response.end(JSON.stringify({id:'fixture',object:'chat.completion',choices:[{index:0,finish_reason:assistant.tool_calls?'tool_calls':'stop',message:assistant}]}));
     });
   });
   await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));t.after(()=>new Promise(resolve=>server.close(resolve)));
   await execute('model add',['policy-api'],{project:root,provider:'custom','base-url':`http://127.0.0.1:${server.address().port}/v1`,model:'fixture',stream:false,'secret-env':key,'allow-private':true,'timeout-ms':0});
   const result=await execute('discover',[],{project:root,'discovery-only':true,detector:'policy',policy:'authz/object-access'},{scannerConnect:connect});
-  assert.equal(result.run.status,'completed',JSON.stringify(result));assert.equal(requests,24);
-  assert.deepEqual([...phaseTurns.values()],[12,12]);
-  assert.equal(result.run.reasoning.independentModelRequests,24);
+  assert.equal(result.run.status,'completed',JSON.stringify(result));assert.equal(requests,34);
+  assert.deepEqual([...phaseTurns.values()],[17,17]);
+  assert.equal(result.run.reasoning.independentModelRequests,34);
+  assert.equal(result.run.signalCount,1);
 });

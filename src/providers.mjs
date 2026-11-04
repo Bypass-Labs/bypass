@@ -177,6 +177,10 @@ export class ProviderSession {
       if(calls.length){const call=calls[0];need(call.name==='security_action'&&typeof call.id==='string'&&call.id.length&&typeof call.arguments==='string'&&call.arguments.length<=64000,'Invalid security tool call.',3);this.pending=call.id;diagnostics.jsonSource='tool_arguments';try{value=JSON.parse(call.arguments);}catch{diagnostics.jsonStatus='invalid_json';throw new Fault('Malformed tool arguments; no action executed.',3,{reason:'invalid_arguments'});}}
       else{need(typeof text==='string'&&text.length<=64000,'Invalid structured result.',3);diagnostics.jsonSource='content';try{value=JSON.parse(text.trim().replace(/^```(?:json)?\s*/,'').replace(/\s*```$/,''));}catch{diagnostics.jsonStatus=text.trim()?'invalid_json':'empty_content';throw new Fault('Model returned no valid security action. Retry or choose a compatible model explicitly.',3,{reason:'invalid_arguments'});}}
       diagnostics.jsonStatus='parsed';
+      if(value&&typeof value==='object'&&!Array.isArray(value)){
+        diagnostics.actionFields=Object.keys(value).filter(field=>Object.hasOwn(schema.properties||{},field));
+        diagnostics.unknownFieldCount=Object.keys(value).length-diagnostics.actionFields.length;
+      }
       try{return validateJSON(schema,value,'security_action');}
       catch(error){diagnostics.schemaStatus='invalid';throw error;}
     } catch(error) {

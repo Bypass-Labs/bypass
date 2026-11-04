@@ -283,14 +283,18 @@ counts, and an allowlisted finish reason (`unknown` for unrecognized values).
 is `not_attempted`, `empty_content`, `invalid_json`, or `parsed`; `schemaStatus:
 "invalid"` means JSON parsed but failed the security-action schema. Raw content,
 reasoning, arguments, tool names, and JSON parser exception messages are not
-logged.
+logged. Parsed objects also report `actionFields` (only names declared in the
+tool schema) and `unknownFieldCount`; unknown field names and values remain
+private.
 
 For example, zero tool calls plus `jsonStatus: "invalid_json"` indicates
 non-JSON or malformed JSON text; `empty_content` with a positive reasoning count
 indicates reasoning was returned without a final text action. `finishReason:
 "length"` indicates truncated generation. Inspect the local server's chat
 template/tool support and generation settings accordingly. Diagnostics do not
-change action validation, retry automatically, or accept unsupported findings.
+change action validation or accept unsupported findings. Docker `scan` stops
+on invalid actions; standalone `discover` can request corrections as described
+below. Provider transport requests still have zero automatic retries.
 
 ## CodeQL and policy discovery with local Glimmer
 
@@ -364,6 +368,23 @@ cap. A task can continue requesting evidence until its submission is accepted.
 Task leases, stage deadlines, configured model-request/evidence budgets,
 conversation-size limits, and cancellation still apply. This does not change
 the separate Docker `scan` worker's turn limits.
+
+Standalone scanner actions have mutually exclusive shapes: evidence contains
+only `action`, `operation`, and `arguments`; submit contains only `action` and
+`result`, matching the task's result schema. Unused fields must be omitted,
+not supplied as empty placeholders. Previously the model-facing schema
+permitted mixed shapes that the driver rejected as `Invalid policy submission
+action`; historical runs do not record which field caused that rejection.
+
+Malformed JSON or schema-invalid actions are never executed or silently
+normalized. The driver prints safe response/field diagnostics and returns
+validation feedback to the model so it can correct the action within the same
+task. Every attempted model request, including corrections, counts against the
+existing budgets; leases, context limits, and cancellation still apply. Network
+and timeout failures still interrupt immediately. If repeated invalid actions
+ultimately interrupt the task, its manifest message includes the last safe
+rejection feedback. This correction behavior applies to standalone discovery
+and evaluation, not Docker `scan` or Muse-hosted reasoning.
 
 An interrupted scanner run prints its failure message and stores its manifest
 under `.bypass/scanner/<run-id>/manifest.json`, separately from `scan` evidence.

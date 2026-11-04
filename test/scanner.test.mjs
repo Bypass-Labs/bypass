@@ -11,6 +11,7 @@ import { runAPIDriver } from '../src/scanner/api-driver.mjs';
 import { apiProfile } from '../src/providers.mjs';
 import { inExecutionMode } from '../src/execution-mode.mjs';
 import { validateJSON } from '../src/schema.mjs';
+import { Fault } from '../src/util.mjs';
 import { parse } from '../src/catalog.mjs';
 import { execute } from '../src/service.mjs';
 import { closeScannerSessions } from '../src/scanner/service.mjs';
@@ -62,8 +63,77 @@ test('discovery and evaluation tasks can submit after more than ten evidence tur
   }
 });
 
-test('uncapped scanner turns still enforce request budgets, task expiry, and cancellation',async t=>{
-  for(const stop of ['budget','expiry','cancel'])await t.test(stop,async t=>{
+test('invalid scanner actions are rejected without execution and corrected within the same task',async t=>{
+  const invalid=[
+    {action:'submit'},
+    {action:'submit',operation:'read',arguments:{},result:{accepted:true}},
+    {action:'evidence',operation:'read',arguments:{path:'PRIVATE_SOURCE'},result:{}},
+    {action:'submit',result:{accepted:'PRIVATE_VALUE'}},
+    {action:'submit',result:{accepted:true},PRIVATE_FIELD:'PRIVATE_VALUE'},
+    {action:'submit',result:null},
+    null
+  ];
+  for(const kind of ['discovery','evaluation'])for(const rejected of invalid)await t.test(`${kind} ${JSON.stringify(rejected)}`,async()=>{
+    const profile=apiProfile('test',{provider:'custom','base-url':'http://127.0.0.1:8080/v1',model:'fixture','secret-env':'BYPASS_UNIT_API_KEY'});
+    const run={id:'scan_18aa42c25cc7467c84be5a64',status:'awaiting_reasoning'};
+    const task={id:'repair-task',kind,phase:kind,expiresAt:Date.now()/1000+60,
+      resultSchema:{type:'object',properties:{accepted:{type:'boolean',enum:[true]}},required:['accepted'],additionalProperties:false}};
+    let turns=0,recorded=0,submits=0;const progress=[];
+    const result=await runAPIDriver({models:[profile],activeModel:'test'},{run,onProgress:event=>progress.push(event),
+      client:{call:async(operation,input)=>{
+        if(operation==='next_task')return {run,task};
+        if(operation==='submit'){
+          submits++;assert.equal(turns,2);assert.deepEqual(input.result,{accepted:true});
+          return {run:{...run,status:'completed'},status:'completed'};
+        }
+        assert.equal(input.operation,'checkpoint');assert.deepEqual(input.arguments,{modelRequests:1});recorded++;
+        return {run};
+      }},
+      sessionFactory:()=>({turn:async(messages,options)=>{
+        turns++;options.onProgress({kind:'phase',phase:'request'});
+        assert.throws(()=>validateJSON(options.schema,rejected));
+        validateJSON(options.schema,{action:'submit',result:{accepted:true}});
+        validateJSON(options.schema,{action:'evidence',operation:'inventory',arguments:{}});
+        if(turns===1)return rejected;
+        const feedback=JSON.parse(messages.at(-1).content);
+        assert.equal(feedback.status,'error');assert.match(feedback.message,/Omit every unused field/);
+        assert.doesNotMatch(JSON.stringify(feedback)+JSON.stringify(progress),/PRIVATE_SOURCE|PRIVATE_VALUE|PRIVATE_FIELD/);
+        return {action:'submit',result:{accepted:true}};
+      }})
+    });
+    assert.equal(result.status,'completed');assert.equal(submits,1);assert.equal(recorded,2);
+    assert.ok(progress.some(event=>event.message?.includes('rejected invalid security action')));
+  });
+});
+
+test('scanner corrects provider parse/schema failures but never retries transport errors',async t=>{
+  for(const reason of ['invalid_arguments','invalid_schema','transport'])await t.test(reason,async()=>{
+    const profile=apiProfile('test',{provider:'custom','base-url':'http://127.0.0.1:8080/v1',model:'fixture','secret-env':'BYPASS_UNIT_API_KEY'});
+    const run={id:'scan_18aa42c25cc7467c84be5a64',status:'awaiting_reasoning'};
+    const task={id:'provider-error',kind:'discovery',phase:'mapping',expiresAt:Date.now()/1000+60,resultSchema:{type:'object'}};
+    let turns=0,recorded=0;
+    const result=await runAPIDriver({models:[profile],activeModel:'test'},{run,
+      client:{call:async(operation,input)=>{
+        if(operation==='next_task')return {run,task};
+        if(operation==='submit')return {run:{...run,status:'completed'},status:'completed'};
+        if(input.arguments?.interrupt)return {run:{...run,status:'interrupted'}};
+        assert.equal(input.arguments.modelRequests,1);recorded++;return {run};
+      }},
+      sessionFactory:()=>({turn:async(messages,options)=>{
+        turns++;options.onProgress({kind:'phase',phase:'request'});
+        if(turns===1)throw new Fault('Synthetic failure',3,reason==='invalid_schema'?
+          {responseDiagnostics:{schemaStatus:'invalid',actionFields:['action','operation','arguments','result']}}:{reason});
+        assert.equal(JSON.parse(messages.at(-1).content).status,'error');
+        return {action:'submit',result:{}};
+      }})
+    });
+    assert.equal(result.status,reason==='transport'?'interrupted':'completed');
+    assert.equal(turns,reason==='transport'?1:2);assert.equal(recorded,turns);
+  });
+});
+
+test('uncapped valid and rejected scanner turns still enforce request budgets, task expiry, and cancellation',async t=>{
+  for(const invalid of [false,true])for(const stop of ['budget','expiry','cancel'])await t.test(`${stop} ${invalid?'rejected':'valid'}`,async t=>{
     let now=Date.now();t.mock.method(Date,'now',()=>now);
     const controller=new AbortController(),profile=apiProfile('test',{provider:'custom','base-url':'http://127.0.0.1:8080/v1',model:'fixture','secret-env':'BYPASS_UNIT_API_KEY','timeout-ms':0});
     const run={id:'scan_18aa42c25cc7467c84be5a64',status:'awaiting_reasoning'};
@@ -73,19 +143,24 @@ test('uncapped scanner turns still enforce request budgets, task expiry, and can
       client:{call:async(operation,input)=>{
         if(operation==='next_task')return {run,task};
         if(operation==='cancel')return {run:{...run,status:'cancelled'},status:'cancelled'};
-        if(input.arguments?.interrupt)return {run:{...run,status:'interrupted'}};
+        if(input.arguments?.interrupt)return {run:{...run,status:'interrupted',message:input.arguments.reason}};
+        if(invalid)assert.equal(input.operation,'checkpoint');
         return {run};
       }},
       sessionFactory:()=>({turn:async(_messages,options)=>{
         turns++;options.onProgress({kind:'phase',phase:'request'});
         if(stop==='expiry')now=task.expiresAt*1000;
         if(stop==='cancel')controller.abort();
-        return {action:'evidence',operation:'inventory',arguments:{limit:1}};
+        return invalid?{action:'submit',arguments:{}}:{action:'evidence',operation:'inventory',arguments:{limit:1}};
       }})
     });
     assert.equal(turns,stop==='budget'?2:1);
     assert.equal(result.status,stop==='cancel'?'cancelled':'interrupted');
     if(stop!=='cancel')assert.match(result.message,stop==='budget'?/request budget exhausted/:/lease expired/);
+    if(invalid&&stop!=='cancel'){
+      assert.match(result.run.message,/Last rejected security action/);
+      assert.match(result.run.message,/"receivedFields":\["action","arguments"\]/);
+    }
   });
 });
 
