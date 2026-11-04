@@ -156,6 +156,48 @@ test('default containers have no mounts/network and package only allowlisted fil
   assert.equal(calls.filter(call => call.includes('build')).length, 1);
 });
 
+test('scanner doctor names exact Colima and context fixes without starting anything', async () => {
+  const contextLines = [
+    {Name:'default', Current:true, DockerEndpoint:'unix:///var/run/docker.sock'},
+    {Name:'colima-bypass-poc', Current:false, DockerEndpoint:'unix:///home/test/.colima/bypass-poc/docker.sock'},
+  ].map(value => JSON.stringify(value)).join('\n');
+  const stoppedCalls = [];
+  const stopped = async (command, args) => {
+    stoppedCalls.push([command, ...args]);
+    if (command === 'colima' && args[0] === 'list') return {code:0, stdout:JSON.stringify({name:'bypass-poc', status:'Stopped', runtime:'docker'})};
+    if (command === 'docker' && args[0] === 'context') return {code:0, stdout:contextLines};
+    return {code:1, stdout:'', stderr:'Cannot connect to the Docker daemon'};
+  };
+  const stoppedResult = await scannerDoctor({runner:stopped, platform:'darwin', fileExists:() => false});
+  assert.equal(stoppedResult.status, 'blocked');
+  assert.equal(stoppedResult.docker.available, false);
+  assert.equal(stoppedResult.docker.reason, 'daemon-stopped');
+  const stoppedCommands = stoppedResult.docker.remediation.map(step => step.command);
+  assert.ok(stoppedCommands.includes('colima start bypass-poc'));
+  assert.ok(stoppedCommands.includes('docker context use colima-bypass-poc'));
+  assert.match(stoppedResult.message, /colima start bypass-poc/);
+  assert.match(stoppedResult.message, /docker context use colima-bypass-poc/);
+  assert.equal(stoppedCalls.some(call => call[0] === 'colima' && call[1] === 'start'), false);
+  assert.equal(stoppedCalls.some(call => call.includes('build')), false);
+
+  const wrongContext = async (command, args) => {
+    if (command === 'docker' && args[0] === '--context' && args[1] === 'colima-bypass-poc') return {code:0, stdout:'29.5.2'};
+    if (command === 'docker' && args[0] === 'context') return {code:0, stdout:contextLines};
+    if (command === 'colima' && args[0] === 'list') return {code:0, stdout:JSON.stringify({name:'bypass-poc', status:'Running', runtime:'docker'})};
+    return {code:1, stdout:'', stderr:'Cannot connect to the Docker daemon'};
+  };
+  const wrongResult = await scannerDoctor({runner:wrongContext, platform:'darwin', fileExists:() => false});
+  assert.equal(wrongResult.docker.reason, 'wrong-context');
+  assert.equal(wrongResult.docker.remediation[0].command, 'docker context use colima-bypass-poc');
+  assert.match(wrongResult.message, /already reachable/);
+
+  const missing = async () => { throw Object.assign(new Error('spawn ENOENT'), {code:'ENOENT'}); };
+  const missingResult = await scannerDoctor({runner:missing, platform:'darwin', fileExists:() => false});
+  assert.equal(missingResult.docker.reason, 'cli-missing');
+  assert.ok(missingResult.docker.remediation.length >= 1);
+  assert.match(missingResult.message, /install/i);
+});
+
 test('planning works before initialization and never creates project state', async () => {
   const root = temp();
   const before = fs.readdirSync(root);

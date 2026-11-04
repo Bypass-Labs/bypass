@@ -40,6 +40,21 @@ Start with the Muse Code plugin. A **standalone CLI** is also available for term
 
 **Requires Muse Code installed, opened, and signed in first.** Install Muse Code from [Meta's official guide](https://dev.meta.ai/docs/muse-code), then run the Bypass plugin installer. You can select your application during setup; you do not need to start in its folder.
 
+<a id="docker-prerequisite"></a>
+
+**Prerequisite for SAST/policy discovery: a running Docker daemon.** The CodeQL/policy scanner runs inside a container, so `/bypass:discover`, `bypass discover`, `bypass scanner doctor`, standalone policy discovery, and standalone Docker-engine source review need Docker installed **and running** before the scan starts. Running-app testing, saved regression replay, discovery plans (`--plan`), and policy listing need no Docker. Bypass never auto-starts a Docker VM; when the daemon is unreachable, `scanner doctor` now reports why (`cli-missing`, `daemon-stopped`, `wrong-context`, or `daemon-unreachable`) with the exact commands to run.
+
+On macOS, the `docker` CLI alone is not enough — a Linux VM provides the daemon. With Colima (Homebrew):
+
+```bash
+brew install colima docker
+colima start                 # or: colima start <profile>
+docker context use colima    # named profile: docker context use colima-<profile>
+docker version               # must print a Server version
+```
+
+Docker Desktop also works: install it, open it, and wait until it reports running. On Linux, start Docker Engine (for example `sudo systemctl start docker`). Keep several GB of free disk for the first scanner image build. If `docker version` prints only client info, check `docker context ls` and `colima list` before retrying; a stopped profile or a context pointed at a missing socket blocks the scan even though Docker is "installed".
+
 **1. Install the plugin.**
 
 macOS / Linux:
@@ -128,7 +143,7 @@ Choose **SAST**, **Policy**, or **Both** in Muse Code:
 
 SAST/Both use GitHub CodeQL under its [separate usage terms](https://github.com/github/codeql-cli-binaries/blob/main/LICENSE.md); Bypass's license does not grant CodeQL rights for private or commercial code.
 
-Docker must be running. First use prepares the selected image: Policy uses a lightweight Python runtime; SAST/Both download the pinned CodeQL toolchains. Later scans reuse the image. No host Python, host CodeQL, or separate plugin API key is required.
+Docker must be running (see [Docker prerequisite](#docker-prerequisite)). First use prepares the selected image: Policy uses a lightweight Python runtime; SAST/Both download the pinned CodeQL toolchains. Later scans reuse the image. No host Python, host CodeQL, or separate plugin API key is required. If `bypass scanner doctor` reports blocked, follow its `docker.remediation` commands — for Colima that is typically `colima start <profile>` plus `docker context use colima-<profile>` — then re-run the doctor.
 
 From the CLI, after [installation](#standalone-cli):
 
