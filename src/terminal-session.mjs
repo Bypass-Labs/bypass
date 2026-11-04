@@ -63,6 +63,26 @@ const shortPath = value => String(value||'').replace(os.homedir()+'/', '~/');
 const duration = ms => ms<60000 ? `${(ms/1000).toFixed(1)}s` : `${Math.floor(ms/60000)}m ${Math.floor(ms/1000)%60}s`;
 const icons = {running:'◈',done:'✓',failed:'!',cancelled:'○',attention:'!',waiting:'◇'};
 
+function livePanelLines(status,width,available,now){
+  if(!status||available<3)return [];
+  const fields=available>=9?[
+    ['DONE',status.done],['WORKING',status.working&&`${status.working} · ${duration(now-status.since)}`],
+    ['LIVE',status.metrics&&`${status.metrics} · last evidence ${duration(now-status.updatedAt)} ago`],
+    ['WHY',status.why],['RECOVERED',status.recovered],['NEXT',status.next]
+  ]:[
+    ['WORKING',status.working&&`${status.working} · ${duration(now-status.since)}`],
+    ['LIVE',status.metrics&&`${status.metrics} · last evidence ${duration(now-status.updatedAt)} ago`],
+    ...(status.recovered?[['RECOVERED',status.recovered]]:[])
+  ];
+  const lines=[`─ LIVE AUDIT ${'─'.repeat(Math.max(0,width-13))}`],limit=Math.min(8,Math.max(3,available-1));
+  for(const [label,text] of fields){
+    if(!text||lines.length>=limit)continue;
+    const wrapped=wrapWords(`${label.padEnd(10)} ${text}`,width).slice(0,available>=9?2:1);
+    for(const line of wrapped){if(lines.length<limit)lines.push(line);}
+  }
+  return lines;
+}
+
 export function transcriptLines(state, width, {expanded=state.expanded, now=Date.now()}={}) {
   const lines=[];
   for(const entry of state.entries) {
@@ -85,12 +105,19 @@ export function frame(state, columns, rows, now=Date.now()) {
   const join=parts=>({text:parts.map(p=>p.text).join(''),parts,tone:'normal'});
   const divider='─'.repeat(width),wideLayout=width>=108&&height>=26;
   const project=state.context.title||'Connect your application';
-  const mode=state.context.demo?'LOCAL DEMO · seeded discovery / real HTTP':state.context.engine==='docker'?'REAL AI · bounded scope':state.context.engine==='mock'?'PREVIEW · simulated discovery':'SETUP · progress saved';
   const mark=[{text:'▰╲',tone:'brand'},{text:'▰  BYPASS LABS',tone:'title'}];
   const version=`v${VERSION}`;
   if(width>=42)mark.push({text:' '.repeat(Math.max(2,width-16-version.length))+version,tone:'muted'});
   lines.push(width>=16?join(mark):row('BYPASS','brand'));
-  put(`${project}${state.context.branch?' · '+state.context.branch:''}  /  ${mode}`,'muted');
+  const trustBar=state.operation?.label==='Black-box audit'?
+    'LIVE REQUESTS · APPROVED SCOPE ONLY · EVIDENCE SAVED CONTINUOUSLY':
+    state.operation?'WORKING · EVIDENCE SAVED CONTINUOUSLY · ESC STOPS SAFELY':
+      state.pending&&!state.context.repo?'SETUP · CHOICES SAVE AS YOU GO · NO LIVE REQUESTS YET':
+        'READY · EVIDENCE STAYS LOCAL · /HELP SHOWS COMMANDS';
+  const compactBar=state.operation?.label==='Black-box audit'?'AUDIT LIVE · SCOPE GUARDED':
+    state.operation?'WORKING · SAFE TO STOP · EVIDENCE SAVED':
+      state.pending&&!state.context.repo?'SETUP · SAVES EACH CHOICE':'READY · LOCAL EVIDENCE · /HELP';
+  put(wideLayout?trustBar:width>=72?`${project} · ${compactBar} · EVIDENCE SAVING`:compactBar,'muted');
   if(height>=20)put('─ ACTIVITY '+ '─'.repeat(Math.max(0,width-11)),'rule');
 
   const bottom=[],add=(text='',tone='normal')=>bottom.push(row(text,tone));
@@ -133,11 +160,14 @@ export function frame(state, columns, rows, now=Date.now()) {
 
   const available=Math.max(0,height-lines.length-bottom.length);
   const sideWidth=wideLayout?32:0,mainWidth=wideLayout?width-sideWidth-3:width;
-  const transcript=transcriptLines(state,mainWidth,{now}),maxScroll=Math.max(0,transcript.length-available);
+  const livePanel=state.operation?livePanelLines(state.liveStatus,mainWidth,available,now):[];
+  const transcriptAvailable=Math.max(0,available-livePanel.length);
+  const transcript=transcriptLines(state,mainWidth,{now}),maxScroll=Math.max(0,transcript.length-transcriptAvailable);
   const scroll=Math.min(state.scroll,maxScroll),end=transcript.length-scroll;
-  const visible=transcript.slice(Math.max(0,end-available),end);
+  const visible=transcript.slice(Math.max(0,end-transcriptAvailable),end);
   if(scroll&&visible.length)visible[0]=`↑ Earlier activity · PgDn to return to latest`;
-  while(visible.length<available)visible.push('');
+  while(visible.length<transcriptAvailable)visible.push('');
+  visible.push(...livePanel);
   const sidebar=[];
   const side=(text='',tone='muted')=>wrapWords(text,sideWidth-2).forEach(text=>sidebar.push({text:' '+text,tone}));
   if(wideLayout){
@@ -171,7 +201,7 @@ export function frame(state, columns, rows, now=Date.now()) {
   return {lines:lines.slice(0,height),cursor:{row:Math.min(height,inputRow),column:Math.min(columns,4+cells(cursorText))},maxScroll};
 }
 const taskTone=status=>status==='done'?'success':status==='running'?'accent':status==='failed'?'error':['attention','cancelled'].includes(status)?'warning':'muted';
-const activityTone=text=>/^✓/.test(text)?'success':/^!|^Error|failed/i.test(text)?'warning':/^›/.test(text)?'accent':/^Step \d|^BYPASS|^Setup saved/.test(text)?'title':/^  \d+ details?/.test(text)?'muted':'normal';
+const activityTone=text=>/^DONE\s/.test(text)?'success':/^WORKING\s/.test(text)?'accent':/^RECOVERED\s/.test(text)?'info':/^─ LIVE AUDIT/.test(text)?'title':/^LIVE\s/.test(text)?'muted':/^✓/.test(text)?'success':/^!|^Error|failed/i.test(text)?'warning':/^›/.test(text)?'accent':/^Step \d|^BYPASS|^Setup saved/.test(text)?'title':/^  \d+ details?/.test(text)?'muted':'normal';
 
 export function paintFrameLine(line,theme,width){
   const parts=line.parts||[{text:line.text,tone:line.tone}];
@@ -181,7 +211,7 @@ export function paintFrameLine(line,theme,width){
 
 export function createTerminalSession({input=process.stdin,output=process.stdout,captureConsole=true,clock=Date.now,env=process.env}={}) {
   const controller=new AbortController();
-  const state={context:{},entries:[],tasks:[],taskTitle:'Progress',next:'Connect your repository, then preview or try /demo',recommended:'/review',input:'',cursor:0,pending:null,operation:null,menu:[],selected:0,expanded:false,tasksExpanded:true,scroll:0};
+  const state={context:{},entries:[],tasks:[],taskTitle:'Progress',next:'Connect your repository, then preview or try /demo',recommended:'/review',input:'',cursor:0,pending:null,operation:null,liveStatus:null,menu:[],selected:0,expanded:false,tasksExpanded:true,scroll:0};
   let closed=false,dirty=true,pasting=false,pasteBuffer='',historyIndex=0,historyDraft='',transcriptPath;
   const history=[],original={log:console.log,error:console.error,warn:console.warn},wasRaw=input.isRaw;
   const mark=()=>{dirty=true;};
@@ -306,7 +336,7 @@ export function createTerminalSession({input=process.stdin,output=process.stdout
       if(operation.controller.signal.aborted)throw operation.controller.signal.reason;
       return result;
     }catch(error){operation.status=operation.controller.signal.aborted||error.code===130?'cancelled':'failed';operation.details.push(safeText(redact(error.message)));throw error;}
-    finally{operation.ended=clock();state.operation=null;mark();render();}
+    finally{operation.ended=clock();state.operation=null;state.liveStatus=null;mark();render();}
   }
   const onResize=()=>{mark();render();};
   const onEnd=()=>shutdown();
@@ -333,6 +363,12 @@ export function createTerminalSession({input=process.stdin,output=process.stdout
     command:(fallback)=>{state.recommended='/'+fallback;historyIndex=history.length;return question('Choose your next action',fallback,{kind:'command'});},
     setContext:context=>{state.context={...state.context,...context};mark();},
     setNext:next=>{state.next=next;mark();},
+    setLiveStatus:status=>{
+      if(!status){state.liveStatus=null;mark();return;}
+      const previous=state.liveStatus,stamp=clock(),working=safeText(status.working||previous?.working||'Continuing the audit');
+      state.liveStatus={...previous,...status,working,
+        since:previous?.working===working?previous.since:stamp,updatedAt:stamp};mark();
+    },
     setTasks:(title,tasks)=>{state.taskTitle=title;state.tasks=tasks.map(label=>({label,status:'waiting'}));mark();},
     task:(index,status)=>{if(state.tasks[index])state.tasks[index].status=status;mark();},
     stopTasks:(status='cancelled')=>{for(const task of state.tasks)if(task.status==='running')task.status=status;mark();},

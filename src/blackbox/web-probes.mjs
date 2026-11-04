@@ -2156,7 +2156,7 @@ export async function planWebLeads(surface, scope, {budget = 20, infer = null, m
         context.preludeRoutes.forEach(path => sentPreludeRoutes.add(path));
         modelCoverage.preludeRoutesSent = sentPreludeRoutes.size;
       } catch (error) {
-        const outputFailure = error.details?.reason === 'incomplete_output' ||
+        const outputFailure = ['incomplete_output','multiple_actions'].includes(error.details?.reason) ||
           /^Invalid type for security_action\./.test(error.message);
         if (outputFailure && entries.length > 1 &&
             modelCalls < Math.max(0, Math.floor(maxModelPages))) {
@@ -2164,7 +2164,14 @@ export async function planWebLeads(surface, scope, {budget = 20, infer = null, m
           pages.splice(page, 1, entries.slice(0, middle), entries.slice(middle));
           page--;
           modelCoverage.pageRetries = (modelCoverage.pageRetries ?? 0) + 1;
-          log({stage: 'web-plan', message: 'Muse web page output was incomplete; retrying its candidates in smaller pages'});
+          log({stage: 'web-plan', message: 'Muse returned a page response that needs a smaller batch; retrying those candidates automatically'});
+          continue;
+        }
+        if (error.details?.reason === 'multiple_actions' &&
+            modelCalls < Math.max(0, Math.floor(maxModelPages))) {
+          page--;
+          modelCoverage.pageRetries = (modelCoverage.pageRetries ?? 0) + 1;
+          log({stage: 'web-plan', message: 'Muse returned multiple actions for one candidate; retrying it as one concise action automatically'});
           continue;
         }
         modelError ??= error.message;

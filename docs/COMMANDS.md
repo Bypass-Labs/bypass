@@ -84,23 +84,23 @@ Set autoSave, requestTimeoutMs, or project.name.
 
 ## auth login
 
-Use local mode or launch official Muse account login.
+Explain the supported authentication path: an API key in standalone mode or the official Muse login flow.
 
 Options: --provider, --device.
 
 ## auth status
 
-Show local mode and Muse account integration status.
+Show whether authentication is owned by the standalone API profile or the active Muse session.
 
 ## auth logout
 
-Clear Bypass-local account metadata; Muse account is separate.
+Clear legacy Bypass-local account metadata; this does not sign out of Muse.
 
 ## integrate muse
 
 Reuse an existing valid Muse plugin, including one from another checkout, or install the bundled native plugin if missing. Does not approve capabilities or change the existing installation source. For a newer public release, rerun `curl -fsSL https://bypasslabs.ai/install/muse | bash` (Windows: `irm https://bypasslabs.ai/install/muse.ps1 | iex`). Native `muse plugins update bypass` refreshes the recorded local source; an installer source may be pinned to an old release. Native installation failures include their diagnostic reason.
 
-Options: --scope, --install, --replace. `--replace` validates the new bundled plugin, replaces the old source, and attempts restoration if installation fails. Native approval and a new Muse session are still required.
+Options: --scope, --replace. `--replace` validates the new bundled plugin, replaces the old source, and attempts restoration if installation fails. Native approval and a new Muse session are still required.
 
 ## integrate status
 
@@ -412,7 +412,7 @@ Stop the local fixture server.
 
 ## Boolean flags
 
---json, --help, --version, --non-interactive, --plan, --full, --detach, --all, --force, --accept, --production, --renew, --once, --stop, --device, --install, --replace, --allow-private.
+--json, --help, --version, --non-interactive, --plan, --full, --detach, --all, --force, --accept, --production, --renew, --once, --stop, --device, --replace, --allow-private.
 
 ## Exit codes
 

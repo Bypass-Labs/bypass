@@ -39,6 +39,19 @@ export function methodInput(current=recommendedMethods){
     help:'Select individual methods or enter a comma-separated list, including custom methods. POST can create data or start jobs; PUT/PATCH change data and DELETE removes it. Only the selected methods and approved paths are allowed.'};
 }
 export async function promptMethods(ask,say=console.log,current=recommendedMethods){
+  const modes=[
+    {id:'all',label:'Allow all',description:'Authorize every supported HTTP method for the most complete review.'},
+    {id:'custom',label:'Customize',description:'Choose individual methods or add a custom HTTP method.'}
+  ];
+  let mode;
+  if(ask.select)mode=await ask.select('HTTP methods',modes,{fallback:0});
+  else{
+    say('\nHTTP methods\n  1  Allow all (recommended) — Authorize every supported HTTP method for the most complete review.\n  2  Customize — Choose individual methods or add a custom HTTP method.');
+    const value=String(await ask('HTTP methods','1')).trim().toLowerCase();
+    mode={id:['2','custom','customize'].includes(value)?'custom':'all'};
+  }
+  if(!mode)throw Object.assign(new Error('Choice cancelled. Saved setup is retained.'),{code:130});
+  if(mode.id==='all')return [...recommendedMethods];
   while(true){
     const value=ask.multiselect?await ask.multiselect('Which HTTP methods may Bypass use?',methodChoices,{selected:current,allowCustom:true}):await (async()=>{
       say(methodChoices.map((m,i)=>`  ${i+1}  ${m.label} — ${m.description}`).join('\n'));

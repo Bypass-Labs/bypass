@@ -29,7 +29,7 @@ test('method selection normalizes exact choices, permits custom methods, and pre
   assert.deepEqual(httpMethods('get, POST post PROPFIND'),['GET','POST','PROPFIND']);
   assert.deepEqual(httpMethods('["GET", "HEAD", "POST", "PATCH", "PROPFIND"]'),['GET','HEAD','POST','PATCH','PROPFIND']);
   for(const value of [[],null,'*','POST\r\nHost:evil','CONNECT','PRI','GET /api','[]','["POST",null]','["POST",{}]','["POST",["GET"]]','["POST", "*"]','["POST"','["POST\\r\\nHost:evil"]'])assert.throws(()=>httpMethods(value));
-  const answers=['*','1,3,PROPFIND'];let errors=0;
+  const answers=['2','*','1,3,PROPFIND'];let errors=0;
   assert.deepEqual(await promptMethods(async()=>answers.shift(),()=>errors++),['GET','POST','PROPFIND']);assert.ok(errors>0);
   assert.deepEqual(await promptMethods(async(_label,fallback)=>fallback),recommendedMethods,
     'fresh onboarding should recommend the complete standard method set');

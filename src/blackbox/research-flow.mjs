@@ -1112,7 +1112,7 @@ const answerFlows = answer => (Array.isArray(answer?.flows) ?
   answer.flows.slice(0, FLOWS_PER_MODEL_PAGE) :
   answer?.flows && typeof answer.flows === 'object' ? [answer.flows] : [])
   .map(knownFlow);
-const isModelOutputFailure = error => error?.details?.reason === 'incomplete_output' ||
+const isModelOutputFailure = error => ['incomplete_output','multiple_actions'].includes(error?.details?.reason) ||
   /^(?:Invalid type for|Unknown) security_action\.flows(?: field)?\./.test(error?.message ?? '');
 const SAMPLE_SCHEMA = {type: 'object', properties: {samples: {type: 'array', maxItems: 1,
   items: {type: 'object', properties: {
@@ -1880,6 +1880,14 @@ export async function planResearchFlows(surface, scope, {infer = null, model = n
         result.coverage.outputRetries++;
         log({stage: 'web-plan', message:
           `Muse HTTP sequence output was incomplete; retrying ${page.length} routes in smaller pages`});
+        pageNumber--;
+        continue;
+      }
+      if (error.details?.reason === 'multiple_actions' && pageUncommitted && callsLeft() > 0) {
+        offset -= page.length;
+        result.coverage.outputRetries++;
+        log({stage: 'web-plan', message:
+          'Muse returned multiple actions for one HTTP-sequence page; retrying it as one concise action automatically'});
         pageNumber--;
         continue;
       }

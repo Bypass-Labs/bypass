@@ -241,13 +241,18 @@ export async function interpretAssets(summaries, {infer = null, model = null, ma
         log({stage: 'asset-model', message: `Muse returned no usable file entries on asset page ${at + 1}; retrying once with exact file ids`});
       }
     } catch (error) {
-      if ((error.details?.reason === 'incomplete_output' ||
+      if ((['incomplete_output','multiple_actions'].includes(error.details?.reason) ||
           error.message === 'Invalid type for security_action.files.') && batch.length > 1 &&
           modelCalls < Math.max(0, maxPages)) {
         const middle = Math.ceil(batch.length / 2);
         pages.splice(at, 1, batch.slice(0, middle), batch.slice(middle));
         at--;
-        log({stage: 'asset-model', message: `Muse asset page output was incomplete; retrying the same facts in smaller pages`});
+        log({stage: 'asset-model', message: `Muse returned a page response that needs a smaller batch; retrying the same facts automatically`});
+        continue;
+      }
+      if (error.details?.reason === 'multiple_actions' && modelCalls < Math.max(0, maxPages)) {
+        at--;
+        log({stage: 'asset-model', message: 'Muse returned multiple actions for one asset; retrying that asset as one concise action automatically'});
         continue;
       }
       modelError ??= error.message;

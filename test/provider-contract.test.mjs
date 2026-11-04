@@ -242,6 +242,19 @@ test('malformed arguments, unknown fields and unsupported tool names cannot exec
   }
 });
 
+test('multiple bounded actions are classified for an automatic smaller-page retry',async t=>{
+  const {profile}=await endpoint(t,(_req,res)=>{
+    const first=action({focus:'one'},'c1').tool_calls[0];
+    const second=action({focus:'two'},'c2').tool_calls[0];
+    chat(res,{role:'assistant',content:null,tool_calls:[first,second]});
+  });
+  await assert.rejects(new ProviderSession(profile).turn([{role:'user',content:'x'}],{schema}),error=>{
+    assert.equal(error.details.reason,'multiple_actions');
+    assert.match(error.message,/more than one security action/);
+    return true;
+  });
+});
+
 test('schema failures report only declared field names and unknown-field counts, never values or unknown names',async t=>{
   const {profile}=await endpoint(t,(_req,res)=>chat(res,{role:'assistant',content:'{"focus":4,"PRIVATE_FIELD":"PRIVATE_VALUE"}'}));
   const progress=[];

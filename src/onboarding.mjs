@@ -11,6 +11,7 @@ import { read, change } from './store.mjs';
 import { scopeReady, loopback, appOriginInput, DEFAULT_REQUESTS_PER_SECOND } from './network.mjs';
 import { appAddressQuestion, appAddressHelp, appEnvironmentQuestion, appEnvironmentChoices } from './app-connection.mjs';
 import { promptMethods, mayChangeData } from './http-methods.mjs';
+import { modelDisplay } from './model-display.mjs';
 import { cleanText, redact, Fault, need, outcome } from './util.mjs';
 
 const unique = (base, entries) => { let name=base, n=2; while(entries.some(x=>x.name===name)) name=base+n++; return name; };
@@ -222,10 +223,13 @@ export async function onboard(options={}, args=[], io={}) {
       say(`${methods.join(', ')} checks on ${target.url}\nPaths: ${paths}\nMaximum ${DEFAULT_REQUESTS_PER_SECOND} requests/second · permission expires in 7 days.`);
       say('Also read public pages and scripts on this app to discover sign-in configuration (anonymous GET only).');
       if(mayChangeData(methods))say('Selected methods can create/change/delete test data or start jobs. Bypass sends only explicitly configured requests.');
-      if(!await yes('Do you authorize these checks?')){say('Scope not authorized. Live testing stays blocked.');return;}
-      let production=false;
-      if(target.environment==='production')production=await confirmChoice(ask,'Confirm testing on this production app',{yes:'Authorize the displayed production scope',no:'Keep production testing disabled',write:say});
-      if(target.environment==='production'&&!production){say('Production scope not authorized.');return;}
+      const production=target.environment==='production';
+      const approved=await confirmChoice(ask,production?
+        `Authorize these checks on the production app ${target.url}?`:
+        `Authorize these checks on ${target.url}?`,{
+        yes:production?'Yes, authorize this production scope':'Yes, authorize these checks',
+        no:'Not now — keep testing disabled',fallback:true,recommended:'yes',write:say});
+      if(!approved){say(production?'Production scope not authorized.':'Scope not authorized. Live testing stays blocked.');return;}
       await call(root,'target authorize',[target.name],{accept:true,paths,methods,rps:DEFAULT_REQUESTS_PER_SECOND,production,'public-config':true});
       say('✓ Testing scope authorized.');
     });
@@ -234,10 +238,10 @@ export async function onboard(options={}, args=[], io={}) {
     rememberSelection(options.project||process.cwd(),root);
     const info=readiness(root);
     const startReview=mode==='live'&&info.ready.liveTesting?{id:'blackbox'}:null;
-    io.setContext?.({model:info.model?`${info.model.name} · ${info.model.provider} · ${info.model.connection}`:'not configured',app:info.target?`${info.target.url} · ${info.target.authorized?'authorized':info.target.ownership==='verified'||info.target.ownershipVerification==='off'?'scope required':'verification pending'}`:'not connected · source review available'});
+    io.setContext?.({model:modelDisplay(info.model),app:info.target?`${info.target.url} · ${info.target.authorized?'authorized':info.target.ownership==='verified'||info.target.ownershipVerification==='off'?'scope required':'verification pending'}`:'not connected · source review available'});
     io.task?.(3,'done');io.setNext?.(startReview?'Starting your first app audit':mode==='live'?'Authorize app boundaries to start testing':'Run /review; type / to see commands');
     say('\nSetup saved\n');
-    say(`  ${mode==='live'?'App profile   ':'Repository    '}${root}\n  Model         ${info.model?`${info.model.name} · ${info.model.connection}`:'add later'}\n  App           ${info.target?`${info.target.url} · ${info.target.authorized?'authorized':info.target.ownership==='verified'||info.target.ownershipVerification==='off'?'scope required':'verification pending'}`:'add later; code-only review available'}\n  Test accounts ${read(root).identities.length} references\n  Muse plugin   ${museInstalled?'installed; approve in Muse':'optional'}`);
+    say(`  ${mode==='live'?'App profile   ':'Repository    '}${root}\n  Model         ${info.model?modelDisplay(info.model):'add later'}\n  App           ${info.target?`${info.target.url} · ${info.target.authorized?'authorized':info.target.ownership==='verified'||info.target.ownershipVerification==='off'?'scope required':'verification pending'}`:'add later; code-only review available'}\n  Test accounts ${read(root).identities.length} references\n  Muse plugin   ${museInstalled?'installed; approve in Muse':'optional'}`);
     if(startReview)say(`\nStarting the audit now with the approved boundaries: ${target.authorization.paths.join(', ')} · ${target.authorization.methods.join(', ')} · ${target.authorization.maxRequestsPerSecond} requests/second.`);
     else if(mode==='live')say('\nThe selected API model runs without Docker. Authorize app testing boundaries to start the audit.');
     else say(info.engine.mode==='docker'?'\nReal AI selected. The first review checks your model connection before sending source.':'\nYour saved offline-preview choice is retained. Use /engine to switch to real AI.');

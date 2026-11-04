@@ -18,7 +18,8 @@ export function progressLine(event) {
       const routes = /, (\d+ of \d+) route facts/.exec(message)?.[1] ?? '?';
       return {label: 'Muse assets', text: `${files} files · ${routes} route facts · ${accepted[1]} notes and ${accepted[2]} paths accepted`};
     }
-    return /failed:/.test(message) ? {label: 'Muse', text: message} : null;
+    if (/retrying .* automatically/.test(message)) return {label: 'Muse recovered', text: message.replace(/^Muse /,'')};
+    return /failed:/.test(message) ? {label: 'Muse attention', text: message} : null;
   }
   if (stage === 'identity') {
     if (message === 'No test accounts: cross-account tests are skipped') return {label: 'Accounts', text: 'Anonymous only · cross-account checks skipped', once: 'anonymous'};
@@ -52,12 +53,20 @@ export function progressLine(event) {
     return null;
   }
   if (stage === 'web-plan') {
-    if (message.startsWith('Muse reviewed')) return {label: 'Muse web', text: message.replace(/^Muse reviewed /, '')};
-    return /failed/.test(message) ? {label: 'Muse', text: message} : null;
+    if (message.startsWith('Muse reviewed')) {
+      const reviewed=/^Muse reviewed (\d+) of (\d+) (remaining )?web candidates in (\d+) of (\d+) pages(.*)$/.exec(message);
+      if(reviewed)return {label:'Muse web',text:Number(reviewed[1])?
+        `${reviewed[1]} of ${reviewed[2]} ${reviewed[3]||''}candidates reviewed · ${reviewed[4]}/${reviewed[5]} bounded batches completed${reviewed[6]}`:
+        `No new candidates reviewed in this pass · ${reviewed[2]} remain available · continuing with saved evidence`};
+      return {label: 'Muse web', text: message.replace(/^Muse reviewed /, '')};
+    }
+    if (/retrying .* automatically/.test(message)) return {label: 'Muse recovered', text: message.replace(/^Muse /,'')};
+    if (/Model request timed out/.test(message)) return {label: 'Muse recovered', text: 'A bounded Muse batch exceeded 60 seconds. Earlier evidence is saved; the audit continues with available and later work.'};
+    return /failed/.test(message) ? {label: 'Muse attention', text: message} : null;
   }
   if (stage === 'web-probes') {
-    const done = /^(\d+) web leads executed; (\d+) queued untested; \d+ confirmed security findings?(?:; \d+ research observations)?; (\d+) (beyond budget|deferred to later pass)$/.exec(message);
-    if (done) return {label: 'Web tests', text: `${done[1]} leads executed${Number(done[2]) ? ` · ${done[2]} queued untested` : ''}${Number(done[3]) ? ` · ${done[3]} ${done[4]}` : ''}`};
+    const done = /^(\d+) web leads executed; (\d+) queued untested; (\d+) confirmed security findings?(?:; \d+ research observations)?; (\d+) (beyond budget|deferred to later pass)$/.exec(message);
+    if (done) return {label: 'Web tests', text: `${done[1]} leads executed${Number(done[2]) ? ` · ${done[2]} queued untested` : ''}${Number(done[3]) ? ` · ${done[3]} confirmed finding${Number(done[3])===1?'':'s'}` : ''}${Number(done[4]) ? ` · ${done[4]} ${done[5]}` : ''}`,confirmed:Number(done[3])};
     return {label: 'Web tests', text: message};
   }
   if (stage === 'research') return {label: 'Muse research', text: message};
@@ -95,6 +104,7 @@ export function createBlackboxProgress(origin, {write = chunk => process.stderr.
     return `${String(Math.floor(seconds / 60)).padStart(2, '0')}:${String(seconds % 60).padStart(2, '0')}`;
   };
   const countersText = () => `${counters.requests} HTTP · ${counters.modelCalls} Muse` +
+    (counters.confirmed ? ` · ${counters.confirmed} finding${counters.confirmed === 1 ? '' : 's'}` : '') +
     (active?.step === 4 && counters.researchAttempts ? ` · ${counters.researchAttempts} research tries` : '') +
     (active?.step === 3 && counters.routesAvailable ? ` · ${counters.routesReviewed}/${counters.routesAvailable} routes${counters.pathsAccepted ? ` · +${counters.pathsAccepted} paths` : ''}` :
       counters.checksTotal ? ` · ${checksText()}${counters.checksUntested ? ` · ${counters.checksUntested} untested` : ''}` : '');

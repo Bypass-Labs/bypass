@@ -8,7 +8,7 @@ import { temp, cli } from './helpers.mjs';
 import { execute } from '../src/service.mjs';
 import { read } from '../src/store.mjs';
 import { verifyOwnership, makeChallenge, targetURL, publicIP, pathAllowed, safeRequest } from '../src/network.mjs';
-import { parse } from '../src/catalog.mjs';
+import { parse, help } from '../src/catalog.mjs';
 
 test('repository onboarding is idempotent, never executes source, and holds live scans behind scope',async()=>{
   const root=temp();fs.writeFileSync(path.join(root,'app.mjs'),`throw new Error('Repository code must never run during init');`);
@@ -86,6 +86,12 @@ test('strict parsing, missing fields, secrets, and scopes remain explicit',async
   assert.equal((await cli(root,'auth','login','--device')).code,3);
   assert.equal((await cli(root,'test','run','--all')).code,3,'an empty suite is incomplete, never passing');
   assert.throws(()=>parse(['--unknown','value']),/Unknown global/);
+});
+
+test('standalone help describes host-owned authentication and rejects the removed install no-op',()=>{
+  assert.match(help('auth login'),/API key in standalone mode or the official Muse login flow/);
+  assert.doesNotMatch(help('integrate muse'),/--install/);
+  assert.throws(()=>parse(['integrate','muse','--install']),/Unknown option --install/);
 });
 
 test('DNS ownership checks require the complete fresh project-bound challenge; production needs explicit acknowledgment',async t=>{
