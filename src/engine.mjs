@@ -123,13 +123,19 @@ export async function verifyFinding(root,findingId,{target,build,retest=false,si
     const bridge=projectIdentityBridge(state,t);
     const env=await projectBlackboxEnvironment(state,t,bridge,{signal});
     const replayed=await verifyBlackboxRun(root,finding.verification.blackboxRun,{env});
-    const proof=replayed.proofs.find(item=>item.id===finding.verification.proofId)??
+    const sealed=finding.history?.findLast(item=>item.action==='blackbox-confirm'&&
+      item.blackboxRun===finding.verification.blackboxRun);
+    const proofId=finding.verification.proofId??sealed?.proofId??finding.verification.id;
+    const proof=replayed.proofs.find(item=>item.id===proofId)??
       (replayed.proofs.length===1?replayed.proofs[0]:null);
     need(proof,'The linked proof is not present in the sealed black-box run.',3);
     const reproduced=['confirmed','observed'].includes(proof.verdict);
     const status=reproduced?'confirmed':proof.verdict==='not_reproduced'?
       (retest?'fixed_verified':'not_reproduced'):'blocked';
-    const verification={...proof,status,origin:t.url,blackboxRun:finding.verification.blackboxRun,
+    const verification={...finding.verification,...proof,status,origin:t.url,
+      blackboxRun:finding.verification.blackboxRun,
+      blackboxFindingId:finding.verification.blackboxFindingId??sealed?.blackboxFindingId??proof.id,
+      proofId,
       at:now(),build:build?{value:build,source:'operator-supplied, not attested'}:null};
     await change(root,s=>{const current=named(s.findings,findingId,'Finding');current.status=status;
       current.verification=verification;current.history.push({action:retest?'retest':'verify',...verification});

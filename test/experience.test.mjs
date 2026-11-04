@@ -12,6 +12,28 @@ import { execute } from '../src/service.mjs';
 import { delay, VERSION } from '../src/util.mjs';
 import { temp, cli } from './helpers.mjs';
 
+test('confirmed live findings point to proof replay, not a legacy demo',t=>{
+  const output=[];t.mock.method(console,'log',text=>output.push(text));
+  printResult({finding:{id:'finding_live',engine:'blackbox',status:'confirmed',
+    title:'Anonymous dossier disclosure',hypothesis:'Anonymous read returned private fields.',
+    recommendation:'Require authentication.',verification:{blackboxRun:'bx-example'}}});
+  const text=output.join('\n');
+  assert.match(text,/Next: bypass verify finding_live/);
+  assert.doesNotMatch(text,/bypass demo/);
+});
+
+test('replayed live proof shows status and the saved-test command',t=>{
+  const output=[];t.mock.method(console,'log',text=>output.push(text));
+  printResult({findingId:'finding_live',status:'confirmed',verification:{status:'confirmed',
+    reason:'Fresh anonymous records still disclosed distinct private fields.',
+    blackboxRun:'bx-example',controls:[{label:'fresh',path:'/v2/api/user/1',status:200}]}});
+  const text=output.join('\n');
+  assert.match(text,/SAVED HTTP PROOF REPLAY/);
+  assert.match(text,/Confirmed again/);
+  assert.match(text,/bypass test save finding_live/);
+  assert.doesNotMatch(text,/"controls"|bypass demo/);
+});
+
 test('scanner interruptions display the saved failure, scanner evidence path, and real usage',t=>{
   const output=[];t.mock.method(console,'log',text=>output.push(text));
   const id='scan_18aa42c25cc7467c84be5a64';

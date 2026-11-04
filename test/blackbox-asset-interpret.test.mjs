@@ -49,6 +49,21 @@ test('Muse interprets every paged asset file but cannot invent routes or paramet
   assert.ok(!sent.includes('sk_l…(28)'));
 });
 
+test('long Muse authentication notes are accepted and bounded before storage',async()=>{
+  const mined=fixture();mined.files=mined.files.slice(0,1);
+  let toolSchema;
+  const result=await interpretAssets(mined,{model:{model:'fixture'},maxPages:1,
+    infer:async(_model,messages,{schema})=>{
+      toolSchema=schema;
+      const unit=JSON.parse(messages[1].content).files[0];
+      return {files:[{id:unit.id,role:'app',why:'Observed client flow',
+        authFlow:'Authorization header. '.repeat(30),routes:[],proposals:[]}]};
+    }});
+  assert.equal(toolSchema.properties.files.items.properties.authFlow.maxLength,undefined);
+  assert.equal(result.modelError,null);
+  assert.ok(result.signals[0].authFlow.length<=300);
+});
+
 test('asset model-call cuts are counted without claiming unseen files were interpreted', async () => {
   const mined = fixture();
   const result = await interpretAssets(mined, {model: {model: 'fixture'}, maxPages: 1,

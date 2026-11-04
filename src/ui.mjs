@@ -118,6 +118,16 @@ export function printResult(data,{interactive=false}={}){
     if(value.export.skippedProofs?.length)console.log(`Skipped ${value.export.skippedProofs.length} unsupported private-read proof${value.export.skippedProofs.length===1?'':'s'}`);
     return;
   }
+  if(value.findingId&&value.verification){
+    const proof=value.verification,confirmed=proof.status==='confirmed'||proof.verdict==='confirmed';
+    console.log(`\n${bold('SAVED HTTP PROOF REPLAY')}\n`+
+      `${confirmed?'✓ Confirmed again':'! '+label(proof.status||proof.verdict||'inconclusive')} · ${value.findingId}\n`+
+      `${proof.reason||'See the saved run report for proof details.'}\n`+
+      `${(proof.controls??[]).map(item=>`  ${item.label} · ${item.path} · HTTP ${item.status}`).join('\n')}\n`+
+      `Evidence: ${proof.blackboxRun||value.blackboxRun||'saved finding'}\n`+
+      `Next: ${confirmed?`bypass test save ${value.findingId}`:`bypass finding show ${value.findingId}`}`);
+    return;
+  }
   if(value.kind==='feature-security-context'){
     console.log(`\n${bold('Build with security context')}\n${value.task}\nRepository: ${value.repository}\n${value.next}`);
     for(const requirement of value.securityRequirements)console.log(`  Preserve owner access; deny other-account and anonymous access · ${requirement.resourcePath}\n    ${requirement.id} · ${requirement.enabled?'enabled':'disabled'} · last ${requirement.lastResult} · replay required`);
@@ -177,7 +187,7 @@ export function printResult(data,{interactive=false}={}){
   if(value.target?.challenge){const t=value.target;console.log(`\n${bold(t.name)} · ${t.url}\nOwnership: ${t.ownership?.status||'pending'}\n`);if(t.environment==='local')console.log(`Next: bypass target verify ${t.name} --method local`);else console.log(`Publish TXT record:\n  Name:  ${t.challenge.record}\n  Value: ${t.challenge.token}\n\nOr serve exactly that value at:\n  ${t.url}${t.challenge.httpPath}\n\nThen: bypass target verify ${t.name} --method dns`);if(t.authorization)console.log(`Scope: ${t.authorization.paths.join(', ')} · expires ${t.authorization.expiresAt}`);return;}
   if(value.findings){console.log(`\n${value.findings.length} findings`);for(const f of value.findings)console.log(`  ${bold(f.id)}  ${f.title}\n    ${label(f.status)} · ${f.fixture?'local fixture':f.simulation?'SIMULATED · unproven':'evidence available'}`);return;}
   if(value.checks&&Array.isArray(value.checks)){console.log(`\n${value.checks.length} saved checks`);for(const c of value.checks)console.log(`  ${bold(c.id)}  ${c.title||c.behavior}\n    ${c.status||c.lastResult?.status||'not run'} · ${c.enabled===false?'disabled':c.target}`);if(value.message)console.log(value.message);return;}
-  if(value.finding){const f=value.finding;const next=f.fixture||f.engine==='docker'?`bypass ${['confirmed_fixture','confirmed','regression_failed'].includes(f.status)?'retest':'verify'} ${f.id}`:'bypass demo — complete the proof loop in a separate local app';console.log(`\n${bold(f.title)}\n${f.id} · ${label(f.status)}\n\n${f.hypothesis}\n\n${f.sourceEvidence?.file?`${f.sourceEvidence.file}:${f.sourceEvidence.line}\n${f.sourceEvidence.quote}`:f.sourceEvidence?.message||''}\n\nFix: ${f.recommendation}\n\nNext: ${next}`);if(f.verification)console.log(JSON.stringify(f.verification,null,2));return;}
+  if(value.finding){const f=value.finding;const next=f.engine==='blackbox'?`bypass verify ${f.id}`:f.fixture||['docker','host'].includes(f.engine)?`bypass ${['confirmed_fixture','confirmed','regression_failed'].includes(f.status)?'retest':'verify'} ${f.id}`:'bypass scan';console.log(`\n${bold(f.title)}\n${f.id} · ${label(f.status)}\n\n${f.hypothesis}\n\n${f.sourceEvidence?.file?`${f.sourceEvidence.file}:${f.sourceEvidence.line}\n${f.sourceEvidence.quote}`:f.sourceEvidence?.message||''}\n\nFix: ${f.recommendation}\n\nNext: ${next}`);if(f.verification)console.log(JSON.stringify(f.verification,null,2));return;}
   if((value.installed||value.integration)&&value.state&&value.next){
     console.log(`\n${bold('Bypass in Muse Code')} · ${label(value.state)}\n${value.message||'Native plugin status'}\n`);
     for(const capability of value.capabilities||[])console.log(`  ${capability.id?.includes(':hook:')?'Session context':'Security tools'} · ${label(capability.status)}`);
@@ -465,7 +475,7 @@ export async function terminal(options={},io){
   const tour=async(flags={})=>{try{return await guidedDemo(flags,prompt);}finally{if(prompt.rich)updateWorkspace(prompt,root);}};
   const showResults=async()=>{
     const findings=read(root).findings;
-    if(!findings.length){console.log('\nNo review results yet. Press Enter on the home screen to run the first preview.');return;}
+    if(!findings.length){console.log('\nNo audit results yet. Run /review to start the selected security audit.');return;}
     const finding=findings.length===1?findings[0]:await choose(ask,findings.map(f=>({...f,label:`${f.title} · ${label(f.status)}`})),'Review results');
     if(!finding)return;
     if(!finding.fixture&&!['docker','host','blackbox'].includes(finding.engine)){
@@ -508,7 +518,7 @@ export async function terminal(options={},io){
           prompt.setNext(`${actions[0].label} · /${actions[0].id}`);
           choice=(await prompt.command(actions[0].id)).replace(/^\//,'');
         }else{
-        console.log(`\n${accent('━'.repeat(Math.min(66,process.stdout.columns||66)))}\n${bold(state.project.name)} / Bypass prototype\n${muted(root)}`);
+        console.log(`\n${accent('━'.repeat(Math.min(66,process.stdout.columns||66)))}\n${bold('BYPASS / '+state.project.name)}\n${muted(root)}`);
         console.log(reviewSummary(info.review));
         console.log(`Model: ${info.model?modelDisplay(info.model):'not configured; mock preview needs no model'} · ${info.findings.total} review result(s)`);
         console.log('\n'+actions.map((action,i)=>`  ${i+1}  ${action.label}${i===0?'  ← Enter':''}`).join('\n'));
@@ -662,7 +672,7 @@ export async function terminal(options={},io){
       }catch(e){if(e.code===130&&!e.details?.cancelled)throw e;prompt.stopTasks?.(e.code===130?'cancelled':'failed');console.log(`\n${paint('31','!')} ${cleanText(e.message)}`);if(e.details?.challenge)console.log(JSON.stringify(e.details.challenge,null,2));}
     }
   }finally{close?.();}
-  console.log(muted(`\nProject state saved. Reopen from the Bypass checkout with:\n  ./bypass --project ${JSON.stringify(root)}\n`));
+  console.log(muted(`\nProject state saved. Reopen with:\n  bypass --project ${shellArg(root)}\n`));
 }
 
 async function engineWizard(ask,root,run){

@@ -158,7 +158,9 @@ function pagesOf(units) {
 const schema = {type: 'object', properties: {files: {type: 'array', maxItems: UNITS_PER_PAGE,
   items: {type: 'object', properties: {
     id: {type: 'string'}, role: {type: 'string'}, why: {type: 'string', maxLength: 300},
-    authFlow: {type: 'string', maxLength: 300},
+    // Muse often gives a useful longer flow summary. Keep the tool response
+    // parseable, then apply the local 300-character storage limit via clean().
+    authFlow: {type: 'string'},
     routes: {type: 'array', maxItems: ROUTES_PER_UNIT, items: {type: 'object', properties: {
       path: {type: 'string'}, method: {type: 'string'}, purpose: {type: 'string', maxLength: 300},
       parameters: {type: 'array', maxItems: 16, items: {type: 'object', properties: {
