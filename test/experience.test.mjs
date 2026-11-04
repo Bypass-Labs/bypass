@@ -112,6 +112,15 @@ test('home recommends review, results, then saved checks independently of pendin
   state.checks.push({enabled:true});assert.equal(homeActions(state)[0].id,'tests');
 });
 
+test('a model response-shape failure recommends retrying the audit, not testing a working connection',()=>{
+  const state={project:{repository:{kind:'git'}},settings:{analysisEngine:'docker'},targets:[],findings:[],checks:[],
+    activeModel:'meta',models:[{name:'meta',lastAttempt:{status:'connected',checkedAt:'2026-01-01T00:00:00.000Z'}}],
+    runs:[{id:'run_1',status:'failed',finishedAt:'2026-01-01T00:01:00.000Z',result:{details:{stage:'white-box',reason:'model_response'}}}]};
+  assert.equal(homeActions(state)[0].id,'review');
+  state.runs[0].result.details={stage:'connection',reason:'authentication'};
+  assert.equal(homeActions(state)[0].id,'model test');
+});
+
 test('Enter runs review and opens results; help exposes commands; no extra return prompt or Exit 3',async t=>{
   const root=temp();fs.writeFileSync(path.join(root,'app.js'),'export const example = true;');await execute('init',[root]);
   await execute('target add',['production'],{project:root,url:'https://app.example.com',environment:'production'});
@@ -121,7 +130,7 @@ test('Enter runs review and opens results; help exposes commands; no extra retur
   assert.equal(answers.length,0);assert.equal(read(root).findings.length,1);
   assert.equal(read(root).targets[0].ownership.status,'pending');
   const transcript=output.join('\n');
-  assert.match(transcript,/Commands you can type here/);assert.match(transcript,/Review preview complete/);
+  assert.match(transcript,/SECURITY AUDITS/);assert.match(transcript,/\/blackbox\s+Test an authorized running application/);assert.match(transcript,/Review preview complete/);
   assert.match(transcript,/It was not discovered in your code/);assert.match(transcript,/Open review results/);
   assert.match(transcript,/empty directory/);
   assert.doesNotMatch(transcript,/Exit 3|Press Enter to return|Unknown operation/);
@@ -142,6 +151,22 @@ test('a successful preview never hides failed saved-check results',t=>{
   const output=[];t.mock.method(console,'log',text=>output.push(text));
   printResult({run:{kind:'scan',result:{simulation:true,inventory:{sourceFileCount:1},findings:[],regression:[{status:'failed',reason:'Account boundary regressed'}]}}});
   assert.match(output.join('\n'),/Saved check: failed/);
+});
+
+test('interactive black-box setup is a short ordered runbook without repeated absolute paths',t=>{
+  const output=[];t.mock.method(console,'log',text=>output.push(text));
+  const root='/tmp/customer-application';
+  printResult({kind:'blackbox-setup',root,origin:'https://app.example.test',
+    scopeFile:path.join(root,'blackbox.scope.json'),created:true,methods:['GET','POST'],rate:32,
+    steps:[{kind:'authorization',target:'production',file:path.join(root,'blackbox.authorization.json'),production:true,
+      command:`bypass target authorize production --scope-file '${root}/blackbox.authorization.json' --accept --project '${root}'`},
+    {kind:'run',command:`bypass blackbox 'https://app.example.test' --scope '${root}/blackbox.scope.json' --project '${root}' --rps 32`}],
+    modelCheck:`bypass model test --project '${root}'`},{interactive:true});
+  const text=output.join('\n');
+  for(const expected of ['BLACK-BOX SETUP','TARGET       https://app.example.test','SCOPE        ./blackbox.scope.json · created',
+    'ALLOWED      GET, POST · 32 requests/second','01 / AUTHORIZE TESTING','02 / START SECURITY AUDIT'])assert.match(text,new RegExp(expected.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')));
+  assert.match(text,/--scope-file '\.\/blackbox\.authorization\.json'/);
+  assert.doesNotMatch(text,/--project|Optional Muse check|\breal\b/i);
 });
 
 test('opening the tooling checkout asks for the application before any review',async t=>{

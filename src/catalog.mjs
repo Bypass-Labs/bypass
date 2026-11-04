@@ -19,8 +19,8 @@ export const commands={
   'scanner policies':command('scanner policies','List exact bundled policy IDs without Docker or inference.','query'),
   'scanner doctor':command('scanner doctor','Inspect the selected detector runtime and image readiness; no inference.','detector'),
   'scanner prepare':command('scanner prepare','Prepare the lightweight policy or pinned SAST runtime.','detector'),
-  poc:command('poc','Open a real-AI, two-container POC with a local test app.','dir model'),
-  'poc start':command('poc start','Create a separate POC app with public accounts and real Docker agents.','dir port model'),
+  poc:command('poc','Open an isolated two-container security POC with a local test app.','dir model'),
+  'poc start':command('poc start','Create a separate POC app with public accounts and containerized audit workers.','dir port model'),
   'poc resume':command('poc resume','Restart the saved generated local fixture; preserve findings and tests.'),
   'poc stop':command('poc stop','Stop this POC fixture app; preserve its evidence.'),
   demo:command('demo','Guided local walkthrough: prove, fix, retest, and catch a regression.','dir'),
@@ -60,9 +60,9 @@ export const commands={
   'model use':command('model use <name>','Select the model profile.'),
   'model test':command('model test [name]','Send a synthetic smoke prompt, without repository content.'),
   'model remove':command('model remove <name>','Remove a model profile.'),
-  'engine use':command('engine use <docker|mock>','Select real Docker agents or the offline mocked preview.'),
+  'engine use':command('engine use <docker|mock>','Select the containerized security audit or offline mocked preview.'),
   'engine doctor':command('engine doctor','Check Docker and the shared inference profile.'),
-  'engine prepare':command('engine prepare','Build the agent image for both Docker services.'),
+  'engine prepare':command('engine prepare','Build the isolated source-review worker image.'),
   'registration discover':command('registration discover','Find public Firebase config in authorized app pages and linked scripts. No accounts created.','target path project-id'),
   'registration choose':command('registration choose','Save the test-account choice: create, existing or skip. Creating accounts requires explicit permission.','target mode accept email-domain'),
   'registration configure':command('registration configure','Authorize up to two dedicated JSON signup attempts on the verified app.','target provider config-file api-key-field project-id path check-path access-path email-domain email-field password-field token-field verified-field identity-field require-verification accept'),
@@ -72,14 +72,14 @@ export const commands={
   'probe discover':command('probe discover','Select owned test IDs from an authorized JSON collection without exposing contents.','target path resource-prefix items-field owner-field id-field resource-id-field identity-field owner outsider'),
   'probe test':command('probe test <name>','Validate both logins and the exact owner resource with three GET requests; zero model calls.','target'),
   'probe list':command('probe list','List approved resources for live agent probes.','target'),
-  scan:command('scan','Replay saved checks, then review with the selected analysis engine.','mode target base full plan detach'),
+  scan:command('scan','Run code, live, or combined security auditing through the canonical engines.','mode target base full plan detach agents http-workers model-calls max-urls max-tasks minutes'),
   'finding list':command('finding list','List findings, with simulation and evidence labels.','target run status severity'),
   'finding show':command('finding show <id>','Show evidence, history, and remediation context.'),
   verify:command('verify <finding-id>','Reproduce a finding using its scoped HTTP controls.','target'),
   retest:command('retest <finding-id>','Check a deployed fix and save a standalone regression.','target build'),
   'test list':command('test list','List saved regression checks.','target'),
   'test show':command('test show <id>','Show a check and environment bindings.'),
-  'test save':command('test save <finding-id>','Save a failing reproduction immediately, or a verified fixed regression.'),
+  'test save':command('test save <finding-id>','Save a portable check or export a confirmed black-box proof as a standalone regression.','out'),
   'test run':command('test run [id]','Replay deterministic checks with zero model calls.','all target detach'),
   'test bind':command('test bind [id]','Bind a saved check to an authorized environment.','all target file'),
   'test export':command('test export [id]','Write ordinary Node tests with no Bypass dependency.','all target out force'),
@@ -139,9 +139,9 @@ export function parse(argv){
   return {key,args:words,options};
 }
 export function help(key,reference=false){
-  if(!key&&!reference)return `BYPASS  /  security checks that stay with your code\n\nMuse plugin (recommended): /bypass:start inside Muse\n\n  bypass onboard       Connect your application\n  bypass poc           Try the real local demonstration\n  bypass status        See what is done and what comes next\n  bypass scan          Review configured source and live checks\n  bypass discover --plan  Plan deterministic CodeQL discovery (no LLM)\n  bypass test run --all  Replay saved regressions without AI\n\nCredentials are optional. Account-boundary tests need two accounts.\nStandalone AI needs an API-key profile; Muse uses its active session.\n\nFull reference: bypass --help --reference\nCommand details: bypass <command> --help\n`;
+  if(!key&&!reference)return `BYPASS  /  security checks that stay with your code\n\nMuse plugin (recommended): /bypass:start inside Muse\n\n  bypass onboard       Connect your application\n  bypass poc           Try the isolated local security demo\n  bypass status        See what is done and what comes next\n  bypass scan          Review configured source and live checks\n  bypass discover --plan  Plan deterministic CodeQL discovery (no LLM)\n  bypass test run --all  Replay saved regressions without AI\n\nCredentials are optional. Account-boundary tests need two accounts.\nStandalone AI needs an API-key profile; Muse uses its active session.\n\nFull reference: bypass --help --reference\nCommand details: bypass <command> --help\n`;
   const selected=commands[key];
   if(selected)return `bypass ${selected.usage}\n\n${selected.description}\n\nOptions: ${selected.flags.map(x=>'--'+x).join(', ')||'(none)'}\nGlobal: --project <path>, --json, --non-interactive, --help\n`;
   const entries=Object.entries(commands).filter(([k,v])=>!v.hidden&&(!key||k.startsWith(key+' ')));
-  return `BYPASS  /  security checks that stay with your code\n\nStart here: bypass demo — complete guided walkthrough; no DNS or login needed.\nYour project: bypass onboard — connect a repository and preview a review.\n\nPOC · real Docker agents via engine use docker; offline mock preview available\n\n${entries.map(([,v])=>`  ${v.usage.padEnd(38)} ${v.description}`).join('\n')}\n\nGlobal: --project <path>, --json, --non-interactive, --help, --version\nExit codes: 0 success · 1 failed regression · 2 usage/config · 3 blocked/incomplete (including mock scan results) · 130 cancelled\n`;
+  return `BYPASS  /  security checks that stay with your code\n\nStart here: bypass demo — complete guided walkthrough; no DNS or login needed.\nYour project: bypass onboard — connect a repository and preview a review.\n\nAudit engine · isolated Docker workers for source review and HTTP proof; offline preview available\n\n${entries.map(([,v])=>`  ${v.usage.padEnd(38)} ${v.description}`).join('\n')}\n\nGlobal: --project <path>, --json, --non-interactive, --help, --version\nExit codes: 0 success · 1 failed regression · 2 usage/config · 3 blocked/incomplete (including mock scan results) · 130 cancelled\n`;
 }

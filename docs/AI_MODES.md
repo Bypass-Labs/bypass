@@ -5,7 +5,7 @@
 | Mode | Reasoning | Execution | Credentials |
 | --- | --- | --- | --- |
 | Muse plugin (`muse-host`) | Active Muse session plans, interprets, follows up and fixes | Typed MCP source/proof tools; shared executor | No provider key or subscription token access |
-| Standalone (`standalone-api`) | Explicit provider API session; orchestrator + two isolated Docker workers | Same source grounding, scoped HTTP proof, evidence, checks | Only the configured environment-variable reference |
+| Standalone (`standalone-api`) | Explicit provider API session; one isolated Docker source worker plus the host black-box runner | Cited source grounding, broad scoped HTTP proof, unified evidence and checks | Only the configured environment-variable reference |
 
 `execution-mode.mjs` binds the mode to asynchronous request context. The provider entry point rejects host mode before looking up the selected credential or opening a connection. Plugin model-configuration/check tools explain host ownership; they cannot configure or invoke a model. No nested Muse inference path exists.
 

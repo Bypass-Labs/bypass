@@ -19,6 +19,7 @@ import {HOST_HEADER_CANARIES, commandOutputCanary, commandOutputOracle, crlfCana
   xxeHostsCanaries, xxeHostsOracle, xxeLiteralControl,
   hostHeaderRedirectMatch, hostHeaderRedirectOracle, jwtUnsignedCanaries, jwtUnsignedOracle,
   authRateLimitOutcome,
+  jsonDisclosureOutcome,
   modelAuthBearer, modelAuthLoginRejection,
   validModelJsonPointer,
   nosqlEqUrl, nosqlOperatorOracle, redirectPollutionUrl, redirectPollutionOracle,
@@ -34,6 +35,7 @@ const COMMAND_PARAM = /^(?:cmd|command|host|hostname|target|ip|address|input|que
 const FILE_PARAM = /^(?:file|filename|filepath|path|document|template|asset|download)$/i;
 const XML_PARAM = /^(?:xml|xmlData|xmlBody|document)$/i;
 const ACCOUNT_LIST_PATH = /(?:^|\/)(?:users?|accounts?|members?|profiles?|people|staff|employees?|customers?|identities|directory|export|dump)(?:\/|$)/i;
+const PRIVATE_RECORD_PATH = /(?:^|\/)(?:users?|accounts?|members?|profiles?|people|staff|employees?|customers?|patients?|dossiers?|crew)(?:\/|$)/i;
 const NOSQL_PARAM = /^(?:id|_id|uid|uuid|filter|lookup|[A-Za-z_][A-Za-z0-9_]*(?:Id|_id|_uid))$/;
 const SAFE_PROBE_PARAM = /^[A-Za-z_][A-Za-z0-9_.-]{0,79}$/;
 const XSS_STYLES = ['html-double', 'html-single', 'script-close'];
@@ -297,6 +299,33 @@ function rateLimitLeads(surface, scope, budget) {
     placement: operation.placement, contentType: operation.placement === 'form' ?
       'application/x-www-form-urlencoded' : 'application/json', purpose,
     source: operation.source ?? null, basis: 'observed-auth-gate-contract'});
+  }
+  return {leads: leads.slice(0, budget), cut: Math.max(0, leads.length - budget)};
+}
+
+function sourceDisclosureLeads(surface, scope, budget) {
+  const leads = [];
+  for (const source of surface?.sourceReview?.securityLeads ?? []) {
+    if (source.category !== 'sensitive-data' ||
+        !['GET', 'HEAD', 'UNKNOWN'].includes(source.method) ||
+        !PRIVATE_RECORD_PATH.test(source.path) || !(source.fields?.length)) continue;
+    const tokens = [...source.path.matchAll(/:([A-Za-z_][A-Za-z0-9_]*)|\{([A-Za-z_][A-Za-z0-9_]*)\}/g)];
+    if (tokens.length !== 1) continue;
+    const firstPath = source.path.replace(tokens[0][0], '1');
+    const secondPath = source.path.replace(tokens[0][0], '2');
+    const first = validateUrl(scope, firstPath, {identity: 'anonymous', method: 'GET'});
+    const second = validateUrl(scope, secondPath, {identity: 'anonymous', method: 'GET'});
+    if (!first.ok || !second.ok) continue;
+    const pointers = source.fields.filter(field => /^[A-Za-z_][A-Za-z0-9_.-]{0,79}$/.test(field))
+      .map(field => `/${field.replaceAll('~', '~0').replaceAll('/', '~1')}`).slice(0, 8);
+    if (!pointers.length) continue;
+    leads.push({path: new URL(first.url).pathname, as: 'anonymous', method: 'GET',
+      sourceLeadId: source.id, sourcePath: source.path,
+      sourceClaim: `${source.hypothesis} Source fields: ${source.fields.join(', ')}. ${source.source?.quote ?? ''}`,
+      rawRequests: [{method: 'GET', path: new URL(first.url).pathname, as: 'anonymous'},
+        {method: 'GET', path: new URL(second.url).pathname, as: 'anonymous'}],
+      jsonPointers: pointers, title: source.title, remediation: source.remediation,
+      source: source.source, basis: 'source-identified-private-record'});
   }
   return {leads: leads.slice(0, budget), cut: Math.max(0, leads.length - budget)};
 }
@@ -866,6 +895,29 @@ function anonymousCredentialFinding(lead, scope, first, second, signal) {
       evidence: first.evidenceId},
     {identity: 'anonymous', method: 'GET', url: url.href, status: second.status,
       evidence: second.evidenceId}]};
+}
+
+function sourceDisclosureFinding(lead, scope, responses, outcome) {
+  const url = new URL(lead.rawRequests[0].path, scope.target.origin);
+  const evidence = responses.map(response => response.evidenceId).filter(Boolean);
+  return {kind: 'model-anonymous-json-disclosure', title: lead.title,
+    severity: 'medium', owasp: 'A01 Broken Access Control', cwe: 'CWE-862',
+    pattern: lead.sourcePath, url: url.href, host: url.host, task: null,
+    verdict: 'confirmed', rule: 'confirmed/source-identified-anonymous-json-disclosure',
+    evidence: unique(evidence.slice(0, 2)), confirmation: unique(evidence.slice(2)),
+    mirror: {result: 'unverified', evidence: [], reason: 'fresh proof replay is required'},
+    tags: ['source-assisted', 'anonymous-json-disclosure', 'read-only'],
+    reach: {observed: 2, basis: outcome.reason}, dataClasses: lead.jsonPointers,
+    remediation: lead.remediation,
+    foundBy: 'source-assisted-read-only-web-probe', status: 'open',
+    sourceFinding: {id: lead.sourceLeadId, source: lead.source,
+      hypothesis: lead.sourceClaim},
+    webProof: {kind: 'model-anonymous-json-disclosure', as: 'anonymous',
+      rawRequests: lead.rawRequests, jsonPointers: lead.jsonPointers,
+      sourcePath: lead.sourcePath, sourceClaim: lead.sourceClaim},
+    webSteps: responses.map((response, index) => ({identity: 'anonymous', method: 'GET',
+      url: new URL(lead.rawRequests[index % 2].path, scope.target.origin).href,
+      status: response.status, evidence: response.evidenceId}))};
 }
 
 function sstiFinding(lead, scope, control, first, second, firstUrl, secondUrl) {
@@ -1684,6 +1736,8 @@ export async function planWebLeads(surface, scope, {budget = 20, infer = null, m
   const baselineCandidates = [
     ...rateLimitLeads(surface, scope, Number.MAX_SAFE_INTEGER).leads.map(lead =>
       ({kind: 'rate-limit-auth-gate', lead, priority: 10})),
+    ...sourceDisclosureLeads(surface, scope, Number.MAX_SAFE_INTEGER).leads.map(lead =>
+      ({kind: 'source-anonymous-json-disclosure', lead, priority: 10})),
     ...anonymousCredentialLeads(surface, scope, Number.MAX_SAFE_INTEGER).leads.map(lead =>
       ({kind: 'anonymous-credential-data', lead, priority: 7})),
     ...redirectLeads(surface, scope, {budget: Number.MAX_SAFE_INTEGER}).leads.map(lead => ({kind: 'open-redirect', lead, priority: 6})),
@@ -1731,10 +1785,10 @@ export async function planWebLeads(surface, scope, {budget = 20, infer = null, m
   // Selection and model review have different cursors: a lead reviewed on the
   // first page but not selected still belongs in the later execution queue.
   const alreadyReviewed = new Set(skipReviewKeys);
-  // The rate-limit verifier is deterministic and intentionally performs
-  // bounded POSTs. Do not ask Muse's read-only web planner to re-rank it.
+  // These source-grounded verifiers are deterministic. Do not ask Muse's
+  // generic web planner to re-rank them.
   const pages = webModelPages(candidates.filter(item =>
-    item.kind !== 'rate-limit-auth-gate' &&
+    !['rate-limit-auth-gate', 'source-anonymous-json-disclosure'].includes(item.kind) &&
     !alreadyReviewed.has(webLeadKey(item.kind, item.lead))), surface);
   const catalogReference = researchCatalogIndex();
   const modelCoverage = {pagesAvailable: pages.length, pagesSent: 0,
@@ -3813,7 +3867,8 @@ export async function runWebProbes(surface, scope, {requester, ledger = null, bu
   // Keep each verifier's control sequence intact. Independent anonymous reads
   // can overlap, while their results are committed in ranked lead order.
   const independentWebKinds = new Set([
-    'rate-limit-auth-gate', 'anonymous-credential-data', 'open-redirect', 'host-header-redirect',
+    'rate-limit-auth-gate', 'source-anonymous-json-disclosure',
+    'anonymous-credential-data', 'open-redirect', 'host-header-redirect',
     'jwt-unsigned', 'http-parameter-pollution', 'cors-reflection',
     'ssrf-loopback', 'xss-dom-fragment', 'xss-reflected', 'html-injection',
     'ssti-arithmetic', 'sql-boolean', 'nosql-operator-bypass',
@@ -3831,7 +3886,8 @@ export async function runWebProbes(surface, scope, {requester, ledger = null, bu
   firstWebCheckCompleted = firstWebCheckKey === null ||
     earlyWebKeys.has(firstWebCheckKey);
   const concurrentReadKinds = new Set([
-    'anonymous-credential-data', 'open-redirect', 'host-header-redirect',
+    'source-anonymous-json-disclosure', 'anonymous-credential-data',
+    'open-redirect', 'host-header-redirect',
     'http-parameter-pollution', 'ssti-arithmetic', 'sql-boolean',
     'command-output', 'path-traversal-hosts', 'xxe-hosts', 'crlf-header',
   ]);
@@ -3880,6 +3936,23 @@ export async function runWebProbes(surface, scope, {requester, ledger = null, bu
       if (outcome.verdict === 'confirmed')
         findings.push(rateLimitFinding(lead, scope, responses, outcome, elapsedMs));
     }
+  if (item.kind === 'source-anonymous-json-disclosure') for (const {lead} of [item]) {
+    const responses = [], evidence = [];
+    for (let round = 0; round < 2; round++) for (const request of lead.rawRequests) {
+      const response = await requester({url: request.path, identity: 'anonymous', method: 'GET',
+        step: round ? 'reverify' : 'task', noCache: true, omitExcerpt: true,
+        maxBytes: MODEL_RESPONSE_BYTES, headers: {'cache-control': 'no-cache'}});
+      responses.push(response);
+      if (response.evidenceId) evidence.push(response.evidenceId);
+    }
+    const outcome = jsonDisclosureOutcome(responses, lead.rawRequests, lead.jsonPointers,
+      {sourcePath: lead.sourcePath, sourceClaim: lead.sourceClaim});
+    recordResult({lead, kind: 'model-anonymous-json-disclosure',
+      sourceLeadId: lead.sourceLeadId, verdict: outcome.verdict,
+      reason: outcome.reason, evidence: unique(evidence)});
+    if (outcome.verdict === 'confirmed')
+      findings.push(sourceDisclosureFinding(lead, scope, responses, outcome));
+  }
   if (item.kind === 'anonymous-credential-data') for (const {lead} of [item]) {
     const call = (step) => requester({url: lead.path, identity: 'anonymous', method: 'GET',
       step, noCache: true, maxBytes: MODEL_RESPONSE_BYTES,

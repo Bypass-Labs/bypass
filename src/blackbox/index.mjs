@@ -251,6 +251,7 @@ export async function runAudit({url, root = process.cwd(), scopeFile = null, ove
   noModel = false, dryRun = false, noDiscovery = false, offline = false, modelName = null, infer = modelInfer,
   modelProfileOverride = null,
   resolve = null, ct = null, connectTls = null, osvQuery = null, sourcePath = null,
+  sourceContext = null,
   findingId = null, focusPath = null, revisionPath = null, revisionField = null,
   log = () => {}, out = null,
   signal = null,
@@ -640,12 +641,30 @@ export async function runAudit({url, root = process.cwd(), scopeFile = null, ove
       const available = Math.max(0, scope.limits.modelCalls - modelInvocations - reserve);
       return Math.min(available, Math.ceil(available / 4));
     };
+    if (sourceContext) sourceReview = await sourceContext;
     if (sourcePath || focus && fs.existsSync(path.join(projectRoot, focus.source.file))) {
-      sourceReview = await reviewSource(sourcePath ?? projectRoot, {
+      const reviewed = await reviewSource(sourcePath ?? projectRoot, {
         infer: !focus && model ? invokeModel : null, model,
         origin: scope.target.origin,
-        maxModelPages: reconModelPages(10), log: say});
-      stats.modelCalls += sourceReview.modelCalls;
+        maxModelPages: reconModelPages(10),
+        modelConcurrency: scope.limits.modelConcurrency,
+        log: say});
+      sourceReview = sourceReview ? {
+        ...reviewed,
+        files: [...sourceReview.files, ...reviewed.files],
+        endpoints: [...sourceReview.endpoints, ...reviewed.endpoints],
+        notes: [...sourceReview.notes, ...reviewed.notes],
+        proposals: [...sourceReview.proposals, ...reviewed.proposals],
+        secretLeads: [...sourceReview.secretLeads, ...reviewed.secretLeads],
+        securityLeads: [...sourceReview.securityLeads, ...reviewed.securityLeads],
+        stats: Object.fromEntries(Object.keys(reviewed.stats).map(key => [key,
+          Number(sourceReview.stats?.[key] ?? 0) + Number(reviewed.stats[key] ?? 0)])),
+        modelCalls: Number(sourceReview.modelCalls ?? 0) + reviewed.modelCalls,
+        modelError: sourceReview.modelError ?? reviewed.modelError,
+      } : reviewed;
+    }
+    if (sourceReview) {
+      stats.modelCalls += sourceReview.modelCalls ?? 0;
       modelError = modelError ?? sourceReview.modelError;
       mined.endpoints.push(...(focus ? sourceReview.endpoints.filter(item =>
         item.file === focus.source.file || item.path === focus.path) :
@@ -717,7 +736,7 @@ export async function runAudit({url, root = process.cwd(), scopeFile = null, ove
         say({stage: 'identity', message: 'The supplied credentials did not establish distinct account principals; cross-account tasks are withheld.'});
       }
       if (sourceReview) surface.sourceReview = {files: sourceReview.files, notes: sourceReview.notes,
-        secretLeads: sourceReview.secretLeads,
+        secretLeads: sourceReview.secretLeads, securityLeads: sourceReview.securityLeads,
         stats: sourceReview.stats, modelCoverage: model ? sourceReview.modelCoverage : null};
       if (sourceReview?.notes?.length) surface.modelNotes.push(...sourceReview.notes.map(note => ({...note, by: 'source-assisted'})));
       if (assetAnalysis?.notes?.length) surface.modelNotes.push(...assetAnalysis.notes
@@ -800,6 +819,7 @@ export async function runAudit({url, root = process.cwd(), scopeFile = null, ove
           .filter(signal => signal.summaryIndexes.includes(0)),
         sourceReview: sourceReview ?
           {files: sourceReview.files, notes: sourceReview.notes, secretLeads: sourceReview.secretLeads,
+            securityLeads: sourceReview.securityLeads,
             stats: sourceReview.stats,
             modelCoverage: model ? sourceReview.modelCoverage : null} : null};
       const followup = focus ? {patterns: [], coverage: {routesAvailable: 0,
@@ -1972,6 +1992,16 @@ export async function runAudit({url, root = process.cwd(), scopeFile = null, ove
       stats.queuedUntested = (stats.queuedUntested ?? 0) +
         web.results.filter(item => item.verdict === 'untested').length;
       stats.beyondBudget = (stats.beyondBudget ?? 0) + web.cut + plan.untested.length;
+      const webVerdictCounts = () => ({
+        confirmed: web.results.filter(item =>
+          item.verdict === 'confirmed' && !RESEARCH_KINDS.has(item.kind)).length,
+        observed: web.results.filter(item =>
+          RESEARCH_KINDS.has(item.kind) && ['confirmed', 'observed'].includes(item.verdict)).length,
+        inconclusive: web.results.filter(item => item.verdict === 'inconclusive').length,
+        blocked: web.results.filter(item => item.verdict === 'blocked').length,
+        notReproduced: web.results.filter(item => item.verdict === 'not_reproduced').length,
+      });
+      const countedWebVerdicts = webVerdictCounts();
       stats.confirmed = (stats.confirmed ?? 0) + web.results.filter(item =>
         item.verdict === 'confirmed' && !RESEARCH_KINDS.has(item.kind)).length;
       stats.observed = (stats.observed ?? 0) + web.results.filter(item =>
@@ -2023,6 +2053,12 @@ export async function runAudit({url, root = process.cwd(), scopeFile = null, ove
         originSurfaces, originContexts: Object.fromEntries(credentialAudits.map(audit =>
           [audit.origin, {scope: audit.scope, env: audit.env, loginSpecs: audit.loginSpecs}])),
         env: sessions.env, loginSpecs: sessions.loginSpecs, ledger, web, log: say});
+      const finalWebVerdicts = webVerdictCounts();
+      for (const [field, statsField] of [['confirmed', 'confirmed'], ['observed', 'observed'],
+        ['inconclusive', 'inconclusive'], ['blocked', 'blocked'],
+        ['notReproduced', 'notReproduced']])
+        stats[statsField] = Math.max(0, (stats[statsField] ?? 0) +
+          finalWebVerdicts[field] - countedWebVerdicts[field]);
       if (credentialsReady) {
         const primaryResults = results.filter(item => !item.origin || item.origin === sessions.scope.target.origin);
         const built = await buildChains(primaryResults, findings, {requester, surface, scope: sessions.scope,
@@ -2449,6 +2485,9 @@ export async function runAudit({url, root = process.cwd(), scopeFile = null, ove
       reportPath: path.join(runDir, 'report.md'),
       scopeHash, findings, stats, untested: plan.untested, dropped: plan.dropped, patterns: surface.patterns.length,
       tasks: plan.tasks.length + web.tested, chains: chains.length, discovery: discovery?.stats ?? null, integrity, coverage,
+      replayInconclusive: web.results.filter(item => item.proofReplay?.verdict === 'inconclusive')
+        .map(item => ({kind: item.kind, path: item.lead?.path ?? null, reason: item.reason})),
+      sourceFindings: report.json.surface.application.sourceFindings,
       credentialOrigins: sessions.scope.credentialOrigins,
       advisories: {status: advisories.status, ...advisories.stats},
       modelOutput,

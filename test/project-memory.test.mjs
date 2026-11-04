@@ -7,7 +7,7 @@ import { temp, cli } from './helpers.mjs';
 import { execute } from '../src/service.mjs';
 import { read, change } from '../src/store.mjs';
 import { inventory } from '../src/repository.mjs';
-import { sourceReader, executeRealScan } from '../src/real-engine.mjs';
+import { sourceReader, executeSourceReview } from '../src/real-engine.mjs';
 import { createRun, verifyFinding } from '../src/engine.mjs';
 import { runAgent } from '../agents/worker.mjs';
 import { startPOC, stopPOC } from '../src/poc.mjs';
@@ -98,19 +98,27 @@ test('real HTTP proof and fixed regression become feature requirements; next rev
   const runtime={prepareAgents:async()=>({image:'controlled-test'}),runContainer:async(role,task,rpc)=>({result:await runAgent(role,task,rpc),container:{role,image:'controlled-test'}}),infer:async(profile,messages)=>{
     calls.push(messages);const system=messages[0].content;
     if(system.startsWith('Plan a bounded'))return {focus:'Read the ownership policy; history is evidence.'};
-    if(system.startsWith('Review the actual'))return {action:'finish',candidates:[],knowledge:[fact({title:'Invoice ownership policy',file:'policy.mjs',line:2,quote:'  return Boolean(account);',summary:'Any authenticated account passes the current invoice policy.'})]};
-    return {action:'probe',bindingIndex:0};
+    if(system.startsWith('Review the actual'))return {action:'finish',candidates:
+      JSON.parse(messages[1].content).initialSource?.some(item=>
+        item.source.includes('return Boolean(account);'))?[{
+      title:'Invoice ownership is not enforced',category:'cross-account-access',
+      file:'policy.mjs',line:2,quote:'  return Boolean(account);',
+      resourcePath:'/api/invoices/inv-101',
+      hypothesis:'Any authenticated account may read the invoice.',
+      recommendation:'Compare the authenticated account with invoice.ownerId.'}]:[],
+      knowledge:[fact({title:'Invoice ownership policy',file:'policy.mjs',line:2,quote:'  return Boolean(account);',summary:'Any authenticated account passes the current invoice policy.'})]};
   }};
   try{
-    const run=await createRun(root,'scan',{mode:'combined'});const result=await executeRealScan(root,run.id,{mode:'combined'},{runtime,report:async()=>{}});
-    assert.equal(result.confirmed.length,1);assert.equal(read(root).memory.entries.filter(e=>e.kind==='source-knowledge').length,1);
+    const run=await createRun(root,'scan',{mode:'code'});const result=await executeSourceReview(root,run.id,{mode:'code'},{runtime,report:async()=>{}});
+    const findingId=result.findings[0];assert.equal((await verifyFinding(root,findingId)).status,'confirmed');
+    assert.equal(read(root).memory.entries.filter(e=>e.kind==='source-knowledge').length,1);
     fs.writeFileSync(path.join(root,'policy.mjs'),'export function mayReadInvoice(account, invoice) { return account === invoice.ownerId; }\n');
-    const fixed=await verifyFinding(root,result.confirmed[0],{retest:true});
+    const fixed=await verifyFinding(root,findingId,{retest:true});
     const context=await featureContext(root,{task:'Add invoice export',files:'policy.mjs'});
     assert.equal(context.securityRequirements[0].id,fixed.savedCheck.id);assert.equal(context.securityRequirements[0].lastResult,'passed');assert.equal(context.securityRequirements[0].replayRequired,true);
     assert.equal(context.securityRequirements[0].expectedBehavior.otherAccount,'cannot read that resource');assert.ok(context.revalidateBeforeCoding.length);
     const count=calls.length;await featureContext(root,{task:'Add export'});assert.equal(calls.length,count,'retrieval must use zero inference');
-    const again=await createRun(root,'scan',{mode:'code'});await executeRealScan(root,again.id,{mode:'code'},{runtime,report:async()=>{}});
+    const again=await createRun(root,'scan',{mode:'code'});await executeSourceReview(root,again.id,{mode:'code'},{runtime,report:async()=>{}});
     const supplied=JSON.parse(calls[count][1].content).projectMemory;assert.ok(supplied.entries.some(e=>e.evidence.checkId===fixed.savedCheck.id));
     assert.ok(read(root).runs.at(-1).agentEvidence.memory.selected.length);assert.equal(read(root).runs.at(-1).agentEvidence.memory.learned.rejected,1,'old source quote cannot be refreshed as current knowledge');
     fs.writeFileSync(path.join(root,'policy.mjs'),'export function mayReadInvoice(account, invoice) { return Boolean(account); }\n');

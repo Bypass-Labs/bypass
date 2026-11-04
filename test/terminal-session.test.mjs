@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { PassThrough } from 'node:stream';
-import { createTerminalSession, frame, transcriptLines, cells, safeText } from '../src/terminal-session.mjs';
+import { createTerminalSession, frame, transcriptLines, cells, safeText, commands, interactiveHelp } from '../src/terminal-session.mjs';
 import { execute } from '../src/service.mjs';
 import { createRun } from '../src/engine.mjs';
 import { watchRun } from '../src/jobs.mjs';
@@ -20,6 +20,21 @@ function terminal(t,columns=90,rows=30) {
   t.after(()=>ui.close());
   return {ui,input,output,key:(name,extra={})=>input.emit('keypress',undefined,{name,...extra}),type:value=>input.write(value),get raw(){return raw;},get bytes(){return bytes;}};
 }
+
+test('help groups every slash command with an aligned description and concrete language',()=>{
+  const help=interactiveHelp(),lines=help.split('\n');
+  for(const heading of ['SECURITY AUDITS','PROJECT SETUP','EVIDENCE AND RESULTS','WORKSPACE','KEYBOARD','CLI REFERENCE'])
+    assert.ok(lines.includes(heading));
+  for(const command of commands)
+    assert.ok(lines.includes(`  ${command.label.padEnd(9)}  ${command.description}`),command.label);
+  assert.doesNotMatch(help,/\breal(?: AI| Docker)?\b/i);
+});
+
+test('structured transcript output preserves aligned columns',()=>{
+  const state={expanded:false,entries:[{type:'message',text:'HELP\n\n  /review    Audit the connected source repository\nTARGET       https://app.test'}]};
+  assert.match(transcriptLines(state,100).join('\n'),/  \/review    Audit/);
+  assert.match(transcriptLines(state,100).join('\n'),/TARGET       https:\/\/app\.test/);
+});
 
 test('slash search, arrow selection, completion and command history work with real key parsing',async t=>{
   const tty=terminal(t);
@@ -182,7 +197,8 @@ test('a live audit keeps an explanatory evidence card visible and uses the top b
   const text=frame(tty.ui.state,130,38,now).lines.map(line=>line.text).join('\n');
   assert.match(text,/LIVE REQUESTS · APPROVED SCOPE ONLY · EVIDENCE SAVED CONTINUOUSLY/);
   assert.doesNotMatch(text,/REAL AI|bounded scope/);
-  for(const value of [/LIVE AUDIT/,/DONE\s+19 assets inspected/,/WORKING\s+Muse is reviewing/,/WHY\s+Muse proposes/,/RECOVERED\s+One slow batch/,/NEXT\s+Run accepted/,/LIVE\s+20\/80 candidates · 148 HTTP · 12 Muse · last evidence 18\.0s ago/])assert.match(text,value);
+  for(const value of [/LIVE AUDIT/,/DONE\s+19 assets inspected/,/WORKING\s+Muse is reviewing/,/WHY\s+Muse proposes/,/RECOVERED\s+One slow batch/,/NEXT\s+Run accepted/,/LIVE\s+20\/80 candidates · 148 HTTP · 12 Muse/])assert.match(text,value);
+  assert.doesNotMatch(text,/last evidence/);
   for(const [columns,rows,status] of [[80,24,'job-radar.app · AUDIT LIVE · SCOPE GUARDED · EVIDENCE SAVING'],[40,15,'AUDIT LIVE · SCOPE GUARDED']]){
     const compact=frame(tty.ui.state,columns,rows,now);
     assert.equal(compact.lines.length,rows);

@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import http from 'node:http';
 import { modelResponseSchema, infer } from '../src/inference.mjs';
-import { executeRealScan } from '../src/real-engine.mjs';
+import { executeSourceReview } from '../src/real-engine.mjs';
 import { createRun, executeRun } from '../src/engine.mjs';
 import { execute } from '../src/service.mjs';
 import { read, change } from '../src/store.mjs';
@@ -20,13 +20,14 @@ test('structured responses satisfy Muse strict required-properties contract recu
     }
     for(const child of Object.values(value))if(Array.isArray(child))child.forEach(visit);else visit(child);
   };
-  for(const role of ['orchestrator','white-box','black-box'])visit(modelResponseSchema(role));
+  for(const role of ['orchestrator','white-box'])visit(modelResponseSchema(role));
+  assert.throws(()=>modelResponseSchema('black-box'),/Unknown model response role/);
 });
 
 test('real review stops at failed preflight before Docker, source upload or further inference',async()=>{
   const root=temp();await execute('init',[root]);await execute('model add',['muse'],{project:root,provider:'meta','secret-env':'BYPASS_UNIT_API_KEY',model:'test-model',stream:false});await execute('engine use',['docker'],{project:root});
   const run=await createRun(root,'scan',{mode:'code'}),stages=[];
-  await assert.rejects(executeRealScan(root,run.id,{mode:'code'},{report:async stage=>stages.push(stage),runtime:{
+  await assert.rejects(executeSourceReview(root,run.id,{mode:'code'},{report:async stage=>stages.push(stage),runtime:{
     testModel:async(_profile,_root,{timeoutMs})=>{assert.equal(timeoutMs,30000);throw new Fault('Provider unavailable',3,{reason:'provider_unavailable'});},
     prepareAgents:async()=>assert.fail('Must not start Docker'),infer:async()=>assert.fail('Must not send source'),runContainer:async()=>assert.fail('Must not start workers')
   }}),error=>error.details.stage==='connection'&&error.details.next==='model test');
@@ -40,7 +41,7 @@ test('recent preflight retains the configured model and displays its timeout',as
   const run=await createRun(root,'scan',{mode:'code'});
   const progress=[];
   t.mock.timers.enable({apis:['setInterval','Date']});
-  const result=await executeRealScan(root,run.id,{mode:'code'},{report:async(_stage,message)=>{progress.push(message);},runtime:{
+  const result=await executeSourceReview(root,run.id,{mode:'code'},{report:async(_stage,message)=>{progress.push(message);},runtime:{
     testModel:async()=>assert.fail('Must reuse recent connection check'),prepareAgents:async()=>({image:'test'}),
     infer:async(profile,_messages,{schema})=>{assert.equal(profile.model,'test-model');assert.equal(profile.timeoutMs,180000);assert.deepEqual(schema,modelResponseSchema('orchestrator'));t.mock.timers.tick(10000);return {focus:'Review source'};},
     runContainer:async()=>({result:{candidates:[]},container:{role:'white-box'}})
@@ -54,7 +55,7 @@ test('no-timeout scans remove connection and worker deadlines and display cancel
   await execute('engine use',['docker'],{project:root});
   const run=await createRun(root,'scan',{mode:'code'}),progress=[];
   t.mock.timers.enable({apis:['setInterval','Date']});
-  const result=await executeRealScan(root,run.id,{mode:'code'},{report:async(_stage,message)=>{progress.push(message);},runtime:{
+  const result=await executeSourceReview(root,run.id,{mode:'code'},{report:async(_stage,message)=>{progress.push(message);},runtime:{
     testModel:async(profile,_root,{timeoutMs})=>{assert.equal(timeoutMs,0);return {status:'connected',checkedAt:new Date().toISOString(),model:profile.model};},
     prepareAgents:async()=>({image:'test'}),
     infer:async profile=>{assert.equal(profile.timeoutMs,0);t.mock.timers.tick(10000);return {focus:'Review source'};},

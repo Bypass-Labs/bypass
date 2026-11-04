@@ -113,8 +113,8 @@ export async function connectProject(options, args, {ask, say, yes, pick, activi
           // Match the configured URL before any user-defined Git transport rewrites.
           const origin=checkoutRoot ? await execFile('git',['-C',directory,'config','--get','remote.origin.url']) : null;
           if(origin?.code===0 && remoteKey(location) && remoteKey(origin.stdout)===remoteKey(location)) {
-            say(`This repository is already checked out at ${display(directory)}.`);
-            if(await yes('Use this existing checkout and keep its files?','y')) return await init(directory);
+            say(`✓ Using the existing matching checkout at ${display(directory)}. Its files and uncommitted work are preserved.`);
+            return await init(directory);
           } else if(origin?.code===0 && remoteKey(origin.stdout)) {
             say(`\n${display(directory)} contains a checkout of ${remoteKey(origin.stdout)}.\nYou requested ${remoteKey(location)||name}.`);
             const choice=await pick('Which repository would you like to use?',[

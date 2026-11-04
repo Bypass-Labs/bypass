@@ -52,7 +52,7 @@ test('onboarding handoff starts the approved audit immediately and streams progr
   await execute('target authorize',['local'],{project:root,accept:true,paths:'/',methods:'GET,HEAD',rps:32});
   const answers=['q'],questions=[],stages=[],output=[];
   const ask=async question=>{questions.push(question);assert.ok(answers.length,`unexpected prompt: ${question}`);return answers.shift();};
-  await terminal({project:root,startReview:{id:'blackbox'},'no-model':true,'max-tasks':1,'max-urls':10,minutes:1},{ask,rich:false,signal:new AbortController().signal,
+  await terminal({project:root,startReview:{id:'blackbox'},'no-model':true},{ask,rich:false,signal:new AbortController().signal,
     setTasks:(_title,items)=>stages.push(...items),task:(index,state)=>output.push(`${index}:${state}`),
     setNext:message=>output.push(message),write:message=>output.push(message),close:()=>{}});
   assert.equal(answers.length,0);assert.equal(questions.some(question=>/App URL|Allowed path|Allowed HTTP|Maximum requests|Start black-box/.test(question)),false);
@@ -60,6 +60,8 @@ test('onboarding handoff starts the approved audit immediately and streams progr
   assert.ok(stages.includes('Routes and responses'));
   const scope=JSON.parse(fs.readFileSync(path.join(root,'blackbox.onboarding.scope.json'),'utf8'));
   assert.equal(scope.target.environment,'local');assert.deepEqual(scope.methods,['GET','HEAD']);assert.equal(scope.limits.rps,32);
+  assert.equal(scope.limits.modelCalls,120);assert.equal(scope.limits.maxUrls,400);
+  assert.equal(scope.limits.tasks,0);assert.equal(scope.limits.minutes,30);
   assert.equal(fs.readdirSync(path.join(root,'.bypass/runs')).filter(item=>item.startsWith('bx-')).length,1);
 });
 

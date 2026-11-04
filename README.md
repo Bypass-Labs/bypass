@@ -118,10 +118,11 @@ Muse Code owns plugin reasoning and billing. Bypass cannot verify subscription b
 | Whitebox discovery and evaluation | `/bypass:discover` → SAST / Policy / Both | `bypass discover --detector <mode>` | Source + Docker; reasoning uses Muse Code or a CLI API profile; SAST discovery-only needs no model |
 | AI-assisted source review | `/bypass:review` | `bypass scan --mode code` | Muse Code session; CLI needs a provider key + Docker |
 | Running-app discovery and testing | `/bypass:blackbox` | `bypass blackbox <url>` | Approved target + scope; CLI needs an API key, Meta by default |
+| Combined source + running-app audit | `/bypass:review` after selecting both | `bypass scan --mode combined` | Connected repository, approved target, API profile, and Docker for source isolation |
 | Saved regression replay | `/bypass:tests` | `bypass test run --all` | Saved checks and valid target setup; no model calls |
 | GitHub PR review and smoke tests | Ask Muse Code to generate setup | `bypass ci init --agent` | GitHub Actions; Meta API key for source review |
 
-With **Code + running app**, `/bypass:start` validates each source finding on the live app. It then offers to fix the confirmed issues and open a PR. After you select that action, Muse Code can run the exported regressions against the PR build, follow the merge and deployment, and replay the original proofs against the deployed app.
+With **Code + running app**, standalone `scan --mode combined` starts the cited source review and broad scoped live reconnaissance together. Source hypotheses enter the same black-box planning and replay pipeline; only independently replayed HTTP evidence becomes confirmed. One parent scan result links the source evidence, black-box report, coverage, findings, remediation, and regression-proof IDs. Muse keeps its native host-directed review flow but uses the same scoped black-box proof engine for live validation.
 
 ## White-box source review
 
@@ -211,14 +212,14 @@ Use this entry point when you have a running app, including when you have **no r
 Replace the URL with your app and provide the five run settings together:
 
 ```text
-/bypass:blackbox Audit https://app.example.com; allow /; use 2 rps, 120 Muse Code calls, 30 minutes.
+/bypass:blackbox Audit https://app.example.com; allow /; use 20 rps, 120 Muse Code calls, 30 minutes.
 ```
 
 Muse Code connects the app, completes missing ownership/scope setup, and drives the black-box engine in the active session. Once the testing plan is approved, it uses the default bounded budgets and begins without another question. Bypass discovers public pages, scripts, and API leads, executes permitted tests, records evidence, and independently checks supported proofs. No separate API key or Docker is needed for this path. Browser-based proof families need Chrome/Chromium; missing prerequisites are reported as coverage gaps.
 
 The URL and paths are run inputs, not permission by themselves. Review the exact scope before testing. The request rate, engine-decision cap, and time limit bound the audit; the displayed “Muse calls” cap does not include every surrounding host turn.
 
-The wizard's **Running app only** choice starts this full audit automatically after scope approval. Its **Code + running app** choice reviews source first; a saved source hypothesis can then be validated live with a focused blackbox run. That focused run uses the same request and proof engine and reports its narrower coverage. `/bypass:blackbox` remains available for a separate full audit.
+The wizard's **Running app only** choice starts this full audit automatically after scope approval. Its **Code + running app** choice starts `scan --mode combined` immediately: source review and broad live reconnaissance overlap, then source leads join the live plan before testing and proof replay finish. `/bypass:blackbox` remains the explicit app-only command; `--finding` remains the explicit focused-validation command.
 
 ### From the CLI
 
@@ -227,7 +228,7 @@ Load your Meta Model API key privately as `MODEL_API_KEY` in your shell or secre
 For a local app you control:
 
 ```bash
-bypass blackbox http://127.0.0.1:3000 --accept-local --rps 2 --model-calls 120 --minutes 30
+bypass blackbox http://127.0.0.1:3000 --accept-local --rps 20 --model-calls 120 --minutes 30
 ```
 
 To validate one finding already saved by source review, add `--finding <finding-id>`. For apps with a JSON build endpoint, `--revision-path /version --revision-field revision` compares the deployed full commit SHA to the checkout. Without that endpoint, the report marks the source/live revision unverified.
@@ -235,7 +236,7 @@ To validate one finding already saved by source review, add `--finding <finding-
 For a deployed app:
 
 ```bash
-bypass blackbox setup https://app.example.com --include / --rps 2
+bypass blackbox setup https://app.example.com --include / --rps 20
 ```
 
 Complete the ownership and authorization steps printed by setup, then run the audit command it prints. Do not use `--accept-local` for a deployed app.
@@ -248,7 +249,7 @@ Anonymous testing can run without credentials. For authenticated black-box check
 With `BYPASS_OWNER_TOKEN` and `BYPASS_OUTSIDER_TOKEN` already loaded privately, add these settings when preparing scope; replace `/api/me` with your app's actual identity endpoint:
 
 ```bash
-bypass blackbox setup https://app.example.com --include / --rps 2 \
+bypass blackbox setup https://app.example.com --include / --rps 20 \
   --owner-env BYPASS_OWNER_TOKEN --other-env BYPASS_OUTSIDER_TOKEN \
   --identity-path /api/me
 ```
@@ -310,6 +311,16 @@ If a no-timeout review reports a connection interruption, try the [buffered-mode
 For slow local Glimmer reasoning or reasoning-only responses, [select minimal reasoning explicitly](docs/AI_MODES.md#select-minimal-reasoning-for-local-glimmer) with `--effort minimal`. Custom profiles keep the server default unless an effort is selected.
 
 For CodeQL and bundled policy checks, use [local Glimmer discovery](docs/AI_MODES.md#codeql-and-policy-discovery-with-local-glimmer) with `bypass discover --detector both --project /path/to/app`. Unlike `scan --mode code`, this runs the scanner detectors and source-only evaluation by default; it does not reproduce vulnerabilities against a running app.
+
+The three canonical standalone audit modes are:
+
+```bash
+bypass scan --mode code --project /path/to/app      # cited source hypotheses; no app requests
+bypass scan --mode live --project /path/to/app      # full scoped black-box audit; source skipped
+bypass scan --mode combined --project /path/to/app  # source + full live audit; one parent result
+```
+
+`scan` accepts the live budget controls `--model-calls`, `--minutes`, `--max-urls`, `--max-tasks`, `--agents`, and `--http-workers`. It snapshots the saved target paths, methods, request rate, and compatible test-account references into the run. It never silently narrows a first audit to a five-minute preset.
 
 Run `bypass init /path/to/app` first if the application is not connected. The first-run experience supports **Meta Model API** and local OpenAI-compatible servers running **Muse Spark Open** or **Muse Glimmer**. Explicit legacy provider profiles remain available through advanced commands but are not offered during onboarding. Bypass never changes billing paths or enables Muse Spark Contributor without an explicit model selection. [Provider examples and migration](docs/AI_MODES.md).
 
@@ -397,7 +408,7 @@ Review and merge the updated files, then use **Run workflow → operation: smoke
 | `/bypass:monitor` | Configure saved-test schedules and a local worker |
 | `/bypass:help` | Browse commands and tools |
 
-For CLI help, use `bypass --help` or `bypass <command> --help`. A local monitor requires a running worker and an awake machine. [Full plugin/CLI command map](docs/PLUGIN_COMMANDS.md).
+For CLI help, use `bypass --help` or `bypass <command> --help`. A local monitor requires a running worker and an awake machine. See the [exact generated CLI reference](docs/CLI_REFERENCE.md) and [full plugin/CLI command map](docs/PLUGIN_COMMANDS.md).
 
 ## Documentation
 

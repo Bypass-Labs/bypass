@@ -20,11 +20,12 @@ export function museModelChoices(ids){
 
 // First-run setup intentionally exposes only the two supported Muse routes.
 // Existing provider plumbing remains available to explicit/manual profiles.
-export async function promptMuseProfile(ask,pick,{secret,write=()=>{},activity,signal,metaBaseUrl=providers.meta.baseUrl,forceSecret=false}={}){
-  const selection=await pick('Where should Muse inference run?',[
+export async function promptMuseProfile(ask,pick,{secret,write=()=>{},activity,signal,metaBaseUrl=providers.meta.baseUrl,forceSecret=false,preferred}={}){
+  const connections=[
     {id:'meta',provider:'meta',name:'meta',label:'Meta Model API (recommended)',description:'Hosted Muse Wonder and Muse Spark; pay-as-you-go API key.'},
     {id:'local',provider:'custom',name:'local-muse',label:'Local Muse model',description:'Muse Spark Open or Muse Glimmer on this computer.'}
-  ]);
+  ];
+  const selection=connections.find(item=>item.id===preferred?.connection)||await pick('Where should Muse inference run?',connections);
   need(selection,'Choose a Muse inference connection.');
   const run=(label,work)=>activity?activity(label,work,{cancelable:true}):work(signal);
   if(selection.id==='meta'){
@@ -43,7 +44,8 @@ export async function promptMuseProfile(ask,pick,{secret,write=()=>{},activity,s
       const models=museModelChoices(ids);need(models.length,'This Meta team has no supported Muse Wonder or Muse Spark models.',3,{reason:'model_access'});return models;
     });
     write(`✓ Authenticated with Meta Model API · ${catalog.length} Muse model${catalog.length===1?'':'s'} available.`);
-    const model=await pick('Choose a Muse model',catalog,0);need(model,'Choose a Muse model.');
+    const model=catalog.find(item=>item.model===preferred?.model)||await pick('Choose a Muse model',catalog,0);need(model,'Choose a Muse model.');
+    if(preferred?.model===model.model)write(`Keeping saved model · ${model.label}.`);
     const config={...base,model:model.model};
     write('Testing a small synthetic prompt; no repository content is sent. Meta Model API usage may apply.');
     const check=await run(`Connect ${model.label.split(' — ')[0]}`,operationSignal=>testModel(apiProfile('meta',{...config,stream:false}),null,{signal:operationSignal,onProgress:progress=>write(`  ${progress.message}`)}));

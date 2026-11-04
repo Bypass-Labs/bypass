@@ -10,7 +10,7 @@ import { execFile } from '../src/util.mjs';
 import { temp, metaModelFixture } from './helpers.mjs';
 
 const remote='https://example.test/team/job-finder';
-const remainingSetup=['n']; // Do not open the dashboard after repository setup.
+const remainingSetup=[]; // Source review is handed off automatically; there is no dashboard confirmation.
 
 async function fixture(t) {
   const home=temp(), source=path.join(home,'source'), config=path.join(home,'gitconfig');
@@ -91,12 +91,13 @@ test('an existing matching checkout resumes its saved setup and preserves uncomm
   const first=await wizard(t,[remote,'',...remainingSetup]);
   const id=read(first.result.root).project.id;
   fs.writeFileSync(path.join(first.result.root,'README.md'),'Uncommitted work');
-  const resumed=await wizard(t,[remote,'','yes','n']);
+  const resumed=await wizard(t,[remote,'']);
   assert.equal(resumed.result.root,first.result.root);
   assert.equal(read(resumed.result.root).project.id,id);
   assert.equal(read(resumed.result.root).models.length,1);
   assert.equal(fs.readFileSync(path.join(resumed.result.root,'README.md'),'utf8'),'Uncommitted work');
-  assert.match(resumed.output,/already checked out/);
+  assert.match(resumed.output,/Using the existing matching checkout/);
+  assert.doesNotMatch(resumed.output,/Use this existing checkout/);
   assert.match(resumed.output,/resuming saved setup/);
 });
 
@@ -105,7 +106,7 @@ test('a different origin is explained and the user can explicitly choose that lo
   const first=await wizard(t,[remote,'',...remainingSetup]);
   await git('-C',first.result.root,'remote','set-url','origin','https://example.test/my-fork/job-finder.git');
   fs.writeFileSync(path.join(first.result.root,'README.md'),'My local edits');
-  const resumed=await wizard(t,[remote,'','2','n']);
+  const resumed=await wizard(t,[remote,'','2']);
   assert.equal(resumed.result.root,first.result.root);
   assert.match(resumed.output,/contains a checkout of example.test\/my-fork\/job-finder/);
   assert.match(resumed.output,/You requested example.test\/team\/job-finder/);

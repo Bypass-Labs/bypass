@@ -30,7 +30,12 @@ export const flagEquivalents={
   init:{repo:'repository'},
   blackbox:{model:'active Muse session'},
   'blackbox resume':{model:'active Muse session'},
-  scan:{plan:'bypass_prepare_scan',detach:'Host review uses explicit read/source/probe/finish steps'},
+  scan:{plan:'bypass_prepare_scan',detach:'Host review uses explicit read/source/probe/finish steps',
+    'model-calls':'bypass_scan.modelCalls',
+    agents:'Muse host controls decision concurrency',
+    'http-workers':'Each focused black-box run uses its reviewed scope default',
+    'max-urls':'Each focused black-box run uses its reviewed scope limit',
+    'max-tasks':'Each focused black-box run uses its reviewed scope limit'},
   'test run':{detach:'bypass_run_tests returns fast completion or a pending durable run'},
   'monitor worker':{detach:'action=start',once:'action=once',stop:'action=stop'}
 };
