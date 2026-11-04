@@ -1,9 +1,8 @@
-import fs from 'node:fs';
-import path from 'node:path';
 import { choiceInput, scopeSuggestions, testingApproval } from './interaction.mjs';
 import { hostAI } from './execution-mode.mjs';
 import { read } from './store.mjs';
-import { VERSION, hash, need } from './util.mjs';
+import { VERSION, need } from './util.mjs';
+import { scopeOutputForOrigin } from './blackbox/setup.mjs';
 import { workspaceInfo } from './project-selection.mjs';
 import { scopeReady, appOriginInput, DEFAULT_REQUESTS_PER_SECOND } from './network.mjs';
 import { reviewReadiness } from './review-readiness.mjs';
@@ -15,14 +14,6 @@ import { httpMethods, methodChoices, methodInput, recommendedMethods } from './h
 import { reviewQuestion, reviewInput, sourceStatus, repositoryAction } from './application-setup.mjs';
 import { ownershipReady, verificationDisabled, sharedOwnership } from './ownership-store.mjs';
 import { latestRemediation } from './remediation-checkpoint.mjs';
-
-function blackboxScopeOutput(root,origin){
-  const file=path.join(root,'blackbox.scope.json');
-  if(!fs.existsSync(file))return {};
-  try{if(JSON.parse(fs.readFileSync(file,'utf8')).target?.origin===origin)return {};}
-  catch{}
-  return {out:`blackbox.${hash(origin).slice(0,12)}.scope.json`};
-}
 
 // Setup plans are read-only. The MCP adapter remembers explicitly selected modes.
 export async function pluginOnboarding(cwd,root,{intent='real',mode,url,environment,repository,dir,reviewScope=false,
@@ -78,7 +69,7 @@ export async function pluginOnboarding(cwd,root,{intent='real',mode,url,environm
   const live=mode!=='code'&&authorized&&ready.live&&(!requestedOrigin||target?.url===requestedOrigin);
   const next=steps.find(s=>s.status==='needed');
   let nextAction=next?{id:next.id,tool:next.tool,...(next.id==='ownership'?{question:target.ownershipVerification==='http'?'Publish the HTTPS verification file, then check it.':'Publish the TXT record, then check DNS.',challenge:next.challenge}:{})}:mode==='live'?{
-    id:'review',tool:'bypass_blackbox_setup',arguments:{url:target.url,include:target.authorization.paths.join(','),methods:target.authorization.methods.join(','),rps:target.authorization.maxRequestsPerSecond,environment:target.environment,...blackboxScopeOutput(root,target.url)},
+    id:'review',tool:'bypass_blackbox_setup',arguments:{url:target.url,include:target.authorization.paths.join(','),methods:target.authorization.methods.join(','),rps:target.authorization.maxRequestsPerSecond,environment:target.environment,...scopeOutputForOrigin(root,target.url)},
     message:'Reuse this app and authorized scope, apply the default bounded budgets, and start the blackbox audit immediately. Do not ask another setup question before showing progress.'
   }:{id:'review',tool:'bypass_scan',arguments:{mode},message:'Show the selected source/app and scope, then start the requested review.'};
   if(mode==='code'){

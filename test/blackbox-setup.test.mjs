@@ -11,6 +11,30 @@ import {CLI} from '../src/demo.mjs';
 import {execute} from '../src/service.mjs';
 import {inExecutionMode} from '../src/execution-mode.mjs';
 
+test('scope, setup, and direct audit commands keep different deployed apps separate', async t => {
+  const root=temp();
+  t.after(()=>fs.rmSync(root,{recursive:true,force:true}));
+  await execute('init',[root]);
+  const first='https://first.example.test',second='https://second.example.test';
+  const original=await execute('blackbox scope',[first],{project:root,include:'/'});
+  const originalText=fs.readFileSync(original.file,'utf8');
+  const setup=await execute('blackbox setup',[second],{project:root,include:'/',
+    methods:'GET,HEAD,POST',rps:20});
+  assert.notEqual(setup.scopeFile,original.file);
+  assert.equal(JSON.parse(fs.readFileSync(setup.scopeFile,'utf8')).target.origin,second);
+  assert.equal(fs.readFileSync(original.file,'utf8'),originalText);
+  const permission=setup.steps.find(step=>step.kind==='authorization');
+  assert.ok(permission);
+  await execute('target authorize',[permission.target],{project:root,'scope-file':permission.file,
+    accept:true});
+  const ready=await execute('blackbox setup',[second],{project:root,include:'/',
+    methods:'GET,HEAD,POST',rps:20});
+  assert.equal(ready.ready,true);
+  await assert.rejects(execute('blackbox',['https://third.example.test'],{project:root}),
+    /No reviewed scope exists.*blackbox setup/);
+  assert.equal(fs.readFileSync(original.file,'utf8'),originalText);
+});
+
 test('a fresh blackbox project reaches the Meta default preflight without project state', async t => {
   const root = temp();
   t.after(() => fs.rmSync(root, {recursive: true, force: true}));

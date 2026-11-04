@@ -17,6 +17,14 @@ const credentialOrigins = (origin, value) => [...new Set([origin, ...list(value)
 const quote = value => `'${String(value).replaceAll("'", "'\\''")}'`;
 const current = value => Date.parse(value ?? '') > Date.now();
 
+export function scopeOutputForOrigin(root, origin) {
+  const file=path.join(root,'blackbox.scope.json');
+  if(!fs.existsSync(file))return {};
+  try{if(JSON.parse(fs.readFileSync(file,'utf8')).target?.origin===origin)return {};}
+  catch{}
+  return {out:`blackbox.${hash(origin).slice(0,12)}.scope.json`};
+}
+
 function requestedMatches(options, scope) {
   const same = (input, actual, normalize = value => value) => input == null ||
     JSON.stringify(list(input).map(normalize)) === JSON.stringify(actual);
@@ -47,6 +55,7 @@ export function prepareScopeTemplate(working, rawUrl, options = {}, {reuse = fal
   need(rawUrl, 'Provide an app URL: bypass blackbox setup <url>.');
   const root = rootFrom(working, false);
   const origin = appOriginInput(rawUrl);
+  if(options.out==null)options={...options,...scopeOutputForOrigin(root,origin)};
   const requestedMethods = options.methods == null ? null : httpMethods(options.methods);
   if (options.rps != null) {
     const requestedRate = Number(options.rps);
@@ -224,7 +233,9 @@ function authorizationFile(file, target, scope, {primary, credentialed}) {
 export async function prepareBlackboxSetup(working, rawUrl, options = {}) {
   // A connected app is the source of truth for environment and approved
   // boundaries. This keeps both preview and execution on the same saved plan.
-  const savedRoot=rootFrom(working,false),savedFile=path.resolve(savedRoot,options.out||'blackbox.scope.json');
+  const savedRoot=rootFrom(working,false);
+  if(options.out==null)options={...options,...scopeOutputForOrigin(savedRoot,appOriginInput(rawUrl))};
+  const savedFile=path.resolve(savedRoot,options.out||'blackbox.scope.json');
   if(!fs.existsSync(savedFile)&&fs.existsSync(path.join(savedRoot,'.bypass/state.json'))){
     const state=read(savedRoot),target=state.targets.find(t=>t.url===appOriginInput(rawUrl)),auth=target?.authorization;
     const bridge=projectIdentityBridge(state,target);

@@ -29,7 +29,7 @@ import { dockerStatus, prepareAgents } from './agent-runtime.mjs';
 import { specFor, saveCheck, bindCheck, exportChecks } from './checks.mjs';
 import { dispatchRun, watchRun, startWorker, workerStatus, runMonitor } from './jobs.mjs';
 import { startDemo, updateDemo, serveDemo, demoConfig, CLI } from './demo.mjs';
-import { prepareScopeTemplate, prepareBlackboxSetup } from './blackbox/setup.mjs';
+import { prepareScopeTemplate, prepareBlackboxSetup, scopeOutputForOrigin } from './blackbox/setup.mjs';
 import { runAudit } from './blackbox/index.mjs';
 import { verifyRun as verifyBlackboxRun, exportRun as exportBlackboxRun } from './blackbox/poc.mjs';
 import { projectIdentityBridge, projectBlackboxEnvironment } from './blackbox/project-scope.mjs';
@@ -134,10 +134,12 @@ export async function execute(key,args=[],o={},context={}){
       }
     }
     let auditRps=o.rps;
-    if(args[0]&&!o.scope&&
-      !fs.existsSync(path.join(rootFrom(working,false),'blackbox.scope.json'))){
-      const origin=appOriginInput(args[0]);
-      if(loopback(new URL(origin).hostname)){
+    if(args[0]&&!o.scope){
+      const projectRoot=rootFrom(working,false),origin=appOriginInput(args[0]);
+      const scopeName=scopeOutputForOrigin(projectRoot,origin).out||'blackbox.scope.json';
+      const scopePath=path.join(projectRoot,scopeName);
+      if(fs.existsSync(scopePath))o={...o,scope:scopePath};
+      else if(loopback(new URL(origin).hostname)){
         auditRps ??= 5;
         const prepared=prepareScopeTemplate(working,origin,
           {include:o.include||'/',rps:auditRps,'model-calls':o['model-calls'],
@@ -145,9 +147,10 @@ export async function execute(key,args=[],o={},context={}){
             'max-urls':o['max-urls'],
             'max-tasks':o['max-tasks'],
             minutes:o.minutes,
-            'dom-script-bytes':o['dom-script-bytes']},{reuse:true});
+            'dom-script-bytes':o['dom-script-bytes'],out:scopeName},{reuse:true});
+        o={...o,scope:prepared.file};
         context.onProgress?.({stage:'setup',message:`Created local scope ${prepared.file} · includes ${prepared.scope.include.join(', ')} · ${auditRps} rps · ${prepared.scope.limits.minutes} min · ${prepared.scope.limits.modelCalls} Muse calls · ${prepared.scope.limits.maxUrls || 'unlimited'} authenticated recon URLs.`});
-      }
+      }else need(false,`No reviewed scope exists for ${origin}. Run bypass blackbox setup ${origin} --project '${projectRoot}' to review and authorize this app.`,3);
     }
     const projectRoot=rootFrom(working,false);let auditEnv=process.env;
     if(fs.existsSync(path.join(projectRoot,'.bypass/state.json'))){

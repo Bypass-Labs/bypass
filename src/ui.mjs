@@ -18,6 +18,7 @@ import { appOriginInput, loopback, DEFAULT_REQUESTS_PER_SECOND } from './network
 import { isBypassSource } from './project-selection.mjs';
 import { createTerminalSession, interactiveHelp } from './terminal-session.mjs';
 import { summaryText as blackboxSummary } from './blackbox/report.mjs';
+import { scopeOutputForOrigin } from './blackbox/setup.mjs';
 import { progressLine as blackboxProgressLine } from './blackbox/progress.mjs';
 import { createTheme, brandHeading } from './terminal-theme.mjs';
 import { promptMethods, mayChangeData, recommendedMethods } from './http-methods.mjs';
@@ -622,8 +623,17 @@ export async function terminal(options={},io){
             out='blackbox.onboarding.scope.json';force=true;
             prompt.write?.(`Starting app audit · ${url} · ${include} · ${methods} · ${rps} requests/second`);
           }else{
-            const input=await promptValue(ask,'App URL',selected?[{value:selected.url,label:selected.url}]:[]);
-            url=appOriginInput(input);const saved=selected?.url===url?selected.authorization:null;
+            const input=await promptValue(ask,'App URL',state.targets.map(target=>
+              ({value:target.url,label:target.url})));
+            url=appOriginInput(input);
+            const matched=state.targets.find(target=>target.url===url);
+            const saved=matched?.authorization;
+            environment=matched?.environment;
+            if(!environment&&!loopback(new URL(url).hostname)){
+              environment=(await choose(ask,appEnvironmentChoices.filter(item=>item.id!=='local'),
+                appEnvironmentQuestion(url)))?.id;
+              if(!environment)continue;
+            }
             include=await promptValue(ask,'Allowed path prefixes',[
               {value:saved?.paths?.join(',')||'/',label:saved?`Saved scope (${saved.paths.join(', ')})`:'Entire app (/)'},
               ...(saved&&saved.paths.join(',')!=='/'?[{value:'/',label:'Entire app (/)' }]:[])],
@@ -632,7 +642,7 @@ export async function terminal(options={},io){
             const rates=[...new Set([saved?.maxRequestsPerSecond,DEFAULT_REQUESTS_PER_SECOND,10,5,1,32].filter(value=>value!=null).map(String))];
             rps=await promptValue(ask,'Maximum requests per second',rates.map(value=>({value,label:`${value} request${value==='1'?'':'s'} per second`})),
             {write:message=>prompt.write?.(message)});
-            environment=selected?.url===url?selected.environment:undefined;
+            out=scopeOutputForOrigin(root,url).out;
           }
           const local=loopback(new URL(url).hostname);
           const limits={agents:options.agents,'http-workers':options['http-workers'],
@@ -641,15 +651,35 @@ export async function terminal(options={},io){
             'max-tasks':options['max-tasks'],
             minutes:options.minutes??STANDALONE_FIRST_AUDIT_MINUTES,
             'dom-script-bytes':options['dom-script-bytes']};
-          const setup=await run('blackbox setup',[url],{include,methods,rps,environment,out,force,...limits});
+          let setup=await run('blackbox setup',[url],{include,methods,rps,environment,out,force,...limits});
+          let approvedHere=false;
+          const pending=setup.steps?.filter(step=>step.kind!=='run')??[];
+          if(!automatic&&!setup.ready&&pending.length===1&&pending[0].kind==='authorization'){
+            const permission=pending[0];
+            console.log(`\nAuthorize testing on ${url}\nPaths: ${include} · methods: ${methods} · limit: ${rps} requests/second`);
+            approvedHere=await confirmChoice(ask,
+              `Do you control ${url} and authorize this ${permission.production?'production ':''}scope?`,
+              {yes:'Authorize and start audit',no:'Save setup only',fallback:true,recommended:'yes',
+                write:message=>prompt.write?.(message)});
+            if(approvedHere){
+              await run('target authorize',[permission.target],{'scope-file':permission.file,
+                accept:true,production:permission.production});
+              setup=await run('blackbox setup',[url],{include,methods,rps,environment,out,force,...limits});
+            }
+          }
           if(!setup.ready){prompt.setNext?.('Complete the displayed ownership and scope steps, then start the audit again');continue;}
           if(prompt.rich)console.log(`Scope: ${path.relative(root,setup.scopeFile)} · ${setup.created?'created':'reused'} · includes ${include}`);
           const profile=state.models.find(model=>model.name===state.activeModel);
           console.log(options['no-model']?'Model: code-only audit':profile?
             `Model: ${profile.provider} · ${profile.model} · ${profile.baseUrl} · key variable ${profile.secretEnv} · ${profile.lastAttempt?.status||profile.lastTest?.status||'not tested'}`:
             'Model: Meta default · muse-spark-1.3 · https://api.meta.ai/v1 · key variable LLM_KEY, META_API_KEY or MODEL_API_KEY');
-          if(!automatic&&!await confirmChoice(ask,`Start black-box audit of ${url} within ${include} at ${rps} rps?`,
+          if(!automatic&&!approvedHere&&!await confirmChoice(ask,`Start black-box audit of ${url} within ${include} at ${rps} rps?`,
             {yes:'Start audit',no:'Return to project',write:message=>prompt.write?.(message)}))continue;
+          const auditedTarget=setup.targets?.find(target=>target.url===url);
+          if(auditedTarget&&auditedTarget.name!==state.activeTarget){
+            await execute('target use',[auditedTarget.name],{project:root});
+            updateWorkspace(prompt,root);
+          }
           const result=await run('blackbox',[url],{scope:setup.scopeFile,rps,...limits,
             'accept-local':local,'no-model':!!options['no-model'],
             'no-discovery':!!options['no-discovery'],offline:!!options.offline,

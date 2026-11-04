@@ -241,6 +241,8 @@ bypass blackbox setup https://app.example.com --include / --rps 20
 
 Complete the ownership and authorization steps printed by setup, then run the audit command it prints. Do not use `--accept-local` for a deployed app.
 
+Inside the interactive CLI, type `/blackbox` to choose an app, review its methods, paths and rate, and start the audit. A newly selected deployed app also asks whether it is production, staging or preview and requests one approval for that app's testing scope. Each app gets its own scope file, so switching apps leaves earlier scope files and approvals intact.
+
 <details>
 <summary>Authenticated tests, proof replay, and regression export</summary>
 
