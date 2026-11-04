@@ -78,13 +78,17 @@ The server does not launch a model or a shell.
 Standalone reasoning has no fixed per-task conversation-turn cap: evidence
 requests can continue until an accepted submission or a remaining budget,
 deadline, or cancellation stops the task. Other workflows retain their own
-turn limits.
+turn limits. A standalone profile with `--timeout-ms 0` also disables per-task
+timeouts: the driver leases tasks with `disableTaskTimeout: true`, and the
+issued task records `taskTimeoutDisabled: true`. Its expiry is the stage
+deadline, not the default 300-second task deadline. Finite profiles and
+Muse-hosted tasks retain their leases; stage budgets always remain enforced.
 
 Standalone tool schemas distinguish evidence (`action`, `operation`,
 `arguments`) from submission (`action`, `result`); unused fields must be absent.
 Malformed JSON and schema-invalid actions receive explicit model correction
 feedback without executing them. Correction requests consume the same model
-budgets and task lease, with no new turn cap. Safe diagnostics identify declared
+budgets and applicable task lease, with no new turn cap. Safe diagnostics identify declared
 fields only, never source or argument values. If invalid actions continue until
 interruption, the manifest message retains the last rejection feedback.
 Transport and timeout failures still interrupt immediately.

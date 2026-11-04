@@ -29,7 +29,13 @@ test('fractional scanner leases become integer model deadlines without extending
     const run={id:'scan_18aa42c25cc7467c84be5a64',status:'awaiting_reasoning'};
     const task={id:'fractional',kind:'discovery',phase:'mapping',expiresAt:(now+10000.75)/1000,resultSchema:{type:'object'}};
     const result=await runAPIDriver({models:[profile],activeModel:'test'},{run,
-      client:{call:async operation=>operation==='next_task'?{run,task}:operation==='submit'?{run:{...run,status:'completed'},status:'completed'}:{run}},
+      client:{call:async(operation,input)=>{
+        if(operation==='next_task'){
+          assert.deepEqual(input,{run:run.id,...(timeoutMs===0?{disableTaskTimeout:true}:{})});
+          return {run,task};
+        }
+        return operation==='submit'?{run:{...run,status:'completed'},status:'completed'}:{run};
+      }},
       sessionFactory:()=>({turn:async(_messages,options)=>{
         assert.equal(options.timeoutMs,10000);
         assert.doesNotThrow(()=>AbortSignal.timeout(options.timeoutMs));
@@ -39,6 +45,26 @@ test('fractional scanner leases become integer model deadlines without extending
     });
     assert.equal(result.status,'completed');
   }
+});
+
+test('scanner request timeout errors distinguish the model, task, and stage deadlines',async t=>{
+  for(const timeoutMs of [0,1000,60000])await t.test(String(timeoutMs),async()=>{
+    const profile=apiProfile('test',{provider:'custom','base-url':'http://127.0.0.1:8080/v1',model:'fixture','secret-env':'BYPASS_UNIT_API_KEY','timeout-ms':timeoutMs});
+    const run={id:'scan_18aa42c25cc7467c84be5a64',status:'awaiting_reasoning'};
+    const task={id:'deadline',kind:'evaluation',phase:'evaluation',expiresAt:Date.now()/1000+10,taskTimeoutDisabled:timeoutMs===0,resultSchema:{type:'object'}};
+    const result=await runAPIDriver({models:[profile],activeModel:'test'},{run,
+      client:{call:async(operation,input)=>{
+        if(operation==='next_task')return {run,task};
+        return input.arguments?.interrupt?{run:{...run,status:'interrupted',message:input.arguments.reason}}:{run};
+      }},
+      sessionFactory:()=>({turn:async(_messages,options)=>{
+        options.onProgress({kind:'phase',phase:'request'});
+        throw new Fault('Model request timed out.',3,{reason:'model_timeout'});
+      }})
+    });
+    assert.equal(result.status,'interrupted');
+    assert.match(result.run.message,timeoutMs===0?/stage time budget exhausted/:timeoutMs===1000?/Model request timed out/:/task lease expired during model request/);
+  });
 });
 
 test('discovery and evaluation tasks can submit after more than ten evidence turns',async()=>{

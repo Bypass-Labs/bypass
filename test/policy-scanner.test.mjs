@@ -105,7 +105,7 @@ test('Muse drives real Python tasks and evidence with a broken API profile and z
   }finally{await closeScannerSessions();}
 });
 
-test('standalone retains task leases with a no-timeout provider profile',{skip:!available},async()=>{
+test('standalone no-timeout profiles disable task deadlines but retain the stage budget',{skip:!available},async()=>{
   const root=await source();await addTestModel(root);
   await change(root,state=>{state.models[0].timeoutMs=0;});
   let turns=0;
@@ -114,6 +114,8 @@ test('standalone retains task leases with a no-timeout provider profile',{skip:!
     return {turn:async(messages,options)=>{
       turns++;options.onProgress({kind:'phase',phase:'request'});
       task??=JSON.parse(messages[1].content);
+      assert.equal(task.taskTimeoutDisabled,true);
+      assert.ok(options.timeoutMs>300000);
       assert.ok(options.timeoutMs>0&&options.timeoutMs<=task.expiresAt*1000-Date.now()+1000);
       assert.equal(Number.isInteger(options.timeoutMs),true);
       const last=JSON.parse(messages.at(-1).content);
@@ -129,6 +131,11 @@ test('standalone retains task leases with a no-timeout provider profile',{skip:!
   assert.equal(turns,4);assert.equal(result.run.reasoning.independentModelRequests,4);assert.equal(result.run.reasoning.hostReasoning,false);
   const signal=JSON.parse(fs.readFileSync(path.join(root,'.bypass/scanner',result.run.id,'signals.json')))[0];
   validateJSON(manifest.schemas.signal,signal);assert.equal(signal.evaluation,'not_run');
+  const saved=JSON.parse(fs.readFileSync(path.join(root,'.bypass/scanner',result.run.id,'policy/state.json')));
+  for(const task of saved.tasks){
+    assert.equal(task.definition.taskTimeoutDisabled,true);
+    assert.equal(task.definition.expiresAt,saved.deadline);
+  }
 });
 
 test('API driver failure persists an interrupted run and retains usage receipts',{skip:!available},async()=>{
@@ -138,6 +145,37 @@ test('API driver failure persists an interrupted run and retains usage receipts'
   assert.equal(result.status,'interrupted');assert.equal(result.exitCode,3);
   assert.equal(result.run.reasoning.independentModelRequests,1);
   assert.equal(result.run.signalCount,0);
+});
+
+test('resuming with a no-timeout profile replaces old task deadlines without resetting stage budgets',{skip:!available},async()=>{
+  const root=await source();await addTestModel(root);
+  const interrupted=await execute('discover',[],{project:root,'discovery-only':true,detector:'policy',policy:'authz/object-access'},
+    {scannerConnect:connect,scannerSessionFactory:()=>({turn:async(messages,options)=>{
+      assert.equal(JSON.parse(messages[1].content).taskTimeoutDisabled,false);
+      options.onProgress({kind:'phase',phase:'request'});
+      throw new Error('Synthetic interruption before profile change');
+    }})});
+  assert.equal(interrupted.status,'interrupted');
+  const filename=path.join(root,'.bypass/scanner',interrupted.run.id,'policy/state.json');
+  const before=JSON.parse(fs.readFileSync(filename));
+  await change(root,state=>{state.models[0].timeoutMs=0;});
+  const result=await execute('discover resume',[interrupted.run.id],{project:root},
+    {scannerConnect:connect,scannerSessionFactory:()=>{
+      let task;
+      return {turn:async(messages,options)=>{
+        task??=JSON.parse(messages[1].content);
+        assert.equal(task.taskTimeoutDisabled,true);assert.equal(task.expiresAt,before.deadline);
+        assert.ok(options.timeoutMs>300000);
+        options.onProgress({kind:'phase',phase:'request'});
+        const last=JSON.parse(messages.at(-1).content);
+        if(!last.evidence)return {action:'evidence',operation:'read',arguments:{path:'app.py'}};
+        const ref=last.evidence.reference.id;
+        return {action:'submit',result:task.phase==='mapping'?mapping(ref):finding(ref)};
+      }};
+    }});
+  assert.equal(result.run.status,'completed',JSON.stringify(result));
+  assert.equal(result.run.reasoning.independentModelRequests,5);
+  assert.equal(JSON.parse(fs.readFileSync(filename)).deadline,before.deadline);
 });
 
 test('an interrupted real scanner retains safe rejection feedback and correction usage',{skip:!available},async()=>{

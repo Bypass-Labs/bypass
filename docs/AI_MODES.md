@@ -187,8 +187,9 @@ This disables the model-request deadline, socket inactivity timeout, synthetic
 connection-check deadline, and Docker review worker's ten-minute deadline for
 `scan`. Cancellation still works; a stalled server can wait indefinitely until
 you cancel. Token, call, evidence, and container resource limits remain.
-Discovery/evaluation task leases and running-app authorization/run budgets are
-separate safeguards and are not disabled by this model setting. Other profiles
+Standalone discovery/evaluation also disables its per-task timeout for these
+profiles. Overall discovery/evaluation stage budgets and running-app
+authorization/run budgets remain separate safeguards. Other profiles
 retain their configured timeouts; the default remains 60 seconds.
 
 ### Connection interrupted despite no timeout
@@ -358,14 +359,17 @@ reasoning uses the **active Muse session**, not your standalone local profile.
 Use standalone `discover` to keep reasoning on local Glimmer. In Muse, pass
 `discovery-only: true` to `bypass_discover` to skip evaluation.
 
-The model profile's `--timeout-ms 0` does **not** disable discovery/evaluation
-task leases or overall stage budgets. Slow local generation may still exhaust
-those independent limits; inspect the run's coverage and unresolved cases rather
-than treating it as a completed review.
+The model profile's `--timeout-ms 0` disables standalone discovery/evaluation
+per-task timeouts, including on resumed tasks. There is no default 300-second
+cutoff across successive model calls. The issued task records
+`taskTimeoutDisabled: true`; its `expiresAt` is the overall stage deadline,
+not a per-task timeout. Stage budgets remain in force, so slow local generation
+can still exhaust the configured discovery or evaluation `timeoutSeconds`.
+Finite profiles and Muse-hosted reasoning retain their configured task leases.
 
 Standalone discovery/evaluation tasks have no fixed per-task conversation-turn
 cap. A task can continue requesting evidence until its submission is accepted.
-Task leases, stage deadlines, configured model-request/evidence budgets,
+Applicable task leases, stage deadlines, configured model-request/evidence budgets,
 conversation-size limits, and cancellation still apply. This does not change
 the separate Docker `scan` worker's turn limits.
 
@@ -380,7 +384,7 @@ Malformed JSON or schema-invalid actions are never executed or silently
 normalized. The driver prints safe response/field diagnostics and returns
 validation feedback to the model so it can correct the action within the same
 task. Every attempted model request, including corrections, counts against the
-existing budgets; leases, context limits, and cancellation still apply. Network
+existing budgets; applicable leases, context limits, and cancellation still apply. Network
 and timeout failures still interrupt immediately. If repeated invalid actions
 ultimately interrupt the task, its manifest message includes the last safe
 rejection feedback. This correction behavior applies to standalone discovery
@@ -393,6 +397,11 @@ Use `discover status <run-id>` to inspect the saved state and
 runtime, and stage budgets still permit it. Accepted CodeQL signals and completed
 evaluation cases are retained; restarting a run is necessary if its stage budget
 has expired.
+
+This task-timeout change requires the updated pinned scanner image, prepared
+automatically on first use. Older runs pinned to a different image cannot be
+resumed with the new image; start a new discovery run. Existing artifacts and
+accepted signals remain saved. Runtime identity checks are not bypassed.
 
 ## Migration
 
