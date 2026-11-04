@@ -32,6 +32,22 @@ const accent=s=>theme.paint('accent',s),muted=s=>theme.paint('muted',s),bold=s=>
 const label=s=>String(s).replace(/_/g,' ');
 const shellArg=value=>`'${String(value).replaceAll("'","'\"'\"'")}'`;
 const RESEARCH_BEHAVIOR=new Set(['model-differential','model-json-differential','model-http-sequence']);
+export const replayableFinding=finding=>finding.engine==='blackbox'
+  ? !!finding.verification?.blackboxRun
+  : !!(finding.fixture||finding.binding);
+export const orderedFindings=findings=>[...findings].sort((a,b)=>{
+  const rank=f=>f.status==='confirmed'||f.status==='confirmed_fixture'?0:
+    f.status==='fixed_verified'?1:f.status==='unproven'?2:3;
+  return rank(a)-rank(b);
+});
+export function sourceReviewNote(source){
+  const failures=source?.executionFailures??[];
+  const timedOut=failures.some(item=>/timed out/i.test(item.reason||''));
+  return failures.length?
+    `\n\nCode security review paused: ${failures.map(item=>item.reason).join('; ')}\n`+
+    `Partial source evidence is saved. ${timedOut?'Check the Muse connection, then retry':'Review the error, then retry'} the code-only audit with scan --mode code.`:
+    '';
+}
 const BLACKBOX_PHASES=[
   {label:'Scope and hosts',working:'Confirming the approved origin, host boundaries and request limits',why:'Every request is checked against the scope before it can leave the CLI.',next:'Inspect public app assets and source facts.'},
   {label:'Assets and source',working:'Extracting routes, methods, inputs and trust boundaries from source and public assets',why:'Each retained fact becomes a concrete test candidate; source concerns remain unproven until HTTP replay.',next:'Show the route inventory, then test the highest-value candidates.'},
@@ -50,7 +66,7 @@ export function blackboxOutcomeText(result){
     const source=result?.sourceFindings??[];
     const sourceSummary=source.length?`\nSource review: ${source.length} unproven lead${source.length===1?'':'s'} · ${source.filter(item=>item.status==='not reproduced').length} not reproduced · ${source.filter(item=>['inconclusive','blocked'].includes(item.status)).length} inconclusive · ${source.filter(item=>item.status==='not tested').length} not tested.`:'';
     if(replayed.length)return `\nNo confirmed security finding survived final proof replay. ${replayed.length} positive signal${replayed.length===1?' was':'s were'} found, but the final replay was inconclusive; this is not a clean result.${sourceSummary}\nOpen report.md for the signal, replay reason and remaining coverage.`;
-    return `\nNo confirmed security finding was produced; this is not a security clearance.${sourceSummary}\nOpen report.md for coverage gaps and untested work.`;
+    return `\nThis run did not confirm a new security finding; this is not a security clearance.${sourceSummary}\nOpen report.md for coverage gaps and untested work.`;
   }
   const cards=findings.map(finding=>{
     const impact=finding.assessment?.impact||finding.rationale||'A replayed HTTP proof confirmed this security boundary failure.';
@@ -83,7 +99,7 @@ export function printResult(data,{interactive=false}={}){
   if(value.kind==='blackbox-audit'){console.log(blackboxSummary(value,{color})+blackboxOutcomeText(value));return;}
   if(value.run?.kind==='scan'&&value.run.result?.blackbox){
     const audit={kind:'blackbox-audit',...value.run.result.blackbox};
-    console.log(blackboxSummary(audit,{color})+blackboxOutcomeText(audit));
+    console.log(blackboxSummary(audit,{color})+blackboxOutcomeText(audit)+sourceReviewNote(value.run.result.source));
     return;
   }
   if(value.kind==='blackbox-scope'){console.log(`\nScope: ${value.file}\nTarget: ${value.origin}\nIncluded paths: ${value.include.join(', ')}\nCredential origins: ${value.credentialOrigins.join(', ')}\nAccounts: ${value.identities.owner}, ${value.identities.outsider}\nNext: ${value.next}`);return;}
@@ -219,7 +235,9 @@ export function printResult(data,{interactive=false}={}){
   if(value.checks&&Array.isArray(value.checks)){console.log(`\n${value.checks.length} saved checks`);for(const c of value.checks)console.log(`  ${bold(c.id)}  ${c.title||c.behavior}\n    ${c.status||c.lastResult?.status||'not run'} · ${c.enabled===false?'disabled':c.target}`);if(value.message)console.log(value.message);return;}
   if(value.finding){
     const f=value.finding;
-    const next=f.engine==='blackbox'?`bypass verify ${f.id}`:
+    const next=!replayableFinding(f)?
+      'No saved HTTP proof is available for this source lead. Review the audit coverage before treating it as confirmed.':
+      f.engine==='blackbox'?`bypass verify ${f.id}`:
       f.fixture||['docker','host'].includes(f.engine)?
         `bypass ${['confirmed_fixture','confirmed','regression_failed'].includes(f.status)?'retest':'verify'} ${f.id}`:
         'bypass scan';
@@ -525,9 +543,10 @@ export async function terminal(options={},io){
   };
   const tour=async(flags={})=>{try{return await guidedDemo(flags,prompt);}finally{if(prompt.rich)updateWorkspace(prompt,root);}};
   const showResults=async()=>{
-    const findings=read(root).findings;
+    const findings=orderedFindings(read(root).findings);
     if(!findings.length){console.log('\nNo audit results yet. Run /review to start the selected security audit.');return;}
-    const finding=findings.length===1?findings[0]:await choose(ask,findings.map(f=>({...f,label:`${f.title} · ${label(f.status)}`})),'Review results');
+    const finding=findings.length===1?findings[0]:await choose(ask,findings.map(f=>({...f,
+      label:`${f.status==='confirmed'?'CONFIRMED':f.status==='fixed_verified'?'FIXED':f.sourceEvidence?.kind==='source'?'SOURCE LEAD':label(f.status).toUpperCase()} · ${f.title} · ${label(f.status)}`})),'Review results');
     if(!finding)return;
     if(!finding.fixture&&!['docker','host','blackbox'].includes(finding.engine)){
       prompt.setNext?.('Run /review against your application to create verified evidence');
@@ -536,7 +555,8 @@ export async function terminal(options={},io){
       if(action?.id==='details')printResult({finding});
     }else{
       printResult({finding});
-      const action=await choose(ask,[{label:['docker','blackbox'].includes(finding.engine)?'Reproduce with saved HTTP proof':'Verify this local fixture',id:'verify'},{label:'Retest a fix',id:'retest'}],'Next step');
+      if(!replayableFinding(finding))return;
+      const action=await choose(ask,[{label:finding.engine==='blackbox'?'Replay saved HTTP proof':finding.fixture?'Verify this local fixture':'Run approved HTTP controls',id:'verify'},{label:'Retest a fix',id:'retest'}],'Next step');
       if(action)await run(action.id,[finding.id]);
     }
   };

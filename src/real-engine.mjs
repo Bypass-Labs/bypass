@@ -207,7 +207,7 @@ export async function executeSourceReview(root,runId,options,{signal,report,runt
     need(!candidates.some(candidate=>!candidate.resourcePath),
       'White-box returned an HTTP hypothesis without a source-observed route. Retry the review so live validation can receive a concrete path.',
       3,{stage:'white-box',reason:'source_route_missing'});await persist();
-    await report('white-box',`${candidates.length} source hypothesis(es) grounded in actual file lines.`);
+    await report('white-box',`${candidates.length} source ${candidates.length===1?'hypothesis':'hypotheses'} grounded in actual file lines.`);
     }catch(error){throw error;}
   }
   await saveSourceCandidates(root,{candidates,bindings,targetName:plan.target,sourceFingerprint:inv.fingerprint,runId,candidateIds});
@@ -215,5 +215,5 @@ export async function executeSourceReview(root,runId,options,{signal,report,runt
   return {plan,inventory:inv,findings:candidateIds,confirmed:[],executionFailures:[],
     coverageGaps:reviewReadiness(read(root)).coverageGaps,containers,model:plan.model,
     modelUsage,modelCalls,engine:'docker-source',simulation:false,coverageComplete:false,
-    exitCode:3,message:`Source review produced ${candidateIds.length} grounded hypothesis${candidateIds.length===1?'':'es'}. Live confirmation is handled by the shared black-box runner.`};
+    exitCode:3,message:`Source review produced ${candidateIds.length} grounded ${candidateIds.length===1?'hypothesis':'hypotheses'}. Live confirmation is handled by the shared black-box runner.`};
 }

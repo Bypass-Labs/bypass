@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { guidedDemo } from '../src/guided-demo.mjs';
 import { onboard } from '../src/onboarding.mjs';
-import { terminal, printResult } from '../src/ui.mjs';
+import { terminal, printResult, orderedFindings, replayableFinding, sourceReviewNote } from '../src/ui.mjs';
 import { homeActions } from '../src/experience.mjs';
 import { appOriginInput, safeRequest } from '../src/network.mjs';
 import { read } from '../src/store.mjs';
@@ -27,6 +27,34 @@ test('confirmed live findings point to proof replay, not a legacy demo',t=>{
   assert.match(text,/Next: bypass verify finding_live/);
   assert.match(text,/Save regression test: bypass test save finding_live/);
   assert.doesNotMatch(text,/bypass demo|"controls"/);
+});
+
+test('results put confirmed evidence first and do not offer replay for source-only leads',t=>{
+  const lead={id:'source-lead',engine:'docker',status:'unproven',title:'Source concern',
+    sourceEvidence:{kind:'source',file:'src/server.js',line:12,quote:'return value;'}};
+  const confirmed={id:'live-proof',engine:'blackbox',status:'confirmed',
+    verification:{blackboxRun:'bx-example'}};
+  assert.deepEqual(orderedFindings([lead,confirmed]).map(item=>item.id),['live-proof','source-lead']);
+  assert.equal(replayableFinding(lead),false);
+  assert.equal(replayableFinding(confirmed),true);
+  const output=[];t.mock.method(console,'log',text=>output.push(text));
+  printResult({finding:lead});
+  assert.match(output.join('\n'),/No saved HTTP proof is available for this source lead/);
+  assert.doesNotMatch(output.join('\n'),/Next: bypass verify source-lead/);
+});
+
+test('combined results explain a paused source review without hiding saved evidence',t=>{
+  const note=sourceReviewNote({executionFailures:[{stage:'white-box',reason:'Model request timed out.'}]});
+  assert.match(note,/Code security review paused: Model request timed out/);
+  assert.match(note,/Partial source evidence is saved/);
+  assert.match(note,/scan --mode code/);
+  assert.equal(sourceReviewNote({executionFailures:[]}), '');
+  const output=[];t.mock.method(console,'log',text=>output.push(text));
+  printResult({run:{kind:'scan',result:{source:{executionFailures:[{stage:'white-box',reason:'Model request timed out.'}]},
+    blackbox:{run:'bx-example',runDir:'/tmp/app/.bypass/runs/bx-example',projectRoot:'/tmp/app',
+      findings:[],coverage:{complete:false},exitCode:3}}}});
+  assert.match(output.join('\n'),/Code security review paused: Model request timed out/);
+  assert.match(output.join('\n'),/Run folder: \/tmp\/app\/\.bypass\/runs\/bx-example/);
 });
 
 test('replayed live proof shows status and the saved-test command',t=>{

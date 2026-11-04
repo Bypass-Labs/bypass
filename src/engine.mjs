@@ -149,7 +149,7 @@ export async function verifyFinding(root,findingId,{target,build,retest=false,si
     await change(root,s=>{const f=named(s.findings,findingId,'Finding');f.history.push({at:now(),action:retest?'retest':'verify',...verification});f.verification=verification;});
     return outcome({findingId,verification},3);
   }
-  need(finding.binding,'This source hypothesis has no approved HTTP resource binding. Add the matching probe and run review again.',3);
+  need(finding.binding,'This is a source-only lead with no saved HTTP proof to replay. Review the audit coverage and keep it unproven until approved live controls confirm it.',3);
   const check={target,fixture:!!finding.fixture,engine:finding.engine,bindings:{[target]:finding.binding}};
   const spec=specFor(state,check,target);
   const result=await replay(spec,{signal,env:await replayEnvironment(state,spec,{signal})});
