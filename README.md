@@ -1,14 +1,18 @@
 # Bypass for Muse Code
 
-![Before Bypass Muse: a developer overwhelmed by scanner findings. After Bypass Muse: a calmer review with source-to-sink context.](docs/assets/bypass-muse-before-after.png)
-
 **Build with Muse. Test the code and the running app. Keep the proof.**
 
 Bypass turns Muse Code into an application security agent. It combines white-box source review, gray-box investigation informed by code and test identities, and black-box testing of an approved running app. Muse chooses what to investigate next. Bypass enforces the scope, runs the checks, and confirms supported findings from recorded behavior. Supported proofs become repeatable security tests that run without a model and give Muse app-specific context for the next feature.
 
 Run Bypass as a native Muse Code plugin or a standalone CLI on macOS, Linux, and Windows. The plugin uses the active Muse session without a separate Bypass model key. The CLI supports Meta Model API or an explicitly configured compatible endpoint for self-hosted Muse Spark Open. Test a local app, preview, staging, or an authorized production deployment.
 
-[How it works](#how-bypass-works-with-muse) · [What judges can verify](#what-judges-can-verify) · [Quick start](#start-in-muse-code) · [White-box](#white-box-source-review) · [Black-box](#black-box-audit) · [CLI](#standalone-cli) · [GitHub agent](#github-security-agent) · [Docs](#documentation)
+[Watch demo](#watch-the-demo) · [How it works](#how-bypass-works-with-muse) · [What judges can verify](#what-judges-can-verify) · [Quick start](#start-in-muse-code) · [White-box](#white-box-source-review) · [Black-box](#black-box-audit) · [CLI demo](#standalone-cli) · [GitHub agent](#github-security-agent) · [Docs](#documentation)
+
+## Watch the demo
+
+[![Watch the Bypass for Muse Code product demo on YouTube](docs/assets/bypass-muse-demo-cover.svg)](https://www.youtube.com/watch?v=xFGu4fIHubo)
+
+**Muse Code plugin + standalone CLI.** [Watch the full product demo on YouTube →](https://www.youtube.com/watch?v=xFGu4fIHubo)
 
 ## Choose your experience
 
@@ -49,6 +53,8 @@ These are bounded test shapes, not exhaustive coverage of each class. For exampl
 ## Why this goes beyond a scan
 
 **A source warning is a lead. A confirmed finding is a reproduced behavior. A fixed finding becomes a test.**
+
+![Before Bypass Muse: a developer overwhelmed by scanner findings. After Bypass Muse: a calmer review with source-to-sink context.](docs/assets/bypass-muse-before-after.png)
 
 CodeQL supplies established static rules. Muse adds app-specific reasoning: what a route is for, which account owns the data, what a response suggests, and which safe follow-up to try. The live engine then tests approved paths with owner, other-account, anonymous, invalid-token, baseline, and canary controls where applicable. It preserves the evidence and retests the fix.
 
@@ -128,19 +134,16 @@ Windows PowerShell:
 irm https://bypasslabs.ai/install/muse.ps1 | iex
 ```
 
-**2. Choose the option to enable Bypass's permissions and open Muse Code (`1` or `y`).**
+**2. Choose the option to enable Bypass's permissions and open Muse Code (type `1` to accept and start muse code).**
 
-The installer explains the security-tools and security-memory permissions, registers the plugin, and opens Muse Code with setup started. It includes the runtime and CLI; no GitHub clone, npm, or separate model key is needed. Docker is needed for SAST/policy discovery and standalone Docker review.
+<img width="729" height="347" alt="intalling muse code plugin" src="https://github.com/user-attachments/assets/709935c6-db0c-4686-a898-5233ec7fa7a2" />
 
 **3. Tell Muse Code what to review.** For example:
 
-```text
-Review the source at https://github.com/YOUR-ORG/YOUR-APP.
-Use code-only mode. Report findings with file/line evidence and fix
-recommendations. Do not edit application code.
-```
+Setup offers **Code only**, **Code + running app**, or **Running app only**. Supply a local source folder or Git URL for code; supply an app URL for live testing. 
+<img width="610" height="310" alt="select the scope" src="https://github.com/user-attachments/assets/0a40086f-6b86-4058-93a3-b403b4e9cdb4" />
 
-Setup offers **Code only**, **Code + running app**, or **Running app only**. Supply a local source folder or Git URL for code; supply an app URL for live testing. To return later, use `/bypass:start`.
+To return later, use `/bypass:start`.
 
 > **Try the Aegis demo:** Test with the [repository](https://github.com/Bypass-Labs/aegis-mission-control-demo-fork-1) and [running app](https://demo-app-fork-1.bypasslabs.ai/).
 
@@ -150,14 +153,6 @@ For a running app, supply its URL and choose its environment if unknown. Bypass 
 <summary>Project setting: domain ownership verification</summary>
 
 Domain verification is **off** unless a project explicitly enables it. Explicit app-control and scope approval is still required. To require proof, tell Muse Code “Require DNS ownership verification for this project” or “Use HTTPS-file verification.” Bypass updates the project setting and shows only the required extra step. In the CLI, use **Settings → Domain ownership verification**, or:
-
-```bash
-bypass config set ownershipVerification dns   # off | dns | http
-```
-
-Changing the setting clears saved testing permission so the next run can review it again. Existing projects retain their verification requirements; valid DNS/HTTPS proof is reused for the same origin. An acknowledgment is recorded as operator authorization, never verified ownership. Apex-domain expansion and GitHub live automation still require DNS proof.
-
-</details>
 
 Setup starts the selected first audit after the required source and app details are ready. For later audits, use `/bypass:discover` for SAST or policy discovery, `/bypass:review` for source review, or `/bypass:blackbox` for a running-app audit. See the examples below.
 
@@ -282,58 +277,13 @@ The URL and paths are run inputs, not permission by themselves. Review the exact
 
 The wizard's **Running app only** choice starts this full audit automatically after scope approval. Its **Code + running app** choice first completes the Muse-directed source review, then hands its cited leads to one full live audit. The wizard offers a **10-minute test** for a quick pass; it reports any remaining coverage as untested. `/bypass:blackbox` remains the explicit app-only command; `--finding` remains an explicit focused-validation command. Muse loads each Bypass tool by its current-session ID, so a logical tool name in a review result is never called as a synthesized MCP identifier.
 
-### From the CLI
-
-Load your Meta Model API key privately as `MODEL_API_KEY` in your shell or secret manager. This is an API key, not a Muse Code subscription/login token. Existing `META_API_KEY` or `LLM_KEY` variables are also supported.
-
-For a local app you control:
-
-```bash
-bypass blackbox http://127.0.0.1:3000 --accept-local --rps 20 --model-calls 120 --minutes 30
-```
-
-To validate one finding already saved by source review, add `--finding <finding-id>`. For apps with a JSON build endpoint, `--revision-path /version --revision-field revision` compares the deployed full commit SHA to the checkout. Without that endpoint, the report marks the source/live revision unverified.
-
-For a deployed app:
-
-```bash
-bypass blackbox setup https://app.example.com --include / --rps 20
-```
-
-Complete the ownership and authorization steps printed by setup, then run the audit command it prints. Do not use `--accept-local` for a deployed app.
-
-Inside the interactive CLI, type `/blackbox` to choose an app, review its methods, paths and rate, and start the audit. A newly selected deployed app also asks whether it is production, staging or preview and requests one approval for that app's testing scope. Each app gets its own scope file, so switching apps leaves earlier scope files and approvals intact.
-
-<details>
-<summary>Authenticated tests, proof replay, and regression export</summary>
-
-Anonymous testing can run without credentials. For authenticated black-box checks on current `main`, supply explicit private credential references and the identity endpoint. The guided setup's “Create two test accounts” choice does not automatically provision accounts for this separate audit engine.
-
-With `BYPASS_OWNER_TOKEN` and `BYPASS_OUTSIDER_TOKEN` already loaded privately, add these settings when preparing scope; replace `/api/me` with your app's actual identity endpoint:
-
-```bash
-bypass blackbox setup https://app.example.com --include / --rps 20 \
-  --owner-env BYPASS_OWNER_TOKEN --other-env BYPASS_OUTSIDER_TOKEN \
-  --identity-path /api/me
-```
-
-After a run, use its printed ID:
-
-```bash
-bypass blackbox verify <run-id>
-bypass blackbox export <run-id>
-bypass blackbox resume <run-id>
-```
-
-In Muse Code, ask it to replay the black-box proofs, export tests for confirmed findings, or resume the named run. These operations use the `bypass_blackbox_*` tools. Black-box run IDs are separate from guided-review `run_*` IDs and their saved checks.
-
-</details>
-
-**Results:** inspect confirmed proofs, inconclusive/blocked tasks, and `coverage.json` under the run's `.bypass/runs/` directory. Missing credentials, budget limits, or zero executed probes do not mean the app passed. Current families include bounded access-control, exposure, redirect, injection, and browser checks; availability varies by target and permissions. [Exact coverage and limitations](docs/BLACKBOX_AUDIT.md).
-
 ## Standalone CLI
 
 Prefer a separate terminal workflow? Use the standalone CLI. It connects either **Meta Model API** for hosted Muse Wonder and Muse Spark, or an existing local/self-hosted server for **Muse Spark Open** or **Muse Glimmer**. It does not require Muse Code or use a Muse Code subscription. Install without opening Muse Code:
+
+[![28-second Bypass CLI walkthrough showing Muse model selection, repository setup, and live-app scope selection](docs/assets/bypass-cli-demo.gif)](docs/assets/bypass-cli-demo.mp4)
+
+*28-second CLI walkthrough. Click the preview to watch the original video.*
 
 ```bash
 curl -fsSL https://bypasslabs.ai/install | bash
@@ -346,14 +296,12 @@ irm https://bypasslabs.ai/install.ps1 | iex
 The installer includes Node and configures PATH. On macOS/Linux, open a new terminal or use its printed activation command. Start the interactive workspace with:
 
 ```bash
-bypass
+bypass onboard
 ```
 
-Choose **Connect my application**. In the first step, onboarding asks where Muse inference runs. Selecting **Meta Model API** immediately opens a masked API-key prompt, discovers the Muse models available to your team, recommends Muse Wonder for the deepest reviews, and verifies one synthetic request before continuing. Muse Spark 1.3 Contributor is an explicit lowest-cost choice and starts with minimal reasoning for a responsive first audit. After code, a running app, or both are connected, onboarding starts that security audit directly. For live testing, approving the displayed boundaries starts the audit and streams progress—there is no `/blackbox` handoff or repeated URL, path, method, rate, or start prompt. The guided first audit allows up to 24 Muse planning calls and 10 minutes; it still runs scoped HTTP checks and reports any untested work. Use `bypass scan --model-calls 120` or resume a run when you want deeper research. The key is retained only in the running process; project state stores its environment-variable name, never its value. Type `/` to browse commands; **Ctrl+O** opens activity details and **Ctrl+T** toggles tasks. `bypass onboard` opens setup directly. Use `NO_COLOR=1` to disable color or `BYPASS_PLAIN=1` for a scrolling interface.
+Choose **Connect my application**. In the first step, onboarding asks where Muse inference runs. Selecting **Meta Model API** immediately opens a masked API-key prompt, discovers the Muse models available to your team, recommends Muse Wonder for the deepest reviews, and verifies one synthetic request before continuing. Muse Spark 1.3 Contributor is an explicit lowest-cost choice and starts with minimal reasoning for a responsive first audit. 
 
-Run `bypass onboard` from your application folder, or enter the folder when prompted. When you resume a saved project, the CLI shows its previous review type and asks what to audit this time. For **Code + running app**, it also asks you to select the saved app or enter a different URL before live testing starts. Saved setup remains in that checkout's `.bypass/state.json`; starting from a new checkout creates separate project state. Domain verification is optional: the default flow confirms app control together with explicit testing permissions, while DNS TXT and HTTPS-file proof remain configurable under **Settings → Domain ownership verification**.
-
-Before repository initialization, Bypass shows the exact `.gitignore`, `.bypassignore`, and local `.bypass/` file plan. You can apply it, customize source-review exclusions, or leave tracked files unchanged. For scripts, `bypass init . --plan --json` reports the same structured `fileChanges` without creating Bypass project files; `--tracked-files skip` initializes only local state.
+After code, a running app, or both are connected, onboarding starts that security audit directly. 
 
 ### Model configuration
 
@@ -499,3 +447,5 @@ npm test
 Author changes in `src/`, `scanner/`, and the plugin's commands, skill, manifest, hooks, and MCP entry points. `plugin/runtime/` is generated build output. Build it before installing the plugin from source. See [scanner development](scanner/README.md) for Docker/CodeQL checks; `npm run test:live` is an opt-in real Muse Code fixture run and uses your host allowance/billing.
 
 Use Bypass only on applications you own or are authorized to test. Source signals, confirmed HTTP proofs, blocked work, and untested coverage are different outcomes; none is a blanket security clearance.
+
+If you would like to became a maintainer, please contact opensource@bypasslabbs.ai
