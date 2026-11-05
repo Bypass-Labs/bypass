@@ -1,14 +1,18 @@
 # Bypass for Muse Code
 
-![Before Bypass Muse: a developer overwhelmed by scanner findings. After Bypass Muse: a calmer review with source-to-sink context.](docs/assets/bypass-muse-before-after.png)
-
 **Build with Muse. Test the code and the running app. Keep the proof.**
 
 Bypass turns Muse Code into an application security agent. It combines white-box source review, gray-box investigation informed by code and test identities, and black-box testing of an approved running app. Muse chooses what to investigate next. Bypass enforces the scope, runs the checks, and confirms supported findings from recorded behavior. Supported proofs become repeatable security tests that run without a model and give Muse app-specific context for the next feature.
 
 Run Bypass as a native Muse Code plugin or a standalone CLI on macOS, Linux, and Windows. The plugin uses the active Muse session without a separate Bypass model key. The CLI supports Meta Model API or an explicitly configured compatible endpoint for self-hosted Muse Spark Open. Test a local app, preview, staging, or an authorized production deployment.
 
-[How it works](#how-bypass-works-with-muse) · [What judges can verify](#what-judges-can-verify) · [Quick start](#start-in-muse-code) · [White-box](#white-box-source-review) · [Black-box](#black-box-audit) · [CLI](#standalone-cli) · [GitHub agent](#github-security-agent) · [Docs](#documentation)
+[Watch demo](#watch-the-demo) · [How it works](#how-bypass-works-with-muse) · [What judges can verify](#what-judges-can-verify) · [Quick start](#start-in-muse-code) · [White-box](#white-box-source-review) · [Black-box](#black-box-audit) · [CLI demo](#standalone-cli) · [GitHub agent](#github-security-agent) · [Docs](#documentation)
+
+## Watch the demo
+
+[![Watch the Bypass for Muse Code product demo on YouTube](docs/assets/bypass-muse-demo-cover.svg)](https://www.youtube.com/watch?v=xFGu4fIHubo)
+
+**Muse Code plugin + standalone CLI.** [Watch the full product demo on YouTube →](https://www.youtube.com/watch?v=xFGu4fIHubo)
 
 ## Choose your experience
 
@@ -49,6 +53,8 @@ These are bounded test shapes, not exhaustive coverage of each class. For exampl
 ## Why this goes beyond a scan
 
 **A source warning is a lead. A confirmed finding is a reproduced behavior. A fixed finding becomes a test.**
+
+![Before Bypass Muse: a developer overwhelmed by scanner findings. After Bypass Muse: a calmer review with source-to-sink context.](docs/assets/bypass-muse-before-after.png)
 
 CodeQL supplies established static rules. Muse adds app-specific reasoning: what a route is for, which account owns the data, what a response suggests, and which safe follow-up to try. The live engine then tests approved paths with owner, other-account, anonymous, invalid-token, baseline, and canary controls where applicable. It preserves the evidence and retests the fix.
 
@@ -334,6 +340,10 @@ In Muse Code, ask it to replay the black-box proofs, export tests for confirmed 
 ## Standalone CLI
 
 Prefer a separate terminal workflow? Use the standalone CLI. It connects either **Meta Model API** for hosted Muse Wonder and Muse Spark, or an existing local/self-hosted server for **Muse Spark Open** or **Muse Glimmer**. It does not require Muse Code or use a Muse Code subscription. Install without opening Muse Code:
+
+[![28-second Bypass CLI walkthrough showing Muse model selection, repository setup, and live-app scope selection](docs/assets/bypass-cli-demo.gif)](docs/assets/bypass-cli-demo.mp4)
+
+*28-second CLI walkthrough. Click the preview to watch the original video.*
 
 ```bash
 curl -fsSL https://bypasslabs.ai/install | bash

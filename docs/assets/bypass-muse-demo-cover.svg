@@ -1,0 +1,54 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="720" viewBox="0 0 1280 720" role="img" aria-labelledby="title description">
+  <title id="title">Watch the Bypass for Muse Code product demo</title>
+  <desc id="description">Video preview for the Bypass Muse Code plugin and standalone CLI demo. Build with Muse, test the app, and keep the proof.</desc>
+  <defs>
+    <linearGradient id="background" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#10151B"/>
+      <stop offset="1" stop-color="#222B35"/>
+    </linearGradient>
+    <radialGradient id="glow">
+      <stop offset="0" stop-color="#B93834" stop-opacity="0.27"/>
+      <stop offset="1" stop-color="#B93834" stop-opacity="0"/>
+    </radialGradient>
+    <pattern id="grid" width="40" height="40" patternUnits="userSpaceOnUse">
+      <path d="M 40 0 H 0 V 40" fill="none" stroke="#FFFFFF" stroke-opacity="0.035" stroke-width="1"/>
+    </pattern>
+    <clipPath id="frame">
+      <rect x="24" y="24" width="1232" height="672" rx="26"/>
+    </clipPath>
+  </defs>
+
+  <rect width="1280" height="720" fill="#0A0D11"/>
+  <g clip-path="url(#frame)">
+    <rect x="24" y="24" width="1232" height="672" fill="url(#background)"/>
+    <rect x="24" y="24" width="1232" height="672" fill="url(#grid)"/>
+    <circle cx="1000" cy="345" r="410" fill="url(#glow)"/>
+    <path d="M 24 25 H 1256" stroke="#D64F47" stroke-width="5"/>
+    <path d="M 820 25 V 695" stroke="#FFFFFF" stroke-opacity="0.07"/>
+  </g>
+  <rect x="24" y="24" width="1232" height="672" rx="26" fill="none" stroke="#46515C" stroke-width="2"/>
+
+  <g font-family="Arial, Helvetica, sans-serif">
+    <text x="82" y="109" fill="#F26C61" font-size="24" font-weight="700" letter-spacing="3">BYPASS</text>
+    <rect x="219" y="81" width="2" height="33" fill="#65717B"/>
+    <text x="240" y="107" fill="#D4DADF" font-size="21" font-weight="700" letter-spacing="2">FOR MUSE CODE</text>
+
+    <rect x="1040" y="74" width="153" height="42" rx="21" fill="#2B343D" stroke="#59646F"/>
+    <text x="1116" y="101" fill="#E2E6E9" font-size="15" font-weight="700" letter-spacing="1.4" text-anchor="middle">PRODUCT DEMO</text>
+
+    <text x="81" y="259" fill="#FFFFFF" font-size="72" font-weight="700" letter-spacing="-2">Build with Muse.</text>
+    <text x="81" y="351" fill="#FFFFFF" font-size="72" font-weight="700" letter-spacing="-2">Test the app.</text>
+    <text x="81" y="443" fill="#FFFFFF" font-size="72" font-weight="700" letter-spacing="-2">Keep the proof.</text>
+    <text x="84" y="503" fill="#B7C1C8" font-size="23">Source review  ·  live testing  ·  saved regressions</text>
+
+    <rect x="82" y="564" width="343" height="69" rx="12" fill="#C94B43"/>
+    <path d="M 109 587 L 109 610 L 129 598.5 Z" fill="#FFFFFF"/>
+    <text x="151" y="608" fill="#FFFFFF" font-size="19" font-weight="700" letter-spacing="1">WATCH THE FULL DEMO</text>
+
+    <circle cx="1018" cy="355" r="193" fill="none" stroke="#FFFFFF" stroke-opacity="0.11" stroke-width="2"/>
+    <circle cx="1018" cy="355" r="158" fill="none" stroke="#FFFFFF" stroke-opacity="0.18" stroke-width="2"/>
+    <circle cx="1018" cy="355" r="111" fill="#2F3943" stroke="#F26C61" stroke-width="5"/>
+    <path d="M 989 306 L 989 404 L 1074 355 Z" fill="#FFFFFF"/>
+    <text x="1018" y="592" fill="#C0C9CF" font-size="20" font-weight="700" letter-spacing="1.3" text-anchor="middle">MUSE CODE PLUGIN + CLI</text>
+  </g>
+</svg>
