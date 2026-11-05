@@ -161,6 +161,64 @@ If permissions remain pending, open `/plugins` → **Installed → Bypass for Mu
 
 Muse Code owns plugin reasoning and billing. Bypass cannot verify subscription billing through MCP; check Muse Code account/settings. For confidential or personal content, use Standard mode with Contributor mode off. Bypass does not change these settings. [Model and privacy details](docs/AI_MODES.md).
 
+## Standalone CLI
+
+Prefer a separate terminal workflow? Use the standalone CLI. It connects either **Meta Model API** for hosted Muse Wonder and Muse Spark, or an existing local/self-hosted server for **Muse Spark Open** or **Muse Glimmer**. It does not require Muse Code or use a Muse Code subscription. Install without opening Muse Code:
+
+[![28-second Bypass CLI walkthrough showing Muse model selection, repository setup, and live-app scope selection](docs/assets/bypass-cli-demo.gif)](docs/assets/bypass-cli-demo.mp4)
+
+*28-second CLI walkthrough. Click the preview to watch the original video.*
+
+```bash
+curl -fsSL https://bypasslabs.ai/install | bash
+```
+
+```powershell
+irm https://bypasslabs.ai/install.ps1 | iex
+```
+
+The installer includes Node and configures PATH. On macOS/Linux, open a new terminal or use its printed activation command. Start the interactive workspace with:
+
+```bash
+bypass onboard
+```
+
+Choose **Connect my application**. In the first step, onboarding asks where Muse inference runs. Selecting **Meta Model API** immediately opens a masked API-key prompt, discovers the Muse models available to your team, recommends Muse Wonder for the deepest reviews, and verifies one synthetic request before continuing. Muse Spark 1.3 Contributor is an explicit lowest-cost choice and starts with minimal reasoning for a responsive first audit.
+
+After code, a running app, or both are connected, onboarding starts that security audit directly.
+
+### Model configuration
+
+SAST, reports, and saved regression replay need no model key. Standalone policy discovery and AI source review need Docker and a Muse connection. The guided wizard uses a masked prompt. For noninteractive setup, load the Meta key privately and configure its environment-variable **name**, never its value:
+
+```bash
+bypass model add review --provider meta --model muse-wonder-1.0 --secret-env MODEL_API_KEY --project /path/to/app
+bypass model use review --project /path/to/app
+bypass discover --detector policy --project /path/to/app
+```
+
+For the separate guided source-review workflow, use `bypass engine use docker --project /path/to/app`, then `bypass scan --mode code --project /path/to/app`.
+
+For **local Muse Glimmer without authentication**, see the [complete local source-review setup](docs/AI_MODES.md#local-muse-glimmer-source-review). It covers the localhost endpoint, placeholder token, explicit model-profile selection, real Docker engine, and a 180-second per-request timeout. For slower generation, [disable the timeout explicitly](docs/AI_MODES.md#disable-the-model-timeout) with `--timeout-ms 0`; cancellation remains available. Bypass connects directly to the local model server; Muse Code is not involved.
+
+If a no-timeout review reports a connection interruption, try the [buffered-mode diagnostic](docs/AI_MODES.md#connection-interrupted-despite-no-timeout) with `--stream false`. Streaming overhead can hit the separate response-size limit; server failures can produce the same error.
+
+For slow local Glimmer reasoning or reasoning-only responses, [select minimal reasoning explicitly](docs/AI_MODES.md#select-minimal-reasoning-for-local-glimmer) with `--effort minimal`. Custom profiles keep the server default unless an effort is selected.
+
+For CodeQL and bundled policy checks, use [local Glimmer discovery](docs/AI_MODES.md#codeql-and-policy-discovery-with-local-glimmer) with `bypass discover --detector both --project /path/to/app`. Unlike `scan --mode code`, this runs the scanner detectors and source-only evaluation by default; it does not reproduce vulnerabilities against a running app.
+
+The three canonical standalone audit modes are:
+
+```bash
+bypass scan --mode code --project /path/to/app      # cited source hypotheses; no app requests
+bypass scan --mode live --project /path/to/app      # full scoped black-box audit; source skipped
+bypass scan --mode combined --project /path/to/app  # source + full live audit; one parent result
+```
+
+`scan` accepts the live budget controls `--model-calls`, `--minutes`, `--max-urls`, `--max-tasks`, `--agents`, and `--http-workers`. It snapshots the saved target paths, methods, request rate, and compatible test-account references into the run. It never silently narrows a first audit to a short preset.
+
+Run `bypass init /path/to/app` first if the application is not connected. The first-run experience supports **Meta Model API** and local OpenAI-compatible servers running **Muse Spark Open** or **Muse Glimmer**. Explicit legacy provider profiles remain available through advanced commands but are not offered during onboarding. Bypass never changes billing paths or enables Muse Spark Contributor without an explicit model selection. [Provider examples and migration](docs/AI_MODES.md).
+
 ## Ways to run Bypass
 
 | Workflow | In Muse Code | Standalone | Requirements |
@@ -270,64 +328,6 @@ Muse Code connects the app, completes missing ownership/scope setup, and drives 
 The URL and paths are run inputs, not permission by themselves. Review the exact scope before testing. The request rate, engine-decision cap, and time limit bound the audit; the displayed “Muse calls” cap does not include every surrounding host turn.
 
 The wizard's **Running app only** choice starts this full audit automatically after scope approval. Its **Code + running app** choice first completes the Muse-directed source review, then hands its cited leads to one full live audit. The wizard offers a **10-minute test** for a quick pass; it reports any remaining coverage as untested. `/bypass:blackbox` remains the explicit app-only command; `--finding` remains an explicit focused-validation command. Muse loads each Bypass tool by its current-session ID, so a logical tool name in a review result is never called as a synthesized MCP identifier.
-
-## Standalone CLI
-
-Prefer a separate terminal workflow? Use the standalone CLI. It connects either **Meta Model API** for hosted Muse Wonder and Muse Spark, or an existing local/self-hosted server for **Muse Spark Open** or **Muse Glimmer**. It does not require Muse Code or use a Muse Code subscription. Install without opening Muse Code:
-
-[![28-second Bypass CLI walkthrough showing Muse model selection, repository setup, and live-app scope selection](docs/assets/bypass-cli-demo.gif)](docs/assets/bypass-cli-demo.mp4)
-
-*28-second CLI walkthrough. Click the preview to watch the original video.*
-
-```bash
-curl -fsSL https://bypasslabs.ai/install | bash
-```
-
-```powershell
-irm https://bypasslabs.ai/install.ps1 | iex
-```
-
-The installer includes Node and configures PATH. On macOS/Linux, open a new terminal or use its printed activation command. Start the interactive workspace with:
-
-```bash
-bypass onboard
-```
-
-Choose **Connect my application**. In the first step, onboarding asks where Muse inference runs. Selecting **Meta Model API** immediately opens a masked API-key prompt, discovers the Muse models available to your team, recommends Muse Wonder for the deepest reviews, and verifies one synthetic request before continuing. Muse Spark 1.3 Contributor is an explicit lowest-cost choice and starts with minimal reasoning for a responsive first audit. 
-
-After code, a running app, or both are connected, onboarding starts that security audit directly. 
-
-### Model configuration
-
-SAST, reports, and saved regression replay need no model key. Standalone policy discovery and AI source review need Docker and a Muse connection. The guided wizard uses a masked prompt. For noninteractive setup, load the Meta key privately and configure its environment-variable **name**, never its value:
-
-```bash
-bypass model add review --provider meta --model muse-wonder-1.0 --secret-env MODEL_API_KEY --project /path/to/app
-bypass model use review --project /path/to/app
-bypass discover --detector policy --project /path/to/app
-```
-
-For the separate guided source-review workflow, use `bypass engine use docker --project /path/to/app`, then `bypass scan --mode code --project /path/to/app`.
-
-For **local Muse Glimmer without authentication**, see the [complete local source-review setup](docs/AI_MODES.md#local-muse-glimmer-source-review). It covers the localhost endpoint, placeholder token, explicit model-profile selection, real Docker engine, and a 180-second per-request timeout. For slower generation, [disable the timeout explicitly](docs/AI_MODES.md#disable-the-model-timeout) with `--timeout-ms 0`; cancellation remains available. Bypass connects directly to the local model server; Muse Code is not involved.
-
-If a no-timeout review reports a connection interruption, try the [buffered-mode diagnostic](docs/AI_MODES.md#connection-interrupted-despite-no-timeout) with `--stream false`. Streaming overhead can hit the separate response-size limit; server failures can produce the same error.
-
-For slow local Glimmer reasoning or reasoning-only responses, [select minimal reasoning explicitly](docs/AI_MODES.md#select-minimal-reasoning-for-local-glimmer) with `--effort minimal`. Custom profiles keep the server default unless an effort is selected.
-
-For CodeQL and bundled policy checks, use [local Glimmer discovery](docs/AI_MODES.md#codeql-and-policy-discovery-with-local-glimmer) with `bypass discover --detector both --project /path/to/app`. Unlike `scan --mode code`, this runs the scanner detectors and source-only evaluation by default; it does not reproduce vulnerabilities against a running app.
-
-The three canonical standalone audit modes are:
-
-```bash
-bypass scan --mode code --project /path/to/app      # cited source hypotheses; no app requests
-bypass scan --mode live --project /path/to/app      # full scoped black-box audit; source skipped
-bypass scan --mode combined --project /path/to/app  # source + full live audit; one parent result
-```
-
-`scan` accepts the live budget controls `--model-calls`, `--minutes`, `--max-urls`, `--max-tasks`, `--agents`, and `--http-workers`. It snapshots the saved target paths, methods, request rate, and compatible test-account references into the run. It never silently narrows a first audit to a short preset.
-
-Run `bypass init /path/to/app` first if the application is not connected. The first-run experience supports **Meta Model API** and local OpenAI-compatible servers running **Muse Spark Open** or **Muse Glimmer**. Explicit legacy provider profiles remain available through advanced commands but are not offered during onboarding. Bypass never changes billing paths or enables Muse Spark Contributor without an explicit model selection. [Provider examples and migration](docs/AI_MODES.md).
 
 ## Optional Muse demo
 
