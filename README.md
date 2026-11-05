@@ -10,8 +10,6 @@ Run Bypass as a native Muse Code plugin or a standalone CLI on macOS, Linux, and
 
 ## Watch the demo
 
-[![Watch the Bypass for Muse Code product demo on YouTube](docs/assets/bypass-muse-demo-cover.svg)](https://www.youtube.com/watch?v=xFGu4fIHubo)
-
 **Muse Code plugin + standalone CLI.** [Watch the full product demo on YouTube →](https://www.youtube.com/watch?v=xFGu4fIHubo)
 
 ## Choose your experience
@@ -149,23 +147,19 @@ To return later, use `/bypass:start`.
 
 For a running app, supply its URL and choose its environment if unknown. Bypass shows one compact testing plan with **Approve**, **Decline**, and **Custom instructions**. Approve confirms that you control the app and authorize the displayed paths, methods, request rate and expiry. The audit then starts immediately with that exact plan and shows live progress; there is no second scope questionnaire or start confirmation. Custom instructions lets you change the plan before approval. Accounts are optional for anonymous checks; authenticated checks need usable test identities.
 
-<details>
-<summary>Project setting: domain ownership verification</summary>
-
-Domain verification is **off** unless a project explicitly enables it. Explicit app-control and scope approval is still required. To require proof, tell Muse Code “Require DNS ownership verification for this project” or “Use HTTPS-file verification.” Bypass updates the project setting and shows only the required extra step. In the CLI, use **Settings → Domain ownership verification**, or:
-
 Setup starts the selected first audit after the required source and app details are ready. For later audits, use `/bypass:discover` for SAST or policy discovery, `/bypass:review` for source review, or `/bypass:blackbox` for a running-app audit. See the examples below.
 
-<details>
-<summary>Updating, permissions, and model privacy</summary>
+### Project setting: domain ownership verification
+
+Domain verification is **off** unless a project explicitly enables it. Explicit app-control and scope approval is still required. To require proof, tell Muse Code “Require DNS ownership verification for this project” or “Use HTTPS-file verification.” Bypass updates the project setting and shows only the required extra step. In the CLI, use **Settings → Domain ownership verification**.
+
+### Updating, permissions, and model privacy
 
 Rerun the installer to update or repair, then start a **new Muse Code session**. An open session keeps its loaded package. `muse plugins update bypass` only refreshes the recorded local source and may not download a newer public release.
 
 If permissions remain pending, open `/plugins` → **Installed → Bypass for Muse Code → Runtime**, review the MCP server and session hook, then start a new session.
 
 Muse Code owns plugin reasoning and billing. Bypass cannot verify subscription billing through MCP; check Muse Code account/settings. For confidential or personal content, use Standard mode with Contributor mode off. Bypass does not change these settings. [Model and privacy details](docs/AI_MODES.md).
-
-</details>
 
 ## Ways to run Bypass
 
