@@ -86,7 +86,7 @@ def invoke(operation, arguments, engine=None):
         elif operation == 'report':
             run = engine.status(arguments['run'])
             state = engine.read(arguments['run'])
-            engine.render(state)
+            engine.render(state,arguments.get('projectDetails'))
             result = response(operation, run['status'], run['message'], run=run, artifacts=[item for item in engine.artifacts(arguments['run']) if item['path'] == 'report.' + arguments.get('format', 'json')])
         elif operation == 'signals':
             path = engine.directory(arguments['run']) / 'signals.json'

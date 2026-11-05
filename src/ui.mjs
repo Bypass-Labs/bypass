@@ -97,6 +97,7 @@ export function printResult(data,{interactive=false}={}){
   if(!data)return;
   const value=redact(data);
   if(value.error){console.error(paint('31',value.error));if(value.details&&Object.keys(value.details).length)console.error(JSON.stringify(value.details,null,2));return;}
+  if(value.kind==='scanner-report'){console.log(value.text);return;}
   if(value.kind==='blackbox-audit'){console.log(blackboxSummary(value,{color})+blackboxOutcomeText(value));return;}
   if(value.run?.kind==='scan'&&value.run.result?.blackbox){
     const audit={kind:'blackbox-audit',...value.run.result.blackbox};

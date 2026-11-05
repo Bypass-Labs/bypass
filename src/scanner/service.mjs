@@ -25,6 +25,20 @@ function continuation(operation,input,result) {
   return terminal(result.run)?{tool:'bypass_discover_report',arguments:{run,format:'md'}}:{tool:'bypass_discover_status',arguments:{run}};
 }
 
+async function readReport(client,input,result,signal) {
+  const format=input.format||'json',artifact=result.artifacts?.find(item=>item.path===`report.${format}`);
+  need(artifact,`Scanner report.${format} is not available in this run.`,3);
+  const pages=[];
+  let offset=0;
+  do{
+    const page=await client.call('artifact',{run:input.run,path:artifact.path,offset},{signal});
+    need(page.status!=='error',page.message,3);
+    need(typeof page.text==='string'&&Number.isInteger(page.nextOffset)&&(page.nextOffset===-1||page.nextOffset>offset),'Invalid scanner report artifact page.',3);
+    pages.push(page.text);offset=page.nextOffset;
+  }while(offset>=0);
+  return {...result,kind:'scanner-report',format,text:pages.join('')};
+}
+
 export function discoveryPlan(options={},config={}) {
   const evaluate=config.evaluation!=='off';
   const reasoning=config.detectors?.includes('policy')||evaluate;
@@ -209,14 +223,16 @@ export async function scannerService(key,args=[],options={},context={}) {
     try{return outcome({...await client.call('rules',input,{signal:context.signal}),ai});}finally{await client.close();}
   }
   const root=selectedRoot(options,context);
+  const projectDetails={name:read(root).project.name,path:root};
   let input, resources, sarif,config;
   if(operation==='start'){
     const configured=configuration(root,options);resources=configured.resources;config=configured.config;
     if(options.sarif){sarif=path.resolve(root,options.sarif);need(fs.statSync(sarif).isFile()&&!fs.lstatSync(sarif).isSymbolicLink(),'SARIF input must be a regular file.',2);}
-    input={config,executionMode:executionMode(),importSarif:!!sarif};
+    input={config,executionMode:executionMode(),importSarif:!!sarif,projectDetails};
   }else{
     ({config,resources}=runConfiguration(root,args[0]));
     input={run:args[0],...Object.fromEntries(['format','path','offset','cursor','limit','task','sourceRevision','result','operation','arguments'].filter(name=>options[name]!==undefined).map(name=>[name,['offset','cursor','limit'].includes(name)?Number(options[name]):options[name]]))};
+    if(operation==='report')input.projectDetails=projectDetails;
   }
   context={...context,detector:config.detectors.includes('codeql')?'codeql':'policy'};
   if(options['debug-log'])context={...context,debugRoot:root,debugOptions:{raw:!!options['debug-raw']}};
@@ -241,8 +257,9 @@ export async function scannerService(key,args=[],options={},context={}) {
       if(session.owned.has(result.run.id))await session.client.pumpBuild?.(result.run);
     }
     if(!host&&executing&&result.run&&result.status!=='error')result=await waitForRun(session,result,context);
+    if(!host&&operation==='report'&&result.status!=='error')result=await readReport(session.client,input,result,context.signal);
     const code=result.status==='cancelled'?130:['incomplete','failed','interrupted','error','not_implemented'].includes(result.status)?3:0;
-    const nextAction=continuation(operation,input,result);
+    const nextAction=result.kind==='scanner-report'?null:continuation(operation,input,result);
     const executionAI=reasoning&&!host?{mode:'standalone-api',reasoning:'Policy discovery and source-only evaluation use the explicitly configured provider. Source-based verdicts are not runtime reproduction.'}:ai;
     return outcome({...result,ai:executionAI,...(result.run?{runId:result.run.id}:{}),...(nextAction?{nextAction}:{})},code);
   }finally{

@@ -552,19 +552,61 @@ test('capabilities inspect current image readiness without building or selecting
   }
 });
 
-test('report continuation reads its artifact and finishes after the last page', async () => {
+test('host report continuation reads its artifact and finishes after the last page', async t => {
+  t.after(closeScannerSessions);
   const root=temp();await execute('init',[root]);
   const client=deterministicClient(root,[]), initial=await client.call('status',{});
   const context={scannerConnect:async()=>({...client,call:async(operation,input)=>{
     if(operation==='artifact')return {protocolVersion,operation,status:'ready',modelCalls:0,message:'',text:'report',nextOffset:input.offset? -1:12000};
     return {...await client.call(operation,input),artifacts:[{path:'report.md',bytes:12006}]};
   }})};
-  const report=await execute('discover report',[initial.run.id],{project:root,format:'md'},context);
+  const report=await inExecutionMode('muse-host',()=>execute('discover report',[initial.run.id],{project:root,format:'md'},context));
   assert.deepEqual(report.nextAction,{tool:'bypass_discover_artifact',arguments:{run:initial.run.id,path:'report.md',offset:0}});
-  const first=await execute('discover artifact',[initial.run.id],{project:root,path:'report.md'},context);
+  const first=await inExecutionMode('muse-host',()=>execute('discover artifact',[initial.run.id],{project:root,path:'report.md'},context));
   assert.equal(first.nextAction.arguments.offset,12000);
-  const last=await execute('discover artifact',[initial.run.id],{project:root,path:'report.md',offset:12000},context);
+  const last=await inExecutionMode('muse-host',()=>execute('discover artifact',[initial.run.id],{project:root,path:'report.md',offset:12000},context));
   assert.equal(last.nextAction,undefined);
+});
+
+test('standalone scanner report reads every artifact page and preserves run status',async t=>{
+  for(const format of ['md','json'])for(const status of ['completed','incomplete'])await t.test(`${format}/${status}`,async()=>{
+    const root=temp();await execute('init',[root]);
+    const client=deterministicClient(root,[]),initial=await client.call('status',{});
+    const text=format==='md'?'# Security discovery report\n'+('Evidence \u20ac\n'.repeat(3000))+'## Run diagnostics\nEND_OF_REPORT':
+      JSON.stringify({run:initial.run,cases:[{rationale:'Evidence \u20ac'.repeat(3000)}]},null,2);
+    const pages=[text.slice(0,11000),text.slice(11000,22000),text.slice(22000)];
+    const offsets=[0,Buffer.byteLength(pages[0]),Buffer.byteLength(pages[0]+pages[1])];
+    const calls=[];
+    const context={scannerConnect:async()=>({...client,call:async(operation,input,options)=>{
+      calls.push({operation,input,options});
+      if(operation==='artifact'){
+        const index=offsets.indexOf(input.offset);
+        assert.ok(index>=0);
+        return {protocolVersion,operation,status:'ready',modelCalls:0,message:'',text:pages[index],nextOffset:index===2?-1:offsets[index+1]};
+      }
+      return {...await client.call(operation,input),status,run:{...initial.run,status},artifacts:[{path:`report.${format}`,bytes:Buffer.byteLength(text)}]};
+    }})};
+    const result=await execute('discover report',[initial.run.id],{project:root,...(format==='md'?{format}:{})},context);
+    assert.equal(result.kind,'scanner-report');assert.equal(result.format,format);assert.equal(result.text,text);
+    assert.equal(result.status,status);assert.equal(result.exitCode,status==='incomplete'?3:0);
+    assert.equal(result.nextAction,undefined);
+    assert.deepEqual(calls[0].input.projectDetails,{name:path.basename(root),path:root});
+    assert.deepEqual(calls.filter(c=>c.operation==='artifact').map(c=>c.input),offsets.map(offset=>({run:initial.run.id,path:`report.${format}`,offset})));
+  });
+});
+
+test('standalone scanner report surfaces missing artifacts, read failures, and invalid paging',async t=>{
+  for(const failure of ['missing','read','paging'])await t.test(failure,async()=>{
+    const root=temp();await execute('init',[root]);
+    const client=deterministicClient(root,[]),initial=await client.call('status',{});
+    const context={scannerConnect:async()=>({...client,call:async(operation,input)=>{
+      if(operation==='artifact')return failure==='read'?{status:'error',message:'Report artifact read failed.'}:
+        {status:'ready',text:'report',nextOffset:input.offset};
+      return {...await client.call(operation,input),artifacts:failure==='missing'?[]:[{path:'report.md',bytes:6}]};
+    }})};
+    await assert.rejects(execute('discover report',[initial.run.id],{project:root,format:'md'},context),
+      failure==='missing'?/report.*not available/i:failure==='read'?/Report artifact read failed/:/Invalid.*report.*page/i);
+  });
 });
 
 test('Muse can inspect capabilities without provider setup and rejects task calls for unknown runs',async t=>{

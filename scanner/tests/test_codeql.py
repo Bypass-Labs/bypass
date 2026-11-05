@@ -318,6 +318,24 @@ else: raise SystemExit(10)
         self.assertEqual(len(page['rules']),1);self.assertEqual(page['nextCursor'],1)
         self.assertEqual(len(invoke('signals',{'run':run},self.engine)['signals']),1)
 
+    def test_report_distinguishes_selected_rules_from_completed_query_runs(self):
+        self.source.joinpath('a.py').write_text('VULNERABLE')
+        self.source.joinpath('a.ts').write_text('VULNERABLE')
+        (self.control/'query-fail-python').touch()
+        run=self.start();self.wait(run)
+        report=json.loads((self.engine.directory(run)/'report.json').read_text())
+        analysis=report['analysis']['static']
+        self.assertEqual(analysis['mode'],'codeql')
+        self.assertEqual(analysis['selectedRules'],2)
+        self.assertEqual(analysis['completedQueryRules'],1)
+        languages={entry['language']:entry for entry in analysis['languages']}
+        self.assertEqual(languages['python']['completedQueryRules'],0)
+        self.assertEqual(languages['javascript']['completedQueryRules'],1)
+        markdown=(self.engine.directory(run)/'report.md').read_text()
+        self.assertIn('| Static rules selected | 2 |',markdown)
+        self.assertIn('| Static rules in completed query runs | 1 |',markdown)
+        self.assertIn('## Executed analysis',markdown)
+
     def test_sarif_import_and_invalid_locations_keep_raw_evidence(self):
         self.source.joinpath('a.py').write_text('safe')
         document={'version':'2.1.0','runs':[{'tool':{'driver':{'name':'Other','rules':[{'id':'r'}]}},'results':[
