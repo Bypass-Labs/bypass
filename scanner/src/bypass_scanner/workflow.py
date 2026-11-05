@@ -554,45 +554,80 @@ class Workflow:
                   'selection': 'rule-selection.json' if (directory / 'rule-selection.json').exists() else None,
                   'notice': 'Original detector signals are retained unchanged. Evaluation verdicts are source-based, not runtime reproductions. Unresolved and unevaluated cases are not safety claims. Complete security coverage is not established.'}
         atomic(directory / 'report.json', report)
-        lines = ['# Security discovery report', '', f"Run: {state['id']}", f"Status: {state['status']}",
-                 f"Source revision: {state['sourceRevision']}", f"Signals: {len(signals)}",
-                 f"Independent API request attempts: {state.get('reasoning',{}).get('independentModelRequests',state.get('modelCalls',0))}",
-                 'Muse host reasoning usage: unknown' if state.get('reasoning',{}).get('hostReasoning') else 'Muse host reasoning: not used',
-                 '', report['notice'], '', '## Coverage', '']
-        if state.get('policy'):lines.append('- Policy discovery: '+json.dumps(state['policy'])+'; see policy/coverage.json for reviewed and deferred work.')
-        lines.extend(f"- {entry['language']}: {entry['status']}; {entry.get('message', '')}" for entry in state['languages'])
+        confirmed = [case for case in cases if case['outcome']=='confirmed']
+        if any(not case.get('evaluation') for case in confirmed):
+            raise ValueError('A confirmed report case is missing its source evaluation.')
+        severity_order = {'critical':0,'high':1,'medium':2,'low':3,'info':4,'unknown':5}
+        confirmed.sort(key=lambda case:severity_order.get(case['evaluation']['severity'],5))
+        analysed_ids = {identity for case in cases if case.get('evaluation') for identity in case['signalIds']}
+        unanalysed = sum(item['id'] not in analysed_ids for item in signals)
+        unresolved = sum(case['outcome']=='needs_review' and bool(case.get('evaluation')) for case in cases)
+        lines = ['# Security scan report', '', report['notice'], '', '## Summary', '',
+                 '| Outcome | Count |', '| --- | ---: |',
+                 f'| Source-confirmed findings | {len(confirmed)} |',
+                 f"| Refuted | {sum(case['outcome']=='refuted' for case in cases)} |",
+                 f'| Unresolved after analysis | {unresolved} |',
+                 f'| Not analysed | {unanalysed} |',
+                 f'| Total candidate signals | {len(signals)} |', '',
+                 'Not analysed includes candidates marked `needs_review` without an evidence-backed evaluation.',
+                 'Only confirmed findings are detailed below. Full records for every outcome remain in '
+                 '`report.json` and `evaluation/cases.json`.', '', '## Confirmed findings', '']
+        if not confirmed:
+            lines.append('No source-confirmed findings.')
+        by_id = {item['id']:item for item in signals}
+        for number, case in enumerate(confirmed,1):
+            evaluation = case['evaluation']
+            related = [by_id[identity] for identity in case['signalIds']]
+            metadata = related[0].get('ruleMetadata',{})
+            description = metadata.get('shortDescription')
+            titles = [description.get('text') if isinstance(description,dict) else None,
+                      metadata.get('title'), related[0]['suspectedIssue']]
+            title = next(value for value in titles if isinstance(value,str) and value.strip())
+            title = ' '.join(title.split())
+            lines.extend(['', '---', '', f'### Finding {number}: {title}', '',
+                          f"**Severity:** {evaluation['severity'].replace('_',' ').title()}", '',
+                          '**Issue**', '', evaluation['rationale'], '',
+                          '**Impact**', '', evaluation['impact'], '',
+                          '**Recommended next action**', '', evaluation['nextAction'], '',
+                          '#### Details', '', '**Affected locations**', ''])
+            locations = sorted({(ref['path'],ref['startLine'],ref['endLine'])
+                                for item in related for ref in item['locations']})
+            for filename, start, end in locations:
+                location = f'{filename}:{start}' if start==end else f'{filename}:{start}-{end}'
+                lines.append(f'- `{location}`')
+            lines.extend(['', '**Supporting evidence**', ''])
+            lines.extend(f"- `{ref['path']}:{ref['startLine']}-{ref['endLine']}`" for ref in evaluation['evidence'])
+            lines.extend(['', '**Severity explanation**', '', evaluation['severityRationale'],
+                          '', '**Counterevidence considered**', '', evaluation['counterevidence']])
+            for label, key in (('Prerequisites','prerequisites'),('Open questions','openQuestions')):
+                if evaluation[key]:
+                    lines.extend(['', '**'+label+'**', ''])
+                    lines.extend('- '+item for item in evaluation[key])
+            if case.get('reason'):
+                lines.extend(['', '**Limitation**', '', case['reason']])
+            rules = ', '.join('`'+name+'`' for name in dict.fromkeys(item['ruleId'] for item in related))
+            detectors = ', '.join(dict.fromkeys('CodeQL' if item['detector']=='codeql' else item['detector'].title() for item in related))
+            lines.extend(['', f'**Detector:** {detectors}  ', f'**Rule:** {rules}  ',
+                          f"**Case reference:** `{case['id']}`"])
+        lines.extend(['', '---', '', '## Scan details', '',
+                      f"Run: `{state['id']}`  ", f"Status: **{state['status']}**  ",
+                      f"Source revision: `{state['sourceRevision']}`  ",
+                      f"Independent API request attempts: {state.get('reasoning',{}).get('independentModelRequests',state.get('modelCalls',0))}",
+                      'Muse host reasoning usage: unknown' if state.get('reasoning',{}).get('hostReasoning') else 'Muse host reasoning: not used'])
+        policy = state.get('policy')
+        if policy:
+            lines.extend(['', f"Policy tasks completed: {policy['finished']}/{policy['tasks']}. "
+                          f"Deferred policy investigations: {policy['deferred']}. See `policy/coverage.json` for coverage gaps."])
+        lines.extend(f"- {entry['language']}: {entry['status']}; {entry.get('message','')}" for entry in state['languages'])
         if state.get('unsupportedLanguages'):
-            lines.append('- Unsupported/deferred: ' + ', '.join(state['unsupportedLanguages']))
+            lines.append('- Unsupported/deferred languages: '+', '.join(state['unsupportedLanguages']))
         scope = state.get('scope')
         if scope:
-            lines.extend(['', '## Analysis scope', '',
-                          f"Eligible files: {scope['analysisFiles']}; build-context files: {scope['contextFiles']}; excluded files: {scope['excludedFiles']}.",
+            lines.extend(['', f"Eligible files: {scope['analysisFiles']}; build-context files: {scope['contextFiles']}; excluded files: {scope['excludedFiles']}.",
                           f"Include tests: {scope['includeTests']}; examples/benchmarks: {scope['includeExamples']}; generated/vendor copies: {scope['includeGenerated']}.",
-                          f"Filtered detector alerts: {scope['filteredSignals']}. See analysis-scope.json and filtered-signals.json artifacts.",
-                          'Build context is retained; compiled builds can extract excluded inputs. Candidate alerts are filtered by primary location. These file counts do not establish extraction coverage.'])
-        evaluated_ids = {signal for case in cases if case['outcome']!='not_run' for signal in case['signalIds']}
-        lines.extend(['', '## Unevaluated signals', ''])
-        lines.extend(f"- `{item['ruleId']}`: {item['suspectedIssue'].replace(chr(10), ' ')} (origin: {item['origin']['artifact']})"
-                     for item in signals if item['id'] not in evaluated_ids)
-        for outcome, title in (('confirmed','Confirmed - source evidence only'),('refuted','Refuted'),('needs_review','Needs review')):
-            lines.extend(['', '## '+title, ''])
-            for case in cases:
-                if case['outcome']!=outcome:
-                    continue
-                evaluation=case.get('evaluation')
-                lines.append(f"- Case `{case['id']}`; signals: {', '.join(case['signalIds'])}")
-                if evaluation:
-                    lines.extend([f"  - Severity: {evaluation['severity']} - {evaluation['severityRationale']}",
-                                  '  - Rationale: '+evaluation['rationale'],
-                                  '  - Counterevidence: '+evaluation['counterevidence'],
-                                  '  - Impact: '+evaluation['impact'],
-                                  '  - Prerequisites: '+'; '.join(evaluation['prerequisites']),
-                                  '  - Open questions: '+'; '.join(evaluation['openQuestions']),
-                                  '  - Next action: '+evaluation['nextAction']])
-                    lines.extend(f"  - Evidence: {ref['path']}:{ref['startLine']}-{ref['endLine']} ({ref['contentHash']})" for ref in evaluation['evidence'])
-                if case.get('reason'):
-                    lines.extend(['  - Limitation: '+case['reason'], '  - Next action: '+case.get('nextAction','Review unresolved questions.')])
-        lines.extend(['', '## Run diagnostics', '', state['message']])
+                          f"Filtered detector alerts: {scope['filteredSignals']}. See `analysis-scope.json` for source selection.",
+                          'File counts do not establish extraction or complete security coverage.'])
+        lines.extend(['', '**Run note**', '', state['message']])
         (directory / 'report.md').write_text('\n'.join(lines) + '\n')
 
     def artifacts(self, run):

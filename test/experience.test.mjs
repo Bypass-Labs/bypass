@@ -120,6 +120,19 @@ test('completed host scanner output distinguishes host reasoning from independen
   assert.ok(text.includes(`bypass discover report ${id} --format md`));assert.doesNotMatch(text,/Discovery incomplete/);
 });
 
+test('scanner report output prints the requested document instead of the run summary',t=>{
+  const output=[];t.mock.method(console,'log',text=>output.push(text));
+  const id='scan_18aa42c25cc7467c84be5a64';
+  for(const format of ['md','json']){
+    const text=format==='md'?'# Security discovery report\n\n## Confirmed - source evidence only\nEvidence: app.js:1-2\n':
+      JSON.stringify({run:{id,status:'incomplete'},cases:[{outcome:'confirmed'}]},null,2);
+    output.length=0;
+    printResult({kind:'scanner-report',format,text,status:'incomplete',exitCode:3,run:{id,status:'incomplete'}});
+    assert.deepEqual(output,[text]);
+    assert.doesNotMatch(output.join('\n'),/Discovery incomplete|Next: bypass discover report/);
+  }
+});
+
 test('walkthrough advances on Enter through real proof, independent pass/fail, scheduler and cleanup',async()=>{
   const root=temp(),output=[],prompts=[];
   const result=await onboard({flow:'demo',dir:root},[],{

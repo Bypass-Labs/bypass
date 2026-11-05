@@ -212,8 +212,12 @@ leases. Failed SAST queries are retried without discarding accepted evaluations;
 new signals get new cases within the original evaluation budget. Expired stage
 budgets require a new scan with explicit limits.
 
-JSON/Markdown reports separate confirmed, refuted, unresolved, and unevaluated
-cases, with severity rationale and evidence. Inspect `evaluation/cases.json`,
+Markdown reports list only confirmed findings, ordered by evaluated severity.
+Each finding separates the issue, impact, and next action from location/evidence
+details, severity rationale, counterevidence, and prerequisites. Summary counts
+cover confirmed, refuted, unresolved-after-analysis, and not-analysed candidates;
+the latter includes `needs_review` cases without an evidence-backed evaluation.
+JSON reports retain all signals and cases unchanged. Inspect `evaluation/cases.json`,
 `evaluation/coverage.json`, and evaluation submissions/evidence artifacts.
 `signals` pages link candidates to their cases. Any unresolved case or discovery
 failure keeps the overall run incomplete; completed evaluation never establishes
