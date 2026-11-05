@@ -1,6 +1,6 @@
 # Bypass: Muse Code Security Plugin and Standalone CLI
 
-**Test code and running apps with the Muse Code plugin or the CLI powered by Meta Model API or local Muse models.**
+**Built by the Bypass Labs team for the Startup Track of the Meta Global AI Developer Hackathon.**
 
 Bypass adds application security testing to Muse Code and provides a standalone CLI. Muse guides source and running-app investigation; Bypass enforces approved scope, records evidence, and turns supported proofs into repeatable security tests.
 
