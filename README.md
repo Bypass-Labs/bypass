@@ -8,7 +8,7 @@ Use Bypass's native Muse Code plugin or standalone CLI on macOS, Linux, and Wind
 
 ## Watch the demo
 
-**Muse Code plugin + standalone CLI.** [Watch the full product demo on YouTube →](https://www.youtube.com/watch?v=xFGu4fIHubo)
+**Muse Code plugin + standalone CLI.** [Watch the full product demo on YouTube →](https://www.youtube.com/watch?v=KcJL0mmJr2U)
 
 ## Choose your experience
 
@@ -82,7 +82,7 @@ For the startup track, [Meta emphasizes](https://dev.meta.ai/events/global-hacka
 
 | Area | What to inspect | Where to look |
 | --- | --- | --- |
-| **Impact** | Security checks follow development from the Muse session through an approved running app, saved regressions, CI, deployment verification, and future features. The CLI and MCP surface extend the workflow beyond Muse. | [Product demo](https://www.youtube.com/watch?v=xFGu4fIHubo) · [Security context](docs/SECURITY_MEMORY.md) · [GitHub replay](docs/GITHUB_AGENT.md) |
+| **Impact** | Security checks follow development from the Muse session through an approved running app, saved regressions, CI, deployment verification, and future features. The CLI and MCP surface extend the workflow beyond Muse. | [Product demo](https://www.youtube.com/watch?v=KcJL0mmJr2U) · [Security context](docs/SECURITY_MEMORY.md) · [GitHub replay](docs/GITHUB_AGENT.md) |
 | **Meta AI tooling** | The plugin uses the active Muse model through skills, commands, MCP tools, and a session hook. The CLI and GitHub agent use Meta Model API; a compatible local Muse Spark Open path is available. Model decisions guide investigation while proof remains independently checked. | [Plugin commands](docs/PLUGIN_COMMANDS.md) · [MCP implementation](src/mcp.mjs) · [AI modes](docs/AI_MODES.md) |
 | **Technical depth** | CodeQL and policy discovery, cited source leads, scoped HTTP and browser checks, verified identities when supplied, evidence replay, coverage accounting, and model-free regression export. | [Scanner](scanner/README.md) · [Black-box evidence](docs/BLACKBOX_AUDIT.md) · [Audit evaluation](docs/AUDIT_EVALUATION.md) |
 | **Demo** | A Muse investigation, live proof, fix, red/green replay, configured future check, and next-feature security context can be shown in one workflow. | [Full demo](https://www.youtube.com/watch?v=xFGu4fIHubo) · [First-audit walkthrough](docs/WALKTHROUGH.md) |
