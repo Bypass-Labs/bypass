@@ -2,9 +2,9 @@
 
 **Test code and running apps with the Muse Code plugin or the CLI powered by Meta Model API or local Muse models.**
 
-Bypass turns Muse Code into an application security agent. It combines white-box source review, gray-box investigation informed by code and test identities, and black-box testing of an approved running app. Muse chooses what to investigate next. Bypass enforces the scope, runs the checks, and confirms supported findings from recorded behavior. Supported proofs become repeatable security tests that run without a model and give Muse app-specific context for the next feature.
+Bypass adds application security testing to Muse Code and provides a standalone CLI. Muse guides source and running-app investigation; Bypass enforces approved scope, records evidence, and turns supported proofs into repeatable security tests.
 
-Run Bypass as a native Muse Code plugin or a standalone CLI on macOS, Linux, and Windows. The plugin uses the active Muse session without a separate Bypass model key. The CLI supports Meta Model API or an explicitly configured compatible endpoint for self-hosted Muse Spark Open. Test a local app, preview, staging, or an authorized production deployment.
+Run Bypass as a native Muse Code plugin or standalone CLI on macOS, Linux, and Windows. The plugin uses the active Muse session; the CLI uses Meta Model API or a compatible endpoint for self-hosted Muse Spark Open or Muse Glimmer. Test a local app, preview, staging, or an authorized production deployment.
 
 [Watch demo](#watch-the-demo) · [How it works](#how-bypass-works-with-muse) · [What judges can verify](#what-judges-can-verify) · [Quick start](#start-in-muse-code) · [White-box](#white-box-source-review) · [Black-box](#black-box-audit) · [CLI demo](#standalone-cli) · [GitHub agent](#github-security-agent) · [Docs](#documentation)
 
@@ -19,13 +19,13 @@ Run Bypass as a native Muse Code plugin or a standalone CLI on macOS, Linux, and
 | **Standalone CLI** | A Meta Model API key, or a local server running Muse Spark Open or Muse Glimmer. Muse Code is not required. | `curl -fsSL https://bypasslabs.ai/install \| bash` |
 | **Muse Code plugin** | Muse Code installed, opened, and signed in first. | `curl -fsSL https://bypasslabs.ai/install/muse \| bash` |
 
-Windows uses the matching `install.ps1` or `install/muse.ps1` URL. The standalone wizard connects Meta Model API authentication and a Muse model before it asks for your application.
+Windows uses the matching `install.ps1` or `install/muse.ps1` URL. The standalone wizard lets you choose Meta Model API or a local Muse server before connecting your application.
 
 ## How Bypass works with Muse
 
 Bypass is a native plugin for **[Muse Code](https://dev.meta.ai/docs/muse-code)**, Meta's coding agent. It adds security skills, slash commands, MCP tools, and saved security context to your existing coding session. Muse Code investigates and explains; Bypass runs scoped operations and keeps the evidence.
 
-Start with the Muse Code plugin. A **standalone CLI** is also available for terminal workflows, and the GitHub integration brings reviews and saved checks into CI. Assessments report findings, recommend fixes, and create supported regression tests; editing application code requires a separate request.
+The standalone CLI and GitHub integration bring reviews and saved checks into terminal workflows and CI. Assessments report findings, recommend fixes, and create supported regression tests; editing application code requires a separate request.
 
 ![Bypass architecture: Muse Code plugin and CLI model access, CodeQL SAST, source-informed testing, black-box DAST, finding validation, regression replay, and GitHub PR review](docs/assets/muse-security-loop.svg)
 
@@ -54,8 +54,6 @@ These are bounded test shapes, not exhaustive coverage of each class. For exampl
 
 ![Before Bypass Muse: a developer overwhelmed by scanner findings. After Bypass Muse: a calmer review with source-to-sink context.](docs/assets/bypass-muse-before-after.png)
 
-CodeQL supplies established static rules. Muse adds app-specific reasoning: what a route is for, which account owns the data, what a response suggests, and which safe follow-up to try. The live engine then tests approved paths with owner, other-account, anonymous, invalid-token, baseline, and canary controls where applicable. It preserves the evidence and retests the fix.
-
 | The developer's question | Bypass's answer |
 | --- | --- |
 | Is this code pattern exploitable in this app? | Keep the source signal separate; test an approved running target before claiming live impact. |
@@ -63,8 +61,6 @@ CodeQL supplies established static rules. Muse adds app-specific reasoning: what
 | Did the patch fix the issue without breaking intended access? | Replay the original proof and the authorized behavior controls. |
 | Will the issue return after the next feature or deployment? | Save supported proofs as Node regressions; replay approved checks locally, in CI, after deployment, or on a configured schedule. |
 | Will Muse remember the app's security rules while writing code? | Retrieve verified findings, saved checks, and source freshness through plugin context and typed tools. |
-
-The handoff between stages is the product loop: source evidence guides scoped live testing; a proved issue becomes a regression; the result returns to Muse before the next edit. The same evidence and replay are available through the CLI, MCP, and GitHub workflows.
 
 ## Secure by default as the app changes
 
@@ -74,26 +70,24 @@ The handoff between stages is the product loop: source evidence guides scoped li
 4. **Keep checking.** Supported proofs become saved and exportable Node tests. Replay them locally, in CI, after a verified deployment, or on a configured daily or six-hour GitHub schedule without model calls.
 5. **Build the next feature.** Muse receives relevant local security context. Stale citations and incomplete checks remain labeled.
 
-The GitHub agent uses Meta Model API to review each PR's immutable source revision and cite file-and-line concerns. Approved live checks replay separately after deployment or on the configured schedule. PR concerns are report-only by default; teams can opt into a severity gate. [GitHub agent](docs/GITHUB_AGENT.md) · [Security context](docs/SECURITY_MEMORY.md).
+The GitHub agent cites source concerns in PR reviews; approved live checks replay separately after verified deployment or on a configured schedule. PR concerns are report-only by default. [GitHub agent](docs/GITHUB_AGENT.md) · [Security context](docs/SECURITY_MEMORY.md).
 
 ## Meta models do work a scanner cannot pre-script
 
 In the native plugin, the active Muse Code model reads bounded source and observed route facts, selects checks through typed MCP tools, interprets returned evidence, and decides the next step. That can be Muse Spark or Muse Wonder, depending on the developer's session. The plugin uses that session without a second model key.
 
-The CLI's Meta Model API profile defaults to `muse-spark-1.3` and accepts another supported model ID, including Muse Wonder. Muse Spark 1.3 Contributor is an explicit lower-cost onboarding choice. The GitHub PR agent also uses Meta Model API and defaults to `muse-spark-1.3`; teams can configure Muse Wonder. A compatible, key-protected local endpoint can serve Muse Spark Open or Muse Glimmer for the CLI. CodeQL queries, scope enforcement, proof verification, reporting, and saved-test replay do not depend on model verdicts. [AI modes](docs/AI_MODES.md).
-
-## Show the complete loop in three minutes
-
-Start with the real Muse plugin and an authorized app. Show the three testing perspectives, follow one model-selected lead into HTTP or browser evidence, and open the finding with its impact, proof status, and coverage. After an explicit fix request, replay the proof, then show a saved check failing when the bug is reintroduced. Finish with the configured GitHub replay and the local security context Muse sees before another feature. The invoice authorization demo is a training fixture, not the scope of the engine. [First-audit walkthrough](docs/WALKTHROUGH.md) · [Audit evaluation contract](docs/AUDIT_EVALUATION.md).
+The CLI and GitHub PR agent use Meta Model API; the CLI can also use a compatible local endpoint for Muse Spark Open or Muse Glimmer. Model decisions guide investigation, while CodeQL queries, scope enforcement, proof verification, reporting, and saved-test replay do not depend on model verdicts. [AI modes](docs/AI_MODES.md).
 
 ## What judges can verify
 
-| Area | Evidence in Bypass |
-| --- | --- |
-| **Impact** | Security checks follow development from the Muse session through an approved running app, saved regressions, CI, deployment verification, and future features. The CLI and MCP surface extend the workflow beyond Muse. |
-| **Meta AI tooling** | The plugin uses the active Muse model through skills, commands, MCP tools, and a session hook. The CLI and GitHub agent use Meta Model API; a compatible local Muse Spark Open path is available. Model decisions guide investigation while proof remains independently checked. |
-| **Technical depth** | CodeQL and policy discovery, cited source leads, scoped HTTP and browser checks, verified identities when supplied, evidence replay, coverage accounting, and model-free regression export. |
-| **Demo** | A Muse investigation, live proof, fix, red/green replay, configured future check, and next-feature security context can be shown in one workflow. |
+For the startup track, [Meta emphasizes](https://dev.meta.ai/events/global-hackathon) technical execution and whether a product holds up in production. This is a map to inspect Bypass, not Meta's official scoring rubric.
+
+| Area | What to inspect | Where to look |
+| --- | --- | --- |
+| **Impact** | Security checks follow development from the Muse session through an approved running app, saved regressions, CI, deployment verification, and future features. The CLI and MCP surface extend the workflow beyond Muse. | [Product demo](https://www.youtube.com/watch?v=xFGu4fIHubo) · [Security context](docs/SECURITY_MEMORY.md) · [GitHub replay](docs/GITHUB_AGENT.md) |
+| **Meta AI tooling** | The plugin uses the active Muse model through skills, commands, MCP tools, and a session hook. The CLI and GitHub agent use Meta Model API; a compatible local Muse Spark Open path is available. Model decisions guide investigation while proof remains independently checked. | [Plugin commands](docs/PLUGIN_COMMANDS.md) · [MCP implementation](src/mcp.mjs) · [AI modes](docs/AI_MODES.md) |
+| **Technical depth** | CodeQL and policy discovery, cited source leads, scoped HTTP and browser checks, verified identities when supplied, evidence replay, coverage accounting, and model-free regression export. | [Scanner](scanner/README.md) · [Black-box evidence](docs/BLACKBOX_AUDIT.md) · [Audit evaluation](docs/AUDIT_EVALUATION.md) |
+| **Demo** | A Muse investigation, live proof, fix, red/green replay, configured future check, and next-feature security context can be shown in one workflow. | [Full demo](https://www.youtube.com/watch?v=xFGu4fIHubo) · [First-audit walkthrough](docs/WALKTHROUGH.md) |
 
 **Push the Frontier:** Muse can test the security of the app it is building, carry forward what it proved, and check whether the next change respects those rules. [Meta hackathon themes](https://dev.meta.ai/events/global-hackathon) · [Hackathon build record](HACKATHON.md).
 
@@ -103,20 +97,7 @@ Start with the real Muse plugin and an authorized app. Show the three testing pe
 
 **Requires Muse Code installed, opened, and signed in first.** Install Muse Code from [Meta's official guide](https://dev.meta.ai/docs/muse-code), then run the Bypass plugin installer. You can select your application during setup; you do not need to start in its folder.
 
-<a id="docker-prerequisite"></a>
-
-**Prerequisite for SAST/policy discovery: a running Docker daemon.** The CodeQL/policy scanner runs inside a container, so `/bypass:discover`, `bypass discover`, `bypass scanner doctor`, standalone policy discovery, and standalone Docker-engine source review need Docker installed **and running** before the scan starts. Running-app testing, saved regression replay, discovery plans (`--plan`), and policy listing need no Docker. Bypass never auto-starts a Docker VM; when the daemon is unreachable, `scanner doctor` now reports why (`cli-missing`, `daemon-stopped`, `wrong-context`, or `daemon-unreachable`) with the exact commands to run.
-
-On macOS, the `docker` CLI alone is not enough — a Linux VM provides the daemon. With Colima (Homebrew):
-
-```bash
-brew install colima docker
-colima start                 # or: colima start <profile>
-docker context use colima    # named profile: docker context use colima-<profile>
-docker version               # must print a Server version
-```
-
-Docker Desktop also works: install it, open it, and wait until it reports running. On Linux, start Docker Engine (for example `sudo systemctl start docker`). Keep several GB of free disk for the first scanner image build. If `docker version` prints only client info, check `docker context ls` and `colima list` before retrying; a stopped profile or a context pointed at a missing socket blocks the scan even though Docker is "installed".
+Source discovery needs Docker; running-app testing and saved regression replay do not. See the [scanner prerequisites](scanner/README.md#prerequisites) when you choose a source scan.
 
 **1. Install the plugin.**
 
@@ -132,11 +113,11 @@ Windows PowerShell:
 irm https://bypasslabs.ai/install/muse.ps1 | iex
 ```
 
-**2. Choose the option to enable Bypass's permissions and open Muse Code (type `1` to accept and start muse code).**
+**2. Enable Bypass's permissions and open Muse Code.** Choose option `1` when prompted.
 
-<img width="729" height="347" alt="intalling muse code plugin" src="https://github.com/user-attachments/assets/709935c6-db0c-4686-a898-5233ec7fa7a2" />
+<img width="729" height="347" alt="Installing the Muse Code plugin" src="https://github.com/user-attachments/assets/709935c6-db0c-4686-a898-5233ec7fa7a2" />
 
-**3. Tell Muse Code what to review.** For example:
+**3. Tell Muse Code what to review.**
 
 Setup offers **Code only**, **Code + running app**, or **Running app only**. Supply a local source folder or Git URL for code; supply an app URL for live testing. 
 <img width="610" height="310" alt="select the scope" src="https://github.com/user-attachments/assets/0a40086f-6b86-4058-93a3-b403b4e9cdb4" />
@@ -177,7 +158,7 @@ After code, a running app, or both are connected, onboarding starts that securit
 
 ### Model configuration
 
-SAST, reports, and saved regression replay need no model key. Standalone policy discovery and AI source review need Docker and a Muse connection. The guided wizard uses a masked prompt. For noninteractive setup, load the Meta key privately and configure its environment-variable **name**, never its value:
+SAST discovery-only, reports, and saved regression replay need no model key. Default SAST evaluation, standalone policy discovery, and AI source review need a configured Muse model; source scans also need Docker. The guided wizard uses a masked prompt. For noninteractive Meta Model API setup, load the key privately and configure its environment-variable **name**, never its value:
 
 ```bash
 bypass model add review --provider meta --model muse-wonder-1.0 --secret-env MODEL_API_KEY --project /path/to/app
@@ -187,13 +168,7 @@ bypass discover --detector policy --project /path/to/app
 
 For the separate guided source-review workflow, use `bypass engine use docker --project /path/to/app`, then `bypass scan --mode code --project /path/to/app`.
 
-For **local Muse Glimmer without authentication**, see the [complete local source-review setup](docs/AI_MODES.md#local-muse-glimmer-source-review). It covers the localhost endpoint, placeholder token, explicit model-profile selection, real Docker engine, and a 180-second per-request timeout. For slower generation, [disable the timeout explicitly](docs/AI_MODES.md#disable-the-model-timeout) with `--timeout-ms 0`; cancellation remains available. Bypass connects directly to the local model server; Muse Code is not involved.
-
-If a no-timeout review reports a connection interruption, try the [buffered-mode diagnostic](docs/AI_MODES.md#connection-interrupted-despite-no-timeout) with `--stream false`. Streaming overhead can hit the separate response-size limit; server failures can produce the same error.
-
-For slow local Glimmer reasoning or reasoning-only responses, [select minimal reasoning explicitly](docs/AI_MODES.md#select-minimal-reasoning-for-local-glimmer) with `--effort minimal`. Custom profiles keep the server default unless an effort is selected.
-
-For CodeQL and bundled policy checks, use [local Glimmer discovery](docs/AI_MODES.md#codeql-and-policy-discovery-with-local-glimmer) with `bypass discover --detector both --project /path/to/app`. Unlike `scan --mode code`, this runs the scanner detectors and source-only evaluation by default; it does not reproduce vulnerabilities against a running app.
+For local Muse Glimmer, including a server without authentication, see the [complete local source-review setup](docs/AI_MODES.md#local-muse-glimmer-source-review). It covers the required placeholder credential, timeouts, connection diagnostics, and CodeQL/policy discovery. Bypass connects directly to the selected local server; Muse Code is not involved.
 
 The three canonical standalone audit modes are:
 
@@ -212,8 +187,8 @@ Run `bypass init /path/to/app` first if the application is not connected. The fi
 | Workflow | In Muse Code | Standalone | Requirements |
 | --- | --- | --- | --- |
 | Whitebox discovery and evaluation | `/bypass:discover` → SAST / Policy / Both | `bypass discover --detector <mode>` | Source + Docker; reasoning uses Muse Code or a CLI API profile; SAST discovery-only needs no model |
-| AI-assisted source review | `/bypass:review` | `bypass scan --mode code` | Muse Code session; CLI needs a provider key + Docker |
-| Running-app discovery and testing | `/bypass:blackbox` | `bypass blackbox <url>` | Approved target + scope; CLI needs an API key, Meta by default |
+| AI-assisted source review | `/bypass:review` | `bypass scan --mode code` | Muse Code session; CLI needs a configured model profile + Docker |
+| Running-app discovery and testing | `/bypass:blackbox` | `bypass blackbox <url>` | Approved target + scope; CLI needs a Meta API or local Muse model profile |
 | Combined source + running-app audit | `/bypass:start` → **Code + running app** | `bypass scan --mode combined` | Connected repository and approved target; the CLI also needs an API profile and Docker for source isolation |
 | Saved regression replay | `/bypass:tests` | `bypass test run --all` | Saved checks and valid target setup; no model calls |
 | GitHub PR review and smoke tests | Ask Muse Code to generate setup | `bypass ci init --agent` | GitHub Actions; Meta API key for source review |
@@ -223,6 +198,10 @@ With **Code + running app**, standalone `scan --mode combined` starts the cited 
 ## White-box source review
 
 ### Discover source security signals
+
+<a id="docker-prerequisite"></a>
+
+**Docker prerequisite:** SAST and policy discovery require a running Docker daemon. `bypass scanner doctor` can diagnose a missing Docker CLI, stopped daemon, or wrong context without a running daemon. Running-app tests, saved regression replay, plans, and policy listing do not need Docker. [Docker setup and recovery](scanner/README.md#prerequisites).
 
 Connect your source through `/bypass:start`, choose **Code only** or **Code + running app**, then run:
 
@@ -240,7 +219,7 @@ Choose **SAST**, **Policy**, or **Both** in Muse Code:
 
 SAST/Both use GitHub CodeQL under its [separate usage terms](https://github.com/github/codeql-cli-binaries/blob/main/LICENSE.md); Bypass's license does not grant CodeQL rights for private or commercial code.
 
-Docker must be running (see [Docker prerequisite](#docker-prerequisite)). First use prepares the selected image: Policy uses a lightweight Python runtime; SAST/Both download the pinned CodeQL toolchains. Later scans reuse the image. No host Python, host CodeQL, or separate plugin API key is required. If `bypass scanner doctor` reports blocked, follow its `docker.remediation` commands — for Colima that is typically `colima start <profile>` plus `docker context use colima-<profile>` — then re-run the doctor.
+First use prepares the selected image: Policy uses a lightweight Python runtime; SAST/Both download the pinned CodeQL toolchains. Later scans reuse the image. No host Python, host CodeQL, or separate plugin API key is required. If `bypass scanner doctor` reports blocked, follow its `docker.remediation` commands, then re-run the doctor.
 
 From the CLI, after [installation](#standalone-cli):
 
@@ -430,4 +409,4 @@ Author changes in `src/`, `scanner/`, and the plugin's commands, skill, manifest
 
 Use Bypass only on applications you own or are authorized to test. Source signals, confirmed HTTP proofs, blocked work, and untested coverage are different outcomes; none is a blanket security clearance.
 
-If you would like to became a maintainer, please contact opensource@bypasslabbs.ai
+If you would like to become a maintainer, open an issue or email info@bypasslabs.ai.

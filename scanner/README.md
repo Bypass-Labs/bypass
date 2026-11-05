@@ -12,14 +12,26 @@ Policy-only mode does not use CodeQL. [Dependency notices](../THIRD_PARTY_NOTICE
 
 ## Prerequisites
 
-A running Docker daemon is required for `scanner doctor`, `scanner prepare`,
-and every discovery run. Plans (`--plan`) and `scanner policies` need none.
-On macOS the `docker` CLI is only a client; start Docker Desktop
-(`open -a Docker`) or Colima (`colima start [profile]`, then
-`docker context use colima[-<profile>]`) and confirm `docker version` prints a
-Server version. Bypass never auto-starts a VM. When the daemon is unreachable,
-`scanner doctor` returns `docker.reason` plus exact `docker.remediation`
-commands for the detected setup instead of a generic "start Docker" message.
+A running Docker daemon is required for `scanner prepare` and every discovery
+run. Plans (`--plan`) and `scanner policies` need none. Run `bypass scanner doctor`
+even when Docker is missing or stopped; it reports `docker.reason` and exact
+`docker.remediation` commands for the detected setup.
+
+On macOS, the `docker` CLI is only a client. Start Docker Desktop
+(`open -a Docker`) or use Colima (Homebrew):
+
+```sh
+brew install colima docker
+colima start                 # or: colima start <profile>
+docker context use colima    # named profile: colima-<profile>
+docker version               # must print a Server version
+```
+
+On Linux, start Docker Engine (for example `sudo systemctl start docker`).
+Bypass never auto-starts a VM. Keep several GB of free disk for the first image
+build. If `docker version` prints only client info, check `docker context ls`
+and, on macOS, `colima list` before retrying; a stopped profile or wrong context
+can block the scan even though the CLI is installed.
 
 ## Select detectors and rules
 
