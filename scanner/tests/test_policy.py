@@ -85,6 +85,21 @@ class PolicyTests(unittest.TestCase):
             receipt=self.call('artifact',{'run':run,'path':path})
             self.assertIn('request.invoice_id',receipt['text'])
 
+    def test_report_counts_distinct_policy_rules_not_mapping_or_surface_tasks(self):
+        run=self.start({'includePolicies':['authz/object-access','authn/session-integrity']})
+        self.mapping(run);task=self.next(run)
+        self.assertEqual(self.submit(run,task,self.outcome(run,task))['status'],'completed')
+        report=json.loads((self.engine.directory(run)/'report.json').read_text())
+        analysis=report['analysis']['policy']
+        self.assertEqual(analysis['selectedRules'],2)
+        self.assertEqual(analysis['reviewedRules'],1)
+        self.assertEqual(analysis['completedTasks'],1)
+        self.assertEqual(report['analysis']['static']['mode'],'disabled')
+        markdown=(self.engine.directory(run)/'report.md').read_text()
+        self.assertIn('| Policy rules selected | 2 |',markdown)
+        self.assertIn('| Distinct policy rules reviewed | 1 |',markdown)
+        self.assertIn('not exhaustive coverage',markdown)
+
     def test_standalone_no_task_timeout_keeps_evidence_and_submission_valid_after_300_seconds(self):
         run=self.start(mode='standalone-api')
         task=self.call('next_task',{'run':run,'disableTaskTimeout':True})['task']

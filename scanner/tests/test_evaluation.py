@@ -199,6 +199,63 @@ class EvaluationTests(unittest.TestCase):
         self.assertIn('No source-confirmed findings.',markdown)
         self.assertNotIn('Unrestricted invoice read',markdown)
 
+    def test_report_contents_links_every_finding_in_severity_order(self):
+        run=self.start()
+        signals_path=self.w.directory(run)/'signals.json'
+        signals=json.loads(signals_path.read_text())
+        signals[1]['ruleMetadata']['shortDescription']={'text':'Invoice [owner] permission'}
+        atomic(signals_path,signals)
+        for severity in ('medium','high'):
+            task=self.task(run)
+            result=self.result(run,task)
+            result['severity']=severity
+            self.assertNotEqual(self.submit(run,task,result)['status'],'error')
+        markdown=(self.w.directory(run)/'report.md').read_text()
+        self.assertIn('## Contents',markdown)
+        self.assertLess(markdown.index('## Contents'),markdown.index('## Summary'))
+        self.assertIn('[1. Invoice \\[owner\\] permission - High](#finding-1)',markdown)
+        self.assertIn('[2. Unrestricted invoice read - Medium](#finding-2)',markdown)
+        for number in (1,2):
+            self.assertEqual(markdown.count(f'<a id="finding-{number}"></a>'),1)
+            self.assertIn(f'### Finding {number}:',markdown)
+        self.assertNotIn('](#finding-3)',markdown)
+
+    def test_project_identity_is_recorded_at_start_and_not_replaced_by_report_connection(self):
+        project={'name':'Invoice service','path':'/selected/invoice-service'}
+        run=self.w.start({'config':{'evaluation':'off'},'importSarif':True,'projectDetails':project})['id']
+        self.settle(run)
+        self.assertEqual(self.w.read(run)['projectDetails'],project)
+        response=self.call('report',run=run,format='md',projectDetails={'name':'Changed connection','path':'/different'})
+        self.assertNotEqual(response['status'],'error')
+        report=json.loads((self.w.directory(run)/'report.json').read_text())
+        self.assertEqual(report['project']['name'],'Invoice service')
+        self.assertEqual(report['project']['path'],'/selected/invoice-service')
+        self.assertEqual(report['project']['identitySource'],'scan-start')
+        markdown=(self.w.directory(run)/'report.md').read_text()
+        self.assertIn('## Analysed project',markdown)
+        self.assertIn('Invoice service',markdown)
+        self.assertIn('/selected/invoice-service',markdown)
+        self.assertNotIn('Changed connection',markdown)
+        self.assertIn('Source snapshot digest',markdown)
+        self.assertIn('python',markdown)
+
+    def test_historical_report_identifies_current_connection_and_does_not_claim_sarif_rules_ran(self):
+        run=self.start({'evaluation':'off'})
+        before=(self.w.directory(run)/'manifest.json').read_bytes()
+        response=self.call('report',run=run,format='md',projectDetails={'name':'Invoice service','path':'/selected/invoices'})
+        self.assertNotEqual(response['status'],'error')
+        report=json.loads((self.w.directory(run)/'report.json').read_text())
+        self.assertEqual(report['project']['identitySource'],'current-connection')
+        self.assertEqual(report['analysis']['static']['mode'],'sarif-import')
+        self.assertEqual(report['analysis']['static']['completedQueryRules'],0)
+        self.assertIsNone(report['analysis']['static']['selectedRules'])
+        markdown=(self.w.directory(run)/'report.md').read_text()
+        self.assertIn('Invoice service',markdown)
+        self.assertIn('not recorded when this scan started',markdown)
+        self.assertIn('SARIF import',markdown)
+        self.assertIn('No static-analysis rules were executed by this scan',markdown)
+        self.assertEqual((self.w.directory(run)/'manifest.json').read_bytes(),before)
+
     def test_standalone_evaluation_without_task_timeout_can_read_and_submit_after_300_seconds(self):
         run=self.start(mode='standalone-api')
         task=self.call('next_task',run=run,disableTaskTimeout=True)['task']

@@ -364,6 +364,16 @@ The summary distinguishes unresolved cases that were analysed from candidates
 that were not analysed, including `needs_review` cases without an evaluation.
 JSON reports and evaluation artifacts retain every candidate and verdict.
 
+The Markdown contents list links to every confirmed finding. Project details
+include the selected name/path, source snapshot digest, detected languages, and
+source-scope counts. New scans record name/path at start; historical reports
+label name/path obtained from the current connection rather than claiming those
+values were recorded at scan time. Analysis counts distinguish static rules
+selected from rules in completed query runs, and distinct policy rules reviewed
+from selected rules and repeated surface/follow-up tasks. Imported SARIF does
+not imply that this scanner executed any static rules. Missing historical rule
+counts are reported as not recorded, not inferred from the number of alerts.
+
 Explicit evaluation requires unchanged source and the recorded scanner runtime.
 Neither discovery nor evaluation tests the running app or proves exploitability.
 Unresolved evaluation cases can keep a run incomplete; zero signals or completed

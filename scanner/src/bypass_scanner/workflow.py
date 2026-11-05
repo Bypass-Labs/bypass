@@ -253,6 +253,8 @@ class Workflow:
                      'signalCount': 0, 'sourceReads': 0, 'languages': [], 'coverageComplete': False, 'evaluation': 'not_run',
                      'message': 'Preparing source snapshot.', 'createdAt': now(), 'updatedAt': now(), 'config': config,
                      'importSarif': importing, 'imageIdentity': os.environ.get('BYPASS_SCANNER_IMAGE', 'development')}
+            if 'projectDetails' in arguments:
+                state['projectDetails']=arguments['projectDetails']
             self.reasoning_timeout(state,arguments.get('disableReasoningTimeout',False))
             self.save(state)
             atomic(active,{'run':run})
@@ -537,7 +539,7 @@ class Workflow:
         if state.get('scope'):
             state['scope']['filteredSignals'] = sum(entry.get('filteredSignalCount', 0) for entry in state['languages'])
 
-    def render(self, state):
+    def render(self, state, project_details=None):
         directory = self.directory(state['id'])
         scope_file = directory / 'analysis-scope.json'
         if state.get('scope') and scope_file.is_file():
@@ -547,8 +549,33 @@ class Workflow:
         signals = json.loads((directory / 'signals.json').read_text()) if (directory / 'signals.json').exists() else []
         cases_path = directory/'evaluation/cases.json'
         cases = json.loads(cases_path.read_text()) if cases_path.is_file() else []
+        def recorded(name):
+            filename=contained(directory,name)
+            return json.loads(filename.read_text()) if filename.is_file() else None
+        snapshot_record=recorded('source-manifest.json')
+        rule_selection=recorded('rule-selection.json')
+        policy_selection=recorded('policy/selection.json')
+        policy_state=recorded('policy/state.json')
+        identity=state.get('projectDetails') or project_details
+        project={**(identity or {'name':self.source.name,'path':str(self.source)}),
+                 'identitySource':'scan-start' if state.get('projectDetails') else 'current-connection' if project_details else 'scanner-path',
+                 'snapshotFileCount':len(snapshot_record['files']) if snapshot_record else None,
+                 'languages':list(detect(snapshot_record['files'])[0]) if snapshot_record else None}
+        static_mode='sarif-import' if state.get('importSarif') else 'codeql' if 'codeql' in state['config'].get('detectors',['codeql']) else 'disabled'
+        static={'mode':static_mode,
+                'selectedRules':len(rule_selection['selected']) if rule_selection else 0 if static_mode=='disabled' else None,
+                'completedQueryRules':sum(entry['ruleCount'] for entry in state['languages'] if entry.get('queryComplete')) if rule_selection else 0 if static_mode!='codeql' else None,
+                'languages':[{'language':entry['language'],'selectedRules':entry['ruleCount'],
+                              'completedQueryRules':entry['ruleCount'] if entry.get('queryComplete') else 0}
+                             for entry in state['languages'] if 'ruleCount' in entry]}
+        policy_tasks=[task for task in policy_state['tasks'] if task['status']=='done' and task['definition']['phase']=='policy'] if policy_state else None
+        policy_analysis={'selectedRules':len(policy_selection['policies']) if policy_selection else None,
+                         'reviewedRules':len({task['definition']['policyId'] for task in policy_tasks}) if policy_tasks is not None else None,
+                         'completedTasks':len(policy_tasks) if policy_tasks is not None else None,
+                         'deferredInvestigations':state['policy']['deferred'] if state.get('policy') else None}
         report = {'run': self.public(state), 'signals': signals, 'unsupportedLanguages': state.get('unsupportedLanguages', []),
                   'cases':cases,
+                  'project':project, 'analysis':{'static':static,'policy':policy_analysis},
                   'scope': state.get('scope', {'status': 'not_recorded_for_this_run'}),
                   'artifacts': [item for item in self.artifacts(state['id']) if item['path'] not in ('report.json', 'report.md')],
                   'selection': 'rule-selection.json' if (directory / 'rule-selection.json').exists() else None,
@@ -559,10 +586,69 @@ class Workflow:
             raise ValueError('A confirmed report case is missing its source evaluation.')
         severity_order = {'critical':0,'high':1,'medium':2,'low':3,'info':4,'unknown':5}
         confirmed.sort(key=lambda case:severity_order.get(case['evaluation']['severity'],5))
+        by_id = {item['id']:item for item in signals}
+        findings=[]
+        for case in confirmed:
+            related=[by_id[identity] for identity in case['signalIds']]
+            metadata=related[0].get('ruleMetadata',{})
+            description=metadata.get('shortDescription')
+            titles=[description.get('text') if isinstance(description,dict) else None,
+                    metadata.get('title'),related[0]['suspectedIssue']]
+            title=' '.join(next(value for value in titles if isinstance(value,str) and value.strip()).split())
+            findings.append((case,related,title))
         analysed_ids = {identity for case in cases if case.get('evaluation') for identity in case['signalIds']}
         unanalysed = sum(item['id'] not in analysed_ids for item in signals)
         unresolved = sum(case['outcome']=='needs_review' and bool(case.get('evaluation')) for case in cases)
-        lines = ['# Security scan report', '', report['notice'], '', '## Summary', '',
+        lines = ['# Security scan report', '', report['notice'], '', '## Contents', '',
+                 '- [Analysed project](#analysed-project)', '- [Executed analysis](#executed-analysis)',
+                 '- [Summary](#summary)', '- [Confirmed findings](#confirmed-findings)']
+        for number,(case,_,title) in enumerate(findings,1):
+            link_title=title.replace('\\','\\\\').replace('[','\\[').replace(']','\\]')
+            lines.append(f"  - [{number}. {link_title} - {case['evaluation']['severity'].title()}](#finding-{number})")
+        lines.extend(['- [Scan details](#scan-details)', '', '## Analysed project', '',
+                      f"**Project:** {project['name']}  ", f"**Source path:** `{project['path']}`  ",
+                      f"**Source snapshot digest:** `{state['sourceRevision']}`  ",
+                      f"**Snapshot files:** {project['snapshotFileCount'] if project['snapshotFileCount'] is not None else 'Not recorded'}  ",
+                      '**Detected source languages:** '+(', '.join(project['languages']) if project['languages'] is not None else 'Not recorded')])
+        if project['identitySource']=='current-connection':
+            lines.extend(['', 'Project name and path describe the current selected connection; they were not recorded when this scan started.'])
+        elif project['identitySource']=='scanner-path':
+            lines.extend(['', 'Only the scanner-visible source path is available; the original host project identity was not recorded.'])
+        scope=state.get('scope')
+        if scope:
+            lines.extend(['', f"**Source files eligible for analysis:** {scope['analysisFiles']}  ",
+                          f"**Build-context files retained:** {scope['contextFiles']}  ",
+                          f"**Snapshot files outside analysis scope:** {scope['excludedFiles']}  ",
+                          f"**Include tests / examples / generated files:** {scope['includeTests']} / {scope['includeExamples']} / {scope['includeGenerated']}",
+                          'Eligible source files are a subset of the retained snapshot, not an additional file count.'])
+        lines.extend(['', '## Executed analysis', '',
+                      '| Analysis | Count |', '| --- | ---: |',
+                      f"| Static rules selected | {static['selectedRules'] if static['selectedRules'] is not None else 'Not recorded'} |",
+                      f"| Static rules in completed query runs | {static['completedQueryRules'] if static['completedQueryRules'] is not None else 'Not recorded'} |"])
+        if static_mode=='sarif-import':
+            lines.extend(['', 'SARIF import: No static-analysis rules were executed by this scan. The imported alerts do not establish rule-execution coverage.'])
+        elif static_mode=='disabled':
+            lines.extend(['', 'Static code analysis was not enabled.'])
+        if static['languages']:
+            lines.extend(['', '| Static-analysis language | Rules selected | Rules in completed query runs |',
+                          '| --- | ---: | ---: |'])
+            lines.extend(f"| {entry['language']} | {entry['selectedRules']} | {entry['completedQueryRules']} |" for entry in static['languages'])
+        if policy_selection or state.get('policy'):
+            lines.extend(['', '| Policy analysis | Count |', '| --- | ---: |'])
+            for label,key in (('Policy rules selected','selectedRules'),('Distinct policy rules reviewed','reviewedRules'),
+                              ('Completed policy review tasks','completedTasks'),('Deferred policy investigations','deferredInvestigations')):
+                count=policy_analysis[key]
+                lines.append(f"| {label} | {count if count is not None else 'Not recorded'} |")
+            lines.extend(['', 'A reviewed policy rule has at least one completed surface review; this is not exhaustive coverage. '
+                          'Mapping tasks and repeated follow-ups are not additional distinct rules.'])
+        else:
+            lines.extend(['', 'Policy analysis was not enabled.'])
+        lines.extend(['', 'Rules in completed query runs count successfully completed query batches, not failed or partial query attempts.',
+                      f"Evaluation: {state['evaluation']}  ",
+                      f"Independent policy / evaluation API requests: {state.get('policy',{}).get('modelRequests','Not recorded') if state.get('policy') else 0} / "
+                      f"{state.get('evaluationSummary',{}).get('modelRequests','Not recorded') if state.get('evaluationSummary') else 0}  ",
+                      f"Started: {state['createdAt']}  ", f"Last scan checkpoint: {state['updatedAt']}",
+                      '', '## Summary', '',
                  '| Outcome | Count |', '| --- | ---: |',
                  f'| Source-confirmed findings | {len(confirmed)} |',
                  f"| Refuted | {sum(case['outcome']=='refuted' for case in cases)} |",
@@ -571,20 +657,12 @@ class Workflow:
                  f'| Total candidate signals | {len(signals)} |', '',
                  'Not analysed includes candidates marked `needs_review` without an evidence-backed evaluation.',
                  'Only confirmed findings are detailed below. Full records for every outcome remain in '
-                 '`report.json` and `evaluation/cases.json`.', '', '## Confirmed findings', '']
+                 '`report.json` and `evaluation/cases.json`.', '', '## Confirmed findings', ''])
         if not confirmed:
             lines.append('No source-confirmed findings.')
-        by_id = {item['id']:item for item in signals}
-        for number, case in enumerate(confirmed,1):
+        for number, (case,related,title) in enumerate(findings,1):
             evaluation = case['evaluation']
-            related = [by_id[identity] for identity in case['signalIds']]
-            metadata = related[0].get('ruleMetadata',{})
-            description = metadata.get('shortDescription')
-            titles = [description.get('text') if isinstance(description,dict) else None,
-                      metadata.get('title'), related[0]['suspectedIssue']]
-            title = next(value for value in titles if isinstance(value,str) and value.strip())
-            title = ' '.join(title.split())
-            lines.extend(['', '---', '', f'### Finding {number}: {title}', '',
+            lines.extend(['', '---', '', f'<a id="finding-{number}"></a>', '', f'### Finding {number}: {title}', '',
                           f"**Severity:** {evaluation['severity'].replace('_',' ').title()}", '',
                           '**Issue**', '', evaluation['rationale'], '',
                           '**Impact**', '', evaluation['impact'], '',
@@ -621,11 +699,8 @@ class Workflow:
         lines.extend(f"- {entry['language']}: {entry['status']}; {entry.get('message','')}" for entry in state['languages'])
         if state.get('unsupportedLanguages'):
             lines.append('- Unsupported/deferred languages: '+', '.join(state['unsupportedLanguages']))
-        scope = state.get('scope')
         if scope:
-            lines.extend(['', f"Eligible files: {scope['analysisFiles']}; build-context files: {scope['contextFiles']}; excluded files: {scope['excludedFiles']}.",
-                          f"Include tests: {scope['includeTests']}; examples/benchmarks: {scope['includeExamples']}; generated/vendor copies: {scope['includeGenerated']}.",
-                          f"Filtered detector alerts: {scope['filteredSignals']}. See `analysis-scope.json` for source selection.",
+            lines.extend(['', f"Filtered detector alerts: {scope['filteredSignals']}. See `analysis-scope.json` for source selection.",
                           'File counts do not establish extraction or complete security coverage.'])
         lines.extend(['', '**Run note**', '', state['message']])
         (directory / 'report.md').write_text('\n'.join(lines) + '\n')

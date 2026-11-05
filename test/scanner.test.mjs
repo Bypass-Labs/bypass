@@ -590,6 +590,7 @@ test('standalone scanner report reads every artifact page and preserves run stat
     assert.equal(result.kind,'scanner-report');assert.equal(result.format,format);assert.equal(result.text,text);
     assert.equal(result.status,status);assert.equal(result.exitCode,status==='incomplete'?3:0);
     assert.equal(result.nextAction,undefined);
+    assert.deepEqual(calls[0].input.projectDetails,{name:path.basename(root),path:root});
     assert.deepEqual(calls.filter(c=>c.operation==='artifact').map(c=>c.input),offsets.map(offset=>({run:initial.run.id,path:`report.${format}`,offset})));
   });
 });
