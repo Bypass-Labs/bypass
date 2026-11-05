@@ -2,9 +2,7 @@
 
 **Built by the Bypass Labs team for the Startup Track of the Meta Global AI Developer Hackathon.**
 
-Bypass adds application security testing to Muse Code and provides a standalone CLI. Muse guides source and running-app investigation; Bypass enforces approved scope, records evidence, and turns supported proofs into repeatable security tests.
-
-Run Bypass as a native Muse Code plugin or standalone CLI on macOS, Linux, and Windows. The plugin uses the active Muse session; the CLI uses Meta Model API or a compatible endpoint for self-hosted Muse Spark Open or Muse Glimmer. Test a local app, preview, staging, or an authorized production deployment.
+Use Bypass's native Muse Code plugin or standalone CLI on macOS, Linux, and Windows to investigate source code and test running apps in local, preview, staging, or authorized production environments. Muse guides the investigation; Bypass enforces approved scope, records evidence, and turns supported proofs into repeatable security tests. The plugin uses the active Muse session, while the CLI connects to Meta Model API or a compatible endpoint for self-hosted Muse Spark Open or Muse Glimmer.
 
 [Watch demo](#watch-the-demo) · [How it works](#how-bypass-works-with-muse) · [What judges can verify](#what-judges-can-verify) · [Quick start](#start-in-muse-code) · [White-box](#white-box-source-review) · [Black-box](#black-box-audit) · [CLI demo](#standalone-cli) · [GitHub agent](#github-security-agent) · [Docs](#documentation)
 
