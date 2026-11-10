@@ -338,6 +338,27 @@ test('source-assisted Muse review reaches late routes through complete bounded p
   assert.deepEqual(result.proposals, ['/api/route-18']);
 });
 
+test('the first bounded source batch reaches explicit server handlers before client calls', async t => {
+  const root = temp();
+  t.after(() => fs.rmSync(root, {recursive: true, force: true}));
+  fs.writeFileSync(path.join(root, 'client.js'), Array.from({length: 8}, (_, index) =>
+    `fetch('/api/client-${index}');`).join('\n'));
+  fs.writeFileSync(path.join(root, 'server.js'),
+    "app.get('/api/records', (req, res) => res.json({items: []}));\n" +
+    "app.post('/api/session', (req, res) => res.json({ok: true}));\n");
+  let firstBatch = [];
+  const result = await reviewSource(root, {model: {provider: 'test'},
+    maxModelPages: 1, infer: async (_model, messages) => {
+      firstBatch = JSON.parse(messages[1].content).snippets;
+      return {notes: [], paths: [], securityLeads: []};
+    }});
+  assert.deepEqual(firstBatch.slice(0, 2).map(item =>
+    [item.file, item.method, item.path]), [
+    ['server.js', 'GET', '/api/records'],
+    ['server.js', 'POST', '/api/session']]);
+  assert.ok(result.modelCoverage.snippetsAvailable > firstBatch.length);
+});
+
 test('source-assisted review uses the configured bounded model concurrency', async t => {
   const root = temp();
   t.after(() => fs.rmSync(root, {recursive: true, force: true}));

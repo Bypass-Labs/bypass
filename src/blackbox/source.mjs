@@ -64,6 +64,17 @@ function safePrefix(value) {
     safeRoutePath(value.startsWith('/') ? value : `/${value}`);
 }
 
+function sourceSnippetPriority(snippet) {
+  const file = snippet.file ?? '', excerpt = snippet.excerpt ?? '';
+  return (/(?:^|[\/._-])(?:server|routes?|controllers?|handlers?|api)(?:[\/._-]|$)/i
+    .test(file) ? 4 : 0) +
+    (/\b(?:app|router|server)\s*\.\s*(?:get|post|put|patch|delete|head|options)\s*\(/i
+      .test(excerpt) ? 3 : 0) +
+    (/\b(?:req(?:uest)?\.method|response\.(?:end|writeHead)|res\.(?:json|send))\b/i
+      .test(excerpt) ? 2 : 0) +
+    (snippet.method && snippet.method !== 'UNKNOWN' ? 1 : 0);
+}
+
 function joinedRoute(parts) {
   let path = parts[0].startsWith('/') ? parts[0] : `/${parts[0]}`;
   for (const part of parts.slice(1)) path = `${path.replace(/\/$/, '')}/${part.replace(/^\//, '')}`;
@@ -462,7 +473,11 @@ export async function reviewSource(sourcePath, {infer = null, model = null, log 
         excerpt: unresolvedExcerpt(body, hint.line)});
     }
   }
-  const pages = sourceModelPages([...unresolvedSnippets, ...snippets]);
+  // Handler excerpts carry stronger trust-boundary facts than client call
+  // sites. Keep route order stable within each priority so short audits reach
+  // server behavior before their source budget ends.
+  const pages = sourceModelPages([...unresolvedSnippets, ...snippets]
+    .toSorted((a, b) => sourceSnippetPriority(b) - sourceSnippetPriority(a)));
   const sourceMethods = new Map();
   for (const endpoint of endpoints) {
     const pathname = new URL(endpoint.path, 'https://source.invalid').pathname;

@@ -686,7 +686,7 @@ export async function runAudit({url, root = process.cwd(), scopeFile = null, ove
       const reviewed = await reviewSource(sourcePath ?? projectRoot, {
         infer: !focus && model ? invokeModel : null, model,
         origin: scope.target.origin,
-        maxModelPages: reconModelPages(10),
+        maxModelPages: reconModelPages(6),
         modelConcurrency: scope.limits.modelConcurrency,
         log: say});
       sourceReview = sourceReview ? {
