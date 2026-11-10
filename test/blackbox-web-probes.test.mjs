@@ -872,6 +872,44 @@ test('one Muse auth revision uses redacted feedback and fresh controls on the sa
   assert.ok(!JSON.stringify(run).includes('bx-invalid-'));
 });
 
+test('auth follow-ups leave model turns for other observed security tracks', async () => {
+  const {scope: loaded} = loadScope({origin: 'http://127.0.0.1:4329',
+    overrides: {acceptLocal: true}});
+  const scope = structuredClone(loaded);
+  scope.localAuthPostContracts = {'/api/session': {path: '/api/session',
+    method: 'POST', contentType: 'application/json', fields: ['user', 'password'],
+    usernameField: 'user', passwordField: 'password'}};
+  const surface = {authBodyOperations: Object.values(scope.localAuthPostContracts),
+    patterns: [{pattern: '/api/private', methods: ['GET'], params: {},
+      responseFacts: {status: 401, type: 'application/json'}},
+    {pattern: '/api/search', methods: ['GET'], params: {q: ['plain']},
+      responseFacts: {status: 200, type: 'application/json'}}]};
+  let authCalls = 0, otherCalls = 0, requests = 0;
+  const infer = async (_model, messages) => {
+    if (messages[0].content.startsWith('From only the observed authorized JSON login operations')) {
+      authCalls++;
+      return {checks: [{loginPath: '/api/session', userField: 'user',
+        passwordField: 'password', userPayloads: [`candidate-${authCalls}`],
+        proofMode: 'protected-status', tokenPointer: '/token',
+        privatePath: '/api/private', why: 'Compare a scoped login candidate'}]};
+    }
+    otherCalls++;
+    return {priorities: [], strategies: [], experiments: [], plans: [],
+      flows: [], checks: [], tasks: [], paths: [], notes: []};
+  };
+  const requester = async options => ({status: options.method === 'POST' ? 401 :
+    options.url?.endsWith('/api/private') ? 401 : 200,
+  type: 'application/json', body: '{}', rawBody: '{}', headers: {},
+  evidenceId: `ev-${++requests}`});
+  const run = await runWebProbes(surface, scope, {requester, infer,
+    model: {model: 'fixture'}, budget: 8, maxModelPages: 6});
+  assert.equal(authCalls, 2);
+  assert.ok(otherCalls > 0);
+  assert.equal(run.modelCoverage.authFollowupCalls, 1);
+  assert.ok(run.modelCoverage.httpSequenceSent > 0,
+    'the remaining allowance should reach observed HTTP-sequence routes');
+});
+
 test('protected-session model calls reduce the remaining primary planning allowance', async () => {
   const {scope: loaded} = loadScope({origin: 'http://127.0.0.1:4329',
     overrides: {acceptLocal: true}});

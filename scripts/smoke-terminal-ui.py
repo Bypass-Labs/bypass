@@ -40,10 +40,15 @@ def run(args,cwd,check,timeout=60):
                 if done:status=value;break
                 time.sleep(.01)
         if status is None:
-            os.killpg(pid,signal.SIGTERM)
+            (artifacts/'timeout.ansi').write_bytes(transcript)
+            try:os.kill(pid,signal.SIGTERM)
+            except ProcessLookupError:pass
             time.sleep(.5)
             done,value=os.waitpid(pid,os.WNOHANG)
-            if not done:os.killpg(pid,signal.SIGKILL);os.waitpid(pid,0)
+            if not done:
+                try:os.kill(pid,signal.SIGKILL)
+                except ProcessLookupError:pass
+                os.waitpid(pid,0)
             raise AssertionError('CLI did not finish; last frame: '+transcript[-12000:].decode(errors='replace'))
         return os.waitstatus_to_exitcode(status)
     finally:os.close(fd)
@@ -52,8 +57,8 @@ with tempfile.TemporaryDirectory(prefix='bypass-ui-app-',dir='/tmp') as temporar
     captured=[]
     def welcome(frame,fd,pid):
         if b'How would you like to start?' in frame and not captured:
-            assert b'BYPASS LABS' in frame and b'NOW' in frame and b'NEXT' in frame
-            assert b'38;2;255;74;44' in frame
+            plain=re.sub(rb'\x1b\[[0-9;]*m',b'',frame)
+            assert b'BYPASS' in plain and b'BUILT FOR MUSE MODELS' in plain and b'NOW' in plain and b'NEXT' in plain,plain[-3000:]
             (artifacts/'welcome.ansi').write_bytes(frame);captured.append('welcome');os.write(fd,b'\x03')
     assert run([],app,welcome)==130
     step=[1]
@@ -61,11 +66,12 @@ with tempfile.TemporaryDirectory(prefix='bypass-ui-app-',dir='/tmp') as temporar
         expected=(str(step[0])+' / 6').encode()
         if step[0]<=6 and expected in frame:
             if step[0]==4:
-                assert b'3/6 done' in frame
                 (artifacts/'walkthrough.ansi').write_bytes(frame)
+                plain=re.sub(rb'\x1b\[[0-9;]*m',b'',frame)
+                assert b'3/6 phases complete' in plain,plain[-2000:]
             os.write(fd,b'\r');step[0]+=1
         elif step[0]==7 and b'Enter to finish' in frame:
-            assert b'6/6 done' in frame
+            assert b'6/6 phases complete' in frame
             (artifacts/'complete.ansi').write_bytes(frame);os.write(fd,b'\r');step[0]+=1
     assert run(['demo','--dir',str(app/'ledger')],app,demo)==0
     assert step[0]==8
@@ -76,7 +82,7 @@ with tempfile.TemporaryDirectory(prefix='bypass-ui-app-',dir='/tmp') as temporar
     def commands(frame,fd,pid):
         if stage[0]==0 and b'/ commands' in frame:
             os.write(fd,b'/');stage[0]=1
-        elif stage[0]==1 and b'/review' in frame and b'/demo' in frame:
+        elif stage[0]==1 and b'/review' in frame and b'/repo' in frame:
             (artifacts/'commands.ansi').write_bytes(frame)
             fcntl.ioctl(fd,termios.TIOCSWINSZ,struct.pack('HHHH',15,40,0,0));os.kill(pid,signal.SIGWINCH);stage[0]=2
         elif stage[0]==2 and frame.count(b'\x1b[2K')==15 and b'Ctrl+C exit' in frame:

@@ -1385,6 +1385,74 @@ test('Muse proposal repair stops when the same validation failure repeats', asyn
   assert.equal(planned.leads.length, 0);
 });
 
+test('an unverified focused source id does not discard a scoped live experiment', async t => {
+  const server = http.createServer((_request, response) => {
+    response.setHeader('content-type', 'application/json');
+    response.end('{"status":"observed"}');
+  });
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+  t.after(() => new Promise(resolve => server.close(resolve)));
+  const origin = `http://127.0.0.1:${server.address().port}`;
+  const scope = loadScope({origin, overrides: {acceptLocal: true}}).scope;
+  const route = randomPath('source-mismatch');
+  const surface = {patterns: [{pattern: route, methods: ['GET'],
+    params: {q: ['plain']}}], sourceReview: {securityLeads: [{
+      id: 'unrelated-fresh-id', path: route, method: 'GET',
+      hypothesis: 'A different source claim',
+      source: {file: 'src/other.ts', line: 2}}]},
+    focus: {findingId: 'stale-source-id',
+    path: route, method: 'GET', hypothesis: 'A source lead to check live',
+    sourceSnapshotMatches: false,
+    source: {file: 'src/server.ts', line: 1, quote: 'unverified source'}}};
+  const planned = await planResearchFlows(surface, scope, {model: 'fixture',
+    budget: 1, modelCallsAvailable: 1, infer: async (_model, messages) => {
+      const context = JSON.parse(messages[1].content);
+      assert.equal(context.sourceFinding.linkable, false);
+      return {flows: [{family: 'live-boundary', why: 'Check observed route',
+        priority: 5, as: 'anonymous', oracle: 'observation',
+        sourceFindingId: 'stale-source-id', prelude: [], observe: [],
+        subject: {method: 'GET', path: route, placement: 'query', key: 'q',
+          fixedFields: [], bodyTemplate: '', headers: []},
+        controlValue: 'plain', firstValue: 'candidate', secondValue: 'negative',
+        marker: '', secondMarker: '', assertion: {step: 'subject', index: 0,
+          location: 'body', name: ''}}]};
+    }});
+  assert.equal(planned.leads.length, 1);
+  assert.equal(planned.leads[0].sourceFindingId, undefined);
+  assert.equal(planned.leads[0].sourceLinkDropped, true);
+  assert.equal(planned.decisions[0].sourceLinkDropped, true);
+  assert.equal(planned.coverage.proposalsRejected, 0);
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'bypass-source-link-'));
+  t.after(() => fs.rmSync(dir, {recursive: true, force: true}));
+  const ledger = createLedger(dir);
+  t.after(() => ledger.close());
+  const requester = createRequester(scope, {ledger, allowLocal: true});
+  const tested = await runResearchFlows(planned.leads, scope, {requester,
+    surface, ledger, modelCallsAvailable: 0});
+  assert.notEqual(tested.results[0].verdict, 'confirmed');
+  assert.equal(tested.results[0].sourceLeadId, undefined);
+});
+
+test('a model-authored candidate with missing markers runs only as observation', async () => {
+  const origin = 'http://127.0.0.1:4329';
+  const scope = loadScope({origin, overrides: {acceptLocal: true}}).scope;
+  const route = randomPath('candidate-observation');
+  const surface = {patterns: [{pattern: route, methods: ['GET'],
+    params: {q: ['plain']}}]};
+  const planned = await planResearchFlows(surface, scope, {model: 'fixture',
+    budget: 1, modelCallsAvailable: 1, infer: async () => ({flows: [{
+      family: 'candidate-check', why: 'Compare an exact candidate',
+      priority: 5, as: 'anonymous', prelude: [], observe: [],
+      subject: {method: 'GET', path: route, placement: 'query', key: 'q',
+        fixedFields: [], bodyTemplate: '', headers: []},
+      firstValue: 'candidate', secondValue: 'negative',
+      assertion: {step: 'subject', index: 0, location: 'body', name: ''}}]})});
+  assert.equal(planned.leads.length, 1);
+  assert.equal(planned.leads[0].oracle, 'observation');
+  assert.equal(planned.leads[0].firstValue, 'candidate');
+  assert.equal(planned.decisions[0].translatedTo, 'observation');
+});
+
 test('Muse repairs a rejected revision and executes the corrected sequence', async () => {
   const origin = 'http://127.0.0.1:4329';
   const scope = loadScope({origin, overrides: {acceptLocal: true}}).scope;

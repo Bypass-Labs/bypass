@@ -2588,8 +2588,18 @@ export async function runWebProbes(surface, scope, {requester, ledger = null, bu
         ...(lead.proposalId ? {proposalId: lead.proposalId} : {})}))],
       deferredLeads: [...(partial.deferredLeads ?? []), ...missing]};
   };
+  // Login feedback can keep producing novel negative payloads until it uses
+  // the entire shared allowance. Preserve turns for the other observed route
+  // and method tracks.
+  const hasOtherWork = (surface?.patterns ?? []).some(record =>
+    Object.keys(record.params ?? {}).length > 0) ||
+    ['jsonBodyOperations', 'formBodyOperations', 'xmlBodyOperations',
+      'methodOperations'].some(key => (surface?.[key]?.length ?? 0) > 0);
+  const authModelPages = hasOtherWork && scope.limits?.minutes <= 10 &&
+    maxModelPages > 2 ?
+    Math.min(2, maxModelPages - 2) : maxModelPages;
   const {plan: authPlan, run: authRun, stats: authStats} = await runAuthInvestigation(surface,
-    scope, {requester, infer, model, budget: freshBudget, maxModelPages,
+    scope, {requester, infer, model, budget: freshBudget, maxModelPages: authModelPages,
       remainingModelCalls, researchDeadline,
       researchDeadlineAfterConfirmation: researchDeadlineAfterAuth,
       onConfirmedSession, log});

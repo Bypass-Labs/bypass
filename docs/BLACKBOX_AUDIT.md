@@ -18,6 +18,8 @@ The scope records the exact origin, environment, allowed path prefixes, HTTP met
 4. Replay supported positive signals with fresh controls. Source interpretations and model suggestions alone do not confirm a vulnerability.
 5. Write confirmed findings, inconclusive results, untested work and coverage to the report. A time or model-call cutoff remains incomplete, even when no finding was confirmed.
 
+When a focused source lead cannot be linked to the current source revision or the proposed HTTP route, Bypass may still run its authorized request but drops the source attribution. A model-supplied candidate without complete proof controls runs only as an observation; it cannot become a confirmed finding until fresh controls and replay support it. In quick audits, the planner reserves model turns for route and method checks when login follow-ups keep returning negative results.
+
 Progress shows the current phase, HTTP and Muse activity, completed checks, positive signals and remaining work. The guided first audit uses a 10-minute and 24-Muse-call budget; direct commands accept explicit `--minutes`, `--model-calls`, `--rps`, `--max-urls`, `--max-tasks`, `--agents` and `--http-workers` values. The effective values are saved with the run.
 
 ## Evidence and replay
