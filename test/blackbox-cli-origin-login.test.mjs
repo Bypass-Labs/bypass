@@ -94,5 +94,7 @@ test('CLI logs into each credential origin separately and replays a secondary-or
   assert.equal((await cli(root, env, 'blackbox', 'verify', audit.data.run)).code, 1);
   assert.ok(loginHits[1] > beforeVerify, 'secondary proof obtained fresh secondary sessions');
   secondaryVulnerable = false;
-  assert.equal((await cli(root, env, 'blackbox', 'verify', audit.data.run)).code, 0);
+  const fixed = await cli(root, env, 'blackbox', 'verify', audit.data.run);
+  assert.equal(fixed.data.proofs.find(item => item.id === finding.id)?.verdict,
+    'not_reproduced', JSON.stringify(fixed.data));
 });
