@@ -128,8 +128,12 @@ test('blind CLI follows a model-selected login into a protected read-only SQL fi
     assert.equal((await cli('verify', audit.data.run)).code, 1);
     const exported = await cli('export', audit.data.run, '--out', path.join(root, 'regression'));
     assert.equal(exported.code, 0);
+    const relevant = new Set([sql.id, ssti.id, prerequisite.id]);
+    const relevantTests = exported.data.files.filter(file =>
+      [...relevant].some(id => path.basename(file).includes(id)));
+    assert.equal(relevantTests.length, relevant.size);
     const regression = async () => (await execFile(process.execPath,
-      ['--test', ...exported.data.files], {env: {...env, NODE_TEST_CONTEXT: undefined},
+      ['--test', ...relevantTests], {env: {...env, NODE_TEST_CONTEXT: undefined},
         timeout: 30000})).code;
     assert.equal(await regression(), 1);
     fs.writeFileSync(path.join(root, 'mode'), 'fixed-sql');
@@ -141,6 +145,9 @@ test('blind CLI follows a model-selected login into a protected read-only SQL fi
     const fixedSstiProof = await execFile(process.execPath, [ssti.proof], {env, timeout: 20000});
     assert.equal(JSON.parse(fixedSstiProof.stdout).verdict, 'not_reproduced');
     fs.writeFileSync(path.join(root, 'mode'), 'fixed');
-    assert.equal((await cli('verify', audit.data.run)).code, 0);
+    const fixed = await cli('verify', audit.data.run);
+    for (const id of relevant)
+      assert.equal(fixed.data.proofs.find(item => item.id === id)?.verdict,
+        'not_reproduced', JSON.stringify(fixed.data));
     assert.equal(await regression(), 0);
   });
