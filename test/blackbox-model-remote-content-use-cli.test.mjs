@@ -39,6 +39,8 @@ test('blind CLI proves remote response content use and clears while server fetch
       try {input = JSON.parse(Buffer.concat(chunks).toString());}
       catch {return json(400, {error: 'invalid JSON'});}
       const destination = String(input.resourceUrl ?? '');
+      if (!destination.startsWith('http://'))
+        return json(502, {error: 'remote fetch failed'});
       let remoteBody = '';
       if (/^http:\/\/127\.0\.0\.1:\d+\/bx-ssrf\/[0-9a-f]{24}$/.test(destination)) {
         callbackFetches++;

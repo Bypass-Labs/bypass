@@ -524,13 +524,16 @@ export function sstiCanary() {
 /** Read-only boolean pairs. The search form closes a quoted expression and tests a wider result set. */
 export function sqlBooleanCanary(base, style) {
   if (typeof base !== 'string' || !/^[A-Za-z0-9_.@-]{1,64}$/.test(base) ||
-      !['quoted', 'numeric', 'search-quote-close-or'].includes(style) ||
+      !['quoted', 'numeric', 'search-quote-close-or', 'search-quote-or'].includes(style) ||
       style === 'numeric' && !/^\d{1,12}$/.test(base))
     throw Error('Invalid SQL boolean probe value.');
   const number = 1000 + randomBytes(2).readUInt16BE(0) % 8000;
   if (style === 'search-quote-close-or') return {number,
     yes: `${base}')) OR ${number}=${number}--`,
     no: `${base}')) OR ${number}=${number + 1}--`};
+  if (style === 'search-quote-or') return {number,
+    yes: `${base}' OR ${number}=${number}-- `,
+    no: `${base}' OR ${number}=${number + 1}-- `};
   return style === 'quoted' ? {number,
     yes: `${base}' AND '${number}'='${number}`,
     no: `${base}' AND '${number}'='${number + 1}`} : {number,
@@ -542,7 +545,7 @@ export function sqlBooleanOracle(baseline, yes, no, style = 'quoted') {
   const json = value => /json|\+json/i.test(value?.type ?? '');
   const baselineIds = new Set((baseline?.ids ?? []).map(String));
   const validBaseline = baseline?.status === 200 && json(baseline) && baselineIds.size > 0 && !responseCached(baseline);
-  if (style === 'search-quote-close-or') {
+  if (style === 'search-quote-close-or' || style === 'search-quote-or') {
     const yesIds = new Set((yes?.ids ?? []).map(String));
     return validBaseline && yes?.status === 200 && json(yes) && !responseCached(yes) &&
       yesIds.size > baselineIds.size && [...baselineIds].every(id => yesIds.has(id)) &&
@@ -3092,7 +3095,7 @@ async function checkSqlBoolean(spec, env) {
   if (!safeProbeParameter(spec.parameter) ||
       !['anonymous', 'owner', 'outsider', 'derived'].includes(spec.request?.as) ||
       !/^[A-Za-z0-9_.@-]{1,64}$/.test(spec.base ?? '') ||
-      !['quoted', 'numeric', 'search-quote-close-or'].includes(spec.style))
+      !['quoted', 'numeric', 'search-quote-close-or', 'search-quote-or'].includes(spec.style))
     return {verdict: 'inconclusive', reason: 'SQL boolean proof prerequisites are missing'};
   const withValue = value => {
     const url = new URL(spec.request.url, spec.origin);
@@ -3149,7 +3152,7 @@ async function checkSqlBoolean(spec, env) {
     if (baselineHash && baseline.hash !== baselineHash)
       return {verdict: 'inconclusive', reason: 'baseline changed between proof pairs', controls};
     baselineHash = baseline.hash;
-    if (spec.style === 'search-quote-close-or') {
+    if (spec.style === 'search-quote-close-or' || spec.style === 'search-quote-or') {
       if (searchHashes && (yes.hash !== searchHashes.yes || no.hash !== searchHashes.no))
         return {verdict: 'inconclusive', reason: 'search differential changed between proof pairs', controls};
       searchHashes = {yes: yes.hash, no: no.hash};
@@ -3628,8 +3631,10 @@ async function checkSsrfLoopback(spec, env) {
           }
         }
         const sent = await issue(subject, value, label, captures, 'subject', 0);
+        // An intentionally invalid plain URL may make a server-side fetch
+        // return 5xx. The callback probes still need successful responses.
         if (!sent || sent.record.status == null || sent.record.status === 429 ||
-            sent.record.status >= 500 || sent.record.cached)
+            token && sent.record.status >= 500 || sent.record.cached)
           return {ok: false, reason: 'callback subject response was unavailable or cached'};
         const observed = [];
         for (const [index, step] of observe.entries()) {
@@ -3655,6 +3660,9 @@ async function checkSsrfLoopback(spec, env) {
       if (!firstResult.ok) return {verdict: 'inconclusive', reason: firstResult.reason, controls};
       const repeat = await phase(plain, 'repeat-control');
       if (!repeat.ok) return {verdict: 'inconclusive', reason: repeat.reason, controls};
+      if (controls.find(item => item.label === 'plain-control')?.status !==
+          controls.find(item => item.label === 'repeat-control')?.status)
+        return {verdict: 'inconclusive', reason: 'plain callback control changed between attempts', controls};
       const second = canary();
       const secondResult = await phase(second.callbackUrl, 'second-callback', second.token);
       if (!secondResult.ok) return {verdict: 'inconclusive', reason: secondResult.reason, controls};

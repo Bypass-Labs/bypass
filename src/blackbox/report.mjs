@@ -188,6 +188,35 @@ export function consolidateRawBoundaryProofs(findings) {
   return findings.filter(item => !corroborating.has(item.id));
 }
 
+/** A generic raw boundary on the same cited SQL input corroborates the typed SQL proof. */
+export function consolidateInjectionProofs(findings) {
+  const typed = findings.filter(item => item.kind === 'sql-boolean' &&
+    item.verdict === 'confirmed' && item.proof && item.sourceFinding?.id);
+  const corroborating = new Set();
+  for (const finding of findings) {
+    if (finding.kind !== 'model-raw-boundary' || finding.verdict !== 'confirmed' ||
+        !finding.proof || !finding.sourceFinding?.id ||
+        !/\binjection\b/i.test(finding.modelHypothesis?.family ?? '')) continue;
+    let candidate;
+    try {candidate = new URL(finding.webProof?.rawRequests?.at(-1)?.path, finding.url);}
+    catch {continue;}
+    const primary = typed.find(item => item.sourceFinding.id === finding.sourceFinding.id &&
+      new URL(item.url).origin === candidate.origin &&
+      new URL(item.url).pathname === candidate.pathname &&
+      candidate.searchParams.has(item.webProof?.parameter));
+    if (!primary) continue;
+    primary.corroboratingProofs = [...(primary.corroboratingProofs ?? []), {
+      id: finding.id, kind: finding.kind, pattern: finding.pattern,
+      proof: finding.proof, rule: finding.rule,
+      evidence: finding.evidence ?? [], confirmation: finding.confirmation ?? []}];
+    primary.evidence = unique([...(primary.evidence ?? []), ...(finding.evidence ?? [])]);
+    primary.confirmation = unique([...(primary.confirmation ?? []),
+      ...(finding.confirmation ?? [])]);
+    corroborating.add(finding.id);
+  }
+  return findings.filter(item => !corroborating.has(item.id));
+}
+
 function outranks(candidate, current) {
   if (rank(candidate.severity) !== rank(current.severity)) return rank(candidate.severity) < rank(current.severity);
   return candidate.reach.observed > current.reach.observed;

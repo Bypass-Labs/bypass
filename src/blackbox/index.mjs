@@ -20,10 +20,12 @@ import { planTasks, oneAccountMissingAuthCandidate } from './planner.mjs';
 import { decide, severityFor, classify, dataClasses } from './verdict.mjs';
 import { runSwarm, reverify, mirror, identityRecheck } from './swarm.mjs';
 import { buildFindings, consolidateBrowserXssProofs, consolidateRawBoundaryProofs,
+  consolidateInjectionProofs,
   renderReport, exitCodeFor } from './report.mjs';
 import { proveFindings } from './poc.mjs';
 import {reviewSource} from './source.mjs';
-import {runWebProbes, runSourceDisclosureProbes} from './web-probes.mjs';
+import {runWebProbes, runSourceDisclosureProbes, runSourceHeaderProbes,
+  runSourceFetchProbes} from './web-probes.mjs';
 import {reconDerivedSession, derivedAnonymousSurface, reconConfirmedAccess} from './derived-session-recon.mjs';
 import {checkDerivedAnonymousAccess} from './derived-access.mjs';
 import {auditDiscoveredHosts, followupResponseHints, mergeResponsePatterns} from './host-audit.mjs';
@@ -42,6 +44,27 @@ const RESEARCH_KINDS = new Set(['model-differential', 'model-json-differential',
 const ACCEPTED_RESEARCH_CHECKPOINT = /^(?:json-experiment|access-boundary)(?:-derived-[0-9a-f]{12})?(?:-queue-[0-9a-f]{12})?-checkpoint\.json$/;
 const HTTP_SEQUENCE_CHECKPOINT = /^http-sequence(?:-derived-[0-9a-f]{12})?(?:-page-[0-9a-f]{12})?(?:-queue-[0-9a-f]{12})?-checkpoint\.json$/;
 const AUDIT_MODEL_DEADLINE_MESSAGE = 'Audit wall-clock deadline cut a Muse research call; remaining work is untested.';
+
+function observedSearchBaseline(response, sourceLead) {
+  if (response.status !== 200 || !/json|\+json/i.test(response.type ?? '') ||
+      !(response.ids?.length) || typeof response.body !== 'string') return null;
+  const column = /\b([A-Za-z_][A-Za-z0-9_]*)\s+LIKE\b/i.exec(
+    sourceLead?.source?.quote ?? '')?.[1];
+  if (!column || /(?:email|token|secret|password|credential|key|phone|address)/i.test(column))
+    return null;
+  let document;
+  try { document = JSON.parse(response.body); } catch { return null; }
+  const records = Array.isArray(document) ? document :
+    Array.isArray(document?.items) ? document.items : null;
+  if (!records) return null;
+  for (const record of records.slice(0, 5)) {
+    const value = record?.[column];
+    if (typeof value !== 'string' || value.length > 256) continue;
+    for (const token of value.match(/[A-Za-z0-9_.-]{2,32}/g) ?? [])
+      if (maskSecrets(token) === token) return token;
+  }
+  return null;
+}
 
 export function describeModelActivity(messages = []) {
   const instruction=messages.find(message=>message?.role==='system')?.content ?? '';
@@ -686,7 +709,9 @@ export async function runAudit({url, root = process.cwd(), scopeFile = null, ove
       const reviewed = await reviewSource(sourcePath ?? projectRoot, {
         infer: !focus && model ? invokeModel : null, model,
         origin: scope.target.origin,
-        maxModelPages: reconModelPages(6),
+        maxModelPages: scope.limits.modelCalls <= 10 ?
+          Math.min(1, Math.max(0, scope.limits.modelCalls - modelInvocations)) :
+          reconModelPages(10),
         modelConcurrency: scope.limits.modelConcurrency,
         log: say});
       sourceReview = sourceReview ? {
@@ -880,7 +905,9 @@ export async function runAudit({url, root = process.cwd(), scopeFile = null, ove
         {requester, infer: model ? invokeModel : null, model,
           // Leave at least half of the remaining calls for hypothesis planning,
           // execution feedback and proof assessment after recursive recon.
-          maxModelPages: Math.max(0, Math.floor((scope.limits.modelCalls - modelInvocations - 2) / 2)),
+          maxModelPages: Math.max(0, Math.min(
+            scope.limits.minutes <= 10 ? 1 : 8,
+            Math.floor((scope.limits.modelCalls - modelInvocations - 2) / 2))),
           kind: 'primary', log: say});
       mergeResponsePatterns(surface.patterns, followup.patterns);
       surface.anonymousResponseFollowup = {...followup.coverage,
@@ -973,6 +1000,71 @@ export async function runAudit({url, root = process.cwd(), scopeFile = null, ove
         headers: {'cache-control': 'no-cache'}});
       if (sensitivePathMatches(exposure.path, fresh)) surface.exposures.push({...exposure, url: address,
         confirmationEvidence: fresh.evidenceId, hash: fresh.hash});
+    }
+    if (!dryRun && scope.limits.modelCalls <= 10 &&
+        surface.sourceReview?.securityLeads?.length) {
+      const citedReads = [...new Set(surface.sourceReview.securityLeads
+        .filter(item => item.method === 'GET' &&
+          ['authentication-trust', 'injection'].includes(item.category) &&
+          typeof item.path === 'string' && !/[{}:]/.test(item.path))
+        .map(item => item.path))].slice(0, 4);
+      for (const path of citedReads) {
+        const record = (surface.patterns ?? []).find(item => item.pattern === path &&
+          (item.methods ?? []).includes('GET') && !Number.isInteger(item.responseFacts?.status));
+        if (!record || Date.now() >= deadline ||
+            !validateUrl(sessions.scope, path,
+              {identity: 'anonymous', method: 'GET'}).ok) continue;
+        const response = await requester({url: path, identity: 'anonymous',
+          method: 'GET', step: 'recon', purpose: 'task', noCache: true,
+          omitExcerpt: true});
+        record.responseFacts = {status: response.status ?? null,
+          type: response.type ?? null, hash: response.hash ?? null,
+          shape: response.shape ?? null, evidenceId: response.evidenceId ?? null};
+        const searchLead = surface.sourceReview.securityLeads.find(item =>
+          item.category === 'injection' && item.method === 'GET' &&
+          item.path === path && item.fields?.some(field =>
+            /^(?:q|query|search|term|keyword)$/i.test(field) &&
+            Object.hasOwn(record.params ?? {}, field)));
+        const baseline = observedSearchBaseline(response, searchLead);
+        if (baseline) for (const field of searchLead.fields) {
+          if (!/^(?:q|query|search|term|keyword)$/i.test(field) ||
+              !Object.hasOwn(record.params ?? {}, field)) continue;
+          record.params[field] = [baseline, ...(record.params[field] ?? [])
+            .filter(value => value !== baseline)].slice(0, 3);
+        }
+        say({stage: 'recon', message: `Checked cited ${path} before planning more routes`});
+      }
+      atomic(path.join(runDir, 'surface.json'), surface);
+    }
+    if (!dryRun && surface.sourceReview?.securityLeads?.length &&
+        taskLimit > earlySource.tested) {
+      const header = await runSourceHeaderProbes(surface, sessions.scope,
+        {requester, ledger, budget: Math.min(2, taskLimit - earlySource.tested), log: say});
+      if (header.tested) {
+        earlySource = {...earlySource,
+          findings: [...earlySource.findings, ...header.findings],
+          results: [...earlySource.results, ...header.results],
+          plan: [...earlySource.plan, ...header.plan],
+          tested: earlySource.tested + header.tested};
+        atomic(path.join(runDir, 'source-header-probes.json'), header);
+        for (const result of header.results)
+          say({stage: 'progress', type: 'task-done', confirmed: result.verdict === 'confirmed'});
+      }
+      if (taskLimit > earlySource.tested) {
+        const fetch = await runSourceFetchProbes(surface, sessions.scope,
+          {requester, ledger, budget: Math.min(1, taskLimit - earlySource.tested),
+            log: say});
+        if (fetch.tested) {
+          earlySource = {...earlySource,
+            findings: [...earlySource.findings, ...fetch.findings],
+            results: [...earlySource.results, ...fetch.results],
+            plan: [...earlySource.plan, ...fetch.plan],
+            tested: earlySource.tested + fetch.tested};
+          atomic(path.join(runDir, 'source-fetch-probes.json'), fetch);
+          for (const result of fetch.results)
+            say({stage: 'progress', type: 'task-done', confirmed: result.verdict === 'confirmed'});
+        }
+      }
     }
     phase('done', 3, 'Recon: routes and responses');
     if (!dryRun) {
@@ -2156,7 +2248,8 @@ export async function runAudit({url, root = process.cwd(), scopeFile = null, ove
       phase('skipped', 5, 'Replay and assess');
     }
     phase('doing', 6, 'Report and coverage');
-    findings = consolidateRawBoundaryProofs(consolidateBrowserXssProofs(findings));
+    findings = consolidateInjectionProofs(consolidateRawBoundaryProofs(
+      consolidateBrowserXssProofs(findings)));
     atomic(path.join(runDir, 'surface.json'), surface);
     atomic(path.join(runDir, 'results.json'), results);
     atomic(path.join(runDir, 'findings.json'), findings);

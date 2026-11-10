@@ -66,9 +66,20 @@ function safePrefix(value) {
 
 function sourceSnippetPriority(snippet) {
   const file = snippet.file ?? '', excerpt = snippet.excerpt ?? '';
+  const routeAt = excerpt.indexOf(snippet.path ?? '\u0000');
+  const ownExcerpt = (routeAt < 0 ? excerpt : excerpt.slice(routeAt))
+    .split('\n').slice(0, 8).join('\n');
+  const handler = /\b(?:app|router|server)\s*\.\s*(?:get|post|put|patch|delete|head|options)\s*\(/i
+    .test(excerpt) || /\b(?:method\s*===?\s*['"](?:GET|POST|PUT|PATCH|DELETE)|req(?:uest)?\.method|response\.(?:end|writeHead)|res\.(?:json|send))\b/i
+      .test(excerpt);
+  const securityOperation = /\b(?:runCommand|exec|spawn|subprocess|os\.system|db\.prepare|db\.query|rememberDevice|otp|verify(?:2fa|Otp))\b|\b(?:fetch|principal)\s*\(/i
+    .test(ownExcerpt);
   return (/(?:^|[\/._-])(?:server|routes?|controllers?|handlers?|api)(?:[\/._-]|$)/i
     .test(file) ? 4 : 0) +
-    (/\b(?:app|router|server)\s*\.\s*(?:get|post|put|patch|delete|head|options)\s*\(/i
+    (handler && securityOperation ? 5 : 0) +
+    (handler && /\b(?:auth|login|session|verify|account|user|search|query|preview|fetch|diagnostics?|upload|internal)\b/i
+      .test(snippet.path ?? '') ? 2 : 0) +
+    (handler && /\b(?:app|router|server)\s*\.\s*(?:get|post|put|patch|delete|head|options)\s*\(/i
       .test(excerpt) ? 3 : 0) +
     (/\b(?:req(?:uest)?\.method|response\.(?:end|writeHead)|res\.(?:json|send))\b/i
       .test(excerpt) ? 2 : 0) +
@@ -327,6 +338,23 @@ function excerpt(text, route) {
   return maskExcerpt(maskSecrets(around)).slice(0, 3000);
 }
 
+function authHelperContext(text, routeExcerpt, routePath) {
+  const routeAt = routeExcerpt.indexOf(routePath);
+  const ownExcerpt = (routeAt < 0 ? routeExcerpt : routeExcerpt.slice(routeAt))
+    .split('\n').slice(0, 8).join('\n');
+  const names = [...new Set([...ownExcerpt.matchAll(
+    /\b(principal|authenticate|authorize|currentUser|requireAuth|sessionUser)\s*\(/gi)]
+    .map(match => match[1]))].slice(0, 2);
+  const lines = text.split('\n');
+  return names.flatMap(name => {
+    const declaration = new RegExp(`\\b(?:function|def|const|let)\\s+${name}\\b`, 'i');
+    const at = lines.findIndex(line => declaration.test(line));
+    if (at < 0) return [];
+    return [{line: at + 1, excerpt: maskExcerpt(maskSecrets(
+      lines.slice(at, at + 12).join('\n'))).slice(0, 1200)}];
+  });
+}
+
 function unresolvedRouteHints(text, file, routes) {
   const expression = /\.php$/i.test(file) ? /^[ \t]*Route\s*::\s*(get|post|put|patch|delete|head|options)\s*\(/gm :
     /\.py$/i.test(file) ? /^[ \t]*@(?:app|router|bp|[A-Za-z_]\w*router)\.(get|post|put|patch|delete|route)\s*\(/gm :
@@ -376,8 +404,10 @@ function sourceLead(raw, batch) {
   const quote = maskExcerpt(maskSecrets(String(raw?.quote ?? ''))).trim().slice(0, 300);
   const snippet = batch.find(item => item.path === path && item.file === file &&
     Number.isInteger(line) && Number.isInteger(item.line) &&
-    line >= Math.max(1, item.line - 2) && line <= item.line + 18 &&
-    quote.length >= 6 && item.excerpt.includes(quote));
+    quote.length >= 6 && (line >= Math.max(1, item.line - 2) &&
+      line <= item.line + 18 && item.excerpt.includes(quote) ||
+      (item.authHelperContext ?? []).some(context => line >= context.line &&
+        line <= context.line + 11 && context.excerpt.includes(quote))));
   if (!snippet || !['GET', 'HEAD', 'POST', 'PUT', 'PATCH', 'DELETE', 'UNKNOWN'].includes(method) ||
       !SOURCE_LEAD_CATEGORIES.has(raw?.category)) return null;
   const title = maskExcerpt(maskSecrets(String(raw?.title ?? ''))).trim().slice(0, 160);
@@ -387,9 +417,25 @@ function sourceLead(raw, batch) {
   const fields = [...new Set((Array.isArray(raw?.fields) ? raw.fields : [])
     .filter(value => typeof value === 'string' && /^[A-Za-z_][A-Za-z0-9_.-]{0,79}$/.test(value)))]
     .slice(0, 12);
-  return {id: `source-${hash(JSON.stringify([path, method, file, line, quote, hypothesis])).slice(0, 16)}`,
+  const helper = (snippet.authHelperContext ?? []).find(context =>
+    line >= context.line && line <= context.line + 11 && context.excerpt.includes(quote));
+  const helperLines = helper?.excerpt.split('\n') ?? [];
+  const quoteOffset = helperLines.findIndex(text => text.includes(quote));
+  const citedLine = quoteOffset >= 0 ? contextLine(helper, quoteOffset) : line;
+  const citedHeader = helperLines.flatMap((text, offset) => {
+    const match = /\b(?:req|request)\.headers\[['"](x-[a-z0-9-]{1,64})['"]\]/i.exec(text);
+    return match && Math.abs(offset - quoteOffset) <= 4 &&
+      fields.includes(match[1].toLowerCase()) ?
+      [{name: match[1].toLowerCase(), line: contextLine(helper, offset), quote: text.trim()}] : [];
+  })[0];
+  return {id: `source-${hash(JSON.stringify([path, method, file, citedLine, quote, hypothesis])).slice(0, 16)}`,
     title, category: raw.category, path, method, hypothesis, remediation, fields,
-    source: {file, line, quote}, verdict: 'unproven'};
+    source: {file, line: citedLine, quote, ...(citedHeader ? {header: citedHeader} : {})},
+    verdict: 'unproven'};
+}
+
+function contextLine(context, offset) {
+  return context.line + offset;
 }
 
 function privateRecordLead(snippet) {
@@ -462,8 +508,13 @@ export async function reviewSource(sourcePath, {infer = null, model = null, log 
     routesCut += routes.length - kept.length;
     endpoints.push(...kept);
     files.push({path: relative, bytes, hash: `sha256:${hash(body)}`, routes: entry.routeCount ?? routes.length});
-    for (const route of kept) if (route.line !== null) snippets.push({path: route.path, method: route.method,
-      params: route.params, file: maskExcerpt(maskSecrets(relative)), line: route.line, excerpt: excerpt(body, route)});
+    for (const route of kept) if (route.line !== null) {
+      const routeExcerpt = excerpt(body, route);
+      const helperContext = authHelperContext(body, routeExcerpt, route.path);
+      snippets.push({path: route.path, method: route.method,
+        params: route.params, file: maskExcerpt(maskSecrets(relative)), line: route.line,
+        excerpt: routeExcerpt, ...(helperContext.length ? {authHelperContext: helperContext} : {})});
+    }
     unresolvedRoutes += entry.hints.length;
     for (const [hintIndex, hint] of entry.hints.entries()) {
       if (unresolvedSnippets.length >= SOURCE_UNRESOLVED_TOTAL ||
@@ -493,7 +544,7 @@ export async function reviewSource(sourcePath, {infer = null, model = null, log 
     log({stage: 'source', message: `Muse source review started: ${selected.reduce((sum, batch) => sum + batch.length, 0)} of ${unresolvedSnippets.length + snippets.length} route excerpts · ${selected.length} bounded batches · ${width} parallel workers`});
     const interpret = async (batch, page) => {
       try {
-        const answer = await infer(model, [{role: 'system', content: 'Interpret these redacted source route excerpts as hypotheses. Explain accepted methods, parameters, purpose and trust boundaries. Also list concrete source-grounded security leads for authentication trust, authorization, bypass logic, injection, or sensitive-data disclosure. Every lead must cite an exact short quote and line from the supplied excerpt. A source lead is unproven until live verification; do not call it confirmed. Entries with a null path are route declarations whose path expression was not parsed. Infer a GET path from them only when literal constants in the excerpt determine it; include a harmless query value when its parameter is needed, such as ?next=/safe. Never infer a GET path from a non-GET declaration. Propose at most eight GET paths for guarded HTTP verification. Return JSON only. Never include secrets, credentials or executable payloads.'},
+        const answer = await infer(model, [{role: 'system', content: 'Interpret these redacted source route excerpts as hypotheses. Explain accepted methods, parameters, purpose and trust boundaries. Also list concrete source-grounded security leads for authentication trust, authorization, bypass logic, injection, or sensitive-data disclosure. authHelperContext, when present, is a bounded same-file helper called by the route; cite its exact line and quote if it establishes a trust boundary. Every lead must cite an exact short quote and line from the supplied excerpt or helper context. A source lead is unproven until live verification; do not call it confirmed. Entries with a null path are route declarations whose path expression was not parsed. Infer a GET path from them only when literal constants in the excerpt determine it; include a harmless query value when its parameter is needed, such as ?next=/safe. Never infer a GET path from a non-GET declaration. Propose at most eight GET paths for guarded HTTP verification. Return JSON only. Never include secrets, credentials or executable payloads.'},
           {role: 'user', content: JSON.stringify({page: page + 1, pages: pages.length, snippets: batch})}], {schema: {type: 'object', properties: {
             notes: {type: 'array', maxItems: 12, items: {type: 'object', properties: {path: {type: 'string'},
               purpose: {type: 'string'}, methods: {type: 'array', items: {type: 'string'}},

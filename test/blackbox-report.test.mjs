@@ -7,6 +7,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { temp } from './helpers.mjs';
 import { buildFindings, consolidateBrowserXssProofs, consolidateRawBoundaryProofs,
+  consolidateInjectionProofs,
   renderReport, summaryText,
   exitCodeFor } from '../src/blackbox/report.mjs';
 
@@ -169,6 +170,24 @@ test('one proved access recipe across routes reports one gate issue with separat
     make('f-001', '/members'), make('f-002', '/', 'admission=other')]).length, 2);
   assert.equal(consolidateRawBoundaryProofs([
     make('f-001', '/members'), make('f-002', '/', 'admission=valid', 'Other Gate')]).length, 2);
+});
+
+test('a raw SQL differential corroborates the cited SQL proof instead of claiming an access gate', () => {
+  const cited = {id: 'source-sql-1'};
+  const sql = {id: 'f-001', kind: 'sql-boolean', verdict: 'confirmed',
+    url: `${ORIGIN}/api/search`, proof: '/tmp/sql-proof.mjs', sourceFinding: cited,
+    evidence: ['ev-0001'], confirmation: ['ev-0002'], webProof: {parameter: 'q'}};
+  const raw = {id: 'f-002', kind: 'model-raw-boundary', verdict: 'confirmed',
+    url: `${ORIGIN}/api/search?q=probe`, proof: '/tmp/raw-proof.mjs',
+    sourceFinding: cited, modelHypothesis: {family: 'injection'},
+    evidence: ['ev-0003'], confirmation: ['ev-0004'],
+    webProof: {rawRequests: [{path: '/api/search?q=probe'}]}};
+  const separate = {...raw, id: 'f-003',
+    webProof: {rawRequests: [{path: '/api/search?other=probe'}]}};
+  const grouped = consolidateInjectionProofs([sql, raw, separate]);
+  assert.deepEqual(grouped.map(item => item.id), ['f-001', 'f-003']);
+  assert.deepEqual(grouped[0].corroboratingProofs.map(item => item.id), ['f-002']);
+  assert.deepEqual(grouped[0].evidence, ['ev-0001', 'ev-0003']);
 });
 
 const scope = {

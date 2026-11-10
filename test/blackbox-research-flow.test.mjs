@@ -11,11 +11,101 @@ import {createRequester, loadScope, validateUrl} from '../src/blackbox/scope.mjs
 import {mineOrigin} from '../src/blackbox/assets.mjs';
 import {anonymousSurface, deriveLocalPostScope} from '../src/blackbox/anonymous.mjs';
 import {reconConfirmedAccess} from '../src/blackbox/derived-session-recon.mjs';
+import {runSourceHeaderProbes, runSourceFetchProbes} from '../src/blackbox/web-probes.mjs';
 import {executeResearchFlow, planResearchFlows, protectedReadBoundaryFacts,
   researchFlowInventory, runResearchFlows,
   validateResearchFlow} from '../src/blackbox/research-flow.mjs';
 import {execFile} from '../src/util.mjs';
 import {validateJSON} from '../src/schema.mjs';
+
+test('a source-cited identity header becomes a replayable proof and clears after repair', async t => {
+  let vulnerable = true;
+  const server = http.createServer((request, response) => {
+    const opened = vulnerable && request.headers['x-actor-id'] === '1';
+    response.writeHead(opened ? 200 : 401,
+      {'content-type': 'application/json', 'cache-control': 'no-store'});
+    response.end(JSON.stringify(opened ? {id: 1, private: true} : {error: 'denied'}));
+  });
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+  t.after(() => new Promise(resolve => server.close(resolve)));
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'bypass-source-header-'));
+  t.after(() => fs.rmSync(dir, {recursive: true, force: true}));
+  const {scope} = loadScope({origin: `http://127.0.0.1:${server.address().port}`,
+    overrides: {acceptLocal: true}});
+  const ledger = createLedger(dir);
+  t.after(() => ledger.close());
+  const requester = createRequester(scope, {ledger, allowLocal: true});
+  const source = {id: 'source-header', category: 'authentication-trust',
+    method: 'GET', path: '/api/private', title: 'Header identity trust',
+    hypothesis: 'A caller may supply an actor ID.', fields: ['x-actor-id'],
+    source: {file: 'server.js', line: 3, quote: 'return claimed ? actor(claimed) : null;',
+      header: {name: 'x-actor-id', line: 2,
+        quote: "const claimed = req.headers['x-actor-id'];"}}};
+  const surface = {patterns: [{pattern: '/api/private', methods: ['GET'], params: {},
+    responseFacts: {status: 401}}], sourceReview: {securityLeads: [source,
+    {id: 'source-sensitive', category: 'sensitive-data', method: 'GET',
+      path: '/api/private', hypothesis: 'Private data might be returned.',
+      source: {file: 'server.js', line: 8, quote: 'res.json({private: true})'}}]}};
+  const run = await runSourceHeaderProbes(surface, scope, {requester, ledger, budget: 2});
+  assert.equal(run.findings[0]?.verdict, 'confirmed', JSON.stringify(run.results));
+  assert.equal(run.findings[0]?.sourceFinding?.id, 'source-header');
+  const proved = await proveFindings([{...run.findings[0], id: 'f-001'}], run.results,
+    {runDir: dir, surface, scope, env: {}, ledger, web: run});
+  assert.equal(proved[0]?.verdict, 'confirmed', JSON.stringify({proved, findings: run.findings,
+    results: run.results}));
+  vulnerable = false;
+  const fixed = await execFile(process.execPath, [proved[0].proof, '--expect-fixed'],
+    {env: process.env, timeout: 20000});
+  assert.equal(fixed.code, 0, fixed.stdout);
+});
+
+test('a source-cited server fetch proves response content use and clears after repair', async t => {
+  let vulnerable = true;
+  const server = http.createServer(async (request, response) => {
+    let body = '';
+    for await (const part of request) body += part;
+    const url = JSON.parse(body).sourceUrl;
+    if (!vulnerable && URL.canParse(url) &&
+        new URL(url).hostname === '127.0.0.1') {
+      response.writeHead(400, {'content-type': 'application/json'});
+      return response.end(JSON.stringify({error: 'blocked'}));
+    }
+    let status = 200, preview = '';
+    try {preview = await (await fetch(url)).text();}
+    catch {status = 502; preview = 'unavailable';}
+    response.writeHead(status, {'content-type': 'application/json',
+      'cache-control': 'no-store'});
+    response.end(JSON.stringify({preview}));
+  });
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+  t.after(() => new Promise(resolve => server.close(resolve)));
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'bypass-source-fetch-'));
+  t.after(() => fs.rmSync(dir, {recursive: true, force: true}));
+  const scope = structuredClone(loadScope({origin: `http://127.0.0.1:${server.address().port}`,
+    overrides: {acceptLocal: true}}).scope);
+  scope.probes.jsonPostPaths = ['/api/preview'];
+  const ledger = createLedger(dir);
+  t.after(() => ledger.close());
+  const requester = createRequester(scope, {ledger, allowLocal: true});
+  const source = {id: 'source-fetch', category: 'other', method: 'POST',
+    path: '/api/preview', title: 'Server fetches caller URL',
+    hypothesis: 'The server may fetch a caller-controlled URL.', fields: ['sourceUrl'],
+    source: {file: 'server.js', line: 3, quote: 'await fetch(sourceUrl)'}};
+  const surface = {jsonBodyOperations: [{path: '/api/preview', method: 'POST',
+    contentType: 'application/json', fields: ['sourceUrl'], requiredFields: []}],
+  sourceReview: {securityLeads: [source]}};
+  const run = await runSourceFetchProbes(surface, scope, {requester, ledger});
+  assert.equal(run.findings[0]?.kind, 'remote-content-use', JSON.stringify(run.results));
+  const proofLog = [];
+  const proved = await proveFindings([{...run.findings[0], id: 'f-001'}], run.results,
+    {runDir: dir, surface, scope, env: {}, ledger, web: run, log: entry => proofLog.push(entry)});
+  assert.equal(proved[0]?.verdict, 'confirmed', JSON.stringify({proved, findings: run.findings,
+    results: run.results, proofLog}));
+  vulnerable = false;
+  const fixed = await execFile(process.execPath, [proved[0].proof, '--expect-fixed'],
+    {env: process.env, timeout: 20000});
+  assert.equal(fixed.code, 0, fixed.stdout);
+});
 
 test('a proved request context remaps new scripts and lets Muse prove a second boundary', async t => {
   const gatePath = randomPath('entry');

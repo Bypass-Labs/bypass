@@ -39,9 +39,9 @@ The Muse plugin sends decisions through typed MCP tools; the CLI validates model
 
 ### Implemented test families
 
-- **Identity and access:** missing authentication, cross-account object and list access, supported GraphQL object authorization, credentialed CORS, unsigned-JWT acceptance, and bounded public-session-token exposure and replay.
+- **Identity and access:** missing authentication, source-cited client identity headers, cross-account object and list access, supported GraphQL object authorization, bounded invalid-login throttling checks, credentialed CORS, unsigned-JWT acceptance, and bounded public-session-token exposure and replay.
 - **Browser and injection:** reflected and reviewed stored XSS, fragment-based DOM XSS, inert HTML injection, SQL boolean injection, bracketed `$eq` operator account bypass, arithmetic SSTI, command-output canaries, path traversal, XML external entities, and CRLF response-header injection.
-- **Discovery and exposure:** open redirects, host-header redirect poisoning, local-target SSRF callbacks, public credential material, private keys and credential-shaped values in client assets, plus app/API route and GraphQL inventory.
+- **Discovery and exposure:** open redirects, host-header redirect poisoning, local-target SSRF callbacks and source-cited server fetches, public credential material, private keys and credential-shaped values in client assets, plus app/API route and GraphQL inventory.
 - **Source review:** CodeQL SAST across supported languages and model-guided policy discovery for object access, privileged actions, outbound destinations, and filesystem boundaries.
 
 These are bounded test shapes, not exhaustive coverage of each class. For example, SSRF proof uses an audit-owned local callback; stored-XSS proof uses reviewed local write/read routes; GraphQL authorization proof requires a supported list/item schema and two verified identities. A bracketed-operator bypass does not establish the backend database type. Reports name untested routes, classes, and missing prerequisites. [Executable coverage and limits](docs/BLACKBOX_AUDIT.md) · [Source scanner](scanner/README.md).

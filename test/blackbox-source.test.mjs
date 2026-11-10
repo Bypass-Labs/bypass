@@ -352,11 +352,54 @@ test('the first bounded source batch reaches explicit server handlers before cli
       firstBatch = JSON.parse(messages[1].content).snippets;
       return {notes: [], paths: [], securityLeads: []};
     }});
-  assert.deepEqual(firstBatch.slice(0, 2).map(item =>
-    [item.file, item.method, item.path]), [
-    ['server.js', 'GET', '/api/records'],
-    ['server.js', 'POST', '/api/session']]);
+  assert.deepEqual(new Set(firstBatch.slice(0, 2).map(item =>
+    `${item.file} ${item.method} ${item.path}`)), new Set([
+    'server.js GET /api/records',
+    'server.js POST /api/session']));
   assert.ok(result.modelCoverage.snippetsAvailable > firstBatch.length);
+});
+
+test('one source batch puts security-sensitive handlers ahead of routine routes', async t => {
+  const root = temp();
+  t.after(() => fs.rmSync(root, {recursive: true, force: true}));
+  const routine = Array.from({length: 8}, (_, index) =>
+    `app.get('/api/public/item-${index}', (req, res) => {\n  res.json({ok: true});\n});\n` +
+    '// route padding\n'.repeat(20)).join('');
+  fs.writeFileSync(path.join(root, 'server.js'), routine +
+    "app.get('/api/records/search', (req, res) => {\n  const query = `SELECT * FROM records WHERE name = '${req.query.q}'`;\n  res.json(db.prepare(query).all());\n});\n" +
+    '// route padding\n'.repeat(20) +
+    "app.post('/api/preview', async (req, res) => {\n  const response = await fetch(req.body.sourceUrl);\n  res.json({body: await response.text()});\n});\n");
+  let firstBatch = [];
+  await reviewSource(root, {model: {provider: 'test'}, maxModelPages: 1,
+    infer: async (_model, messages) => {
+      firstBatch = JSON.parse(messages[1].content).snippets;
+      return {notes: [], paths: [], securityLeads: []};
+    }});
+  assert.ok(firstBatch.some(item => item.path === '/api/records/search'));
+  assert.ok(firstBatch.some(item => item.path === '/api/preview'));
+});
+
+test('a route can cite its bounded same-file authentication helper', async t => {
+  const root = temp();
+  t.after(() => fs.rmSync(root, {recursive: true, force: true}));
+  fs.writeFileSync(path.join(root, 'server.js'),
+    "function principal(req) {\n  const claimed = req.headers['x-actor-id'];\n  return claimed ? {id: claimed} : null;\n}\n" +
+    "app.get('/api/private', (req, res) => {\n  const user = principal(req);\n  if (!user) return res.status(401).json({error: 'denied'});\n  res.json({id: user.id});\n});\n");
+  let helper;
+  const result = await reviewSource(root, {model: {provider: 'test'}, maxModelPages: 1,
+    infer: async (_model, messages) => {
+      helper = JSON.parse(messages[1].content).snippets[0].authHelperContext?.[0];
+      return {notes: [], paths: [], securityLeads: [{title: 'Client header trusted as identity',
+        category: 'authentication-trust', path: '/api/private', method: 'GET',
+        hypothesis: 'A caller may supply its own actor ID.',
+        remediation: 'Derive identity from a verified session.', fields: ['x-actor-id'],
+        file: 'server.js', line: 1, quote: 'return claimed ? {id: claimed} : null;'}]};
+    }});
+  assert.equal(helper?.line, 1);
+  assert.ok(helper?.excerpt.includes("req.headers['x-actor-id']"));
+  assert.equal(result.securityLeads[0]?.source.line, 3);
+  assert.deepEqual(result.securityLeads[0]?.source.header,
+    {name: 'x-actor-id', line: 2, quote: "const claimed = req.headers['x-actor-id'];"});
 });
 
 test('source-assisted review uses the configured bounded model concurrency', async t => {

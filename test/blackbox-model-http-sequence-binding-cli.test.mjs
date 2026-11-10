@@ -8,6 +8,7 @@ import {randomBytes} from 'node:crypto';
 import {spawn} from 'node:child_process';
 import {CLI} from '../src/demo.mjs';
 import {execFile} from '../src/util.mjs';
+import {execute} from '../src/service.mjs';
 
 test('CLI binds a freshly observed JSON value into a later request and replays it', async t => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'bypass-sequence-binding-'));
@@ -33,9 +34,9 @@ test('CLI binds a freshly observed JSON value into a later request and replays i
     };
     if (url.pathname === '/') return send(200, {service: 'preview workspace'});
     if (url.pathname === '/openapi.json') return send(200, {openapi: '3.0.0', paths: {
+      [prepare]: {get: {summary: 'Create a short preview context'}},
       ...Object.fromEntries([...setupReads, ...observeReads].map(route =>
         [route, {get: {summary: 'Read-only workflow step'}}])),
-      [prepare]: {get: {summary: 'Create a short preview context'}},
       [transform]: {get: {summary: 'Preview expression within a workspace',
         parameters: [{name: 'workspace', in: 'query', schema: {type: 'string'}},
           {name: 'expression', in: 'query', schema: {type: 'string'}, example: 'plain'}]}}}});
@@ -64,48 +65,62 @@ test('CLI binds a freshly observed JSON value into a later request and replays i
   const origin = `http://127.0.0.1:${server.address().port}`;
   const scopePath = path.join(root, 'blackbox.scope.json');
   fs.writeFileSync(scopePath, JSON.stringify({schemaVersion: 1, target: {origin},
-    never: [decoy], limits: {rps: 50, maxUrls: 40, minutes: 3,
+    never: [decoy], seeds: {paths: [prepare]},
+    limits: {rps: 50, maxUrls: 40, minutes: 3,
       modelCalls: 30, tasks: 20}}));
-  const bin = path.join(root, 'bin');
-  fs.mkdirSync(bin);
-  fs.writeFileSync(path.join(bin, 'muse'), [
-    '#!' + process.execPath,
-    "const fs=require('node:fs');",
-    'const args=process.argv.slice(2);',
-    'const value=flag=>args[args.indexOf(flag)+1];',
-    "if(args.includes('--version')){console.log('muse fixture');process.exit(0);}",
-    "if(args[0]!=='exec'||!args.includes('--disable-shell')||!args.includes('--output-schema')||value('--provider')!=='meta')process.exit(2);",
-    "const messages=JSON.parse(fs.readFileSync(value('--prompt-file'),'utf8'));",
-    'const system=messages[0].content;',
-    'const context=JSON.parse(messages[1].content);',
-    'let answer;',
-    "if(system.startsWith('You are planning bounded, authorized HTTP research.')){",
-    ' const subject=context.routes.find(item=>item.path===process.env.BX_TRANSFORM&&item.kind===\'read\'&&item.fields.includes(\'workspace\')&&item.fields.includes(\'expression\'));',
-    ' const source=context.observedReadRoutes.find(item=>item.path===process.env.BX_PREPARE);',
-    ' const setups=JSON.parse(process.env.BX_SETUP_READS);',
-    ' const observations=JSON.parse(process.env.BX_OBSERVE_READS);',
-    ' const observed=path=>context.observedReadRoutes.some(item=>item.path===path);',
-    " const step=path=>({method:'GET',path,headers:[]});",
-    ' const encoded=value=>`hex:${Buffer.from(value).toString(\'hex\')}`;',
-    " answer={flows:subject&&source?.responseShapes?.anonymous?.workspace?.id==='string'&&[...setups,...observations].every(observed)?[{family:'contextual-preview-transform',why:'A fresh workspace context may affect the preview result',priority:9,as:'anonymous',prelude:[...setups.slice(0,2).map(step),step(source.path),...setups.slice(2).map(step)],subject:{method:'GET',path:subject.path,placement:'query',key:'expression',fixedFields:[],bodyTemplate:'',headers:[]},observe:observations.map(step),binding:{from:2,pointer:'/workspace/id',to:'subject',index:0,key:'workspace'},controlValue:'plain',firstValue:encoded(context.marker),secondValue:encoded(context.secondMarker),marker:context.marker,secondMarker:context.secondMarker,assertion:{step:'subject',index:0,location:'body',name:''}}]:[]};",
-    '}',
-    "else if(system.includes('Interpret only the extracted'))answer={files:[]};",
-    "else if(system.includes('Assess only these independently proved'))answer={notes:[]};",
-    "else if(system.includes('Continue mapping this authorized primary application'))answer={paths:[]};",
-    "else if(system.includes('mapping an authorized web API'))answer={paths:[],notes:[]};",
-    "else if(system.includes('Propose bounded GET access-control'))answer={tasks:[]};",
-    "else if(system.includes('Rank only the supplied observed read-only web-test candidates'))answer={priorities:[],strategies:[],experiments:[]};",
-    'else {',
-    " const schema=JSON.parse(fs.readFileSync(value('--output-schema'),'utf8'));",
-    " const blank=s=>s?.type==='object'?Object.fromEntries((s.required??[]).map(key=>[key,blank(s.properties?.[key])])):s?.type==='array'?[]:s?.type==='integer'||s?.type==='number'?0:s?.type==='boolean'?false:s?.enum?.[0]??'';",
-    ' answer=blank(schema);',
-    '}',
-    "console.log(JSON.stringify({payload:{kind:'run_terminal',terminal:'completed',text:JSON.stringify(answer)}}));",
-  ].join('\n') + '\n', {mode: 0o700});
-  const env = {PATH: `${bin}${path.delimiter}${process.env.PATH}`,
-    BX_PREPARE: prepare, BX_TRANSFORM: transform,
-    BX_SETUP_READS: JSON.stringify(setupReads),
-    BX_OBSERVE_READS: JSON.stringify(observeReads)};
+  const blank = schema => schema?.type === 'object' ?
+    Object.fromEntries((schema.required ?? []).map(key =>
+      [key, blank(schema.properties?.[key])])) :
+    schema?.type === 'array' ? [] :
+    ['integer', 'number'].includes(schema?.type) ? 0 :
+    schema?.type === 'boolean' ? false : schema?.enum?.[0] ?? '';
+  const modelServer = http.createServer(async (request, response) => {
+    let raw = '';
+    for await (const chunk of request) raw += chunk;
+    const call = JSON.parse(raw);
+    const system = call.input.find(item => item.role === 'system')?.content ?? '';
+    const context = call.input.filter(item => item.role === 'user').toReversed()
+      .map(item => {try {return JSON.parse(item.content);} catch {return null;}})
+      .find(Boolean) ?? {};
+    let answer;
+    if (system.startsWith('You are planning bounded, authorized HTTP research.')) {
+      const subject = context.routes.find(item => item.path === transform &&
+        item.kind === 'read' && item.fields.includes('workspace') &&
+        item.fields.includes('expression'));
+      const source = context.observedReadRoutes.find(item => item.path === prepare);
+      const observed = route => context.observedReadRoutes.some(item => item.path === route);
+      const step = route => ({method: 'GET', path: route, headers: []});
+      const encoded = value => `hex:${Buffer.from(value).toString('hex')}`;
+      answer = {flows: subject && source &&
+        [...setupReads, ...observeReads].every(observed) ? [{
+          family: 'contextual-preview-transform',
+          why: 'A fresh workspace context may affect the preview result',
+          priority: 9, as: 'anonymous',
+          prelude: [...setupReads.slice(0, 2).map(step), step(source.path),
+            ...setupReads.slice(2).map(step)],
+          subject: {method: 'GET', path: subject.path, placement: 'query',
+            key: 'expression', fixedFields: [], bodyTemplate: '', headers: []},
+          observe: observeReads.map(step),
+          binding: {from: 2, pointer: '/workspace/id', to: 'subject',
+            index: 0, key: 'workspace'},
+          controlValue: 'plain', firstValue: encoded(context.marker),
+          secondValue: encoded(context.secondMarker), marker: context.marker,
+          secondMarker: context.secondMarker,
+          assertion: {step: 'subject', index: 0, location: 'body', name: ''}}] : []};
+    } else answer = blank(call.text.format.schema);
+    response.setHeader('content-type', 'application/json');
+    response.end(JSON.stringify({status: 'completed', output: [{type: 'message',
+      role: 'assistant', content: [{type: 'output_text', text: JSON.stringify(answer)}]}]}));
+  });
+  await new Promise(resolve => modelServer.listen(0, '127.0.0.1', resolve));
+  t.after(() => {modelServer.closeAllConnections(); modelServer.close();});
+  const modelOrigin = `http://127.0.0.1:${modelServer.address().port}/v1`;
+  await execute('init', [root]);
+  await execute('model add', ['sequence-fixture'], {project: root, provider: 'custom',
+    'base-url': modelOrigin, model: 'fixture',
+    'secret-env': 'BYPASS_SEQUENCE_FIXTURE_KEY', transport: 'responses',
+    'response-mode': 'json-schema', stream: false});
+  const env = {BYPASS_SEQUENCE_FIXTURE_KEY: 'unit-fixture-key'};
   const cli = async (...args) => {
     const completed = await execFile(process.execPath,
       [CLI, 'blackbox', ...args, '--project', root, '--json', '--non-interactive'],
