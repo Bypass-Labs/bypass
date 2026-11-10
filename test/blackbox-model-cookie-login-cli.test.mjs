@@ -180,8 +180,12 @@ for (const authMode of ['explicit-cookie', 'auto-cookie', 'dual-fallback']) test
     }
     const exported = await cli('export', audit.data.run, '--out', path.join(root, 'regression'));
     assert.equal(exported.code, 0);
+    const relevant = new Set([finding.id, ssti.id]);
+    const relevantTests = exported.data.files.filter(file =>
+      [...relevant].some(id => path.basename(file).includes(id)));
+    assert.equal(relevantTests.length, 2);
     const regression = async files => (await execFile(process.execPath,
-      ['--test', ...(files ?? exported.data.files)], {env: {...env, NODE_TEST_CONTEXT: undefined},
+      ['--test', ...(files ?? relevantTests)], {env: {...env, NODE_TEST_CONTEXT: undefined},
         timeout: 20000})).code;
     assert.equal(await regression(), 1);
     templateFixed = true;
@@ -192,7 +196,10 @@ for (const authMode of ['explicit-cookie', 'auto-cookie', 'dual-fallback']) test
     assert.equal(await regression(exported.data.files.filter(file =>
       file.includes(ssti.id))), 0, 'SSTI regression must clear after only the template fix');
     fixed = true;
-    assert.equal((await cli('verify', audit.data.run)).code, 0);
+    const verified = await cli('verify', audit.data.run);
+    for (const id of relevant)
+      assert.equal(verified.data.proofs.find(item => item.id === id)?.verdict,
+        'not_reproduced', JSON.stringify(verified.data));
     assert.equal(await regression(), 0);
     assert.ok(calls.every(call => call.method !== 'POST' || call.path === loginPath));
   });

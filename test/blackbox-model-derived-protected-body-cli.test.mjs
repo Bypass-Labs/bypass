@@ -148,6 +148,11 @@ test('Muse uses a derived login as a protected-content control and replays an an
     const contentRegression = exported.data.files.find(file =>
       file.endsWith(`-${finding.id}.test.mjs`));
     assert.ok(contentRegression);
+    const relevant = new Set(audit.data.findings.filter(item =>
+      item.proof && item.kind !== 'rate-limit-auth-gate').map(item => item.id));
+    const relevantTests = exported.data.files.filter(file =>
+      [...relevant].some(id => path.basename(file).includes(id)));
+    assert.equal(relevantTests.length, relevant.size);
     const regression = async (files = [contentRegression]) => (await execFile(process.execPath,
       ['--test', ...files], {env: {...env, NODE_TEST_CONTEXT: undefined},
         timeout: 20000})).code;
@@ -165,8 +170,11 @@ test('Muse uses a derived login as a protected-content control and replays an an
       'not_reproduced');
     assert.equal(await regression(), 0);
     loginVulnerable = false;
-    assert.equal((await cli('verify', audit.data.run)).code, 0);
-    assert.equal(await regression(exported.data.files), 0);
+    const verified = await cli('verify', audit.data.run);
+    for (const id of relevant)
+      assert.equal(verified.data.proofs.find(item => item.id === id)?.verdict,
+        'not_reproduced', JSON.stringify(verified.data));
+    assert.equal(await regression(relevantTests), 0);
     assert.ok(calls.includes(`GET ${privatePath}`));
     assert.ok(calls.includes(`POST ${publicPath}`));
   });

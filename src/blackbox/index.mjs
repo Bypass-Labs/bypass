@@ -50,7 +50,7 @@ function observedSearchBaseline(response, sourceLead) {
       !(response.ids?.length) || typeof response.body !== 'string') return null;
   const column = /\b([A-Za-z_][A-Za-z0-9_]*)\s+LIKE\b/i.exec(
     sourceLead?.source?.quote ?? '')?.[1];
-  if (!column || /(?:email|token|secret|password|credential|key|phone|address)/i.test(column))
+  if (!column || /(?:email|token|secret|password|credential|key|phone|address|name|birth|ssn|social|tax|card|account)/i.test(column))
     return null;
   let document;
   try { document = JSON.parse(response.body); } catch { return null; }
