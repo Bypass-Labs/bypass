@@ -40,8 +40,8 @@ test('provider reports count-only token usage for both transports, including rej
     assert.deepEqual(await session.turn([{role:'user',content:'second'}],
       {schema,onProgress:event=>events.push(event)}),{focus:'ok'});
     assert.deepEqual(events.filter(event=>event.kind==='usage'),[
-      {kind:'usage',inputTokens:17,outputTokens:5,totalTokens:22},
-      {kind:'usage',inputTokens:17,outputTokens:5,totalTokens:22}]);
+      {kind:'usage',message:'Model usage: 17 input · 5 output tokens',inputTokens:17,outputTokens:5,totalTokens:22},
+      {kind:'usage',message:'Model usage: 17 input · 5 output tokens',inputTokens:17,outputTokens:5,totalTokens:22}]);
   });
 });
 
@@ -61,7 +61,7 @@ test('streamed provider responses retain final token usage',async t=>{
     assert.deepEqual(await new ProviderSession(profile).turn([{role:'user',content:'start'}],
       {schema,onProgress:event=>events.push(event)}),{focus:'ok'});
     assert.deepEqual(events.filter(event=>event.kind==='usage'),
-      [{kind:'usage',inputTokens:11,outputTokens:3,totalTokens:14}]);
+      [{kind:'usage',message:'Model usage: 11 input · 3 output tokens',inputTokens:11,outputTokens:3,totalTokens:14}]);
   });
 });
 

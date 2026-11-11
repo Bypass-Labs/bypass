@@ -129,7 +129,8 @@ function modelUsage(usage) {
   const outputTokens = usage.output_tokens ?? usage.completion_tokens;
   if (![inputTokens, outputTokens].every(value => Number.isSafeInteger(value) && value >= 0)) return null;
   const totalTokens = usage.total_tokens;
-  return {kind: 'usage', inputTokens, outputTokens,
+  return {kind: 'usage', message: `Model usage: ${inputTokens} input · ${outputTokens} output tokens`,
+    inputTokens, outputTokens,
     totalTokens: Number.isSafeInteger(totalTokens) && totalTokens >= 0 ?
       totalTokens : inputTokens + outputTokens};
 }
@@ -159,7 +160,9 @@ export class ProviderSession {
     try {
       const workspace=p.workspaceEnv?need(process.env[p.workspaceEnv],`Set ${p.workspaceEnv} for the selected Anthropic workspace.`,3):null;
       const Client=requestTimeout===0?DeadlineFreeOpenAI:OpenAI;
-      client=new Client({apiKey:process.env[p.secretEnv],adminAPIKey:null,organization:null,project:null,webhookSecret:null,logLevel:'off',baseURL:p.baseUrl,maxRetries:0,timeout:requestTimeout,fetch:pinnedFetch(p,process.env[p.secretEnv],workspace,onProgress,requestTimeout)});
+      // Let our AbortSignal own the visible deadline so an SDK timeout at the
+      // same instant cannot turn a model timeout into a generic network error.
+      client=new Client({apiKey:process.env[p.secretEnv],adminAPIKey:null,organization:null,project:null,webhookSecret:null,logLevel:'off',baseURL:p.baseUrl,maxRetries:0,timeout:requestTimeout===0?0:requestTimeout+1000,fetch:pinnedFetch(p,process.env[p.secretEnv],workspace,onProgress,requestTimeout)});
       const clean=redact(messages);
       if(!this.history.length)this.history=structuredClone(clean);
       else if(this.pending){const output=clean.at(-1).content;this.history.push(p.transport==='responses'?{type:'function_call_output',call_id:this.pending,output}:{role:'tool',tool_call_id:this.pending,content:output});this.pending=null;}
