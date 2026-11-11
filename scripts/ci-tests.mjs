@@ -37,6 +37,14 @@ export function documentationOnly(files){
     (file==='README.md'||/^docs\/[^\0\r\n]+\.md$/.test(file)));
 }
 
+export function pluginOnly(files){
+  return files.length>0&&files.some(file=>!documentationOnly([file]))&&files.every(file=>
+    documentationOnly([file])||
+    /^plugin\/(?:skills\/[^/]+\/SKILL\.md|commands\/[^/]+\.md)$/.test(file)||
+    file==='plugin/mcp/context-hook.mjs'||file==='src/plugin-context.mjs'||
+    file==='test/plugin-compaction.test.mjs');
+}
+
 export function changedFiles(base,head,root=checkout){
   need([base,head].every(value=>/^[a-f0-9]{40}$/.test(value||'')),'Expected exact base and head commit SHAs');
   // No API pagination/truncation; retain both sides of a move.
@@ -46,7 +54,10 @@ export function changedFiles(base,head,root=checkout){
 export function checkGate(needs){
   need(needs?.fast?.result==='success','Fast checks did not succeed');
   const full=needs.fast.outputs?.full;
+  const mode=needs.fast.outputs?.mode;
   need(full==='true'||full==='false','Missing or invalid change classification');
+  need(['full','plugin','docs'].includes(mode)&&
+    (full==='true')===(mode==='full'),'Missing or inconsistent validation mode');
   for(const name of ['regression','policy','codeql']){
     const expected=full==='true'?'success':'skipped';
     need(needs[name]?.result===expected,`${name} must be ${expected}; got ${needs[name]?.result||'missing'}`);
@@ -76,14 +87,18 @@ async function main(){
   const weights=JSON.parse(fs.readFileSync(path.join(checkout,'scripts/ci-test-timings.json'))).milliseconds;
   const groups=planTests(discoverTests(),weights);
   if(command==='plan'){
-    let full=true,reason='Full validation is the default.';
+    let mode='full',reason='Full validation is the default.';
     try{
       const files=changedFiles(process.env.CI_BASE_SHA,process.env.CI_HEAD_SHA);
-      full=!documentationOnly(files);reason=full?'Code, runtime input, or other non-documentation changes.':'Only presentation Markdown changed; fast checks still run.';
+      mode=documentationOnly(files)?'docs':pluginOnly(files)?'plugin':'full';
+      reason=mode==='docs'?'Only presentation Markdown changed; fast checks still run.':
+        mode==='plugin'?'Only Muse plugin guidance/context changed; run focused plugin checks.':
+          'Code, scanner, workflow, or other runtime changes require full validation.';
     }catch(error){reason=`Unable to prove documentation-only changes; running all checks: ${error.message}`;}
+    const full=mode==='full';
     const matrix={shard:groups.map(group=>group.shard)};
-    console.log(JSON.stringify({full,reason,groups},null,2));
-    if(process.env.GITHUB_OUTPUT)fs.appendFileSync(process.env.GITHUB_OUTPUT,`full=${full}\nmatrix=${JSON.stringify(matrix)}\n`);
+    console.log(JSON.stringify({full,mode,reason,groups},null,2));
+    if(process.env.GITHUB_OUTPUT)fs.appendFileSync(process.env.GITHUB_OUTPUT,`full=${full}\nmode=${mode}\nmatrix=${JSON.stringify(matrix)}\n`);
     if(process.env.GITHUB_STEP_SUMMARY)fs.appendFileSync(process.env.GITHUB_STEP_SUMMARY,`## PR validation plan\n\n${reason}\n\n| Shard | Files | Estimated test minutes |\n|---|---:|---:|\n${groups.map(group=>`| ${group.shard} | ${group.files.length} | ${(group.estimatedMs/60000).toFixed(1)} |`).join('\n')}\n\nEstimates come from a previous CI run; setup, cache misses, and runner contention add time.\n`);
   }else if(command==='run'){
     need(/^[1-9][0-9]*$/.test(value||'')&&Number(value)<=shardCount,'Choose a valid shard number');

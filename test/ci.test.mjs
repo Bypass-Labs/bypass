@@ -5,7 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import {execFileSync,spawnSync} from 'node:child_process';
 import {fileURLToPath} from 'node:url';
-import {discoverTests,planTests,documentationOnly,changedFiles,checkGate,runTests,shardCount} from '../scripts/ci-tests.mjs';
+import {discoverTests,planTests,documentationOnly,pluginOnly,changedFiles,checkGate,runTests,shardCount} from '../scripts/ci-tests.mjs';
 
 const root=fileURLToPath(new URL('../',import.meta.url));
 const temporary=t=>{const dir=fs.mkdtempSync(path.join(os.tmpdir(),'bypass-ci-'));t.after(()=>fs.rmSync(dir,{recursive:true,force:true}));return dir;};
@@ -43,6 +43,15 @@ test('only ordinary documentation can skip integrations; runtime Markdown and un
   for(const files of [[],['src/ui.mjs'],['package.json'],['.github/workflows/check.yml'],['plugin/skills/bypass/SKILL.md'],['docs/muse_spark_bug_bounty_tier_1_tier_2.md'],['scanner/README.md'],['docs/fixture.json'],['docs/../src/notes.md'],['README.md','test/x.test.mjs'],['docs/a.md\nother']])assert.equal(documentationOnly(files),false,JSON.stringify(files));
 });
 
+test('plugin-only changes get focused checks while mixed runtime changes keep full validation',()=>{
+  assert.equal(pluginOnly(['plugin/skills/bypass/SKILL.md','plugin/mcp/context-hook.mjs',
+    'src/plugin-context.mjs','test/plugin-compaction.test.mjs','docs/CI.md']),true);
+  assert.equal(pluginOnly(['README.md']),false);
+  for(const file of ['src/host-review.mjs','src/blackbox/index.mjs','scanner/src/main.py',
+    '.github/workflows/check.yml','test/blackbox-index.test.mjs','plugin/runtime/src/plugin-context.mjs'])
+    assert.equal(pluginOnly(['plugin/mcp/context-hook.mjs',file]),false,file);
+});
+
 test('Git change classification includes additions, deletions, and both sides of renames',t=>{
   const dir=temporary(t);
   const git=(...args)=>execFileSync('git',args,{cwd:dir,encoding:'utf8',stdio:['ignore','pipe','pipe']}).trim();
@@ -58,16 +67,20 @@ test('Git change classification includes additions, deletions, and both sides of
   assert.throws(()=>changedFiles('--help',head,dir),/exact base/);
 });
 
-const successful=()=>({fast:{result:'success',outputs:{full:'true'}},regression:{result:'success'},policy:{result:'success'},codeql:{result:'success'}});
+const successful=()=>({fast:{result:'success',outputs:{full:'true',mode:'full'}},regression:{result:'success'},policy:{result:'success'},codeql:{result:'success'}});
 test('the required check rejects failed, cancelled, skipped, or missing code gates',()=>{
   assert.doesNotThrow(()=>checkGate(successful()));
   for(const name of ['fast','regression','policy','codeql'])for(const result of ['failure','cancelled','skipped',undefined]){
     const needs=successful();needs[name].result=result;assert.throws(()=>checkGate(needs));
   }
   for(const full of [undefined,'','TRUE',true]){const needs=successful();needs.fast.outputs.full=full;assert.throws(()=>checkGate(needs));}
+  for(const mode of [undefined,'','unknown','plugin','docs']){const needs=successful();needs.fast.outputs.mode=mode;assert.throws(()=>checkGate(needs));}
   assert.throws(()=>checkGate(null));
-  const docs=successful();docs.fast.outputs.full='false';for(const name of ['regression','policy','codeql'])docs[name].result='skipped';
+  const docs=successful();docs.fast.outputs.full='false';docs.fast.outputs.mode='docs';for(const name of ['regression','policy','codeql'])docs[name].result='skipped';
   assert.doesNotThrow(()=>checkGate(docs));docs.fast.result='failure';assert.throws(()=>checkGate(docs));
+  const plugin=successful();plugin.fast.outputs.full='false';plugin.fast.outputs.mode='plugin';
+  for(const name of ['regression','policy','codeql'])plugin[name].result='skipped';
+  assert.doesNotThrow(()=>checkGate(plugin));
 });
 
 test('the planner defaults to full coverage when comparison metadata is unavailable',t=>{
@@ -77,7 +90,8 @@ test('the planner defaults to full coverage when comparison metadata is unavaila
   assert.equal(result.status,0,result.stderr);const plan=JSON.parse(result.stdout);
   assert.equal(plan.full,true);assert.match(plan.reason,/running all checks/);
   const lines=fs.readFileSync(output,'utf8').trim().split('\n');assert.equal(lines[0],'full=true');
-  assert.deepEqual(JSON.parse(lines[1].slice('matrix='.length)),{shard:[1,2,3,4]});
+  assert.equal(lines[1],'mode=full');
+  assert.deepEqual(JSON.parse(lines[2].slice('matrix='.length)),{shard:[1,2,3,4]});
 });
 
 test('shard execution preserves Docker opt-in, runs every selected file, and propagates failure',async t=>{
