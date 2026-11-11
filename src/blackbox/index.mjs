@@ -2258,7 +2258,7 @@ export async function runAudit({url, root = process.cwd(), scopeFile = null, ove
           {infer: invokeModel, model, env: sessions.env,
             modelCallsAvailable: 1, researchDeadline, log: say, ledger});
         web.modelCalls += pivotPlan.modelCalls;
-        web.modelError ??= pivotPlan.modelError;
+        if (pivotPlan.modelError) say({stage: 'research', message: pivotPlan.modelError});
         web.strategyDecisions.push(...pivotPlan.decisions);
         if (pivotPlan.leads.length) {
           const pivotRun = await runResearchFlows(pivotPlan.leads, proofScope,
@@ -2274,7 +2274,7 @@ export async function runAudit({url, root = process.cwd(), scopeFile = null, ove
           web.strategyDecisions.push(...pivotRun.decisions);
           web.investigations.push(...pivotRun.investigations);
           web.modelCalls += pivotRun.modelCalls;
-          web.modelError ??= pivotRun.modelError;
+          if (pivotRun.modelError) say({stage: 'research', message: pivotRun.modelError});
           web.tested += pivotResults.filter(item => item.verdict !== 'untested').length;
           stats.tasks += pivotResults.filter(item => item.verdict !== 'untested').length;
           stats.queuedUntested += pivotResults.filter(item => item.verdict === 'untested').length;

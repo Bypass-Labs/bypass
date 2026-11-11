@@ -5531,7 +5531,7 @@ export async function runWebProbes(surface, scope, {requester, ledger = null, bu
         derivedAvailable: Boolean(derivedSession?.requestAuthenticated)});
     plan.strategyDecisions.push(...pivotPlan.decisions);
     flowRun.modelCalls += pivotPlan.modelCalls;
-    flowRun.modelError ??= pivotPlan.modelError;
+    if (pivotPlan.modelError) log({stage: 'research', message: pivotPlan.modelError});
     plan.modelCoverage.confirmedPivots = {proposed: pivotPlan.decisions.length,
       accepted: pivotPlan.leads.length, executed: 0};
     if (pivotPlan.leads.length) {
@@ -5552,7 +5552,7 @@ export async function runWebProbes(surface, scope, {requester, ledger = null, bu
       flowRun.investigations.push(...pivotRun.investigations);
       flowRun.deferredLeads.push(...pivotRun.deferredLeads);
       flowRun.modelCalls += pivotRun.modelCalls;
-      flowRun.modelError ??= pivotRun.modelError;
+      if (pivotRun.modelError) log({stage: 'research', message: pivotRun.modelError});
       plan.modelCoverage.confirmedPivots.executed = pivotRun.results.filter(item =>
         item.verdict !== 'untested').length;
     }

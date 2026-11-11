@@ -125,6 +125,30 @@ test('a long audit runs a distinct Muse impact check after its primary proof', a
     item.lead?.path === '/api/beta/status' && item.verdict === 'observed'), true);
 });
 
+test('an optional Muse impact timeout does not invalidate the primary finding', async () => {
+  const scope = structuredClone(loadScope({origin: 'http://127.0.0.1:4329',
+    overrides: {acceptLocal: true, rps: 20}}).scope);
+  scope.limits.minutes = 10;
+  const surface = {patterns: [], jsonBodyOperations: [{path: '/api/beta/unlock',
+    method: 'POST', contentType: 'application/json', fields: ['code'],
+    requiredFields: [], source: 'public-js', purpose: 'Beta unlock access code.'}]};
+  let requests = 0;
+  const run = await runWebProbes(surface, scope, {budget: 1, maxModelPages: 16,
+    model: {model: 'fixture'}, researchDeadline: Date.now() + 120_000,
+    infer: async (_model, messages) => {
+      if (messages[0].content.startsWith('The primary scoped audit has completed'))
+        throw Error('Model request timed out');
+      return {flows: [], priorities: [], strategies: [], experiments: [],
+        checks: [], tasks: [], plans: [], samples: []};
+    }, requester: async () => ({status: 200, type: 'application/json',
+      body: '{"ok":false}', headers: {'content-type': 'application/json',
+        'cache-control': 'no-store'}, evidenceId: `ev-${++requests}`})});
+  assert.ok(run.findings.some(item => item.kind === 'rate-limit-auth-gate'));
+  assert.equal(run.modelError, null);
+  assert.deepEqual(run.modelCoverage.confirmedPivots,
+    {proposed: 1, accepted: 0, executed: 0});
+});
+
 test('queued web checks use reserved execution time after Muse planning ends', async () => {
   const {scope} = loadScope({origin: 'http://127.0.0.1:4329',
     overrides: {acceptLocal: true, rps: 20}});
