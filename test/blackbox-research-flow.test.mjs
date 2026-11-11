@@ -12,7 +12,8 @@ import {mineOrigin} from '../src/blackbox/assets.mjs';
 import {anonymousSurface, deriveLocalPostScope} from '../src/blackbox/anonymous.mjs';
 import {reconConfirmedAccess} from '../src/blackbox/derived-session-recon.mjs';
 import {runSourceHeaderProbes, runSourceFetchProbes} from '../src/blackbox/web-probes.mjs';
-import {executeResearchFlow, planResearchFlows, protectedReadBoundaryFacts,
+import {executeResearchFlow, planResearchFlows, planConfirmedPivots,
+  protectedReadBoundaryFacts,
   researchFlowInventory, runResearchFlows,
   validateResearchFlow} from '../src/blackbox/research-flow.mjs';
 import {execFile} from '../src/util.mjs';
@@ -622,6 +623,95 @@ test('Muse may stop a raw request after reviewing one negative candidate', async
   assert.equal(run.investigations[0].stopReason, 'model-stopped');
   assert.equal(run.decisions[0].stopReviewRequested, true);
   assert.equal(run.decisions[1].stopReview, true);
+});
+
+test('a transient read timeout gets one fresh attempt while a write is never repeated', async () => {
+  const origin = 'http://127.0.0.1:4329';
+  const read = randomPath('transient-read');
+  const write = randomPath('transient-write');
+  const scope = loadScope({origin, overrides: {acceptLocal: true}}).scope;
+  const surface = {patterns: [{pattern: read, methods: ['GET'], params: {}}],
+    jsonBodyOperations: [{path: write, method: 'POST',
+      contentType: 'application/json', fields: ['value']}]};
+  const flow = (method, route) => validateResearchFlow({family: 'scoped response',
+    why: 'Check one observed route', priority: 5, as: 'anonymous',
+    oracle: 'raw-observation', rawRequests: [{method, path: route,
+      ...(method === 'POST' ? {headers: [{name: 'Content-Type',
+        value: 'application/json'}], body: '{"value":"audit"}'} : {})}]}, surface, scope);
+  const readPlan = flow('GET', read), writePlan = flow('POST', write);
+  assert.equal(readPlan.ok, true);
+  assert.equal(writePlan.ok, true);
+  const calls = [];
+  const requester = async request => {
+    calls.push(request.method);
+    return calls.filter(method => method === request.method).length === 1 ?
+      {blocked: {reason: 'Request timeout'}, evidenceId: `ev-${calls.length}`} :
+      {status: 200, type: 'application/json', body: '{}',
+        headers: {}, evidenceId: `ev-${calls.length}`};
+  };
+  const readRun = await runResearchFlows([readPlan.lead], scope,
+    {surface, requester, modelCallsAvailable: 0});
+  assert.equal(readRun.results[0].verdict, 'observed');
+  assert.deepEqual(calls, ['GET', 'GET']);
+  const writeRun = await runResearchFlows([writePlan.lead], scope,
+    {surface, requester, modelCallsAvailable: 0});
+  assert.equal(writeRun.results[0].verdict, 'inconclusive');
+  assert.deepEqual(calls, ['GET', 'GET', 'POST']);
+});
+
+test('Muse follows a confirmed signal into a distinct observed impact path', async () => {
+  const origin = 'http://127.0.0.1:4329';
+  const gate = randomPath('gate');
+  const privatePath = randomPath('gate-data');
+  const scope = loadScope({origin, overrides: {acceptLocal: true}}).scope;
+  const surface = {patterns: [gate, privatePath].map(pattern =>
+    ({pattern, methods: ['GET'], params: {code: ['plain']}}))};
+  const raw = value => ({method: 'GET', path: `${gate}?code=${value}`});
+  const first = validateResearchFlow({family: 'access gate',
+    why: 'Compare the observed gate contract', priority: 8, as: 'anonymous',
+    oracle: 'raw-proof', rawRequests: [raw('open')],
+    rawProof: {baseline: [raw('plain')], negative: [raw('wrong')],
+      closedText: '', openText: ''}}, surface, scope);
+  assert.equal(first.ok, true, first.reason);
+  let requests = 0, modelCalls = 0;
+  const requester = async request => {
+      requests++;
+      const opened = request.url.includes('code=open');
+      const status = request.url.includes(privatePath) ? 200 : opened ? 200 : 403;
+      const body = status === 200 ? 'private-ready' : 'closed';
+      return {status, type: 'text/plain', body, hash: body,
+        headers: {'cache-control': 'no-store'}, evidenceId: `ev-${requests}`};
+    };
+  const run = await runResearchFlows([first.lead], scope,
+    {surface, requester, modelCallsAvailable: 0});
+  assert.equal(run.results[0].verdict, 'confirmed', JSON.stringify(run.results));
+  const pivot = await planConfirmedPivots(run.findings, surface, scope,
+    {model: 'fixture', modelCallsAvailable: 1,
+      infer: async (_model, messages) => {
+      modelCalls++;
+      const context = JSON.parse(messages[1].content);
+      assert.equal(context.confirmedFinding.path, gate);
+      return {flows: [{family: 'related protected data',
+        why: 'Check the observed related read after the gate signal',
+        priority: 7, as: 'anonymous', oracle: 'raw-observation',
+        rawRequests: [{method: 'GET', path: privatePath}]}]};
+    }});
+  const follow = await runResearchFlows(pivot.leads, scope,
+    {surface, requester, modelCallsAvailable: 0});
+  assert.equal(run.findings.length, 1);
+  assert.equal(pivot.decisions[0]?.accepted, true, JSON.stringify(pivot.decisions));
+  assert.equal(follow.results[0]?.lead?.path, privatePath);
+  assert.equal(modelCalls, 1);
+  assert.ok(requests > 1);
+  const repeated = await planConfirmedPivots(run.findings, surface, scope,
+    {model: 'fixture', modelCallsAvailable: 1,
+      infer: async () => ({flows: [{family: 'same gate', why: 'Repeat the gate',
+        priority: 8, as: 'anonymous', oracle: 'raw-proof',
+        rawRequests: [raw('open')],
+        rawProof: {baseline: [raw('plain')], negative: [raw('wrong')],
+          closedText: '', openText: ''}}]})});
+  assert.equal(repeated.leads.length, 0);
+  assert.equal(repeated.decisions[0].reason, 'duplicate-payload');
 });
 
 test('generic raw proof preserves a model-authored POST body and header through replay', async t => {

@@ -170,6 +170,11 @@ export function decide(task, {O, T, A, surface, scope} = {}) {
       (foreignList(T, pattern) ||
        (surface?.identity?.principals?.owner != null && Object.values(T.ownership ?? {}).some(value => value === hash(surface.identity.principals.owner)))))
     return rule('confirmed', 'bfla/foreign-data');
+  if (task.kind === 'bfla' && T.status === 200 && !same && !foreignList(T, pattern) &&
+      !/admin|staff|superuser/i.test(`${scope?.identities?.owner?.role ?? ''} ` +
+        `${surface?.identity?.roles?.owner?.role ?? ''}`))
+    return rule('blocked', 'bfla/no-privileged-control',
+      'This route returned each member its own resource; a privileged positive account is needed to test function-level access.');
   if (task.kind === 'enumeration' && T.status === 200) return rule('inconclusive', 'enumeration-needs-idor');
   const denied = task.kind === 'missing-auth' ? A : T;
   if (DENIED.has(denied.status) && !throttled(denied)) return rule('not_reproduced', 'denied');

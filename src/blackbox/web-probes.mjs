@@ -9,7 +9,8 @@ import {researchCatalogIndex, researchCatalogHint} from './research-catalog.mjs'
 import {scheduleResearchTracks} from './research-scheduler.mjs';
 import {planSessionChains, runSessionChains} from './session-chain.mjs';
 import {planJsonExperiments, runJsonExperiments} from './json-experiment.mjs';
-import {planResearchFlows, runResearchFlows, validateResearchFlow} from './research-flow.mjs';
+import {planResearchFlows, runResearchFlows, planConfirmedPivots,
+  validateResearchFlow} from './research-flow.mjs';
 import {planAccessBoundaries, runAccessBoundaries} from './access-boundary.mjs';
 import {planStoredXss, runStoredXss} from './stored-xss.mjs';
 import {MODEL_RESPONSE_BYTES, responseSizeLimited} from './response-size.mjs';
@@ -2503,6 +2504,21 @@ export async function runWebProbes(surface, scope, {requester, ledger = null, bu
   skipLeadKeys = [], priorVerifierResults = [],
   resumeOnly = false, onResumeCheckpoint = null,
   prioritizeWebTurn = false} = {}) {
+  // Keep a small model allowance for impact pivots after primary checks.
+  // Short fixture runs retain their existing scheduling and call budget.
+  const pivotReserve = infer && model && scope.limits?.minutes >= 10 &&
+    maxModelPages >= 16 ? 2 : 0;
+  maxModelPages -= pivotReserve;
+  const deniedBaseline = lead => {
+    if (lead.as !== 'anonymous') return null;
+    const fingerprint = surface.patterns?.find(route => route.pattern === lead.path)?.fingerprint;
+    const denied = fingerprint?.anonymous;
+    if (![401, 403].includes(denied?.status) ||
+        [fingerprint.owner, fingerprint.outsider].some(item => item?.status === 200))
+      return null;
+    return {reason: `recon returned HTTP ${denied.status} for this protected route; a working test identity is required`,
+      evidence: [denied.evidenceId].filter(Boolean)};
+  };
   const responsePathHints = new Map();
   const derivedResponsePathHints = new Map();
   const scopedRequester = requester;
@@ -4551,6 +4567,11 @@ export async function runWebProbes(surface, scope, {requester, ledger = null, bu
     recordResult({lead, kind: 'html-injection', verdict, reason, evidence: unique(evidence)});
   }
   if (item.kind === 'ssti-arithmetic') for (const {lead} of [item]) {
+    const prerequisite = deniedBaseline(lead);
+    if (prerequisite) {
+      recordResult({lead, kind: 'ssti-arithmetic', verdict: 'blocked', ...prerequisite});
+      continue;
+    }
     const firstCanary = sstiCanary(), secondCanary = sstiCanary();
     const samples = [firstCanary, secondCanary];
     while (samples[1].result === samples[0].result) samples[1] = sstiCanary();
@@ -4564,8 +4585,11 @@ export async function runWebProbes(surface, scope, {requester, ledger = null, bu
     const evidence = [control.evidenceId].filter(Boolean);
     if (control.blocked || control.refused || control.status !== 200 ||
         samples.some(sample => control.body?.includes(sample.result))) {
-      recordResult({lead, kind: 'ssti-arithmetic', verdict: control.blocked || control.refused ? 'blocked' : 'inconclusive',
-        reason: control.reason ?? 'plain control did not establish a stable baseline', evidence});
+      const denied = [400, 401, 403, 404].includes(control.status);
+      recordResult({lead, kind: 'ssti-arithmetic',
+        verdict: control.blocked || control.refused || denied ? 'blocked' : 'inconclusive',
+        reason: denied ? `plain control returned HTTP ${control.status}; a reachable baseline is required` :
+          control.reason ?? 'plain control did not establish a stable baseline', evidence});
       continue;
     }
     const firstUrl = withValue(samples[0].input);
@@ -4590,13 +4614,18 @@ export async function runWebProbes(surface, scope, {requester, ledger = null, bu
     if (confirmed) findings.push(sstiFinding(lead, scope, control, first, second, firstUrl, secondUrl));
   }
   if (item.kind === 'sql-boolean') for (const {lead} of [item]) {
+    const prerequisite = deniedBaseline(lead);
+    if (prerequisite) {
+      recordResult({lead, kind: 'sql-boolean', verdict: 'blocked', ...prerequisite});
+      continue;
+    }
     const withValue = value => {
       const url = new URL(lead.path, scope.target.origin);
       url.searchParams.set(lead.parameter, value);
       return `${url.pathname}${url.search}`;
     };
     const evidence = [], pairs = [];
-    let activeLead = lead, firstBaseline = null;
+    let activeLead = lead, firstBaseline = null, lastBaseline = null;
     let verdict = 'inconclusive', reason = 'baseline did not return identifiable JSON records';
     if (lead.as === 'derived') {
       if (!derivedSession?.requestAuthenticated || !derivedSession?.loginProof) {
@@ -4630,6 +4659,7 @@ export async function runWebProbes(surface, scope, {requester, ledger = null, bu
       ...(lead.baselineAlternatives ?? [])].slice(0, 3)) {
       const response = await requestObserved({url: withValue(candidate.base), identity: lead.as,
         method: 'GET', step: 'control', noCache: true});
+      lastBaseline = response;
       if (response.evidenceId) evidence.push(response.evidenceId);
       if (response.blocked || response.refused) {
         verdict = 'blocked'; reason = response.reason ?? 'SQL record control was refused'; break;
@@ -4648,6 +4678,19 @@ export async function runWebProbes(surface, scope, {requester, ledger = null, bu
             !/json|\+json/i.test(observed?.responseFacts?.type ?? ''))) break;
     }
     if (!firstBaseline) {
+      if (verdict === 'inconclusive' &&
+          [400, 401, 403, 404].includes(lastBaseline?.status)) {
+        verdict = 'blocked';
+        reason = `record control returned HTTP ${lastBaseline.status}; a reachable JSON record is required`;
+      } else if (verdict === 'inconclusive' && lastBaseline?.status === 200 &&
+          !/json|\+json/i.test(lastBaseline.type ?? '')) {
+        verdict = 'blocked';
+        reason = 'record control returned non-JSON content; an identifiable JSON record is required';
+      } else if (verdict === 'inconclusive' && lastBaseline?.status === 200 &&
+          !(lastBaseline.ids ?? []).length) {
+        verdict = 'blocked';
+        reason = 'record control contained no identifiable JSON record; provide an observed record value';
+      }
       recordResult({lead, kind: 'sql-boolean', verdict, reason, evidence: unique(evidence)});
       continue;
     }
@@ -4765,6 +4808,11 @@ export async function runWebProbes(surface, scope, {requester, ledger = null, bu
     if (verdict === 'confirmed') findings.push(nosqlFinding(lead, scope, pairs[0], pairs[1]));
   }
   if (item.kind === 'command-output') for (const {lead} of [item]) {
+    const prerequisite = deniedBaseline(lead);
+    if (prerequisite) {
+      recordResult({lead, kind: 'command-output', verdict: 'blocked', ...prerequisite});
+      continue;
+    }
     const withValue = value => {
       const url = new URL(lead.path, scope.target.origin);
       url.searchParams.set(lead.parameter, value);
@@ -4783,8 +4831,10 @@ export async function runWebProbes(surface, scope, {requester, ledger = null, bu
       const control = await call(sample.control, 'control');
       if (control.blocked || control.refused || control.status !== 200 ||
           control.body?.includes(sample.marker) || responseCached(control)) {
-        verdict = control.blocked || control.refused ? 'blocked' : 'inconclusive';
-        reason = 'non-executing command control was unavailable, cached or contained the marker'; break;
+        const denied = [400, 401, 403, 404].includes(control.status);
+        verdict = control.blocked || control.refused || denied ? 'blocked' : 'inconclusive';
+        reason = denied ? `non-executing control returned HTTP ${control.status}; a reachable baseline is required` :
+          'non-executing command control was unavailable, cached or contained the marker'; break;
       }
       const executed = await call(sample.payload, index ? 'reverify' : 'task');
       pairs.push({control, executed, urls: {control: withValue(sample.control),
@@ -5468,6 +5518,45 @@ export async function runWebProbes(surface, scope, {requester, ledger = null, bu
     if (selected?.by === 'model-feedback')
       finding.tags = unique([...(finding.tags ?? []), 'model-verifier-handoff']);
   }
+  if (pivotReserve && infer && model &&
+      researchDeadline - Date.now() > 30_000 &&
+      findings.some(item => item.verdict === 'confirmed')) {
+    const remaining = Math.max(0, Math.min(pivotReserve,
+      pivotReserve + maxModelPages - plan.modelCalls - accessRun.modelCalls -
+        jsonRun.modelCalls - flowRun.modelCalls - followupCalls,
+      typeof remainingModelCalls === 'function' ? remainingModelCalls() : Infinity));
+    const pivotPlan = await planConfirmedPivots(findings, surface, scope,
+      {infer, model, env, modelCallsAvailable: remaining,
+        researchDeadline, log, ledger,
+        derivedAvailable: Boolean(derivedSession?.requestAuthenticated)});
+    plan.strategyDecisions.push(...pivotPlan.decisions);
+    flowRun.modelCalls += pivotPlan.modelCalls;
+    flowRun.modelError ??= pivotPlan.modelError;
+    plan.modelCoverage.confirmedPivots = {proposed: pivotPlan.decisions.length,
+      accepted: pivotPlan.leads.length, executed: 0};
+    if (pivotPlan.leads.length) {
+      for (const lead of pivotPlan.leads) {
+        plan.leads.push({kind: 'model-http-sequence', lead, priority: lead.priority,
+          by: 'confirmed-pivot', why: lead.why});
+        plan.selected.push({kind: 'model-http-sequence', path: lead.subject.path,
+          parameter: lead.subject.key, priority: lead.priority,
+          by: 'confirmed-pivot', why: lead.why});
+      }
+      const pivotRun = await runResearchFlows(pivotPlan.leads, scope,
+        {requester, infer, model, surface, env, ledger, log, derivedSession,
+          researchDeadline, remainingModelCalls,
+          modelCallsAvailable: Math.max(0, remaining - pivotPlan.modelCalls)});
+      for (const result of pivotRun.results) recordResult(result);
+      findings.push(...pivotRun.findings);
+      plan.strategyDecisions.push(...pivotRun.decisions);
+      flowRun.investigations.push(...pivotRun.investigations);
+      flowRun.deferredLeads.push(...pivotRun.deferredLeads);
+      flowRun.modelCalls += pivotRun.modelCalls;
+      flowRun.modelError ??= pivotRun.modelError;
+      plan.modelCoverage.confirmedPivots.executed = pivotRun.results.filter(item =>
+        item.verdict !== 'untested').length;
+    }
+  }
   const securityFindings = findings.filter(item => item.verdict === 'confirmed').length;
   const observations = findings.length - securityFindings;
   const queuedUntested = results.filter(item => item.verdict === 'untested').length;
@@ -5478,7 +5567,10 @@ export async function runWebProbes(surface, scope, {requester, ledger = null, bu
     responsePathHints: [...responsePathHints.values()],
     derivedResponsePathHints: [...derivedResponsePathHints.values()],
     cutLeadKeys: plan.cutLeadKeys,
-    completedLeadKeys: results.filter(item => !['untested', 'blocked'].includes(item.verdict))
+    // Later passes in this audit should not replay the same attempted lead
+    // merely because its prerequisite was blocked. A new identity has a
+    // different lead key and can still exercise the protected route.
+    completedLeadKeys: results.filter(item => item.verdict !== 'untested')
       .map(item => item.proposalId ? `proposal:${item.proposalId}` :
         webLeadKey(item.kind, item.lead)),
     strategyDecisions: plan.strategyDecisions,

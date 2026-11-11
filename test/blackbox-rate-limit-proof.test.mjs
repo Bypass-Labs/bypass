@@ -7,6 +7,7 @@ import path from 'node:path';
 import {check} from '../src/blackbox/poc-runtime.mjs';
 import {proveFindings} from '../src/blackbox/poc.mjs';
 import {loadScope} from '../src/blackbox/scope.mjs';
+import {mergeProofSurfaces} from '../src/blackbox/index.mjs';
 
 async function fixture(handler) {
   const server = http.createServer(handler);
@@ -98,5 +99,34 @@ test('confirmed rate-limit findings survive generated proof replay', async t => 
     env: {}, ledger: {append: () => 'ev-proof'}, web: {results: []}});
   assert.equal(kept.length, 1);
   assert.equal(kept[0].proof.endsWith('/poc/f-0001/poc.mjs'), true);
+  assert.equal(requests, 20);
+});
+
+test('proof replay receives an auth-gate contract discovered after initial recon', async t => {
+  let requests = 0;
+  const {server, origin} = await fixture((request, response) => {
+    requests++;
+    request.resume();
+    response.writeHead(200, {'content-type': 'application/json'});
+    response.end('{"ok":false}');
+  });
+  t.after(() => server.close());
+  const runDir = fs.mkdtempSync(path.join(os.tmpdir(), 'bypass-late-rate-proof-'));
+  t.after(() => fs.rmSync(runDir, {recursive: true, force: true}));
+  const {scope} = loadScope({origin, overrides: {acceptLocal: true, rps: 100}});
+  const surface = mergeProofSurfaces({patterns: [], jsonBodyOperations: []}, [
+    {jsonBodyOperations: [{path: '/api/beta/unlock', method: 'POST',
+      fields: ['code'], contentType: 'application/json'}]}]);
+  const finding = {id: 'f-late', kind: 'rate-limit-auth-gate',
+    pattern: '/api/beta/unlock', url: `${origin}/api/beta/unlock`,
+    evidence: ['ev-a'], confirmation: ['ev-b'], webProof: {
+      kind: 'rate-limit-auth-gate', request: {method: 'POST',
+        url: `${origin}/api/beta/unlock`, as: 'anonymous'},
+      mode: 'access-gate', placement: 'json', field: 'code', fields: ['code'],
+      userField: null, contentType: 'application/json', attemptCount: 20,
+      minimumRps: 10}};
+  const kept = await proveFindings([finding], [], {runDir, surface, scope,
+    env: {}, ledger: {append: () => 'ev-proof'}, web: {results: []}});
+  assert.ok(kept[0]?.proof?.endsWith('/poc/f-late/poc.mjs'), JSON.stringify(kept));
   assert.equal(requests, 20);
 });

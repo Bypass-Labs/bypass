@@ -26,6 +26,7 @@ import { proveFindings } from './poc.mjs';
 import {reviewSource} from './source.mjs';
 import {runWebProbes, runSourceDisclosureProbes, runSourceHeaderProbes,
   runSourceFetchProbes} from './web-probes.mjs';
+import {planConfirmedPivots, runResearchFlows} from './research-flow.mjs';
 import {reconDerivedSession, derivedAnonymousSurface, reconConfirmedAccess} from './derived-session-recon.mjs';
 import {checkDerivedAnonymousAccess} from './derived-access.mjs';
 import {auditDiscoveredHosts, followupResponseHints, mergeResponsePatterns} from './host-audit.mjs';
@@ -44,6 +45,17 @@ const RESEARCH_KINDS = new Set(['model-differential', 'model-json-differential',
 const ACCEPTED_RESEARCH_CHECKPOINT = /^(?:json-experiment|access-boundary)(?:-derived-[0-9a-f]{12})?(?:-queue-[0-9a-f]{12})?-checkpoint\.json$/;
 const HTTP_SEQUENCE_CHECKPOINT = /^http-sequence(?:-derived-[0-9a-f]{12})?(?:-page-[0-9a-f]{12})?(?:-queue-[0-9a-f]{12})?-checkpoint\.json$/;
 const AUDIT_MODEL_DEADLINE_MESSAGE = 'Audit wall-clock deadline cut a Muse research call; remaining work is untested.';
+
+/** Preserve every observed request contract for independent proof replay. */
+export function mergeProofSurfaces(base, additions = []) {
+  if (!additions.length) return base;
+  const merged = {...base};
+  for (const field of ['patterns', 'methodOperations', 'jsonBodyOperations',
+    'formBodyOperations', 'authBodyOperations', 'xmlBodyOperations'])
+    merged[field] = [...(base?.[field] ?? []),
+      ...additions.flatMap(surface => surface?.[field] ?? [])];
+  return merged;
+}
 
 function corroborateSourceFields(leads, endpoints) {
   return leads.map(lead => {
@@ -1132,7 +1144,10 @@ export async function runAudit({url, root = process.cwd(), scopeFile = null, ove
         host.origin !== sessions.scope.target.origin && !sessions.scope.credentialOrigins.includes(host.origin) &&
         sessions.scope.discovery.auditDomains.some(domain =>
           host.host === domain || host.host.endsWith(`.${domain}`))).length;
-      const remainingWebModelCalls = () => Math.max(0, scope.limits.modelCalls - modelInvocations - 2);
+      const taskPivotReserve = model && scope.limits.minutes >= 10 &&
+        scope.limits.modelCalls >= 16 ? 1 : 0;
+      const remainingWebModelCalls = () => Math.max(0,
+        scope.limits.modelCalls - modelInvocations - 2 - taskPivotReserve);
       const webModelShare = origins => model ?
         Math.floor(remainingWebModelCalls() / Math.max(1, origins)) : 0;
       // A confirmed login may reveal routes unavailable to anonymous recon.
@@ -2212,14 +2227,8 @@ export async function runAudit({url, root = process.cwd(), scopeFile = null, ove
         untested: stats.queuedUntested ?? 0});
       phase('done', 4, 'Plan and test observed leads');
       phase('doing', 5, 'Replay and assess');
-      const proofSurface = derivedPending.length || provedAccessSurfaces.length ? {...surface,
-        patterns: [...(surface.patterns ?? []),
-          ...derivedPending.flatMap(item => item.nextSurface.patterns ?? []),
-          ...provedAccessSurfaces.flatMap(item => item.patterns ?? [])],
-        methodOperations: [...(surface.methodOperations ?? []),
-          ...derivedPending.flatMap(item => item.nextSurface.methodOperations ?? []),
-          ...provedAccessSurfaces.flatMap(item => item.methodOperations ?? [])],
-      } : surface;
+      const proofSurface = mergeProofSurfaces(surface,
+        [...derivedPending.map(item => item.nextSurface), ...provedAccessSurfaces]);
       // The PoC receives only exact local contracts observed during this run.
       // It obtains a fresh login; no derived bearer is written to disk.
       const proofScope = [...derivedPending, ...provedAccessScopes.map(scope => ({scope}))]
@@ -2235,6 +2244,49 @@ export async function runAudit({url, root = process.cwd(), scopeFile = null, ove
           ...item.scope.localAutoMethodContracts};
         return merged;
         }, sessions.scope);
+      // Web checks already follow their own confirmed signals. Give a source-
+      // informed task finding one separate Muse turn after the primary queue,
+      // while preserving the two model calls reserved for final assessment.
+      const primaryTaskFindings = findings.filter(item => item.task &&
+        item.verdict === 'confirmed' &&
+        new URL(item.url).origin === proofScope.target.origin);
+      if (taskPivotReserve && researchDeadline - Date.now() > 30_000 &&
+          scope.limits.modelCalls - modelInvocations > 2 &&
+          primaryTaskFindings.length) {
+        const pivotPlan = await planConfirmedPivots(
+          primaryTaskFindings, proofSurface, proofScope,
+          {infer: invokeModel, model, env: sessions.env,
+            modelCallsAvailable: 1, researchDeadline, log: say, ledger});
+        web.modelCalls += pivotPlan.modelCalls;
+        web.modelError ??= pivotPlan.modelError;
+        web.strategyDecisions.push(...pivotPlan.decisions);
+        if (pivotPlan.leads.length) {
+          const pivotRun = await runResearchFlows(pivotPlan.leads, proofScope,
+            {requester, infer: invokeModel, model, surface: proofSurface,
+              env: sessions.env, ledger, log: say, researchDeadline,
+              modelCallsAvailable: 0});
+          const pivotResults = pivotRun.results.map(item => ({...item,
+            origin: sessions.scope.target.origin, discoveredVia: 'confirmed-task-pivot'}));
+          web.results.push(...pivotResults);
+          web.findings.push(...pivotRun.findings);
+          web.plan.push(...pivotPlan.leads.map(lead => ({kind: 'model-http-sequence',
+            lead, priority: lead.priority, by: 'confirmed-task-pivot', why: lead.why})));
+          web.strategyDecisions.push(...pivotRun.decisions);
+          web.investigations.push(...pivotRun.investigations);
+          web.modelCalls += pivotRun.modelCalls;
+          web.modelError ??= pivotRun.modelError;
+          web.tested += pivotResults.filter(item => item.verdict !== 'untested').length;
+          stats.tasks += pivotResults.filter(item => item.verdict !== 'untested').length;
+          stats.queuedUntested += pivotResults.filter(item => item.verdict === 'untested').length;
+          findings.push(...pivotRun.findings);
+        }
+        web.modelCoverage.push({origin: sessions.scope.target.origin,
+          discoveredVia: 'confirmed-task-pivot',
+          confirmedPivots: {proposed: pivotPlan.decisions.length,
+            accepted: pivotPlan.leads.length,
+            executed: web.results.filter(item =>
+              item.discoveredVia === 'confirmed-task-pivot' && item.verdict !== 'untested').length}});
+      }
       findings = await proveFindings(findings, results, {runDir, surface: proofSurface,
         scope: proofScope,
         originSurfaces, originContexts: Object.fromEntries(credentialAudits.map(audit =>

@@ -844,9 +844,9 @@ function noteNever(session, url, match) {
 
 /** One guarded GET through the requester, cached per (identity, path); walk URLs count against limits.maxUrls. */
 async function fetchAs(session, path, identity, {step = 'recon', purpose = 'task', accept,
-  counted = true, pinnedIdentity = false} = {}) {
+  counted = true, pinnedIdentity = false, noCache = false} = {}) {
   const key = `${identity} ${path}`;
-  if (session.responses.has(key)) return session.responses.get(key);
+  if (!noCache && session.responses.has(key)) return session.responses.get(key);
   if (counted && !session.urls.has(path)) {
     if (session.urls.size >= session.limits.maxUrls) {
       noteOutOfScope(session, path, 'budget');
@@ -855,16 +855,35 @@ async function fetchAs(session, path, identity, {step = 'recon', purpose = 'task
     session.urls.add(path);
   }
   const result = await session.requester({url: session.origin + path, identity, step,
-    purpose, omitExcerpt: purpose === 'task', headers: accept ? {accept} : {}});
+    purpose, omitExcerpt: purpose === 'task', noCache,
+    headers: accept ? {accept} : {}});
   session.requests += 1;
   if (pinnedIdentity) {
     session.pinnedIdentityRequests += 1;
     session.outOfScope.delete(`budget  ${path}`);
   }
-  session.responses.set(key, result);
+  // A transport timeout is not a stable route fingerprint. Let a later
+  // bounded read make a fresh attempt instead of reusing that failure.
+  if (!transientReadFailure(result)) session.responses.set(key, result);
   if (result.refused && result.reason === 'never') noteNever(session, path, null);
   else if (result.refused) noteOutOfScope(session, path, result.reason);
   return result;
+}
+
+function transientReadFailure(response) {
+  return response?.blocked &&
+    /timeout|timed out|ECONNRESET|ETIMEDOUT|EAI_AGAIN|fetch failed/i.test(
+      String(response.blocked.reason ?? response.reason ?? ''));
+}
+
+async function identityRead(session, path, identity, options) {
+  let response = await fetchAs(session, path, identity, options);
+  // Recon may have cached a transport failure before identity discovery. Retry
+  // only the configured, read-only identity endpoint and retain each attempt.
+  if (path === session.scope.identities.identityPath)
+    for (let retry = 0; retry < 2 && transientReadFailure(response); retry++)
+      response = await fetchAs(session, path, identity, {...options, noCache: true});
+  return response;
 }
 
 // A Muse-proposed query variant is an exact GET observation, not just a parameter hint.
@@ -1220,14 +1239,14 @@ function aliasesOf(body, principal, otherBody) {
 async function tryIdentity(session, path, {pinnedBudgetBypass = false} = {}) {
   const options = {step: 'identity', counted: !pinnedBudgetBypass,
     pinnedIdentity: pinnedBudgetBypass};
-  const owner = await fetchAs(session, path, 'owner', options);
+  const owner = await identityRead(session, path, 'owner', options);
   const ownerBody = owner?.status === 200 ? jsonOf(owner) : undefined;
   const ownerPrincipal = principalOf(ownerBody);
   if (!ownerPrincipal) return null;
-  const outsider = await fetchAs(session, path, 'outsider', options);
+  const outsider = await identityRead(session, path, 'outsider', options);
   const outsiderBody = outsider?.status === 200 ? jsonOf(outsider) : undefined;
   const outsiderPrincipal = principalOf(outsiderBody);
-  const anonymous = await fetchAs(session, path, 'anonymous', options);
+  const anonymous = await identityRead(session, path, 'anonymous', options);
   if (!answered(anonymous) || principalOf(jsonOf(anonymous))) return null;
   if (!outsiderPrincipal || outsiderPrincipal.value === ownerPrincipal.value) return {
     path,

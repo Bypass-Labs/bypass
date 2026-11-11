@@ -45,3 +45,19 @@ test('a raw list response with a foreign owner ID confirms a list leak', () => {
     ids: {ownerIds: ['itm-101'], outsiderIds: ['itm-202']}, private: {'itm-101': {by: 'list'}}}]};
   assert.equal(decide(task, {O: owner, T: outsider, A: anonymous, surface}).verdict, 'confirmed');
 });
+
+test('two ordinary members on an admin-named route need a privileged positive control', () => {
+  const O = {status: 200, type: 'application/json', hash: 'owner',
+    ownership: {owner_uid: hash('owner')}, headers: {}};
+  const T = {status: 200, type: 'application/json', hash: 'outsider',
+    ownership: {owner_uid: hash('outsider')}, headers: {}};
+  const A = {status: 401, type: 'application/json', headers: {}};
+  const task = {kind: 'bfla', pattern: '/api/admin/whoami',
+    control: {url: '/api/admin/whoami'}, request: {url: '/api/admin/whoami'}};
+  const surface = {identity: {principals: {owner: 'owner', outsider: 'outsider'},
+    roles: {owner: {role: 'member'}, outsider: {role: 'member'}}},
+  patterns: [{pattern: task.pattern, label: {kind: 'admin'}, private: {}, ids: {}}]};
+  const scope = {identities: {owner: {role: 'member'}, outsider: {role: 'member'}}};
+  assert.equal(decide(task, {O, T, A, surface, scope}).rule,
+    'blocked/bfla/no-privileged-control');
+});

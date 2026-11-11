@@ -23,6 +23,17 @@ test('report counts queued web checks separately from executed checks', () => {
   assert.match(report.json.summary.narrative, /1 task ran; 2 tasks remained queued/);
 });
 
+test('report shows the scope and execution of post-finding Muse exploration', () => {
+  const report = renderReport({run: 'bx-pivot-report', scope,
+    scopeHash: 'test', surface: surfaceFixture(), findings: [], results: [],
+    web: {results: [], modelCoverage: [{confirmedPivots:
+      {proposed: 2, accepted: 1, executed: 1}}]}});
+  assert.deepEqual(report.json.summary.confirmedPivots,
+    {proposed: 2, accepted: 1, executed: 1});
+  assert.match(report.markdown, /Muse related-impact follow-up: 2 positive signal\(s\) considered/);
+  assert.match(report.markdown, /follow-up observation is not a confirmed security finding/);
+});
+
 test('marker proofs count as unrated and describe response effects rather than access boundaries', () => {
   const make = (kind, id, rule, webProof) => ({
     id, kind, title: 'A repeated response marker', severity: 'unrated',

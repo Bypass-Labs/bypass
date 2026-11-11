@@ -451,11 +451,18 @@ function summarySection(findings, results, web) {
     ` with ${plural(corroboratingProofs, 'additional independent proof')}` : ''}` : 'No confirmed findings';
   const observed = observations.length ? ` ${plural(observations.length, 'verified response transformation')} requires security impact assessment.` : '';
   const listed = `${plural(open, 'inconclusive or blocked item')} ${open === 1 ? 'is' : 'are'} listed in section 7`;
+  const confirmedPivots = (Array.isArray(web?.modelCoverage) ? web.modelCoverage :
+    [web?.modelCoverage]).filter(Boolean).reduce((total, item) => ({
+      proposed: total.proposed + (item.confirmedPivots?.proposed ?? 0),
+      accepted: total.accepted + (item.confirmedPivots?.accepted ?? 0),
+      executed: total.executed + (item.confirmedPivots?.executed ?? 0),
+    }), {proposed: 0, accepted: 0, executed: 0});
   return {
     narrative: `${found}.${observed} ${plural(executed, 'task')} ran${queued ? `; ${plural(queued, 'task')} remained queued` : ''}; ${listed}.`,
     counts,
     corroboratingProofs,
     researchObservations: observations.length,
+    confirmedPivots,
     findings: findings.map(({ id, title, host, pattern, severity, status, kind, foundBy, tags,
       corroboratingProofs }) => (
       { id, title, host, pattern, severity: RESEARCH_BEHAVIOR.has(kind) ? 'unrated' : severity,
@@ -827,6 +834,10 @@ function modelUsageText(usage, calls) {
 
 function markdownSummary(summary) {
   const lines = ['## 1. Executive summary', '', summary.narrative];
+  if (summary.confirmedPivots?.proposed)
+    lines.push('', `Muse related-impact follow-up: ${summary.confirmedPivots.proposed} positive signal(s) considered, ` +
+      `${summary.confirmedPivots.accepted} bounded flow(s) accepted, ${summary.confirmedPivots.executed} executed. ` +
+      'A follow-up observation is not a confirmed security finding without independent proof.');
   if (!summary.findings.length) return lines;
   return [...lines, '', ...table(['ID', 'Title', 'Host', 'Pattern', 'Severity', 'Verdict', 'Kind', 'Found by'],
     summary.findings.map(f => [f.id, f.title, f.host, code(f.pattern), f.severity, f.verdict, f.kind, f.foundBy]))];
@@ -1128,11 +1139,28 @@ function markdownChains(chains) {
 
 function markdownOpen(items) {
   if (!items.length) return ['## 7. Inconclusive and blocked', '', 'None: every task reached a definite verdict.'];
+  const groups = new Map();
+  for (const item of items) {
+    const key = `${item.verdict}\n${item.reason || 'No reason recorded'}`;
+    groups.set(key, (groups.get(key) ?? 0) + 1);
+  }
+  const reasons = [...groups].sort((a, b) => b[1] - a[1]).slice(0, 8)
+    .map(([key, count]) => {
+      const [verdict, reason] = key.split('\n');
+      const next = /HTTP 40[13]|reachable baseline|reachable JSON record/i.test(reason) ?
+        ' Check the test identity and route before retrying.' :
+        /identifiable JSON record|record control contained no/i.test(reason) ?
+          ' Supply a valid observed record value.' :
+          /timeout|did not complete/i.test(reason) ?
+            ' Retry the saved work when the target responds.' : '';
+      return `- ${count} ${verdict}: ${code(reason)}${next}`;
+    });
   const rows = items.map(item => {
     const request = item.url ? `${item.as} ${item.method} ${code(item.url)}` : '-';
     return [item.task, item.kind, request, item.verdict, code(item.rule), item.reason || '-', item.evidence.join(', ') || '-'];
   });
-  return ['## 7. Inconclusive and blocked', '', ...table(['Task', 'Kind', 'Request', 'Verdict', 'Rule', 'Reason', 'Evidence'], rows)];
+  return ['## 7. Inconclusive and blocked', '', 'Most common reasons:', '',
+    ...reasons, '', ...table(['Task', 'Kind', 'Request', 'Verdict', 'Rule', 'Reason', 'Evidence'], rows)];
 }
 
 function markdownAppendix(rows, ledgerFile) {

@@ -2348,7 +2348,8 @@ async function executeRawRequests(requests, requester, scope, env, label = 'requ
   const responses = [], evidence = [], controls = [];
   for (const [index, request] of requests.entries()) {
     let response;
-    try {
+    const safeRetry = ['GET', 'HEAD'].includes(request.method);
+    for (let attempt = 0; attempt < (safeRetry ? 2 : 1); attempt++) try {
       response = await requester({url: expandOperatorSecrets(request.path, scope, env),
         method: request.method,
         identity: request.as, headers: Object.fromEntries(request.headers.map(header =>
@@ -2356,12 +2357,16 @@ async function executeRawRequests(requests, requester, scope, env, label = 'requ
         ...(request.body ? {body: expandOperatorSecrets(request.body, scope, env)} : {}),
         step, purpose: 'task', rawModelRequest: true,
         noCache: true, omitExcerpt: true, maxBytes: MODEL_RESPONSE_BYTES});
+      if (response.evidenceId) evidence.push(response.evidenceId);
+      if (!response.blocked || !/timeout|timed out|ECONNRESET|ETIMEDOUT|fetch failed/i.test(
+          String(response.blocked.reason ?? response.reason ?? ''))) break;
     } catch (error) {
-      return {responses, evidence, controls,
+      if (!safeRetry || attempt ||
+          !/timeout|timed out|ECONNRESET|ETIMEDOUT|fetch failed/i.test(
+            String(error?.message ?? ''))) return {responses, evidence, controls,
         error: `scoped request could not execute: ${brief(error.message, 120)}`};
     }
     responses.push(response);
-    if (response.evidenceId) evidence.push(response.evidenceId);
     controls.push({label: `${label}-${index + 1}`, identity: request.as,
       method: request.method,
       path: request.path, status: response.status ?? null,
@@ -4128,4 +4133,111 @@ export async function runResearchFlows(leads, scope, {requester, infer = null, m
   }
   return {findings, results, decisions, investigations, deferredLeads, handoffs,
     modelCalls, modelError};
+}
+
+/** Plan distinct impact checks only after the primary audit has finished its queued work. */
+export async function planConfirmedPivots(findings, surface, scope, {infer = null,
+  model = null, env = {}, modelCallsAvailable = 0, researchDeadline = Infinity,
+  log = () => {}, ledger = null, derivedAvailable = false} = {}) {
+  const result = {leads: [], decisions: [], modelCalls: 0, modelError: null};
+  if (!infer || !model || modelCallsAvailable < 1 ||
+      researchDeadline - Date.now() <= 30_000) return result;
+  const inventory = researchFlowInventory(surface, scope);
+  const routes = modelRoutes(inventory, surface, env, scope).routes;
+  const seen = new Set();
+  for (const finding of findings.filter(item => item.verdict === 'confirmed').slice(0, 2)) {
+    if (result.modelCalls >= modelCallsAvailable ||
+        researchDeadline - Date.now() <= 30_000) break;
+    const confirmedPath = new URL(finding.url ?? finding.pattern,
+      scope.target.origin).pathname;
+    const prefix = confirmedPath.split('/').slice(0, 3).join('/');
+    const related = routes.filter(route => route.path.startsWith(prefix)).slice(0, 12);
+    const other = routes.filter(route => !route.path.startsWith(prefix)).slice(0, 8);
+    const testedRequests = (finding.webProof?.rawRequests ?? []).slice(0, 3)
+      .map(request => {
+        let bodyFields = [];
+        try {
+          const body = JSON.parse(request.body ?? '');
+          if (body && typeof body === 'object' && !Array.isArray(body))
+            bodyFields = Object.keys(body).slice(0, 12);
+        } catch { /* no JSON body contract */ }
+        return {method: request.method,
+          path: new URL(request.path, scope.target.origin).pathname,
+          headerNames: (request.headers ?? []).slice(0, 12).map(header =>
+            safeModelText(header.name, scope, env, 80)), bodyFields};
+      });
+    const context = {origin: scope.target.origin,
+      confirmedFinding: {kind: safeModelText(finding.kind, scope, env, 100),
+        title: safeModelText(finding.title, scope, env, 200),
+        method: finding.webProof?.request?.method ?? testedRequests[0]?.method ?? null,
+        path: confirmedPath, testedRequests,
+        rule: safeModelText(finding.rule, scope, env, 160),
+        evidence: (finding.evidence ?? []).slice(0, 8),
+        controls: (finding.webSteps ?? []).slice(0, 8).map(step => ({
+          identity: step.identity, method: step.method,
+          path: new URL(step.url, scope.target.origin).pathname,
+          status: step.status, evidence: step.evidence}))},
+      relatedRoutes: [...related, ...other],
+      sourceLeads: availableSourceFindings(surface).filter(lead =>
+        lead.path === confirmedPath).slice(0, 4).map(lead => ({
+          id: lead.id, title: safeModelText(lead.title, scope, env, 160),
+          hypothesis: safeModelText(lead.hypothesis, scope, env, 400),
+          source: {file: lead.source?.file, line: lead.source?.line,
+            quote: safeModelText(lead.source?.quote, scope, env, 320)}})),
+      protectedReadRoutes: protectedReadRoutes(surface, scope, env,
+        derivedAvailable).slice(0, 12)};
+    while (context.relatedRoutes.length > 1 &&
+        Buffer.byteLength(JSON.stringify(context)) > 20_000)
+      context.relatedRoutes.pop();
+    while (context.protectedReadRoutes.length &&
+        Buffer.byteLength(JSON.stringify(context)) > 20_000)
+      context.protectedReadRoutes.pop();
+    while (context.sourceLeads.length &&
+        Buffer.byteLength(JSON.stringify(context)) > 20_000)
+      context.sourceLeads.pop();
+    const decision = {mode: 'confirmed-pivot', path: confirmedPath,
+      findingId: finding.id ?? null, accepted: false,
+      evidence: (finding.evidence ?? []).slice(0, 8)};
+    try {
+      log({stage: 'research', message: `Muse is exploring related impact after ${confirmedPath}`});
+      result.modelCalls++;
+      const answer = await infer(model, [{role: 'system', content:
+        'The primary scoped audit has completed its queued checks and produced one preliminary positive finding. Investigate a distinct, reachable impact path or adjacent trust boundary from the supplied observed routes. Consider another identity, a dependent resource or a follow-up read when the evidence supports it. Propose at most one complete bounded HTTP flow, or empty flows when no useful next check is grounded. Prefer read-only requests. Do not invent credentials, off-origin destinations or destructive actions. Bypass validates and executes the flow separately and requires independent proof replay before reporting another issue. Do not repeat the original proof.'},
+        {role: 'user', content: JSON.stringify(context)}], {schema: ANSWER_SCHEMA});
+      for (const proposal of answerFlows(answer).slice(0, 1)) {
+        const normalized = executableProposal(proposal, inventory, surface, scope,
+          env, derivedAvailable);
+        const checked = validateResearchFlow(normalized.proposal, surface, scope,
+          {env, inventory, derivedAvailable});
+        if (!checked.ok) {decision.reason = checked.reason; break;}
+        const key = signature(checked.lead);
+        const rawKey = requests => JSON.stringify((requests ?? []).map(request => ({
+          method: request.method, path: request.path, as: request.as,
+          headers: request.headers ?? [], body: request.body ?? ''})));
+        const repeatsProof = checked.lead.rawRequests?.length &&
+          rawKey(checked.lead.rawRequests) ===
+            rawKey(finding.webProof?.rawRequests);
+        if (seen.has(key) || repeatsProof) {
+          decision.reason = 'duplicate-payload'; break;
+        }
+        seen.add(key);
+        const proposalId = `pivot-${createHash('sha256').update(key)
+          .digest('hex').slice(0, 12)}`;
+        result.leads.push({...checked.lead, proposalId,
+          confirmedPivotOf: finding.id ?? confirmedPath, basis: 'confirmed-pivot'});
+        decision.accepted = true;
+        decision.followupProposalId = proposalId;
+        decision.followupPath = new URL(checked.lead.subject.path,
+          scope.target.origin).pathname;
+        log({stage: 'research', message: `Muse is checking a related impact path after ${confirmedPath}`});
+      }
+      if (!decision.accepted && !decision.reason) decision.reason = 'no-grounded-pivot';
+    } catch (error) {
+      decision.reason = safeModelText(error.message, scope, env);
+      result.modelError ??= `Muse confirmed-finding follow-up failed: ${decision.reason}`;
+    }
+    result.decisions.push(decision);
+    ledger?.append({step: 'investigation', kind: 'model-confirmed-pivot', ...decision});
+  }
+  return result;
 }
