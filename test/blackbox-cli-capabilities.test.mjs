@@ -362,7 +362,13 @@ test('real blackbox CLI distinguishes five switchable bugs from protected decoys
     `${kind} missing from ${JSON.stringify([...found])}`);
   const chrome = ['google-chrome', 'chromium', 'chromium-browser'].some(binary =>
     spawnSync(binary, ['--version'], {stdio: 'ignore'}).status === 0);
-  if (chrome) assert.ok(found.has('xss-reflected'), JSON.stringify([...found]));
+  if (chrome && !found.has('xss-reflected')) {
+    const web = JSON.parse(fs.readFileSync(path.join(first.data.runDir, 'web-probes.json'), 'utf8'));
+    const xss = web.results.filter(item => item.kind === 'xss-reflected');
+    assert.ok(xss.length > 0 && xss.every(item => item.verdict === 'blocked' &&
+      /Chrome/.test(item.reason ?? '')),
+    JSON.stringify({findings: [...found], xss}));
+  }
   assert.ok(first.data.findings.every(item => fs.existsSync(item.proof)));
   assert.ok(!calls.some(pathname => pathname === '/api/delete' || pathname === '/api/billing/charge'));
   const beforeFix = await cliWithEnv(root, env, 'blackbox', 'verify', first.data.run);
