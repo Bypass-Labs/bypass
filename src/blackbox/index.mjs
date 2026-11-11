@@ -557,7 +557,10 @@ export async function runAudit({url, root = process.cwd(), scopeFile = null, ove
   let web = {findings: [], results: [], cut: 0, tested: 0, strategyDecisions: []};
   let earlySource = {findings: [], results: [], tested: 0, keys: [], plan: []};
   let assessment = null;
-  let stats = {startedAt, model: null, modelCalls: 0, requests: 0, cached: 0, tasks: 0, agents: 0};
+  let stats = {startedAt, model: null, modelCalls: 0,
+    modelUsage: {inputTokens: 0, outputTokens: 0, totalTokens: 0,
+      reportedCalls: 0, callsWithoutUsage: 0},
+    requests: 0, cached: 0, tasks: 0, agents: 0};
   try {
     const testMuse = !noModel && infer === modelInfer && !modelProfileOverride && !modelName &&
       env.BYPASS_TEST_LEGACY_MUSE === '1' &&
@@ -585,7 +588,7 @@ export async function runAudit({url, root = process.cwd(), scopeFile = null, ove
     };
     const invokeModelOnce = async (profile, messages, options = {}) => {
       await acquireModelSlot();
-      let call=null,callStarted=null,activity='Analyzing observed security evidence';
+      let call=null,callStarted=null,activity='Analyzing observed security evidence',usageRecorded=false;
       try {
         need(modelInvocations < scope.limits.modelCalls, 'Muse model-call budget was exhausted.', 3);
         if (Date.now() >= deadline) {
@@ -605,7 +608,18 @@ export async function runAudit({url, root = process.cwd(), scopeFile = null, ove
         const timeoutMs = Math.max(1, Math.min(model.provider === 'muse-host' ? 300000 : 60000, remainingMs));
         try {
           const answer=await activeInfer(profile, messages, {...options, signal, timeoutMs,
-            onProgress: progress => {if (progress.kind === 'model') stats.model = progress.model;}});
+            onProgress: progress => {
+              if (progress.kind === 'model') stats.model = progress.model;
+              if (progress.kind === 'usage' && !usageRecorded &&
+                [progress.inputTokens, progress.outputTokens, progress.totalTokens]
+                  .every(value => Number.isSafeInteger(value) && value >= 0)) {
+                usageRecorded = true;
+                stats.modelUsage.inputTokens += progress.inputTokens;
+                stats.modelUsage.outputTokens += progress.outputTokens;
+                stats.modelUsage.totalTokens += progress.totalTokens;
+                stats.modelUsage.reportedCalls++;
+              }
+            }});
           log({stage:'progress',type:'model-finish',call,activity,status:'completed',
             durationMs:Date.now()-callStarted,active:Math.max(0,modelInFlight-1),
             configured:modelParallelism});
@@ -620,7 +634,10 @@ export async function runAudit({url, root = process.cwd(), scopeFile = null, ove
             configured:modelParallelism});
           throw classified;
         }
-      } finally { releaseModelSlot(); }
+      } finally {
+        if (call !== null && !usageRecorded) stats.modelUsage.callsWithoutUsage++;
+        releaseModelSlot();
+      }
     };
     const invokeModel = (profile, messages, options = {}) => withStructuredRepair(
       repairMessages=>invokeModelOnce(profile,repairMessages,options),messages,{

@@ -21,6 +21,50 @@ async function endpoint(t,handler,options={}){
 const chat=(res,message)=>{res.setHeader('content-type','application/json');res.end(JSON.stringify({choices:[{finish_reason:message.tool_calls?'tool_calls':'stop',message}]}));};
 const action=(value,id='c1')=>({role:'assistant',content:null,reasoning_content:'opaque-reasoning-state',tool_calls:[{id,type:'function',function:{name:'security_action',arguments:JSON.stringify(value)}}]});
 
+test('provider reports count-only token usage for both transports, including rejected actions',async t=>{
+  for(const transport of ['chat','responses'])await t.test(transport,async t=>{
+    const {profile}=await endpoint(t,(_req,res,_call,n)=>{
+      res.setHeader('content-type','application/json');
+      if(transport==='chat')res.end(JSON.stringify({
+        choices:[{finish_reason:'stop',message:{role:'assistant',content:n===1?'not-json':'{"focus":"ok"}'}}],
+        usage:{prompt_tokens:17,completion_tokens:5,total_tokens:22}}));
+      else res.end(JSON.stringify({status:'completed',
+        output:[{type:'message',role:'assistant',content:[{type:'output_text',text:n===1?'not-json':'{"focus":"ok"}'}]}],
+        usage:{input_tokens:17,output_tokens:5,total_tokens:22}}));
+    },{transport,'response-mode':'json-schema'});
+    const events=[];
+    const session=new ProviderSession(profile);
+    await assert.rejects(session.turn([{role:'user',content:'first'}],
+      {schema,onProgress:event=>events.push(event)}));
+    session.discardRejectedStructuredReply();
+    assert.deepEqual(await session.turn([{role:'user',content:'second'}],
+      {schema,onProgress:event=>events.push(event)}),{focus:'ok'});
+    assert.deepEqual(events.filter(event=>event.kind==='usage'),[
+      {kind:'usage',inputTokens:17,outputTokens:5,totalTokens:22},
+      {kind:'usage',inputTokens:17,outputTokens:5,totalTokens:22}]);
+  });
+});
+
+test('streamed provider responses retain final token usage',async t=>{
+  for(const transport of ['chat','responses'])await t.test(transport,async t=>{
+    const {profile}=await endpoint(t,(_req,res)=>{
+      res.writeHead(200,{'content-type':'text/event-stream'});
+      const output=transport==='chat' ? [
+        {choices:[{delta:{content:'{"focus":"ok"}'},finish_reason:'stop'}]},
+        {choices:[],usage:{prompt_tokens:11,completion_tokens:3,total_tokens:14}}] :
+        [{type:'response.completed',response:{status:'completed',
+          output:[{type:'message',role:'assistant',content:[{type:'output_text',text:'{"focus":"ok"}'}]}],
+          usage:{input_tokens:11,output_tokens:3,total_tokens:14}}}];
+      res.end(output.map(event=>`data: ${JSON.stringify(event)}\n\n`).join('')+'data: [DONE]\n\n');
+    },{transport,stream:true,'response-mode':'json-schema'});
+    const events=[];
+    assert.deepEqual(await new ProviderSession(profile).turn([{role:'user',content:'start'}],
+      {schema,onProgress:event=>events.push(event)}),{focus:'ok'});
+    assert.deepEqual(events.filter(event=>event.kind==='usage'),
+      [{kind:'usage',inputTokens:11,outputTokens:3,totalTokens:14}]);
+  });
+});
+
 test('explicit JSON-schema profiles persist and send schema constraints without tools in both transports',async t=>{
   for(const transport of ['chat','responses'])await t.test(transport,async t=>{
     const {profile,calls}=await endpoint(t,(_req,res)=>{

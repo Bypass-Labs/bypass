@@ -30,6 +30,8 @@ Progress shows the current phase, HTTP and Muse activity, completed checks, posi
 
 Each `bx-*` run stores `report.md`, `coverage.json`, `evidence.jsonl` and any sealed proofs under `<project>/.bypass/runs/<run-id>/`. The parent `run_*` record for a combined audit links the source result and live evidence. `/results` or `bypass finding show <id>` shows impact, severity, proof status and recommended fix. `/memory` and `/context` show exact local file locations and treat prior results as historical evidence.
 
+Standalone API audits record provider-reported input, output and total token counts in `report.md` and `run.json`. The report states how many model calls supplied usage. If the provider or Muse Code session omits usage, the counts are unavailable or partial; model-call count alone is not a token-spend measurement.
+
 `/results` puts saved confirmed HTTP findings before provisional source leads. A source-only lead still shows its citation, possible impact and suggested fix, but offers no proof replay until approved HTTP controls produce one. If Muse times out during source review, the combined result names that pause and retains the partial source evidence while reporting live coverage separately.
 
 ```bash

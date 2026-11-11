@@ -418,6 +418,7 @@ function headerSection({ run, scope, scopeHash, stats, integrity }) {
     origin: scope.target.origin, environment: scope.target.environment, domains: scope.domains ?? [], run,
     startedAt: stats.startedAt ?? null, finishedAt: stats.finishedAt ?? null, version: VERSION,
     model: stats.model ?? null, modelCalls: stats.modelCalls ?? 0, modelCallCap: scope.limits?.modelCalls ?? null,
+    modelUsage: stats.modelUsage ?? null,
     scopeHash, ledger: integrityLine(integrity),
     accounts: { owner: account(scope, 'owner'), outsider: account(scope, 'outsider'), auth: scope.identities?.auth ?? 'bearer' },
   };
@@ -808,11 +809,20 @@ function markdownHeader(header) {
       ['Finished', header.finishedAt ?? 'unknown'],
       ['Bypass version', header.version],
       ['Model', `${model} · ${header.modelCalls} of ${header.modelCallCap ?? '?'} calls`],
+      ...(header.modelCalls ? [['Model tokens', modelUsageText(header.modelUsage,
+        header.modelCalls)]] : []),
       ['Scope hash', code(header.scopeHash)],
       ['Ledger', header.ledger],
       ['Configured account variables', `${accountsText(header.accounts, ' · ')} · ${header.accounts.auth}`],
     ]),
   ];
+}
+
+function modelUsageText(usage, calls) {
+  const reported = usage?.reportedCalls ?? 0;
+  if (!reported) return `unavailable · 0 of ${calls} calls reported usage`;
+  const counts = `${usage.inputTokens} input · ${usage.outputTokens} output · ${usage.totalTokens} total`;
+  return `${counts} · ${reported} of ${calls} calls reported usage${reported < calls ? ' (partial)' : ''}`;
 }
 
 function markdownSummary(summary) {
@@ -1272,6 +1282,8 @@ export function summaryText(result, {color = false} = {}) {
   if (result.modelError) lines.push(`Muse model stage failed: ${result.modelError}`);
   else if (stats.model) lines.push(`Muse model:      ${stats.model} · ${stats.modelCalls ?? 0} calls`);
   else lines.push('Muse model:      code-only');
+  if (stats.modelCalls > 0)
+    lines.push(`Model tokens:    ${modelUsageText(stats.modelUsage, stats.modelCalls)}`);
   if (stats.model)
     lines.push(`Muse agents      ${stats.modelWorkersPeak ?? 0} active at peak · ${stats.modelWorkersConfigured ?? '?'} configured`);
   if (result.researchDeadlineCut)
