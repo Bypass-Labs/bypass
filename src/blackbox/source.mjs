@@ -401,7 +401,7 @@ function sourceLead(raw, batch) {
   const method = String(raw?.method ?? '').toUpperCase();
   const file = typeof raw?.file === 'string' ? raw.file : '';
   const line = Number(raw?.line);
-  const quote = maskExcerpt(maskSecrets(String(raw?.quote ?? ''))).trim().slice(0, 300);
+  let quote = maskExcerpt(maskSecrets(String(raw?.quote ?? ''))).trim().slice(0, 300);
   const snippet = batch.find(item => item.path === path && item.file === file &&
     Number.isInteger(line) && Number.isInteger(item.line) &&
     quote.length >= 6 && (line >= Math.max(1, item.line - 2) &&
@@ -410,6 +410,13 @@ function sourceLead(raw, batch) {
         line <= context.line + 11 && context.excerpt.includes(quote))));
   if (!snippet || !['GET', 'HEAD', 'POST', 'PUT', 'PATCH', 'DELETE', 'UNKNOWN'].includes(method) ||
       !SOURCE_LEAD_CATEGORIES.has(raw?.category)) return null;
+  // The model may cite only the environment lookup and omit the literal
+  // fallback on that same already-redacted line. Preserve the full cited
+  // gate expression so the later scoped verifier can try an exact candidate.
+  const sourceLine = snippet.excerpt.split('\n').find(text => text.includes(quote));
+  if (raw.category === 'authentication-bypass' && sourceLine &&
+      /(?:\|\||\?\?)\s*['"`][^'"`]{1,80}['"`]/.test(sourceLine))
+    quote = sourceLine.trim().slice(0, 300);
   const title = maskExcerpt(maskSecrets(String(raw?.title ?? ''))).trim().slice(0, 160);
   const hypothesis = maskExcerpt(maskSecrets(String(raw?.hypothesis ?? ''))).trim().slice(0, 500);
   const remediation = maskExcerpt(maskSecrets(String(raw?.remediation ?? ''))).trim().slice(0, 500);
@@ -456,6 +463,27 @@ function privateRecordLead(snippet) {
     remediation: 'Require authentication and object-level authorization before returning the record, and return only fields the caller may access.',
     fields, source: {file: snippet.file, line: snippet.line, quote: quote.slice(0, 300)},
     verdict: 'unproven', derived: true};
+}
+
+function fallbackGateLead(snippet) {
+  if (!['POST', 'PUT', 'PATCH'].includes(snippet.method) ||
+      !/(?:auth|login|unlock|verify|access|invite|reset|beta|2fa)/i.test(snippet.path) ||
+      !/\b(?:req|request)\.body\b/.test(snippet.excerpt) ||
+      !/\bif\s*\(/.test(snippet.excerpt)) return null;
+  const lines = snippet.excerpt.split('\n');
+  const offset = lines.findIndex(line =>
+    /\bprocess\.env\.[A-Z][A-Z0-9_]*(?:CODE|TOKEN|SECRET|PASSWORD|PIN|KEY)\b\s*(?:\|\||\?\?)\s*(['"`])[^'"`\n]{2,80}\1/.test(line));
+  if (offset < 0) return null;
+  const quote = lines[offset].trim().slice(0, 300);
+  const line = Math.max(1, snippet.line - 2) + offset;
+  return {id: `source-${hash(JSON.stringify([snippet.path, snippet.method,
+    snippet.file, line, quote])).slice(0, 16)}`,
+  title: `Literal fallback may open the access gate at ${snippet.path}`,
+  category: 'authentication-bypass', path: snippet.path, method: snippet.method,
+  hypothesis: 'The handler compares client input with an environment setting that has a literal fallback. Check whether the deployed gate accepts that fallback while ordinary and invalid controls remain denied.',
+  remediation: 'Require an explicit access secret in deployed environments and fail closed when it is absent.',
+  fields: [], source: {file: snippet.file, line, quote},
+  verdict: 'unproven', derived: true};
 }
 
 /** Read an explicitly supplied source tree and extract route facts plus optional Muse interpretations. */
@@ -544,7 +572,7 @@ export async function reviewSource(sourcePath, {infer = null, model = null, log 
     log({stage: 'source', message: `Muse source review started: ${selected.reduce((sum, batch) => sum + batch.length, 0)} of ${unresolvedSnippets.length + snippets.length} route excerpts · ${selected.length} bounded batches · ${width} parallel workers`});
     const interpret = async (batch, page) => {
       try {
-        const answer = await infer(model, [{role: 'system', content: 'Interpret these redacted source route excerpts as hypotheses. Explain accepted methods, parameters, purpose and trust boundaries. Also list concrete source-grounded security leads for authentication trust, authorization, bypass logic, injection, or sensitive-data disclosure. authHelperContext, when present, is a bounded same-file helper called by the route; cite its exact line and quote if it establishes a trust boundary. Every lead must cite an exact short quote and line from the supplied excerpt or helper context. A source lead is unproven until live verification; do not call it confirmed. Entries with a null path are route declarations whose path expression was not parsed. Infer a GET path from them only when literal constants in the excerpt determine it; include a harmless query value when its parameter is needed, such as ?next=/safe. Never infer a GET path from a non-GET declaration. Propose at most eight GET paths for guarded HTTP verification. Return JSON only. Never include secrets, credentials or executable payloads.'},
+        const answer = await infer(model, [{role: 'system', content: 'Interpret these redacted source route excerpts as hypotheses. Explain accepted methods, parameters, purpose and trust boundaries. Also list concrete source-grounded security leads for authentication trust, authorization, bypass logic, injection, or sensitive-data disclosure. Prioritize a route that grants access through a fallback constant, optional challenge, or client-controlled identity when its excerpt supports that behavior; record the exact gate as an unproven lead so a scoped live check can compare positive and negative controls. authHelperContext, when present, is a bounded same-file helper called by the route; cite its exact line and quote if it establishes a trust boundary. Every lead must cite an exact short quote and line from the supplied excerpt or helper context. A source lead is unproven until live verification; do not call it confirmed. Entries with a null path are route declarations whose path expression was not parsed. Infer a GET path from them only when literal constants in the excerpt determine it; include a harmless query value when its parameter is needed, such as ?next=/safe. Never infer a GET path from a non-GET declaration. Propose at most eight GET paths for guarded HTTP verification. Return JSON only. Never include secrets, credentials or executable payloads.'},
           {role: 'user', content: JSON.stringify({page: page + 1, pages: pages.length, snippets: batch})}], {schema: {type: 'object', properties: {
             notes: {type: 'array', maxItems: 12, items: {type: 'object', properties: {path: {type: 'string'},
               purpose: {type: 'string'}, methods: {type: 'array', items: {type: 'string'}},
@@ -605,9 +633,14 @@ export async function reviewSource(sourcePath, {infer = null, model = null, log 
     log({stage: 'source', message: `Muse source review complete: ${completed}/${selected.length} bounded batches · ${snippetsSent}/${unresolvedSnippets.length + snippets.length} route excerpts · ${notes.length} route notes · ${securityLeads.length} security leads retained`});
   }
   for (const snippet of snippets) {
-    const lead = privateRecordLead(snippet);
-    if (lead && !securityLeads.some(item => item.path === lead.path &&
-        item.category === lead.category)) securityLeads.push(lead);
+    const privateLead = privateRecordLead(snippet);
+    if (privateLead && !securityLeads.some(item => item.path === privateLead.path &&
+        item.category === privateLead.category)) securityLeads.push(privateLead);
+    const fallbackLead = fallbackGateLead(snippet);
+    if (fallbackLead && !securityLeads.some(item => item.path === fallbackLead.path &&
+        item.category === fallbackLead.category &&
+        item.source?.quote === fallbackLead.source.quote))
+      securityLeads.push(fallbackLead);
   }
   const modelCoverage = {pagesAvailable: pages.length, pagesSent: modelCalls,
     snippetsAvailable: unresolvedSnippets.length + snippets.length, snippetsSent};

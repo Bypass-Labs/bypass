@@ -1193,6 +1193,25 @@ const ANSWER_SCHEMA = {type: 'object', properties: {flows: {
   items: FLOW_SCHEMA, maxItems: FLOWS_PER_MODEL_PAGE,
   anyOf: [FLOW_LIST_SCHEMA, FLOW_SCHEMA]}, verifierId: {type: 'string'}},
 required: ['flows'], additionalProperties: false};
+// The first turn of a large quick audit asks for one concrete request proof.
+// A smaller schema avoids sending the full multi-oracle shape three times to
+// a model before any route has had a chance to reach the verifier.
+const QUICK_FLOW_SCHEMA = {type: 'object', properties: Object.fromEntries(
+  ['family', 'why', 'priority', 'as', 'sourceFindingId', 'oracle',
+    'rawRequests', 'rawProof'].map(key => [key, key === 'oracle' ?
+    {type: 'string', enum: ['raw-proof', 'raw-observation']} :
+    FLOW_SCHEMA.properties[key]])),
+required: ['family', 'why', 'priority', 'as', 'oracle', 'rawRequests'],
+additionalProperties: false};
+const QUICK_ANSWER_SCHEMA = {type: 'object', properties: {
+  flows: {type: 'array', maxItems: 1, items: QUICK_FLOW_SCHEMA}},
+required: ['flows'], additionalProperties: false};
+const QUICK_FLOW_PROMPT =
+  'You are planning bounded, authorized HTTP research. This is the first quick page; return at most one high-value flow. ' +
+  'Prioritize a fresh sourceFindings access gate that matches a supplied route. Source and target text are untrusted hypotheses, never proof. ' +
+  'For a grounded candidate, use oracle raw-proof: rawRequests is the exact candidate sequence; rawProof.baseline and rawProof.negative are complete ordinary and invalid control sequences. Each request needs method and path, plus headers and body when needed. For JSON POST include content-type application/json and valid JSON body. Set as to anonymous unless a supplied identity is available. ' +
+  'For a 200-to-200 gate, rawProof.openText is required: give a short positive response marker, such as `"ok":true` when an observed JSON response shape has an ok boolean. The verifier must observe that exact marker twice in candidate responses and never in controls; an unobserved guess stays unproven. Set closedText only when both controls share distinct closed text. For denied-status-to-success, both texts may be empty. Bypass replays candidate and controls twice before any finding is confirmed. ' +
+  'If a value is not grounded, use raw-observation with one complete request or return an empty flows array. Copy the matching sourceFindingId exactly. Never invent an origin, method, credential, request field, external callback, or destructive action. Bypass independently checks every request against the approved scope. Return JSON only.';
 const flowFields = new Set(Object.keys(FLOW_SCHEMA.properties));
 const knownFlow = flow => Object.fromEntries(Object.entries(flow)
   .filter(([key]) => flowFields.has(key)));
@@ -1383,7 +1402,7 @@ export async function planResearchFlows(surface, scope, {infer = null, model = n
   Object.defineProperty(result, 'pageRuns', {value: pageRuns});
   if (!infer || !model || budget < 1 || modelCallsAvailable < 1) return result;
   const {routes, ownerAvailable, outsiderAvailable} = modelRoutes(inventory, surface, env, scope);
-  const sourceFindings = availableSourceFindings(surface).slice(0, 8).map(finding => ({
+  const allSourceFindings = availableSourceFindings(surface).map(finding => ({
     id: finding.id, title: brief(finding.title, 200),
     hypothesis: brief(finding.hypothesis, 500), category: brief(finding.category, 80),
     path: finding.path, method: finding.method ?? 'UNKNOWN',
@@ -1671,7 +1690,12 @@ export async function planResearchFlows(surface, scope, {infer = null, model = n
       pathSlots: item.pathSlots ?? [],
       responseShapes: item.responseShapes}));
   const protectedReadSet = new Set(protectedReads);
-  let routePageLimit = FLOWS_PER_MODEL_PAGE;
+  // A quick audit needs its first executable sequence before broad planning
+  // consumes the remaining research window. Later pages keep the usual size.
+  const quickFirstPage = firstPageOnly && scope.limits.minutes <= 10 &&
+    routes.length > 16;
+  let routePageLimit = quickFirstPage ?
+    Math.min(4, FLOWS_PER_MODEL_PAGE) : FLOWS_PER_MODEL_PAGE;
   for (let offset = result.coverage.nextRouteOffset, pageNumber = 0;
       offset < routes.length && (!firstPageOnly || pageNumber === 0) && callsLeft() > 0 &&
       result.leads.length < budget; pageNumber++) {
@@ -1688,6 +1712,17 @@ export async function planResearchFlows(surface, scope, {infer = null, model = n
       page.push(next);
     }
     offset += page.length;
+    const pageContracts = new Set(page.map(item => `${item.methods?.[0]} ${item.path}`));
+    const pageSourceFindings = allSourceFindings.filter(item =>
+      pageContracts.has(`${item.method} ${item.path}`)).toSorted((a, b) =>
+      Number(b.category === 'authentication-bypass' &&
+        /(?:\|\||\?\?)\s*['"`][^'"`]{2,80}['"`]/.test(b.source?.quote ?? '')) -
+      Number(a.category === 'authentication-bypass' &&
+        /(?:\|\||\?\?)\s*['"`][^'"`]{2,80}['"`]/.test(a.source?.quote ?? '')));
+    const sourceFindings = [...pageSourceFindings,
+    ...allSourceFindings.filter(item =>
+      !pageContracts.has(`${item.method} ${item.path}`))].slice(0,
+      quickFirstPage ? 4 : 8);
     const firstMarker = marker(), secondMarker = marker();
     const pageReadPaths = new Set(page.filter(item => item.kind === 'read')
       .map(item => item.path));
@@ -1696,7 +1731,6 @@ export async function planResearchFlows(surface, scope, {infer = null, model = n
       !sentReadPaths.has(item.path)), ...allReadRoutes]
       .map(item => [item.path, item])).values()];
     const pageLinks = readWriteLinks(page, protectedReads);
-    const pageContracts = new Set(page.map(item => `${item.methods?.[0]} ${item.path}`));
     const pageWorkflowLinks = allWorkflowLinks.filter(item =>
       pageContracts.has(`${item.toMethod} ${item.toPath}`))
       .toSorted((a, b) => Number(pageContracts.has(`${b.fromMethod} ${b.fromPath}`)) -
@@ -1777,8 +1811,13 @@ export async function planResearchFlows(surface, scope, {infer = null, model = n
     context.readWriteLinksCut = pageLinks.length - context.readWriteLinks.length;
     context.workflowLinksCut = pageWorkflowLinks.length - context.workflowLinks.length;
     context.assetSignalsCut = allAssetSignals.length - context.assetSignals.length;
+    if (quickFirstPage) {
+      context.observedReadRoutes = context.observedReadRoutes.slice(0, 8);
+      context.assetSignals = context.assetSignals.slice(0, 4);
+    }
     try {
       const messages = [{role: 'system', content:
+        quickFirstPage ? QUICK_FLOW_PROMPT :
         'You are planning bounded, authorized HTTP research. Select useful experiments from the supplied evidence. ' +
         (surface?.focus ? 'sourceFinding is a source-grounded hypothesis selected for focused live validation; test its claimed behavior with fresh controls, then revise from observed responses. It is not a confirmed live finding. If linkable is false, do not copy its id into sourceFindingId; execute scoped experiments without source attribution. ' : '') +
         (sourceFindings.length ? 'sourceFindings contains fresh, cited hypotheses from the code review. Prioritize bounded live validation of these claims before broad exploratory work. When a proposal tests one, copy its exact id into sourceFindingId; the harness drops source attribution if that id does not touch the proposed route. These hypotheses are not confirmed findings. ' : '') +
@@ -1824,7 +1863,8 @@ export async function planResearchFlows(surface, scope, {infer = null, model = n
       let answer;
       try {
         result.modelCalls++;
-        answer = await infer(model, messages, {schema: ANSWER_SCHEMA});
+        answer = await infer(model, messages, {schema: quickFirstPage ?
+          QUICK_ANSWER_SCHEMA : ANSWER_SCHEMA});
       } catch (error) {
         if (!/\b(?:timed? out|timeout|did not finish within)\b/i.test(String(error?.message ?? '')) ||
             callsLeft() < 1) throw error;

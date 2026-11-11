@@ -7,6 +7,30 @@ import {randomBytes} from 'node:crypto';
 import {temp, cli} from './helpers.mjs';
 import {reviewSource} from '../src/blackbox/source.mjs';
 
+test('an access gate with a literal environment fallback remains an unproven source lead when Muse omits it', async t => {
+  const root = temp();
+  t.after(() => fs.rmSync(root, {recursive: true, force: true}));
+  fs.writeFileSync(path.join(root, 'server.js'),
+    'app.post("/api/access/unlock", (req, reply) => {\n' +
+    '  const code = String(req.body.code || "");\n' +
+    '  const expected = process.env.ACCESS_CODE || "sample-open";\n' +
+    '  if (code !== expected) return {ok:false};\n' +
+    '  return {ok:true};\n' +
+    '});\n' +
+    'app.post("/api/access/settings", (req, reply) => {\n' +
+    '  const label = process.env.PUBLIC_SITE_NAME || "Example";\n' +
+    '  if (req.body.label) return {label};\n' +
+    '});\n');
+  const result = await reviewSource(root, {infer: async () =>
+    ({notes: [], paths: [], securityLeads: []}), model: 'fixture'});
+  const lead = result.securityLeads.find(item => item.path === '/api/access/unlock');
+  assert.equal(lead?.verdict, 'unproven');
+  assert.equal(lead?.category, 'authentication-bypass');
+  assert.equal(lead?.source.line, 3);
+  assert.match(lead?.source.quote ?? '', /ACCESS_CODE.*sample-open/);
+  assert.ok(!result.securityLeads.some(item => item.path === '/api/access/settings'));
+});
+
 test('source-assisted review keeps methods and body fields from literal JavaScript route guards', async t => {
   const root = temp();
   t.after(() => fs.rmSync(root, {recursive: true, force: true}));
@@ -400,6 +424,26 @@ test('a route can cite its bounded same-file authentication helper', async t => 
   assert.equal(result.securityLeads[0]?.source.line, 3);
   assert.deepEqual(result.securityLeads[0]?.source.header,
     {name: 'x-actor-id', line: 2, quote: "const claimed = req.headers['x-actor-id'];"});
+});
+
+test('a cited access-gate fallback retains its exact redacted source line for live validation', async t => {
+  const root = temp();
+  t.after(() => fs.rmSync(root, {recursive: true, force: true}));
+  fs.writeFileSync(path.join(root, 'server.js'),
+    "app.post('/api/gate', (req, res) => {\n" +
+    "  const code = req.body.code;\n" +
+    "  const expected = process.env.GATE_CODE || 'fixture-open-13';\n" +
+    "  res.json({ok: code === expected});\n" +
+    "});\n");
+  const result = await reviewSource(root, {model: {provider: 'test'},
+    maxModelPages: 1, infer: async () => ({notes: [], paths: [],
+      securityLeads: [{title: 'Fallback gate', category: 'authentication-bypass',
+        path: '/api/gate', method: 'POST',
+        hypothesis: 'A fallback code may open the gate.',
+        remediation: 'Require an operator-configured code.', fields: ['code'],
+        file: 'server.js', line: 3, quote: 'process.env.GATE_CODE'}]})});
+  assert.match(result.securityLeads[0]?.source.quote ?? '',
+    /const expected = process\.env\.GATE_CODE \|\| 'fixture-open-13'/);
 });
 
 test('source-assisted review uses the configured bounded model concurrency', async t => {

@@ -683,6 +683,22 @@ export async function runAudit({url, root = process.cwd(), scopeFile = null, ove
     }
     phase('done', 1, 'Scope and host discovery');
     phase('doing', 2, 'Recon: assets and source');
+    const reconModelPages = reserve => {
+      const available = Math.max(0, scope.limits.modelCalls - modelInvocations - reserve);
+      return Math.min(available, Math.ceil(available / 4));
+    };
+    const sourceInput = sourcePath || focus && fs.existsSync(path.join(projectRoot, focus.source.file));
+    // Source interpretation and anonymous route/asset recon are independent.
+    // Start both together, but keep connected host source handoffs sequential
+    // so they never spend a second model allowance.
+    const sourceReviewTask = !sourceContext && sourceInput ? reviewSource(sourcePath ?? projectRoot, {
+      infer: !focus && model ? invokeModel : null, model,
+      origin: scope.target.origin,
+      maxModelPages: scope.limits.modelCalls <= 10 ?
+        Math.min(1, Math.max(0, scope.limits.modelCalls - modelInvocations)) :
+        reconModelPages(10),
+      modelConcurrency: scope.limits.modelConcurrency,
+      log: say}).then(value => ({value}), error => ({error})) : null;
     if (focus) {
       const readMethod = ['GET', 'HEAD'].includes(focus.method) ? focus.method :
         focus.method === 'UNKNOWN' && scope.methods.includes('GET') ? 'GET' : null;
@@ -740,23 +756,21 @@ export async function runAudit({url, root = process.cwd(), scopeFile = null, ove
     }
     // Scale early interpretation with the operator's model allowance while
     // leaving most calls for route analysis, tests, revisions and assessment.
-    const reconModelPages = reserve => {
-      const available = Math.max(0, scope.limits.modelCalls - modelInvocations - reserve);
-      return Math.min(available, Math.ceil(available / 4));
-    };
     if (sourceContext) sourceReview = await sourceContext;
-    if (sourcePath || focus && fs.existsSync(path.join(projectRoot, focus.source.file))) {
+    if (sourceInput) {
       // A connected Muse review has already used the host model for source
       // reasoning. Recover route contracts here without spending that model
       // budget again.
-      const reviewed = await reviewSource(sourcePath ?? projectRoot, {
+      const reviewedResult = sourceReviewTask ?? await reviewSource(sourcePath ?? projectRoot, {
         infer: !focus && model && !sourceContext ? invokeModel : null, model,
         origin: scope.target.origin,
         maxModelPages: scope.limits.modelCalls <= 10 ?
           Math.min(1, Math.max(0, scope.limits.modelCalls - modelInvocations)) :
           reconModelPages(10),
         modelConcurrency: scope.limits.modelConcurrency,
-        log: say});
+        log: say}).then(value => ({value}), error => ({error}));
+      const {value: reviewed, error: sourceError} = await reviewedResult;
+      if (sourceError) throw sourceError;
       sourceReview = sourceReview ? {
         ...reviewed,
         files: [...sourceReview.files, ...reviewed.files],
