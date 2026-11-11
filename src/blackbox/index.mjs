@@ -45,6 +45,17 @@ const ACCEPTED_RESEARCH_CHECKPOINT = /^(?:json-experiment|access-boundary)(?:-de
 const HTTP_SEQUENCE_CHECKPOINT = /^http-sequence(?:-derived-[0-9a-f]{12})?(?:-page-[0-9a-f]{12})?(?:-queue-[0-9a-f]{12})?-checkpoint\.json$/;
 const AUDIT_MODEL_DEADLINE_MESSAGE = 'Audit wall-clock deadline cut a Muse research call; remaining work is untested.';
 
+function corroborateSourceFields(leads, endpoints) {
+  return leads.map(lead => {
+    const quote = lead.source?.quote ?? '';
+    const fields = endpoints.filter(endpoint => endpoint.path === lead.path &&
+      endpoint.method === lead.method && Array.isArray(endpoint.bodyFields))
+      .flatMap(endpoint => endpoint.bodyFields)
+      .filter(field => new RegExp(`\\b${field}\\b`).test(quote));
+    return fields.length ? {...lead, fields: [...new Set([...(lead.fields ?? []), ...fields])]} : lead;
+  });
+}
+
 function observedSearchBaseline(response, sourceLead) {
   if (response.status !== 200 || !/json|\+json/i.test(response.type ?? '') ||
       !(response.ids?.length) || typeof response.body !== 'string') return null;
@@ -723,8 +734,11 @@ export async function runAudit({url, root = process.cwd(), scopeFile = null, ove
     };
     if (sourceContext) sourceReview = await sourceContext;
     if (sourcePath || focus && fs.existsSync(path.join(projectRoot, focus.source.file))) {
+      // A connected Muse review has already used the host model for source
+      // reasoning. Recover route contracts here without spending that model
+      // budget again.
       const reviewed = await reviewSource(sourcePath ?? projectRoot, {
-        infer: !focus && model ? invokeModel : null, model,
+        infer: !focus && model && !sourceContext ? invokeModel : null, model,
         origin: scope.target.origin,
         maxModelPages: scope.limits.modelCalls <= 10 ?
           Math.min(1, Math.max(0, scope.limits.modelCalls - modelInvocations)) :
@@ -738,7 +752,12 @@ export async function runAudit({url, root = process.cwd(), scopeFile = null, ove
         notes: [...sourceReview.notes, ...reviewed.notes],
         proposals: [...sourceReview.proposals, ...reviewed.proposals],
         secretLeads: [...sourceReview.secretLeads, ...reviewed.secretLeads],
-        securityLeads: [...sourceReview.securityLeads, ...reviewed.securityLeads],
+        securityLeads: [...corroborateSourceFields(sourceReview.securityLeads,
+          reviewed.endpoints), ...reviewed.securityLeads],
+        // The host already reviewed source. The deterministic route pass has
+        // no separate Muse excerpt pages, so do not report them as unread.
+        modelCoverage: sourceReview.modelCoverage,
+        provenance: sourceReview.provenance,
         stats: Object.fromEntries(Object.keys(reviewed.stats).map(key => [key,
           Number(sourceReview.stats?.[key] ?? 0) + Number(reviewed.stats[key] ?? 0)])),
         modelCalls: Number(sourceReview.modelCalls ?? 0) + reviewed.modelCalls,

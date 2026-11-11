@@ -13,7 +13,7 @@ The scope records the exact origin, environment, allowed path prefixes, HTTP met
 ## What the run does
 
 1. Save the effective scope and limits with the run.
-2. Read reachable public pages and assets, collect observed routes and response shapes, and incorporate cited source leads when a combined review selected code. Bounded source review sends likely server handlers before client call sites and includes a small same-file authentication helper when a handler calls it.
+2. Read reachable public pages and assets, collect observed routes and response shapes, and incorporate cited source leads when a combined review selected code. The native plugin also carries bounded source-extracted route methods and request fields into that live run without another model source pass. Bounded source review sends likely server handlers before client call sites and includes a small same-file authentication helper when a handler calls it.
 3. Execute bounded checks within the saved HTTP scope. Muse can suggest tests from observed facts; Bypass validates each request before sending it.
 4. Replay supported positive signals with fresh controls. Source interpretations and model suggestions alone do not confirm a vulnerability.
 5. Write confirmed findings, inconclusive results, untested work and coverage to the report. A time or model-call cutoff remains incomplete, even when no finding was confirmed.
