@@ -43,6 +43,7 @@ test('early protected pass plans and executes a web lead before slower HTTP rese
       if (prompt.startsWith('You are planning bounded, authorized HTTP research.')) {
         events.push('sequence-plan');
         await new Promise(resolve => setTimeout(resolve, 900));
+        events.push('sequence-plan-finished');
         return {flows: []};
       }
       if (prompt.startsWith('Rank only the supplied observed read-only web-test candidates')) {
@@ -76,13 +77,13 @@ test('early protected pass plans and executes a web lead before slower HTTP rese
       researchDeadline: Date.now() + 3000});
     assert.ok(events.includes('web-plan'), JSON.stringify(events));
     assert.ok(events.includes('web-request'), JSON.stringify(events));
-    assert.ok(events.indexOf('web-plan') < events.indexOf('sequence-plan'),
-      `the web planner waited behind HTTP research: ${events.join(', ')}`);
-    assert.ok(events.indexOf('web-request') < events.indexOf('sequence-plan'),
-      `a web lead did not execute before HTTP research: ${events.join(', ')}`);
+    assert.ok(events.indexOf('web-plan') < events.indexOf('sequence-plan-finished'),
+      `the web planner waited for HTTP research to finish: ${events.join(', ')}`);
+    assert.ok(events.indexOf('web-request') < events.indexOf('sequence-plan-finished'),
+      `a web lead did not execute during HTTP research: ${events.join(', ')}`);
     assert.ok(events.filter(item => item === 'web-plan').length > 1,
       `the early pass must review multiple affordable pages: ${events.join(', ')}`);
-    assert.ok(events.slice(0, events.indexOf('sequence-plan'))
+    assert.ok(events.slice(0, events.indexOf('sequence-plan-finished'))
       .filter(item => item === 'web-request').length > 1,
     `the early pass must execute more than one web lead: ${events.join(', ')}`);
     assert.ok(result.modelCoverage?.pagesSent > 1,

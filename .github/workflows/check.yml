@@ -12,6 +12,7 @@ jobs:
     timeout-minutes: 10
     outputs:
       full: ${{ steps.plan.outputs.full }}
+      codeql: ${{ steps.plan.outputs.codeql }}
       mode: ${{ steps.plan.outputs.mode }}
       matrix: ${{ steps.plan.outputs.matrix }}
     steps:
@@ -93,7 +94,7 @@ jobs:
         run: npm run test:policy
   codeql:
     needs: fast
-    if: needs.fast.outputs.full == 'true'
+    if: needs.fast.outputs.codeql == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 120
     env:

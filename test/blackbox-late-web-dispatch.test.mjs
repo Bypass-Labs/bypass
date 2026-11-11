@@ -4,7 +4,7 @@ import {createHash} from 'node:crypto';
 import {loadScope} from '../src/blackbox/scope.mjs';
 import {runWebProbes} from '../src/blackbox/web-probes.mjs';
 
-test('a newly reviewed web lead starts while an independent HTTP sequence is being revised',
+test('newly reviewed web leads execute without waiting for an HTTP sequence revision',
   {timeout: 10000}, async () => {
     const origin = 'http://127.0.0.1:43199';
     const scope = loadScope({origin, overrides: {acceptLocal: true,
@@ -75,7 +75,6 @@ test('a newly reviewed web lead starts while an independent HTTP sequence is bei
     const requester = async ({url}) => {
       const target = new URL(url, origin);
       if (target.pathname.startsWith('/api/item-') &&
-          !events.includes('late-page-reviewed') &&
           !events.includes('first-http')) events.push('first-http');
       if (lateLead && target.pathname === lateLead.path &&
           target.searchParams.get('q')?.startsWith('bx-control-'))
@@ -95,8 +94,8 @@ test('a newly reviewed web lead starts while an independent HTTP sequence is bei
     assert.ok(run.modelCoverage.earlyWebChecksExecuted > 0,
       'the first Muse web page must start an early verifier pool');
     assert.ok(events.indexOf('first-http') >= 0 &&
-      events.indexOf('first-http') < events.indexOf('late-page-reviewed'),
-    `the first web batch did not run before the later page: ${events.join(', ')}`);
+      events.indexOf('first-http') < events.indexOf('sequence-revision-finished'),
+    `the first web batch waited for sequence feedback: ${events.join(', ')}`);
     assert.ok(lateLead && lateLead.path !== firstLead?.path &&
       lateLead.kind !== firstLead?.kind,
       `Muse never selected an input on a later page: ${JSON.stringify(events)}`);

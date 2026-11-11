@@ -45,6 +45,16 @@ export function pluginOnly(files){
     file==='test/plugin-compaction.test.mjs');
 }
 
+export function codeqlRequired(files){
+  // The scanner imports shared service/provider/store code. Only these isolated
+  // black-box paths are known not to affect its image or real CodeQL fixtures.
+  return files.length===0||files.some(file=>!(
+    documentationOnly([file])||pluginOnly([file])||
+    /^src\/blackbox\/[^/]+\.mjs$/.test(file)||
+    /^test\/blackbox-[^/]+\.test\.mjs$/.test(file)
+  ));
+}
+
 export function changedFiles(base,head,root=checkout){
   need([base,head].every(value=>/^[a-f0-9]{40}$/.test(value||'')),'Expected exact base and head commit SHAs');
   // No API pagination/truncation; retain both sides of a move.
@@ -55,11 +65,14 @@ export function checkGate(needs){
   need(needs?.fast?.result==='success','Fast checks did not succeed');
   const full=needs.fast.outputs?.full;
   const mode=needs.fast.outputs?.mode;
+  const codeql=needs.fast.outputs?.codeql;
   need(full==='true'||full==='false','Missing or invalid change classification');
+  need(codeql==='true'||codeql==='false','Missing or invalid CodeQL classification');
   need(['full','plugin','docs'].includes(mode)&&
     (full==='true')===(mode==='full'),'Missing or inconsistent validation mode');
+  need(full==='true'||codeql==='false','CodeQL cannot be required when full validation is skipped');
   for(const name of ['regression','policy','codeql']){
-    const expected=full==='true'?'success':'skipped';
+    const expected=(name==='codeql'?codeql:full)==='true'?'success':'skipped';
     need(needs[name]?.result===expected,`${name} must be ${expected}; got ${needs[name]?.result||'missing'}`);
   }
 }
@@ -88,17 +101,20 @@ async function main(){
   const groups=planTests(discoverTests(),weights);
   if(command==='plan'){
     let mode='full',reason='Full validation is the default.';
+    let codeql=true;
     try{
       const files=changedFiles(process.env.CI_BASE_SHA,process.env.CI_HEAD_SHA);
       mode=documentationOnly(files)?'docs':pluginOnly(files)?'plugin':'full';
+      codeql=mode==='full'&&codeqlRequired(files);
       reason=mode==='docs'?'Only presentation Markdown changed; fast checks still run.':
         mode==='plugin'?'Only Muse plugin guidance/context changed; run focused plugin checks.':
-          'Code, scanner, workflow, or other runtime changes require full validation.';
+          codeql?'Shared, scanner, workflow, or unknown code changed; run full validation including CodeQL.':
+            'Isolated black-box code changed; run full validation without CodeQL fixtures.';
     }catch(error){reason=`Unable to prove documentation-only changes; running all checks: ${error.message}`;}
     const full=mode==='full';
     const matrix={shard:groups.map(group=>group.shard)};
-    console.log(JSON.stringify({full,mode,reason,groups},null,2));
-    if(process.env.GITHUB_OUTPUT)fs.appendFileSync(process.env.GITHUB_OUTPUT,`full=${full}\nmode=${mode}\nmatrix=${JSON.stringify(matrix)}\n`);
+    console.log(JSON.stringify({full,codeql,mode,reason,groups},null,2));
+    if(process.env.GITHUB_OUTPUT)fs.appendFileSync(process.env.GITHUB_OUTPUT,`full=${full}\ncodeql=${codeql}\nmode=${mode}\nmatrix=${JSON.stringify(matrix)}\n`);
     if(process.env.GITHUB_STEP_SUMMARY)fs.appendFileSync(process.env.GITHUB_STEP_SUMMARY,`## PR validation plan\n\n${reason}\n\n| Shard | Files | Estimated test minutes |\n|---|---:|---:|\n${groups.map(group=>`| ${group.shard} | ${group.files.length} | ${(group.estimatedMs/60000).toFixed(1)} |`).join('\n')}\n\nEstimates come from a previous CI run; setup, cache misses, and runner contention add time.\n`);
   }else if(command==='run'){
     need(/^[1-9][0-9]*$/.test(value||'')&&Number(value)<=shardCount,'Choose a valid shard number');
