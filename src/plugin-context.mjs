@@ -44,7 +44,13 @@ export function sessionHint(cwd){
   if(!selected)return {version:VERSION,ai:hostAI(),hostWorkspace:cwd,selectedRepository:null,selectionRequired:true,
     instruction:'Bypass is available. On a Bypass request, call bypass_onboarding. No application is selected. Do not search .demo folders or summarize example monitor history. Use the returned native review-type picker and ask only for missing inputs. Running app only needs no repository. Never ask the user to type MCP calls.'};
   const state=read(selected);
+  const latestReview=state.runs.findLast(run=>run.kind==='scan'&&
+    run.executionMode==='muse-host');
+  const activeReview=latestReview?.status==='awaiting_host'?latestReview:null;
   return {version:VERSION,ai:hostAI(),hostWorkspace:cwd,selectedRepository:state.project.repository.kind==='app'?null:selected,profileRoot:selected,selectionRequired:false,
     memory:memorySummary(state),engine:'host',app:state.targets.find(t=>t.name===state.activeTarget)?.url||null,
+    activeReview:activeReview?{id:activeReview.id,status:activeReview.status,
+      resume:{tool:'bypass_review_step',arguments:{id:activeReview.id,
+        action:'status'}}}:null,
     instruction:'An application explicitly selected earlier is available. Before implementing features or refactors in this selected application, call bypass_feature_context with the task and likely files. Re-read cited source, preserve saved account boundaries and replay authorized checks. No full review onboarding is needed to read memory. For security reviews, call bypass_onboarding to show setup and next action. Review/test/continue/keep working means assessment only: evidence, recommendations and regression artifacts. Do not edit application source or configuration to fix findings without a separate explicit remediation request. Continue actionable planned checks after each finding. Do not scan automatically or summarize unrelated example projects.'};
 }
