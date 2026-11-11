@@ -59,6 +59,8 @@ test('list checks distinguish a missing owner-only control from a checked denial
     private: {'owner-record': {by: 'owner-only-list'}}}]};
   assert.equal(decide(task, {O, T, A, surface: owned}).rule,
     'not_reproduced/list-leak/owner-record-absent');
+  assert.equal(decide(task, {O, T: response(['outsider-record'], 'outsider'),
+    A, surface: owned}).rule, 'inconclusive/list-leak/variant-needed');
   const shared = {patterns: [{pattern: '/api/items', label: {kind: 'list'},
     ids: {ownerIds: ['owner-record'], outsiderIds: ['owner-record'],
       shared: ['owner-record']}, private: {}}]};

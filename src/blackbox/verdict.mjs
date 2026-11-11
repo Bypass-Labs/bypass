@@ -165,9 +165,13 @@ export function decide(task, {O, T, A, surface, scope} = {}) {
     if (!observedOwnerOnly.length)
       return rule('blocked', 'list-leak/no-owner-only-record',
         'No owner-exclusive record was observed in this list. Seed one or choose a route with account-owned records before testing cross-account list access.');
-    if (observedOwnerOnly.every(value => !ids(T).has(value)))
+    if (observedOwnerOnly.every(value => !ids(T).has(value))) {
+      if (ids(T).size)
+        return rule('inconclusive', 'list-leak/variant-needed',
+          'The outsider received different records. Try other observed list filters before closing this cross-account check.');
       return rule('not_reproduced', 'list-leak/owner-record-absent',
         'The checked outsider response did not include the owner-only records; other pages and filters remain untested.');
+    }
   }
   if (task.kind === 'param-filter' && T.status === 200 && (foreignList(T, pattern) || filteredField(T, pattern, scope)))
     return rule('confirmed', 'param-filter/extra-data');
