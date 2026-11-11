@@ -377,6 +377,7 @@ For CLI help, use `bypass --help` or `bypass <command> --help`. A local monitor 
 - [Source scanner: languages, rules, scope, reports, and recovery](scanner/README.md)
 - [AI policy discovery: policies, evidence, coverage, and custom context](docs/POLICY_SIGNAL_DISCOVERY.md)
 - [Black-box audit: supported checks and evidence limits](docs/BLACKBOX_AUDIT.md)
+- [Local scanner benchmark: findings, time, and provider tokens](docs/SCANNER_BENCHMARK_2026_11_10.md)
 - [Accounts: signup, private imports, and token refresh](docs/ACCOUNTS.md)
 - [AI modes: Muse Code, provider APIs, and local/self-hosted models](docs/AI_MODES.md)
 - [Security memory and feature context](docs/SECURITY_MEMORY.md)

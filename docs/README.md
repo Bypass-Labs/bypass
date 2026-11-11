@@ -8,6 +8,7 @@ Start with the [product README](../README.md) and the [first security audit walk
 - [CLI experience](CLI_EXPERIENCE.md)
 - [Muse Code plugin commands](PLUGIN_COMMANDS.md)
 - [Black-box audit and evidence limits](BLACKBOX_AUDIT.md)
+- [Local scanner benchmark](SCANNER_BENCHMARK_2026_11_10.md)
 - [Security memory and feature context](SECURITY_MEMORY.md)
 - [Accounts and test identities](ACCOUNTS.md)
 - [Muse model and API modes](AI_MODES.md)
