@@ -2977,6 +2977,7 @@ export async function runWebProbes(surface, scope, {requester, ledger = null, bu
       ['web', ...schedule.order.filter(name => name !== 'web')] : schedule.order;
     const firstPageOrder = [...fairOrder.filter(name => name !== 'sequence'),
       ...fairOrder.filter(name => name === 'sequence')];
+    let independentPagesDone = Promise.resolve([]);
     const planFirstPage = async name => {
       if (firstPlans[name]) return;
       if (!supportedTracks.has(name) ||
@@ -3000,7 +3001,6 @@ export async function runWebProbes(surface, scope, {requester, ledger = null, bu
         surface, scope, {infer, model, env, budget,
           modelCallsAvailable: 1 + jsonRepairCall, log});
       else if (name === 'sequence') {
-        if (earlyWebPromise) await firstWebBatch;
         firstPlans[name] = await planResearchFlows(
         surface, scope, {infer, model, env, requester, ledger,
           priorVerifierResults, derivedAvailable, remainingModelCalls,
@@ -3012,6 +3012,9 @@ export async function runWebProbes(surface, scope, {requester, ledger = null, bu
           resumeSequenceResults: pageResume?.priorSequenceResults ?? [],
           onPageCheckpoint: recordSequencePage, deferOverflow, log,
           onAcceptedPage: async (leads, page) => {
+            const settled = await independentPagesDone;
+            const failed = settled.find(item => item.status === 'rejected');
+            if (failed) throw failed.reason;
             if (earlyWebPromise) await firstWebBatch;
             return runResearchSwarm(leads, scope, {requester, infer, model,
               derivedSession, surface, env, ledger, log, verifierCandidates,
@@ -3069,20 +3072,22 @@ export async function runWebProbes(surface, scope, {requester, ledger = null, bu
           error => ({earlyTrackError: error})));
       }
     };
-    // Independent first pages have fixed, disjoint call shares. Launch them
-    // together, and start each accepted verifier as soon as its page returns.
-    // The sequence page uses the completed access plan and follows both the
-    // independent pages and their initial checkpoints.
+    // First pages have fixed, disjoint call shares. Plan the sequence page
+    // alongside the independent pages; its accepted verifier still waits for
+    // their first checkpoints and the early web batch before executing.
     const independentPages = firstPageOrder.filter(name => name !== 'sequence');
-    const settled = await Promise.allSettled(independentPages.map(planFirstPage));
+    independentPagesDone = Promise.allSettled(independentPages.map(planFirstPage));
+    const sequencePage = firstPageOrder.includes('sequence') ?
+      planFirstPage('sequence') : null;
+    const settled = await independentPagesDone;
     const plannerFailure = settled.find(item => item.status === 'rejected');
     if (plannerFailure) {
-      await Promise.allSettled([...firstPageRuns.values(), earlyWebPromise]
+      await Promise.allSettled([sequencePage, ...firstPageRuns.values(), earlyWebPromise]
         .filter(Boolean));
       throw plannerFailure.reason;
     }
-    if (firstPageOrder.includes('sequence')) try {
-      await planFirstPage('sequence');
+    if (sequencePage) try {
+      await sequencePage;
     } catch (error) {
       await Promise.allSettled([...firstPageRuns.values(), earlyWebPromise]
         .filter(Boolean));
