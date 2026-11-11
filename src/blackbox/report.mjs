@@ -441,16 +441,16 @@ function summarySection(findings, results, web) {
     count + (finding.corroboratingProofs?.length ?? 0), 0);
   const counts = Object.fromEntries(SEVERITIES.map(severity =>
     [severity, confirmed.filter(f => f.severity === severity).length]));
-  const open = results.filter(result => OPEN.has(result.verdict)).length +
-    (web?.results ?? []).filter(result => OPEN.has(result.verdict)).length;
   const allChecks = [...results, ...(web?.results ?? [])];
+  const blocked = allChecks.filter(result => result.verdict === 'blocked').length;
+  const inconclusive = allChecks.filter(result => result.verdict === 'inconclusive').length;
   const executed = allChecks.filter(result => result.verdict !== 'untested').length;
   const queued = allChecks.length - executed;
   const bySeverity = SEVERITIES.filter(severity => counts[severity]).map(severity => `${counts[severity]} ${severity}`).join(', ');
   const found = confirmed.length ? `${plural(confirmed.length, 'confirmed finding')} (${bySeverity})${corroboratingProofs ?
     ` with ${plural(corroboratingProofs, 'additional independent proof')}` : ''}` : 'No confirmed findings';
   const observed = observations.length ? ` ${plural(observations.length, 'verified response transformation')} requires security impact assessment.` : '';
-  const listed = `${plural(open, 'inconclusive or blocked item')} ${open === 1 ? 'is' : 'are'} listed in section 7`;
+  const listed = `${blocked} blocked and ${inconclusive} inconclusive ${blocked + inconclusive === 1 ? 'item is' : 'items are'} listed in section 7`;
   const confirmedPivots = (Array.isArray(web?.modelCoverage) ? web.modelCoverage :
     [web?.modelCoverage]).filter(Boolean).reduce((total, item) => ({
       proposed: total.proposed + (item.confirmedPivots?.proposed ?? 0),
@@ -460,6 +460,8 @@ function summarySection(findings, results, web) {
   return {
     narrative: `${found}.${observed} ${plural(executed, 'task')} ran${queued ? `; ${plural(queued, 'task')} remained queued` : ''}; ${listed}.`,
     counts,
+    blocked,
+    inconclusive,
     corroboratingProofs,
     researchObservations: observations.length,
     confirmedPivots,

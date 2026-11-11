@@ -160,6 +160,15 @@ export function decide(task, {O, T, A, surface, scope} = {}) {
     return rule('confirmed', `${task.kind}/owner-resource`);
   if (task.kind === 'list-leak' && T.status === 200 && foreignList(T, pattern))
     return rule('confirmed', 'list-leak/owner-id');
+  if (task.kind === 'list-leak' && T.status === 200 && DENIED.has(A.status)) {
+    const observedOwnerOnly = [...ownerOnly(pattern)].filter(value => ids(O).has(value));
+    if (!observedOwnerOnly.length)
+      return rule('blocked', 'list-leak/no-owner-only-record',
+        'No owner-exclusive record was observed in this list. Seed one or choose a route with account-owned records before testing cross-account list access.');
+    if (observedOwnerOnly.every(value => !ids(T).has(value)))
+      return rule('not_reproduced', 'list-leak/owner-record-absent',
+        'The checked outsider response did not include the owner-only records; other pages and filters remain untested.');
+  }
   if (task.kind === 'param-filter' && T.status === 200 && (foreignList(T, pattern) || filteredField(T, pattern, scope)))
     return rule('confirmed', 'param-filter/extra-data');
   const declared = scope?.identities?.outsider?.role ?? '';
