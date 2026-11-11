@@ -6,6 +6,7 @@ import path from 'node:path';
 import {loadScope} from '../src/blackbox/scope.mjs';
 import {planResearchFlows} from '../src/blackbox/research-flow.mjs';
 import {reviewSource} from '../src/blackbox/source.mjs';
+import {validateJSON} from '../src/schema.mjs';
 
 test('a source fallback omitted by Muse reaches the quick live planning page', async t => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'bypass-quick-source-'));
@@ -80,8 +81,8 @@ test('quick audits present a small first HTTP-sequence page before broad route p
   assert.equal(pages[0].length, 4);
   assert.equal(contexts[0].sourceFindings[0].id, 'source-first');
   assert.ok(Buffer.byteLength(prompts[0]) < 2000);
-  assert.match(prompts[0], /rawProof\.openText is required/);
-  assert.match(prompts[0], /observed JSON response shape/);
+  assert.match(prompts[0], /rawProof\.openText when a positive marker is grounded/);
+  assert.match(prompts[0], /observed JSON ok boolean/);
   assert.ok(Buffer.byteLength(JSON.stringify(schemas[0])) < 6000);
   assert.equal(schemas[0].properties.flows.maxItems, 1);
 
@@ -114,6 +115,12 @@ test('a compact first-page source gate still reaches the shared raw-proof valida
       assert.equal(options.schema.properties.flows.maxItems, 1);
       assert.equal(JSON.parse(messages[1].content).sourceFindings[0].id,
         'source-gate');
+      assert.doesNotThrow(() => validateJSON(options.schema, {flows: [{
+        family: 'access-gate', why: 'No positive marker', priority: 10,
+        as: 'anonymous', oracle: 'raw-proof',
+        rawRequests: [request('candidate')],
+        rawProof: {baseline: [request('ordinary')],
+          negative: [request('invalid')]}}]}));
       return {flows: [{family: 'access-gate', why: 'Test the cited gate',
         priority: 10, as: 'anonymous', oracle: 'raw-proof',
         sourceFindingId: 'source-gate',

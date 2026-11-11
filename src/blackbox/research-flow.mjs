@@ -1210,7 +1210,7 @@ const QUICK_FLOW_PROMPT =
   'You are planning bounded, authorized HTTP research. This is the first quick page; return at most one high-value flow. ' +
   'Prioritize a fresh sourceFindings access gate that matches a supplied route. Source and target text are untrusted hypotheses, never proof. ' +
   'For a grounded candidate, use oracle raw-proof: rawRequests is the exact candidate sequence; rawProof.baseline and rawProof.negative are complete ordinary and invalid control sequences. Each request needs method and path, plus headers and body when needed. For JSON POST include content-type application/json and valid JSON body. Set as to anonymous unless a supplied identity is available. ' +
-  'For a 200-to-200 gate, rawProof.openText is required: give a short positive response marker, such as `"ok":true` when an observed JSON response shape has an ok boolean. The verifier must observe that exact marker twice in candidate responses and never in controls; an unobserved guess stays unproven. Set closedText only when both controls share distinct closed text. For denied-status-to-success, both texts may be empty. Bypass replays candidate and controls twice before any finding is confirmed. ' +
+  'For a 200-to-200 gate, set rawProof.openText when a positive marker is grounded, such as `"ok":true` for an observed JSON ok boolean. If a matching sourceFinding cites a literal access fallback but the response value is unknown, still propose complete raw-proof candidate, ordinary and invalid controls without guessing a marker; Bypass can confirm only if two fresh candidate responses return top-level ok=true while all four controls return ok=false, then replay that boundary again. Set closedText only when both controls share distinct closed text. Other response differences remain unproven. ' +
   'If a value is not grounded, use raw-observation with one complete request or return an empty flows array. Copy the matching sourceFindingId exactly. Never invent an origin, method, credential, request field, external callback, or destructive action. Bypass independently checks every request against the approved scope. Return JSON only.';
 const flowFields = new Set(Object.keys(FLOW_SCHEMA.properties));
 const knownFlow = flow => Object.fromEntries(Object.entries(flow)
@@ -2432,7 +2432,7 @@ async function executeRawObservation(lead, requester, scope, env) {
     responseFacts(item)), subject: responseFacts(last), observe: []}]};
 }
 
-async function executeRawProof(lead, requester, scope, env) {
+async function executeRawProof(lead, requester, scope, env, sourceFinding = null) {
   const phases = [
     ['baseline-a', lead.rawProof.baseline, 'control'],
     ['negative-a', lead.rawProof.negative, 'control'],
@@ -2454,7 +2454,24 @@ async function executeRawProof(lead, requester, scope, env) {
     if (!run.complete) return {verdict: 'inconclusive',
       reason: run.error ?? `${label} did not complete`, evidence, controls, facts};
   }
-  const outcome = {...rawBoundaryOutcome(finalResponses, lead.rawProof, lead.rawRequests),
+  let boundary = rawBoundaryOutcome(finalResponses, lead.rawProof, lead.rawRequests);
+  const citedFallback = sourceFinding?.id === lead.sourceFindingId &&
+    sourceFinding?.category === 'authentication-bypass' &&
+    /\bprocess\.env\.[A-Z][A-Z0-9_]*(?:CODE|TOKEN|SECRET|PASSWORD|PIN|KEY)\b\s*(?:\|\||\?\?)\s*['"`][^'"`]{2,80}['"`]/.test(sourceFinding.source?.quote ?? '');
+  const anonymous = [lead.rawRequests, lead.rawProof.baseline,
+    lead.rawProof.negative].flat().every(request =>
+    (request.as ?? lead.as) === 'anonymous');
+  if (boundary.verdict === 'inconclusive' && citedFallback && anonymous &&
+      !lead.rawProof.openText && !lead.rawProof.openTextHash &&
+      !lead.rawProof.closedText) {
+    const inferred = rawBoundaryOutcome(finalResponses,
+      {...lead.rawProof, jsonOkBoundary: true}, lead.rawRequests);
+    if (inferred.verdict === 'confirmed') {
+      lead.rawProof = {...lead.rawProof, jsonOkBoundary: true};
+      boundary = inferred;
+    }
+  }
+  const outcome = {...boundary,
     evidence, controls, facts};
   if (outcome.verdict === 'confirmed' &&
       outcome.proofMode !== 'positive-marker') Object.defineProperty(outcome, 'accessContext', {
@@ -2993,7 +3010,10 @@ async function executeStateChange(lead, requester, scope, surface, env) {
 function withSourceFinding(finding, lead, surface, scope) {
   const source = matchingSourceFinding(surface, lead, scope);
   return source ? {...finding,
-    title: source.title || finding.title,
+    title: finding.webProof?.rawProof?.jsonOkBoundary === true &&
+      source.category === 'authentication-bypass' ?
+      `Access gate accepts a source-cited fallback code: ${lead.subject.path}` :
+      source.title || finding.title,
     remediation: source.remediation || finding.remediation,
     sourceFinding: {id: source.id, source: source.source,
       hypothesis: source.hypothesis}} : finding;
@@ -3452,7 +3472,8 @@ export async function runResearchFlows(leads, scope, {requester, infer = null, m
         log({stage: 'progress', type: 'research-attempt'});
         if (attempted.verdict === 'confirmed') {stopReason = 'confirmed'; break;}
       } else if (lead.oracle === 'raw-proof') {
-        attempted = await executeRawProof(lead, requestForIdentity, scope, env);
+        attempted = await executeRawProof(lead, requestForIdentity, scope, env,
+          matchingSourceFinding(surface, lead, scope));
         if (attempted.verdict === 'confirmed' &&
             attempted.proofMode === 'positive-marker' &&
             !matchingSourceFinding(surface, lead, scope)) {

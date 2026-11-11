@@ -801,6 +801,39 @@ export function rawBoundaryOutcome(responses, proof, candidateRequests = []) {
         reason: 'the application consistently rejected the candidate while controls remained available'};
     return {verdict: 'inconclusive', reason: 'page boundary markers were unstable across controls'};
   }
+  // A source-linked access gate can return 200 for both acceptance and
+  // rejection. The runner may enable this exact JSON oracle only after it
+  // validates the source citation and observes the boundary once. Replay
+  // requires two new accepted candidates and four rejected controls again.
+  if (proof?.jsonOkBoundary === true && !closedText && !openMarker) {
+    const claimsSuccess = candidateRequests.some(request => {
+      if (requestSuppliesMarker(request, '"ok":true')) return true;
+      try {
+        if (new URL(request.path, 'https://proof.invalid').searchParams.get('ok') === 'true')
+          return true;
+        if (JSON.parse(request.body ?? '{}')?.ok === true) return true;
+      } catch { /* A non-JSON request cannot supply the JSON success field. */ }
+      return (request.headers ?? []).some(header =>
+        String(header.name).toLowerCase() === 'ok' &&
+          String(header.value).toLowerCase() === 'true');
+    });
+    const ok = item => {
+      if (item.status < 200 || item.status >= 300 ||
+          !/json|\+json/i.test(contentType(item))) return null;
+      try {
+        const body = JSON.parse(item.body);
+        return object(body) && Object.hasOwn(body, 'ok') &&
+          typeof body.ok === 'boolean' ? body.ok : null;
+      } catch {return null;}
+    };
+    if (!claimsSuccess && controls.every(item => ok(item) === false) &&
+        candidates.every(item => ok(item) === true) &&
+        signature(baselineA) === signature(baselineB) &&
+        signature(negativeA) === signature(negativeB) &&
+        signature(candidateA) === signature(candidateB))
+      return {verdict: 'confirmed', proofMode: 'json-ok-gate',
+        reason: 'two fresh candidate responses returned ok=true while ordinary and invalid controls stayed at ok=false'};
+  }
   if (closedText || openMarker)
     return {verdict: 'inconclusive', reason: 'both closed and open response markers are needed'};
   const denied = item => [401, 403, 404].includes(item.status);
