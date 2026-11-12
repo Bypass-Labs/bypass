@@ -111,13 +111,150 @@ class EvaluationTests(unittest.TestCase):
         report=json.loads((self.w.directory(run)/'report.json').read_text())
         self.assertEqual(len(report['cases']),2)
         markdown=(self.w.directory(run)/'report.md').read_text()
-        self.assertIn('Confirmed - source evidence only',markdown)
+        self.assertIn('## Confirmed findings',markdown)
         self.assertIn('Refuted',markdown)
-        self.assertIn('Prerequisites:',markdown)
-        self.assertIn('Evidence: app.py:',markdown)
+        self.assertIn('**Prerequisites**',markdown)
+        self.assertIn('`app.py:1-8`',markdown)
         self.assertTrue(any(a['path'].startswith('evaluation/evidence/') for a in self.w.artifacts(run)))
         self.assertEqual(self.submit(run,task,result)['status'],'completed','Exact final submission is idempotent.')
         self.assertEqual(self.submit(run,task,{**result,'impact':'changed'})['status'],'error')
+
+    def test_markdown_report_details_only_confirmed_findings_and_counts_unanalysed_cases(self):
+        sarif=json.loads(self.sarif.read_text())
+        results=sarif['runs'][0]['results']
+        for title in ('UNRESOLVED_PRIVATE_DETAILS','UNANALYSED_PRIVATE_DETAILS'):
+            results.append({'ruleId':'invoice-access','message':{'text':title},
+                            'locations':[{'physicalLocation':{'artifactLocation':{'uri':'app.py'},
+                                                             'region':{'startLine':2}}}]})
+        self.sarif.write_text(json.dumps(sarif))
+        run=self.start({'evaluationLimits':{'maxTasks':3}})
+        signals_path=self.w.directory(run)/'signals.json'
+        signals=json.loads(signals_path.read_text())
+        signals[0]['ruleMetadata']['shortDescription']={'text':'Missing invoice ownership check'}
+        atomic(signals_path,signals)
+        for outcome in ('confirmed','refuted','needs_review'):
+            task=self.task(run)
+            result=self.result(run,task,outcome)
+            if outcome!='confirmed':
+                result['rationale']='REFUTED_PRIVATE_DETAILS' if outcome=='refuted' else 'UNRESOLVED_PRIVATE_DETAILS'
+            self.assertNotEqual(self.submit(run,task,result)['status'],'error')
+        markdown=(self.w.directory(run)/'report.md').read_text()
+        self.assertIn('### Finding 1: Missing invoice ownership check',markdown)
+        self.assertEqual(markdown.count('### Finding '),1)
+        self.assertIn('**Issue**',markdown)
+        self.assertIn('Reviewed lookup and relevant ownership controls.',markdown)
+        self.assertLess(markdown.index('**Issue**'),markdown.index('#### Details'))
+        self.assertIn('**Affected locations**',markdown)
+        self.assertIn('`app.py:2`',markdown)
+        self.assertIn('**Supporting evidence**',markdown)
+        self.assertIn('`app.py:1-8`',markdown)
+        self.assertIn('**Severity:** Medium',markdown)
+        self.assertIn('| Source-confirmed findings | 1 |',markdown)
+        self.assertIn('| Refuted | 1 |',markdown)
+        self.assertIn('| Unresolved after analysis | 1 |',markdown)
+        self.assertIn('| Not analysed | 1 |',markdown)
+        self.assertIn('| Total candidate signals | 4 |',markdown)
+        for text in ('REFUTED_PRIVATE_DETAILS','UNRESOLVED_PRIVATE_DETAILS','UNANALYSED_PRIVATE_DETAILS',
+                     '## Refuted','## Needs review','## Unevaluated signals'):
+            self.assertNotIn(text,markdown)
+        report=json.loads((self.w.directory(run)/'report.json').read_text())
+        self.assertEqual(len(report['signals']),4)
+        self.assertEqual(len(report['cases']),4)
+        self.assertEqual([c['outcome'] for c in report['cases']],['confirmed','refuted','needs_review','needs_review'])
+        self.assertIsNone(report['cases'][-1]['evaluation'])
+        self.assertIn('REFUTED_PRIVATE_DETAILS',json.dumps(report))
+        self.assertIn('UNRESOLVED_PRIVATE_DETAILS',json.dumps(report))
+
+    def test_markdown_report_separates_findings_and_orders_supported_severity(self):
+        run=self.start()
+        for severity in ('medium','high'):
+            task=self.task(run)
+            result=self.result(run,task)
+            result['severity']=severity
+            self.assertNotEqual(self.submit(run,task,result)['status'],'error')
+        markdown=(self.w.directory(run)/'report.md').read_text()
+        self.assertEqual(markdown.count('### Finding '),2)
+        self.assertIn('### Finding 1: Potential unsafe read with a guard',markdown)
+        self.assertIn('### Finding 2: Unrestricted invoice read',markdown)
+        self.assertIn('\n---\n',markdown)
+        self.assertLess(markdown.index('**Severity:** High'),markdown.index('**Severity:** Medium'))
+
+    def test_markdown_report_without_confirmed_findings_contains_only_aggregates(self):
+        run=self.start()
+        for _ in range(2):
+            task=self.task(run)
+            self.assertNotEqual(self.submit(run,task,self.result(run,task,'refuted'))['status'],'error')
+        markdown=(self.w.directory(run)/'report.md').read_text()
+        self.assertIn('No source-confirmed findings.',markdown)
+        self.assertIn('| Refuted | 2 |',markdown)
+        self.assertIn('| Not analysed | 0 |',markdown)
+        self.assertNotIn('### Finding ',markdown)
+        self.assertNotIn('Reviewed lookup and relevant ownership controls.',markdown)
+
+    def test_discovery_only_markdown_counts_all_signals_as_unanalysed(self):
+        run=self.start({'evaluation':'off'})
+        markdown=(self.w.directory(run)/'report.md').read_text()
+        self.assertIn('| Source-confirmed findings | 0 |',markdown)
+        self.assertIn('| Not analysed | 2 |',markdown)
+        self.assertIn('No source-confirmed findings.',markdown)
+        self.assertNotIn('Unrestricted invoice read',markdown)
+
+    def test_report_contents_links_every_finding_in_severity_order(self):
+        run=self.start()
+        signals_path=self.w.directory(run)/'signals.json'
+        signals=json.loads(signals_path.read_text())
+        signals[1]['ruleMetadata']['shortDescription']={'text':'Invoice [owner] permission'}
+        atomic(signals_path,signals)
+        for severity in ('medium','high'):
+            task=self.task(run)
+            result=self.result(run,task)
+            result['severity']=severity
+            self.assertNotEqual(self.submit(run,task,result)['status'],'error')
+        markdown=(self.w.directory(run)/'report.md').read_text()
+        self.assertIn('## Contents',markdown)
+        self.assertLess(markdown.index('## Contents'),markdown.index('## Summary'))
+        self.assertIn('[1. Invoice \\[owner\\] permission - High](#finding-1)',markdown)
+        self.assertIn('[2. Unrestricted invoice read - Medium](#finding-2)',markdown)
+        for number in (1,2):
+            self.assertEqual(markdown.count(f'<a id="finding-{number}"></a>'),1)
+            self.assertIn(f'### Finding {number}:',markdown)
+        self.assertNotIn('](#finding-3)',markdown)
+
+    def test_project_identity_is_recorded_at_start_and_not_replaced_by_report_connection(self):
+        project={'name':'Invoice service','path':'/selected/invoice-service'}
+        run=self.w.start({'config':{'evaluation':'off'},'importSarif':True,'projectDetails':project})['id']
+        self.settle(run)
+        self.assertEqual(self.w.read(run)['projectDetails'],project)
+        response=self.call('report',run=run,format='md',projectDetails={'name':'Changed connection','path':'/different'})
+        self.assertNotEqual(response['status'],'error')
+        report=json.loads((self.w.directory(run)/'report.json').read_text())
+        self.assertEqual(report['project']['name'],'Invoice service')
+        self.assertEqual(report['project']['path'],'/selected/invoice-service')
+        self.assertEqual(report['project']['identitySource'],'scan-start')
+        markdown=(self.w.directory(run)/'report.md').read_text()
+        self.assertIn('## Analysed project',markdown)
+        self.assertIn('Invoice service',markdown)
+        self.assertIn('/selected/invoice-service',markdown)
+        self.assertNotIn('Changed connection',markdown)
+        self.assertIn('Source snapshot digest',markdown)
+        self.assertIn('python',markdown)
+
+    def test_historical_report_identifies_current_connection_and_does_not_claim_sarif_rules_ran(self):
+        run=self.start({'evaluation':'off'})
+        before=(self.w.directory(run)/'manifest.json').read_bytes()
+        response=self.call('report',run=run,format='md',projectDetails={'name':'Invoice service','path':'/selected/invoices'})
+        self.assertNotEqual(response['status'],'error')
+        report=json.loads((self.w.directory(run)/'report.json').read_text())
+        self.assertEqual(report['project']['identitySource'],'current-connection')
+        self.assertEqual(report['analysis']['static']['mode'],'sarif-import')
+        self.assertEqual(report['analysis']['static']['completedQueryRules'],0)
+        self.assertIsNone(report['analysis']['static']['selectedRules'])
+        markdown=(self.w.directory(run)/'report.md').read_text()
+        self.assertIn('Invoice service',markdown)
+        self.assertIn('not recorded when this scan started',markdown)
+        self.assertIn('SARIF import',markdown)
+        self.assertIn('No static-analysis rules were executed by this scan',markdown)
+        self.assertEqual((self.w.directory(run)/'manifest.json').read_bytes(),before)
 
     def test_standalone_evaluation_without_task_timeout_can_read_and_submit_after_300_seconds(self):
         run=self.start(mode='standalone-api')
