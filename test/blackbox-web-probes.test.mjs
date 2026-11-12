@@ -5,7 +5,54 @@ import http from 'node:http';
 import {loadScope} from '../src/blackbox/scope.mjs';
 import {followupResponseHints} from '../src/blackbox/host-audit.mjs';
 import {planWebLeads, runWebProbes, planAuthLogins, runAuthLogins,
-  runAuthInvestigation} from '../src/blackbox/web-probes.mjs';
+  runAuthInvestigation, runSourceHeaderProbes} from '../src/blackbox/web-probes.mjs';
+
+test('a cited client identity header gets a zero-model read-only proof and clears after the fix', async () => {
+  const {scope} = loadScope({origin: 'http://127.0.0.1:4329',
+    overrides: {acceptLocal: true}});
+  const source = {id: 'source-header', category: 'authentication-trust',
+    method: 'GET', path: '/api/private', title: 'Client header trusted as identity',
+    hypothesis: 'The caller may supply its own identity.', fields: ['x-actor-id'],
+    source: {file: 'server.js', line: 2, quote: "req.headers['x-actor-id']"}};
+  const surface = {patterns: [{pattern: '/api/private', methods: ['GET'], params: {},
+    responseFacts: {status: 401}}], sourceReview: {securityLeads: [source]}};
+  let vulnerable = true, calls = 0;
+  const requester = async options => {
+    calls++;
+    const header = options.headers?.['x-actor-id'];
+    const opened = vulnerable && header === '1';
+    const body = JSON.stringify(opened ? {id: 1} : {error: 'denied'});
+    return {status: opened ? 200 : 401, type: 'application/json', body,
+      hash: body, cached: false, evidenceId: `ev-${calls}`};
+  };
+  const proved = await runSourceHeaderProbes(surface, scope, {requester, budget: 2});
+  assert.equal(proved.tested, 1);
+  assert.equal(proved.findings[0]?.verdict, 'confirmed');
+  assert.equal(proved.findings[0]?.sourceFinding?.id, 'source-header');
+  vulnerable = false;
+  const fixed = await runSourceHeaderProbes(surface, scope, {requester, budget: 2});
+  assert.equal(fixed.findings.length, 0);
+  assert.ok(fixed.results.every(item => item.verdict !== 'confirmed'));
+});
+
+test('protected-route baseline denials are named as missing prerequisites', async () => {
+  const {scope} = loadScope({origin: 'http://127.0.0.1:4329',
+    overrides: {acceptLocal: true}});
+  const surface = {patterns: [{pattern: '/api/private/search',
+    methods: ['GET'], params: {q: ['known']}, source: ['fixture'],
+    fingerprint: {anonymous: {status: 401, evidenceId: 'ev-recon'},
+      owner: {blocked: true}, outsider: {blocked: true}},
+    responseFacts: {status: 401, type: 'application/json'}}]};
+  const run = await runWebProbes(surface, scope, {budget: 30,
+    requester: async () => ({status: 401, type: 'application/json',
+      body: '{"error":"unauthorized"}', headers: {}, evidenceId: 'ev-denied'})});
+  for (const kind of ['ssti-arithmetic', 'sql-boolean']) {
+    const result = run.results.find(item => item.kind === kind);
+    assert.equal(result?.verdict, 'blocked', JSON.stringify(run.results));
+    assert.match(result.reason, /working test identity/i);
+    assert.deepEqual(result.evidence, ['ev-recon']);
+  }
+});
 import {modelExperimentReason, safeAuthUserPayload,
   validModelExperiment} from '../src/blackbox/poc-runtime.mjs';
 import {domXssFragment, nosqlEqUrl, nosqlOperatorOracle, redirectPollutionUrl,
@@ -36,6 +83,70 @@ test('observed access-code endpoints are checked for effective throttling withou
   assert.ok(requests.every(item => JSON.parse(item.body).code.startsWith('bypass-audit-invalid-')));
   assert.equal(finding?.cwe, 'CWE-307');
   assert.equal(finding?.webProof.attemptCount, 20);
+});
+
+test('a long audit runs a distinct Muse impact check after its primary proof', async () => {
+  const scope = structuredClone(loadScope({origin: 'http://127.0.0.1:4329',
+    overrides: {acceptLocal: true, rps: 20}}).scope);
+  scope.limits.minutes = 10;
+  const surface = {patterns: [{pattern: '/api/beta/status', methods: ['GET'],
+    params: {}, responseFacts: {status: 200, type: 'application/json'}}],
+  jsonBodyOperations: [{path: '/api/beta/unlock', method: 'POST',
+    contentType: 'application/json', fields: ['code'], requiredFields: [],
+    source: 'public-js', purpose: 'Beta unlock access code.'}]};
+  let requests = 0, pivotCalls = 0;
+  const requester = async ({url}) => {
+    requests++;
+    const body = JSON.stringify({ok: false});
+    return {status: 200, type: 'application/json', body,
+      headers: {'content-type': 'application/json', 'cache-control': 'no-store'},
+      evidenceId: `ev-${requests}`, url};
+  };
+  const infer = async (_model, messages) => {
+    if (messages[0].content.startsWith('The primary scoped audit has completed')) {
+      pivotCalls++;
+      const context = JSON.parse(messages[1].content);
+      assert.equal(context.confirmedFinding.path, '/api/beta/unlock');
+      return {flows: [{family: 'beta status', why: 'Check related public state',
+        priority: 7, as: 'anonymous', oracle: 'raw-observation',
+        rawRequests: [{method: 'GET', path: '/api/beta/status'}]}]};
+    }
+    return {flows: [], priorities: [], strategies: [], experiments: [],
+      checks: [], tasks: [], plans: [], samples: []};
+  };
+  const run = await runWebProbes(surface, scope, {requester, infer,
+    model: {model: 'fixture'}, budget: 1, maxModelPages: 16,
+    researchDeadline: Date.now() + 120_000});
+  assert.equal(run.findings.some(item => item.kind === 'rate-limit-auth-gate'), true);
+  assert.equal(pivotCalls, 1);
+  assert.deepEqual(run.modelCoverage.confirmedPivots,
+    {proposed: 1, accepted: 1, executed: 1});
+  assert.equal(run.results.some(item => item.kind === 'model-raw-observation' &&
+    item.lead?.path === '/api/beta/status' && item.verdict === 'observed'), true);
+});
+
+test('an optional Muse impact timeout does not invalidate the primary finding', async () => {
+  const scope = structuredClone(loadScope({origin: 'http://127.0.0.1:4329',
+    overrides: {acceptLocal: true, rps: 20}}).scope);
+  scope.limits.minutes = 10;
+  const surface = {patterns: [], jsonBodyOperations: [{path: '/api/beta/unlock',
+    method: 'POST', contentType: 'application/json', fields: ['code'],
+    requiredFields: [], source: 'public-js', purpose: 'Beta unlock access code.'}]};
+  let requests = 0;
+  const run = await runWebProbes(surface, scope, {budget: 1, maxModelPages: 16,
+    model: {model: 'fixture'}, researchDeadline: Date.now() + 120_000,
+    infer: async (_model, messages) => {
+      if (messages[0].content.startsWith('The primary scoped audit has completed'))
+        throw Error('Model request timed out');
+      return {flows: [], priorities: [], strategies: [], experiments: [],
+        checks: [], tasks: [], plans: [], samples: []};
+    }, requester: async () => ({status: 200, type: 'application/json',
+      body: '{"ok":false}', headers: {'content-type': 'application/json',
+        'cache-control': 'no-store'}, evidenceId: `ev-${++requests}`})});
+  assert.ok(run.findings.some(item => item.kind === 'rate-limit-auth-gate'));
+  assert.equal(run.modelError, null);
+  assert.deepEqual(run.modelCoverage.confirmedPivots,
+    {proposed: 1, accepted: 0, executed: 0});
 });
 
 test('queued web checks use reserved execution time after Muse planning ends', async () => {
@@ -101,6 +212,29 @@ test('an explicit throttle prevents an authentication rate-limit finding', async
   assert.equal(run.results.find(item => item.kind === 'rate-limit-auth-gate')?.verdict,
     'not_reproduced');
   assert.ok(!run.findings.some(item => item.kind === 'rate-limit-auth-gate'));
+});
+
+test('a local login burst reports only local app-layer throttling', async () => {
+  const scope = structuredClone(loadScope({origin: 'http://127.0.0.1:4329',
+    overrides: {acceptLocal: true, rps: 20}}).scope);
+  const operation = {path: '/api/auth/login',
+    method: 'POST', contentType: 'application/json', fields: ['email', 'password'],
+    usernameField: 'email', passwordField: 'password'};
+  scope.localAuthPostContracts = {'/api/auth/login': operation};
+  const surface = {patterns: [], authBodyOperations: [operation]};
+  const payloads = [];
+  const run = await runWebProbes(surface, scope, {budget: 1, requester: async request => {
+    payloads.push(JSON.parse(request.body));
+    return {status: 401, type: 'application/json', body: '{"error":"invalid"}',
+      headers: {}, evidenceId: `ev-${payloads.length}`};
+  }});
+  const finding = run.findings.find(item => item.kind === 'rate-limit-auth-gate');
+  assert.equal(finding?.verdict, 'confirmed');
+  assert.match(finding.title, /on this local target/);
+  assert.match(finding.mirror.reason, /deployed edge controls/);
+  assert.equal(payloads.length, 20);
+  assert.equal(new Set(payloads.map(item => item.email)).size, 1);
+  assert.ok(payloads[0].email.endsWith('@example.invalid'));
 });
 
 test('registration contracts are never selected for automatic rate-limit attempts', async () => {
@@ -870,6 +1004,44 @@ test('one Muse auth revision uses redacted feedback and fresh controls on the sa
   assert.ok(passwords.size >= 2);
   assert.ok(!JSON.stringify(run).includes('bx-session-'));
   assert.ok(!JSON.stringify(run).includes('bx-invalid-'));
+});
+
+test('auth follow-ups leave model turns for other observed security tracks', async () => {
+  const {scope: loaded} = loadScope({origin: 'http://127.0.0.1:4329',
+    overrides: {acceptLocal: true}});
+  const scope = structuredClone(loaded);
+  scope.localAuthPostContracts = {'/api/session': {path: '/api/session',
+    method: 'POST', contentType: 'application/json', fields: ['user', 'password'],
+    usernameField: 'user', passwordField: 'password'}};
+  const surface = {authBodyOperations: Object.values(scope.localAuthPostContracts),
+    patterns: [{pattern: '/api/private', methods: ['GET'], params: {},
+      responseFacts: {status: 401, type: 'application/json'}},
+    {pattern: '/api/search', methods: ['GET'], params: {q: ['plain']},
+      responseFacts: {status: 200, type: 'application/json'}}]};
+  let authCalls = 0, otherCalls = 0, requests = 0;
+  const infer = async (_model, messages) => {
+    if (messages[0].content.startsWith('From only the observed authorized JSON login operations')) {
+      authCalls++;
+      return {checks: [{loginPath: '/api/session', userField: 'user',
+        passwordField: 'password', userPayloads: [`candidate-${authCalls}`],
+        proofMode: 'protected-status', tokenPointer: '/token',
+        privatePath: '/api/private', why: 'Compare a scoped login candidate'}]};
+    }
+    otherCalls++;
+    return {priorities: [], strategies: [], experiments: [], plans: [],
+      flows: [], checks: [], tasks: [], paths: [], notes: []};
+  };
+  const requester = async options => ({status: options.method === 'POST' ? 401 :
+    options.url?.endsWith('/api/private') ? 401 : 200,
+  type: 'application/json', body: '{}', rawBody: '{}', headers: {},
+  evidenceId: `ev-${++requests}`});
+  const run = await runWebProbes(surface, scope, {requester, infer,
+    model: {model: 'fixture'}, budget: 8, maxModelPages: 6});
+  assert.equal(authCalls, 2);
+  assert.ok(otherCalls > 0);
+  assert.equal(run.modelCoverage.authFollowupCalls, 1);
+  assert.ok(run.modelCoverage.httpSequenceSent > 0,
+    'the remaining allowance should reach observed HTTP-sequence routes');
 });
 
 test('protected-session model calls reduce the remaining primary planning allowance', async () => {
@@ -1678,6 +1850,8 @@ test('search SQL lead can start from a benign query and needs an expanded true s
     ['a', 'search-quote-close-or', 'benign-search-baseline']);
   const pair = sqlBooleanCanary(lead.base, lead.style);
   assert.match(pair.yes, /^a'\)\) OR (\d+)=\1--$/);
+  assert.match(sqlBooleanCanary('a', 'search-quote-or').yes,
+    /^a' OR (\d+)=\1-- $/);
   const baseline = {status: 200, type: 'application/json', ids: ['1', '2'], hash: 'baseline'};
   const yes = {status: 200, type: 'application/json', ids: ['1', '2', '3'], hash: 'all'};
   const no = {status: 200, type: 'application/json', ids: [], hash: 'empty'};
@@ -1685,6 +1859,22 @@ test('search SQL lead can start from a benign query and needs an expanded true s
   assert.equal(sqlBooleanOracle(baseline, {...yes, ids: ['3']}, no, lead.style), false);
   assert.equal(sqlBooleanOracle(baseline, yes, {...no, ids: ['2']}, lead.style), false);
   assert.equal(sqlBooleanOracle(baseline, {...baseline, ids: []}, yes, no, lead.style), false);
+});
+
+test('a cited GET injection lead moves its observed SQL input into the first proof slot', async () => {
+  const {scope} = loadScope({origin: 'http://127.0.0.1:4329', overrides: {acceptLocal: true}});
+  const surface = {patterns: [
+    {pattern: '/api/catalog/search', params: {q: ['present']}, source: ['public-openapi'],
+      responseFacts: {status: 200, type: 'application/json'}},
+    {pattern: '/api/public/redirect', params: {next: ['/']}, source: ['public-openapi']}],
+  sourceReview: {securityLeads: [{id: 'source-sql', category: 'injection', method: 'GET',
+    path: '/api/catalog/search', fields: ['q'],
+    source: {file: 'server.js', line: 1, quote: "signal LIKE '%${term}%'"}}]}};
+  const planned = await planWebLeads(surface, scope, {budget: 1});
+  assert.deepEqual(planned.selected.map(item => item.kind), ['sql-boolean']);
+  assert.equal(planned.selected[0].priority, 11);
+  assert.equal(planned.leads[0].lead.style, 'search-quote-or');
+  assert.equal(planned.leads[0].lead.sourceFinding.id, 'source-sql');
 });
 
 test('SQL search tries observed example baselines and prioritizes routes with a JSON record oracle', async () => {
@@ -1703,7 +1893,7 @@ test('SQL search tries observed example baselines and prioritizes routes with a 
   const requester = async ({url}) => {
     const value = new URL(url, scope.target.origin).searchParams.get('q');
     values.push(value);
-    const condition = /\bOR (\d+)=(\d+)--$/.exec(value ?? '');
+    const condition = /\bOR (\d+)=(\d+)--\s*$/.exec(value ?? '');
     const ids = condition ? condition[1] === condition[2] ? ['1', '2'] : [] :
       value === 'present' ? ['1'] : [];
     const body = JSON.stringify({data: ids.map(id => ({id}))});

@@ -123,6 +123,18 @@ function responseShape(text,reasoning,calls,finish,profile) {
     finishReason:finish==null?null:knownFinish.includes(finish)?finish:'unknown',
     jsonStatus:'not_attempted'};
 }
+function modelUsage(usage) {
+  if (!usage || typeof usage !== 'object') return null;
+  const inputTokens = usage.input_tokens ?? usage.prompt_tokens;
+  const outputTokens = usage.output_tokens ?? usage.completion_tokens;
+  if (![inputTokens, outputTokens].every(value => Number.isSafeInteger(value) && value >= 0)) return null;
+  const totalTokens = usage.total_tokens;
+  return {kind: 'usage', message: `Model usage: ${inputTokens} input · ${outputTokens} output tokens`,
+    inputTokens, outputTokens,
+    totalTokens: Number.isSafeInteger(totalTokens) && totalTokens >= 0 ?
+      totalTokens : inputTokens + outputTokens};
+}
+
 export class ProviderSession {
   constructor(profile,{maxTurns=10}={}){
     need(maxTurns===null||(Number.isInteger(maxTurns)&&maxTurns>0),'Provider turn limit must be a positive integer or null.',3);
@@ -148,7 +160,9 @@ export class ProviderSession {
     try {
       const workspace=p.workspaceEnv?need(process.env[p.workspaceEnv],`Set ${p.workspaceEnv} for the selected Anthropic workspace.`,3):null;
       const Client=requestTimeout===0?DeadlineFreeOpenAI:OpenAI;
-      client=new Client({apiKey:process.env[p.secretEnv],adminAPIKey:null,organization:null,project:null,webhookSecret:null,logLevel:'off',baseURL:p.baseUrl,maxRetries:0,timeout:requestTimeout,fetch:pinnedFetch(p,process.env[p.secretEnv],workspace,onProgress,requestTimeout)});
+      // Let our AbortSignal own the visible deadline so an SDK timeout at the
+      // same instant cannot turn a model timeout into a generic network error.
+      client=new Client({apiKey:process.env[p.secretEnv],adminAPIKey:null,organization:null,project:null,webhookSecret:null,logLevel:'off',baseURL:p.baseUrl,maxRetries:0,timeout:requestTimeout===0?0:requestTimeout+1000,fetch:pinnedFetch(p,process.env[p.secretEnv],workspace,onProgress,requestTimeout)});
       const clean=redact(messages);
       if(!this.history.length)this.history=structuredClone(clean);
       else if(this.pending){const output=clean.at(-1).content;this.history.push(p.transport==='responses'?{type:'function_call_output',call_id:this.pending,output}:{role:'tool',tool_call_id:this.pending,content:output});this.pending=null;}
@@ -159,11 +173,13 @@ export class ProviderSession {
       const jsonSchema=!!schema&&p.responseMode==='json-schema';
       const common={model:p.model,stream:p.stream,...(schema&&!jsonSchema?{tools:[p.transport==='responses'?{type:'function',...definition}:{type:'function',function:definition}],tool_choice:'auto'}:{})};
       onProgress?.({kind:'phase',phase:'request',message:`${p.provider}: ${p.transport} request · API-key billing`});
-      let text='',calls=[];
+      let text='',calls=[],usage=null;
       if(p.transport==='responses'){
         const request={...common,input:this.history,max_output_tokens:p.maxTokens,store:false,...(jsonSchema?{text:{format:{type:'json_schema',name:'security_action',strict:true,schema}}}:{}),...(providers[p.provider].encryptedReplay?{include:['reasoning.encrypted_content']}:{}) ,...(p.effort?{reasoning:{effort:p.effort}}:{})};
         let response=await client.responses.create(request,{signal:active});
         if(p.stream){let final;for await(const event of response){if(event.type==='response.completed')final=event.response;if(['response.failed','response.incomplete','error'].includes(event.type))throw incompleteResponse(event.response);}response=need(final,'Stream ended without a completed response.',3);}
+        usage=modelUsage(response.usage);
+        if(usage)onProgress?.(usage);
         if(response.status==='incomplete')throw incompleteResponse(response);
         need(!response.status||response.status==='completed','Provider response did not complete.',3);
         need(Array.isArray(response.output),'Invalid Responses output.',3);
@@ -176,10 +192,11 @@ export class ProviderSession {
         const request={...common,messages:this.history,...(jsonSchema?{response_format:{type:'json_schema',json_schema:{name:'security_action',strict:true,schema}}}:{}),...(p.provider==='openai'?{max_completion_tokens:p.maxTokens}:{max_tokens:p.maxTokens}),...(p.effort?(p.provider==='deepseek'&&p.effort==='none'?{thinking:{type:'disabled'}}:{reasoning_effort:p.effort}):{})};
         let response=await client.chat.completions.create(request,{signal:active}),message,finish;
         if(p.stream){message={role:'assistant',content:'',tool_calls:[]};let reasoning='';
-          for await(const chunk of response){const choice=chunk.choices?.[0];if(!choice)continue;finish=choice.finish_reason||finish;const d=choice.delta||{};message.content+=d.content||'';reasoning+=d.reasoning_content||'';
+          for await(const chunk of response){usage=modelUsage(chunk.usage)??usage;const choice=chunk.choices?.[0];if(!choice)continue;finish=choice.finish_reason||finish;const d=choice.delta||{};message.content+=d.content||'';reasoning+=d.reasoning_content||'';
             for(const tc of d.tool_calls||[]){need(Number.isInteger(tc.index)&&tc.index>=0&&tc.index<4,'Invalid streamed tool index.',3);const current=message.tool_calls[tc.index]??={id:'',type:'function',function:{name:'',arguments:''}};current.id+=tc.id||'';current.function.name+=tc.function?.name||'';current.function.arguments+=tc.function?.arguments||'';}
           }if(reasoning)message.reasoning_content=reasoning;if(!message.tool_calls.length)delete message.tool_calls;
-        }else{message=response.choices?.[0]?.message;finish=response.choices?.[0]?.finish_reason;}
+        }else{message=response.choices?.[0]?.message;finish=response.choices?.[0]?.finish_reason;usage=modelUsage(response.usage);}
+        if(usage)onProgress?.(usage);
         const responseCalls=(message?.tool_calls||[]).map(x=>({id:x.id,...x.function}));
         diagnostics=responseShape(message?.content,message?.reasoning_content,responseCalls,finish,p);
         rejectedContent=message?.content;rejectedArguments=responseCalls.map(call=>call.arguments);

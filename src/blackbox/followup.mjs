@@ -9,6 +9,7 @@ const MAX_VARIANTS = 8;
 const MAX_PAGES = 8;
 const MAX_BYTES = 20000;
 const ELIGIBLE = new Set(['inconclusive/different-resource',
+  'inconclusive/list-leak/variant-needed',
   'inconclusive/insufficient-evidence', 'inconclusive/non-json']);
 const KINDS = new Set(['idor', 'list-leak', 'param-filter', 'bfla']);
 const clean = (value, limit = 200) => maskSecrets(String(value ?? ''))

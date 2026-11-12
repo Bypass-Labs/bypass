@@ -128,6 +128,92 @@ test('a missing route is inconclusive even when every response lacks the marker'
   assert.equal(rawBoundaryOutcome(varied, proof, request).verdict, 'inconclusive');
 });
 
+test('a source-approved JSON gate oracle needs repeated ok booleans and rejects reflected success', () => {
+  const route = '/api/access/unlock';
+  const request = [{method: 'POST', path: route, body: '{"code":"sample-open"}'}];
+  const proof = {baseline: [{path: route}], negative: [{path: route}]};
+  const response = ok => ({status: 200, type: 'application/json',
+    body: JSON.stringify({ok}), headers: {'cache-control': 'no-store'}});
+  const replies = [response(false), response(false), response(true),
+    response(true), response(false), response(false)];
+  assert.equal(rawBoundaryOutcome(replies, proof, request).verdict, 'inconclusive');
+  const sealed = rawBoundaryOutcome(replies,
+    {...proof, jsonOkBoundary: true}, request);
+  assert.equal(sealed.verdict, 'confirmed');
+  assert.equal(sealed.proofMode, 'json-ok-gate');
+  assert.equal(rawBoundaryOutcome(replies, {...proof, jsonOkBoundary: true},
+    [{method: 'POST', path: route, body: '{"ok":true}'}]).verdict, 'inconclusive');
+  assert.equal(rawBoundaryOutcome(replies.map(item => ({...item,
+    type: 'text/plain'})), {...proof, jsonOkBoundary: true}, request).verdict,
+  'inconclusive');
+  assert.equal(rawBoundaryOutcome(replies.map((item, index) => index === 3 ?
+    {...item, body: '{"ok":true,"nonce":1}'} : item),
+  {...proof, jsonOkBoundary: true}, request).verdict, 'inconclusive');
+});
+
+test('a cited fallback gate proves its JSON success boundary and the saved proof clears after repair', async t => {
+  let vulnerable = true;
+  const route = '/api/access/unlock';
+  const app = http.createServer(async (request, response) => {
+    let body = '';
+    for await (const chunk of request) body += chunk;
+    const code = JSON.parse(body).code;
+    response.setHeader('content-type', 'application/json');
+    response.setHeader('cache-control', 'no-store');
+    response.end(JSON.stringify({ok: vulnerable && code === 'sample-open'}));
+  });
+  await new Promise(resolve => app.listen(0, '127.0.0.1', resolve));
+  t.after(() => new Promise(resolve => app.close(resolve)));
+  const origin = `http://127.0.0.1:${app.address().port}`;
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'bypass-json-gate-'));
+  t.after(() => fs.rmSync(dir, {recursive: true, force: true}));
+  const scope = loadScope({origin, overrides: {acceptLocal: true}}).scope;
+  const raw = code => ({method: 'POST', path: route,
+    headers: [{name: 'content-type', value: 'application/json'}],
+    body: JSON.stringify({code})});
+  const surface = {jsonBodyOperations: [{method: 'POST', path: route,
+    contentType: 'application/json', fields: ['code'], requiredFields: ['code']}],
+  sourceReview: {securityLeads: [{id: 'source-gate',
+    title: 'Literal access fallback', category: 'authentication-bypass',
+    path: route, method: 'POST', hypothesis: 'A fallback may open the gate.',
+    remediation: 'Require explicit configuration.',
+    source: {file: 'server.js', line: 3,
+      quote: 'const expected = process.env.ACCESS_CODE || "sample-open";'}}]}};
+  const proposal = {family: 'authentication-bypass',
+    why: 'Test the cited literal gate with two invalid controls',
+    priority: 9, as: 'anonymous', oracle: 'raw-proof',
+    sourceFindingId: 'source-gate', rawRequests: [raw('sample-open')],
+    rawProof: {baseline: [raw('ordinary')], negative: [raw('invalid')]}};
+  const injected = validateResearchFlow({...proposal,
+    rawProof: {...proposal.rawProof, jsonOkBoundary: true}}, surface, scope);
+  assert.ok(!injected.ok || !injected.lead.rawProof.jsonOkBoundary,
+    'a model cannot enable the source-only JSON oracle');
+  const plan = await planResearchFlows(surface, scope, {model: 'fixture',
+    budget: 1, modelCallsAvailable: 1,
+    infer: async () => ({flows: [proposal]})});
+  assert.equal(plan.leads.length, 1, JSON.stringify(plan.decisions));
+  const ledger = createLedger(dir);
+  t.after(() => ledger.close());
+  const requester = createRequester(scope, {ledger, allowLocal: true});
+  const noCitation = await runResearchFlows(plan.leads, scope,
+    {surface: {...surface, sourceReview: {securityLeads: []}},
+      requester, ledger, modelCallsAvailable: 0});
+  assert.equal(noCitation.findings.length, 0);
+  const run = await runResearchFlows(plan.leads, scope,
+    {surface, requester, ledger, modelCallsAvailable: 0});
+  assert.equal(run.findings[0]?.kind, 'model-raw-boundary');
+  assert.equal(run.results[0]?.verdict, 'confirmed');
+  assert.match(run.findings[0].title, /Access gate accepts a source-cited fallback code/);
+  assert.equal(run.findings[0].webProof.rawProof.jsonOkBoundary, true);
+  const proved = await proveFindings([{...run.findings[0], id: 'f-001'}], [],
+    {runDir: dir, scope, surface, env: {}, ledger, web: run});
+  assert.equal(proved.length, 1);
+  vulnerable = false;
+  const fixed = await execFile(process.execPath, [proved[0].proof, '--expect-fixed'],
+    {env: process.env, timeout: 20000});
+  assert.equal(fixed.code, 0, fixed.stdout);
+});
+
 test('planning metadata masks a long response marker before truncation', async () => {
   const marker = `INTERNAL_SEAL_${randomBytes(16).toString('hex')}${'x'.repeat(320)}`;
   const origin = 'http://127.0.0.1:4329';

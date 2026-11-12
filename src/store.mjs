@@ -18,7 +18,19 @@ export function atomic(file, data) {
   fs.mkdirSync(path.dirname(file), {recursive:true, mode:0o700});
   const tmp = `${file}.${process.pid}.${id('tmp')}`;
   fs.writeFileSync(tmp, typeof data === 'string' ? data : JSON.stringify(data, null, 2) + '\n', {mode:0o600});
-  fs.renameSync(tmp, file);
+  try {
+    for (let attempt = 0;; attempt++) {
+      try { fs.renameSync(tmp, file); break; }
+      catch (error) {
+        // Windows scanners can briefly hold the destination between a read
+        // and rename. Keep the write atomic; retry only that transient case.
+        if (process.platform !== 'win32' ||
+            !['EPERM', 'EACCES', 'EBUSY'].includes(error.code) || attempt >= 4)
+          throw error;
+        Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 10 * 2 ** attempt);
+      }
+    }
+  } finally { try { fs.rmSync(tmp, {force: true}); } catch { /* preserve the rename error */ } }
 }
 export function read(root) {
   try { const data = JSON.parse(fs.readFileSync(path.join(root, FILE), 'utf8')); need(data.schemaVersion === 1, 'Unsupported project state version.'); return data; }

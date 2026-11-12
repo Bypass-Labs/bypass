@@ -12,6 +12,8 @@ jobs:
     timeout-minutes: 10
     outputs:
       full: ${{ steps.plan.outputs.full }}
+      codeql: ${{ steps.plan.outputs.codeql }}
+      mode: ${{ steps.plan.outputs.mode }}
       matrix: ${{ steps.plan.outputs.matrix }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
@@ -31,7 +33,12 @@ jobs:
       - run: npm ci --ignore-scripts
       - run: npm run check
       - run: node --test test/ci.test.mjs
-      - run: npm run test:scanner
+      - name: Test scanner on scanner and mixed changes
+        if: steps.plan.outputs.mode == 'full'
+        run: npm run test:scanner
+      - name: Test Muse plugin and review recovery on plugin-only changes
+        if: steps.plan.outputs.mode == 'plugin'
+        run: node --import ./test/legacy-muse-env.mjs --test --test-concurrency=1 test/plugin-compaction.test.mjs test/plugin-onboarding.test.mjs test/project-selection.test.mjs test/host-review.test.mjs test/blackbox-plugin-handoff.test.mjs test/mcp.test.mjs test/plugin-parity.test.mjs
   regression:
     name: Regression shard ${{ matrix.shard }}/4
     needs: fast
@@ -87,7 +94,7 @@ jobs:
         run: npm run test:policy
   codeql:
     needs: fast
-    if: needs.fast.outputs.full == 'true'
+    if: needs.fast.outputs.codeql == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 120
     env:

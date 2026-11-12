@@ -7,6 +7,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { temp } from './helpers.mjs';
 import { buildFindings, consolidateBrowserXssProofs, consolidateRawBoundaryProofs,
+  consolidateInjectionProofs,
   renderReport, summaryText,
   exitCodeFor } from '../src/blackbox/report.mjs';
 
@@ -20,6 +21,31 @@ test('report counts queued web checks separately from executed checks', () => {
     web: {tested: 3, results: [{verdict: 'not_reproduced'},
       {verdict: 'untested'}, {verdict: 'untested'}]}});
   assert.match(report.json.summary.narrative, /1 task ran; 2 tasks remained queued/);
+});
+
+test('report distinguishes missing proof prerequisites from inconclusive checks', () => {
+  const report = renderReport({run: 'bx-open-work', scope,
+    scopeHash: 'test', surface: surfaceFixture(), findings: [],
+    results: [{verdict: 'blocked', task: {id: 't-1', kind: 'list-leak',
+      pattern: '/api/items', request: {as: 'outsider', url: '/api/items'}},
+      rule: 'blocked/list-leak/no-owner-only-record', reason: 'Seed an owner record.'},
+    {verdict: 'inconclusive', task: {id: 't-2', kind: 'missing-auth',
+      pattern: '/api/items', request: {as: 'anonymous', url: '/api/items'}},
+      rule: 'inconclusive/timeout', reason: 'Timeout.'}], web: {results: []}});
+  assert.equal(report.json.summary.blocked, 1);
+  assert.equal(report.json.summary.inconclusive, 1);
+  assert.match(report.json.summary.narrative, /1 blocked and 1 inconclusive item/);
+});
+
+test('report shows the scope and execution of post-finding Muse exploration', () => {
+  const report = renderReport({run: 'bx-pivot-report', scope,
+    scopeHash: 'test', surface: surfaceFixture(), findings: [], results: [],
+    web: {results: [], modelCoverage: [{confirmedPivots:
+      {proposed: 2, accepted: 1, executed: 1}}]}});
+  assert.deepEqual(report.json.summary.confirmedPivots,
+    {proposed: 2, accepted: 1, executed: 1});
+  assert.match(report.markdown, /Muse related-impact follow-up: 2 positive signal\(s\) considered/);
+  assert.match(report.markdown, /follow-up observation is not a confirmed security finding/);
 });
 
 test('marker proofs count as unrated and describe response effects rather than access boundaries', () => {
@@ -169,6 +195,24 @@ test('one proved access recipe across routes reports one gate issue with separat
     make('f-001', '/members'), make('f-002', '/', 'admission=other')]).length, 2);
   assert.equal(consolidateRawBoundaryProofs([
     make('f-001', '/members'), make('f-002', '/', 'admission=valid', 'Other Gate')]).length, 2);
+});
+
+test('a raw SQL differential corroborates the cited SQL proof instead of claiming an access gate', () => {
+  const cited = {id: 'source-sql-1'};
+  const sql = {id: 'f-001', kind: 'sql-boolean', verdict: 'confirmed',
+    url: `${ORIGIN}/api/search`, proof: '/tmp/sql-proof.mjs', sourceFinding: cited,
+    evidence: ['ev-0001'], confirmation: ['ev-0002'], webProof: {parameter: 'q'}};
+  const raw = {id: 'f-002', kind: 'model-raw-boundary', verdict: 'confirmed',
+    url: `${ORIGIN}/api/search?q=probe`, proof: '/tmp/raw-proof.mjs',
+    sourceFinding: cited, modelHypothesis: {family: 'injection'},
+    evidence: ['ev-0003'], confirmation: ['ev-0004'],
+    webProof: {rawRequests: [{path: '/api/search?q=probe'}]}};
+  const separate = {...raw, id: 'f-003',
+    webProof: {rawRequests: [{path: '/api/search?other=probe'}]}};
+  const grouped = consolidateInjectionProofs([sql, raw, separate]);
+  assert.deepEqual(grouped.map(item => item.id), ['f-001', 'f-003']);
+  assert.deepEqual(grouped[0].corroboratingProofs.map(item => item.id), ['f-002']);
+  assert.deepEqual(grouped[0].evidence, ['ev-0001', 'ev-0003']);
 });
 
 const scope = {

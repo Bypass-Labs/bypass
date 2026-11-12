@@ -45,3 +45,43 @@ test('a raw list response with a foreign owner ID confirms a list leak', () => {
     ids: {ownerIds: ['itm-101'], outsiderIds: ['itm-202']}, private: {'itm-101': {by: 'list'}}}]};
   assert.equal(decide(task, {O: owner, T: outsider, A: anonymous, surface}).verdict, 'confirmed');
 });
+
+test('list checks distinguish a missing owner-only control from a checked denial', () => {
+  const response = (ids, hashValue) => ({status: 200, type: 'application/json',
+    hash: hashValue, ids, items: ids.length, headers: {}});
+  const O = response(['owner-record'], 'owner');
+  const T = response([], 'outsider');
+  const A = {status: 401, headers: {}};
+  const task = {kind: 'list-leak', pattern: '/api/items',
+    control: {url: '/api/items'}, request: {url: '/api/items'}};
+  const owned = {patterns: [{pattern: '/api/items', label: {kind: 'list'},
+    ids: {ownerIds: ['owner-record'], outsiderIds: []},
+    private: {'owner-record': {by: 'owner-only-list'}}}]};
+  assert.equal(decide(task, {O, T, A, surface: owned}).rule,
+    'not_reproduced/list-leak/owner-record-absent');
+  assert.equal(decide(task, {O, T: response(['outsider-record'], 'outsider'),
+    A, surface: owned}).rule, 'inconclusive/list-leak/variant-needed');
+  const shared = {patterns: [{pattern: '/api/items', label: {kind: 'list'},
+    ids: {ownerIds: ['owner-record'], outsiderIds: ['owner-record'],
+      shared: ['owner-record']}, private: {}}]};
+  assert.equal(decide(task, {O, T, A, surface: shared}).rule,
+    'blocked/list-leak/no-owner-only-record');
+  assert.equal(decide(task, {O, T: {...T, status: 429}, A, surface: owned}).verdict,
+    'inconclusive');
+});
+
+test('two ordinary members on an admin-named route need a privileged positive control', () => {
+  const O = {status: 200, type: 'application/json', hash: 'owner',
+    ownership: {owner_uid: hash('owner')}, headers: {}};
+  const T = {status: 200, type: 'application/json', hash: 'outsider',
+    ownership: {owner_uid: hash('outsider')}, headers: {}};
+  const A = {status: 401, type: 'application/json', headers: {}};
+  const task = {kind: 'bfla', pattern: '/api/admin/whoami',
+    control: {url: '/api/admin/whoami'}, request: {url: '/api/admin/whoami'}};
+  const surface = {identity: {principals: {owner: 'owner', outsider: 'outsider'},
+    roles: {owner: {role: 'member'}, outsider: {role: 'member'}}},
+  patterns: [{pattern: task.pattern, label: {kind: 'admin'}, private: {}, ids: {}}]};
+  const scope = {identities: {owner: {role: 'member'}, outsider: {role: 'member'}}};
+  assert.equal(decide(task, {O, T, A, surface, scope}).rule,
+    'blocked/bfla/no-privileged-control');
+});

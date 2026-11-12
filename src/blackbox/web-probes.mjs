@@ -9,7 +9,8 @@ import {researchCatalogIndex, researchCatalogHint} from './research-catalog.mjs'
 import {scheduleResearchTracks} from './research-scheduler.mjs';
 import {planSessionChains, runSessionChains} from './session-chain.mjs';
 import {planJsonExperiments, runJsonExperiments} from './json-experiment.mjs';
-import {planResearchFlows, runResearchFlows} from './research-flow.mjs';
+import {planResearchFlows, runResearchFlows, planConfirmedPivots,
+  validateResearchFlow} from './research-flow.mjs';
 import {planAccessBoundaries, runAccessBoundaries} from './access-boundary.mjs';
 import {planStoredXss, runStoredXss} from './stored-xss.mjs';
 import {MODEL_RESPONSE_BYTES, responseSizeLimited} from './response-size.mjs';
@@ -207,7 +208,7 @@ const MODEL_EXPERIMENT_ITEM = {type: 'object', properties: {
   priority: {type: 'integer'}, why: {type: 'string', maxLength: 300}},
   required: ['family', 'path', 'parameter', 'controlValue', 'firstValue', 'secondValue',
     'marker', 'secondMarker', 'prelude', 'headers', 'priority', 'why'], additionalProperties: true};
-const SQL_STYLES = new Set(['quoted', 'numeric', 'search-quote-close-or']);
+const SQL_STYLES = new Set(['quoted', 'numeric', 'search-quote-close-or', 'search-quote-or']);
 const validSqlStrategy = proposal => typeof proposal?.base === 'string' &&
   /^[A-Za-z0-9_.@-]{1,64}$/.test(proposal.base) && SQL_STYLES.has(proposal.style) &&
   (proposal.style !== 'numeric' || /^\d{1,12}$/.test(proposal.base));
@@ -279,10 +280,9 @@ function rateLimitLeads(surface, scope, budget) {
       'access-gate' : LOGIN_SEMANTICS.test(semantics) && userField && secretField ?
         'login' : null;
     if (!mode) continue;
-    // A local login does not exercise the deployed throttling layer and the
-    // repeated failures can interfere with fixture accounts used by deeper
-    // authenticated checks. Deployed login contracts remain eligible.
-    if (mode === 'login' && scope.target.environment === 'local') continue;
+    // A local result describes only the local app layer; deployed edge
+    // throttling remains outside this proof. Use one synthetic unknown user
+    // so the burst cannot lock a configured test identity.
     const selectedFields = mode === 'access-gate' ? [codeField] : [userField, secretField];
     if ((operation.requiredFields ?? []).some(field => !selectedFields.includes(field))) continue;
     const purpose = operation.placement === 'form' ? 'form-body' :
@@ -337,14 +337,16 @@ function rateLimitFinding(lead, scope, responses, outcome, elapsedMs) {
   const url = new URL(lead.path, scope.target.origin);
   const evidence = responses.map(item => item.evidenceId).filter(Boolean);
   return {kind: 'rate-limit-auth-gate',
-    title: `No effective throttling after ${responses.length} rapid invalid ${lead.mode === 'login' ?
+    title: `No effective throttling ${scope.target.environment === 'local' ?
+      'on this local target ' : ''}after ${responses.length} rapid invalid ${lead.mode === 'login' ?
       'login' : 'access-code'} attempts: ${lead.path}`,
     severity: 'medium', owasp: 'A07 Identification and Authentication Failures', cwe: 'CWE-307',
     pattern: lead.path, url: url.href, host: url.host, task: null, verdict: 'confirmed',
     rule: `confirmed/rate-limit-auth-gate/${responses.length}-rapid-invalid-attempts-no-throttle`,
     evidence: evidence.slice(0, Math.ceil(evidence.length / 2)),
     confirmation: evidence.slice(Math.ceil(evidence.length / 2)),
-    mirror: {result: 'unverified', evidence: [], reason: 'distributed-source and valid-account lockout behavior were not tested'},
+    mirror: {result: 'unverified', evidence: [], reason:
+      `${scope.target.environment === 'local' ? 'deployed edge controls, ' : ''}distributed-source and valid-account lockout behavior were not tested`},
     tags: ['authentication', 'rate-limit', 'synthetic-invalid-attempts'],
     reach: {observed: 1, basis: `${responses.length} explicit denials completed at ${outcome.achievedRps.toFixed(1)} requests per second without 429, Retry-After, or an exhausted rate-limit header`},
     dataClasses: [], remediation: 'Throttle repeated failures per source and credential target, add progressive delays or temporary lockouts, and return 429 with Retry-After when the limit is reached.',
@@ -687,11 +689,19 @@ function sqlLeads(surface, scope, budget) {
         /(?:^|\/)(?:search|find|lookup)(?:\/|$)/i.test(pathname);
       const base = documentedBases[0] ?? (search ? 'a' : null);
       if (!base) continue;
+      const citedSource = (surface?.sourceReview?.securityLeads ?? []).find(source =>
+        source.category === 'injection' && source.method === 'GET' &&
+        source.path === pathname && source.fields?.includes(parameter));
+      const searchStyle = /\bLIKE\b.{0,160}%\$\{/i.test(citedSource?.source?.quote ?? '') ?
+        'search-quote-or' : 'search-quote-close-or';
       leads.push({path: pathname, pattern: record.pattern, parameter, base,
-        style: search ? 'search-quote-close-or' : /^\d{1,12}$/.test(base) ? 'numeric' : 'quoted',
+        style: search ? searchStyle : /^\d{1,12}$/.test(base) ? 'numeric' : 'quoted',
         baselineAlternatives: documentedBases.slice(1).map(value => ({base: value,
-          style: search ? 'search-quote-close-or' : /^\d{1,12}$/.test(value) ? 'numeric' : 'quoted'})),
-        as, source: record.source ?? [], basis: documentedBases.length ? 'documented-value' : 'benign-search-baseline'});
+          style: search ? searchStyle : /^\d{1,12}$/.test(value) ? 'numeric' : 'quoted'})),
+        as, source: record.source ?? [],
+        ...(citedSource ? {sourceFinding: {id: citedSource.id,
+          source: citedSource.source, hypothesis: citedSource.hypothesis}} : {}),
+        basis: documentedBases.length ? 'documented-value' : 'benign-search-baseline'});
     }
   }
   return {leads: leads.slice(0, budget), cut: Math.max(0, leads.length - budget)};
@@ -956,6 +966,102 @@ export async function runSourceDisclosureProbes(surface, scope, {requester, budg
       priority: 10, by: 'cited-source'}))};
 }
 
+/** Test a literal source-cited client identity header against a denied GET route. */
+export async function runSourceHeaderProbes(surface, scope, {requester, ledger = null,
+  budget = 2, log = () => {}} = {}) {
+  const findings = [], results = [], plan = [];
+  if (!requester || budget <= 0) return {findings, results, plan, tested: 0};
+  const seen = new Set();
+  for (const source of surface?.sourceReview?.securityLeads ?? []) {
+    if (results.length >= budget) break;
+    if (source.category !== 'authentication-trust' || source.method !== 'GET' ||
+        !source.id || typeof source.path !== 'string') continue;
+    if (surface.focus && source.path !== surface.focus.path) continue;
+    const match = /\b(?:req|request)\.headers\[['"](x-[a-z0-9-]{1,64})['"]\]/i
+      .exec(source.source?.quote ?? '');
+    const header = source.source?.header?.name ?? match?.[1]?.toLowerCase();
+    if (!header || !source.fields?.includes(header)) continue;
+    const route = (surface.patterns ?? []).find(item => item.pattern === source.path &&
+      (item.methods ?? ['GET']).includes('GET'));
+    if (![401, 403].includes(route?.responseFacts?.status) ||
+        !validateUrl(scope, source.path, {identity: 'anonymous', method: 'GET'}).ok ||
+        seen.has(`${source.path} ${header}`)) continue;
+    seen.add(`${source.path} ${header}`);
+    const raw = (headers = []) => ({method: 'GET', path: source.path,
+      as: 'anonymous', headers, body: ''});
+    const negative = `bx-invalid-${randomBytes(6).toString('hex')}`;
+    for (const value of ['1', '2']) {
+      if (results.length >= budget) break;
+      const proposed = {family: 'authentication trust', why: source.hypothesis,
+        priority: 10, as: 'anonymous', oracle: 'raw-proof',
+        sourceFindingId: source.id,
+        rawRequests: [raw([{name: header, value}])],
+        rawProof: {baseline: [raw()], negative: [raw([{name: header, value: negative}])],
+          closedText: '', openText: ''}};
+      const checked = validateResearchFlow(proposed, surface, scope);
+      if (!checked.ok) continue;
+      checked.lead.sourceFindingId = source.id;
+      const run = await runResearchFlows([checked.lead], scope,
+        {requester, surface, ledger, modelCallsAvailable: 0, log});
+      for (const finding of run.findings) {
+        finding.title = `${source.title}: ${source.path}`;
+        finding.foundBy = 'source-guided-http-proof';
+        finding.tags = [...new Set([...(finding.tags ?? []).filter(tag =>
+          tag !== 'muse-proposed'), 'source-guided'])];
+      }
+      findings.push(...run.findings);
+      results.push(...run.results);
+      plan.push({kind: 'model-raw-boundary', lead: {path: source.path,
+        parameter: header, as: 'anonymous', basis: 'source-authentication-trust'},
+      priority: 10, by: 'cited-source'});
+      if (run.findings.some(item => item.verdict === 'confirmed')) break;
+    }
+  }
+  return {findings, results, plan, tested: results.length};
+}
+
+/** Prove a source-cited server fetch on a reviewed local JSON URL input. */
+export async function runSourceFetchProbes(surface, scope, {requester, ledger,
+  budget = 1, log = () => {}} = {}) {
+  const findings = [], results = [], plan = [];
+  if (!requester || !ledger || budget <= 0 || scope.target.environment !== 'local')
+    return {findings, results, plan, tested: 0};
+  for (const source of surface?.sourceReview?.securityLeads ?? []) {
+    if (results.length >= budget) break;
+    if (source.method !== 'POST' || !source.id || typeof source.path !== 'string' ||
+        surface.focus && source.path !== surface.focus.path) continue;
+    const fetched = /\b(?:await\s+)?fetch\(\s*([A-Za-z_$][\w$]*)\b/.exec(
+      source.source?.quote ?? '');
+    const field = fetched?.[1];
+    if (!field || !source.fields?.includes(field) ||
+        !(surface.jsonBodyOperations ?? []).some(item => item.path === source.path &&
+          item.method === 'POST' && item.fields?.includes(field))) continue;
+    const proposed = {family: 'source-cited server fetch', why: source.hypothesis,
+      priority: 10, as: 'anonymous', oracle: 'remote-content-use',
+      sourceFindingId: source.id, prelude: [], observe: [],
+      subject: {method: 'POST', path: source.path, placement: 'json', key: field,
+        fixedFields: [], bodyTemplate: '', headers: []},
+      controlValue: '', firstValue: '', secondValue: '', marker: '', secondMarker: '',
+      assertion: {step: 'subject', index: 0, location: 'body', name: ''}};
+    const checked = validateResearchFlow(proposed, surface, scope);
+    if (!checked.ok) continue;
+    checked.lead.sourceFindingId = source.id;
+    const run = await runResearchFlows([checked.lead], scope,
+      {requester, surface, ledger, modelCallsAvailable: 0, log});
+    for (const finding of run.findings) {
+      finding.foundBy = 'source-guided-http-proof';
+      finding.tags = [...new Set([...(finding.tags ?? []).filter(tag =>
+        tag !== 'muse-proposed'), 'source-guided'])];
+    }
+    findings.push(...run.findings);
+    results.push(...run.results);
+    plan.push({kind: 'remote-content-use', lead: {path: source.path,
+      parameter: field, as: 'anonymous', basis: 'source-server-fetch'},
+    priority: 10, by: 'cited-source'});
+  }
+  return {findings, results, plan, tested: results.length};
+}
+
 function sstiFinding(lead, scope, control, first, second, firstUrl, secondUrl) {
   const url = new URL(firstUrl, scope.target.origin);
   return {kind: 'ssti-arithmetic', title: `Server-side template expression evaluated: ${lead.path}`,
@@ -1071,7 +1177,7 @@ async function executeModelExperiment(lead, scope, requester) {
 
 function sqlFinding(lead, scope, first, second, firstUrl) {
   const url = new URL(firstUrl, scope.target.origin);
-  const search = lead.style === 'search-quote-close-or';
+  const search = lead.style === 'search-quote-close-or' || lead.style === 'search-quote-or';
   return {kind: 'sql-boolean', title: `SQL boolean condition changed ${search ? 'search results' : 'a record lookup'}: ${lead.path}`,
     severity: 'high', owasp: 'A03 Injection', cwe: 'CWE-89', pattern: lead.path,
     url: url.href, host: url.host, task: null, verdict: 'confirmed',
@@ -1083,6 +1189,7 @@ function sqlFinding(lead, scope, first, second, firstUrl) {
       basis: search ? `two distinct true conditions returned stable expanded search results while both false conditions returned no records (${first.yes.evidenceId}, ${second.yes.evidenceId})` :
         `two distinct true conditions returned the stable record while their false controls did not (${first.yes.evidenceId}, ${second.yes.evidenceId})`},
     dataClasses: [], remediation: 'Use parameterized SQL queries and keep user input separate from query syntax.',
+    ...(lead.sourceFinding ? {sourceFinding: lead.sourceFinding} : {}),
     foundBy: 'read-only-web-probe', status: 'open', webProof: {kind: 'sql-boolean',
       request: {method: 'GET', url: lead.path, as: lead.as}, parameter: lead.parameter,
       base: lead.base, style: lead.style},
@@ -1762,6 +1869,9 @@ export async function planWebLeads(surface, scope, {budget = 20, infer = null, m
   const observedRoutes = new Map((surface?.patterns ?? []).flatMap(record => [
     [record.pattern, record], ...(record.representative ? [[record.representative, record]] : [])]));
   const sqlPriority = lead => {
+    if ((surface?.sourceReview?.securityLeads ?? []).some(source =>
+      source.category === 'injection' && source.method === 'GET' &&
+      source.path === lead.path && source.fields?.includes(lead.parameter))) return 11;
     const record = observedRoutes.get(lead.path) ?? observedRoutes.get(lead.pattern);
     const response = record?.responseFacts ?? record?.fingerprint?.anonymous;
     if (!response) return 5;
@@ -1912,7 +2022,7 @@ export async function planWebLeads(surface, scope, {budget = 20, infer = null, m
       try {
         modelCalls++;
         if (context.catalogReference) modelCoverage.catalogSent = context.catalogReference.length;
-        const reply = await infer(model, [{role: 'system', content: 'Rank only the supplied observed read-only web-test candidates. The catalogReference lists common classes and tiers but is not a whitelist. Prioritize relevant Tier 1 leads and use Tier 2 whenever the observed surface supports them. Use observedResponse status and contentType when present: HTML responses can justify browser execution checks; JSON responses can justify structured input and access-boundary checks. Content type alone proves no vulnerability. strategyProfiles are fast verified shortcuts, not a vulnerability-family whitelist. When a listed profile matches the observed input and desired impact oracle, set profile to its exact name; Bypass will generate its own controlled payloads and independently verify impact. For another family, choose oracle "marker" only if two nonliteral code-generated canaries can be proved in fresh responses. Otherwise choose oracle "observation" with a clean control and two distinct scoped, low-impact values; Bypass will execute them, report structured response differences to you, and will not claim a finding without an independent impact oracle. Use empty prelude/headers unless needed. If those values are not ready, give the hypothesis and Muse will get one focused follow-up to design an executable experiment. You may also propose a new GET experiment for any observed path and parameter in the collected surface, with any hypothesis name. An expression-like input is a good candidate when observed evidence supports server evaluation. For a sql-boolean strategy, supply a short benign base value likely to return a JSON record; publicRecordIds are public examples when available. Choose quoted, numeric or search-quote-close-or style; the runner tests the baseline and two randomized true/false pairs. For every other strategy return base as an empty string and style as none. An experiment supplies one plain control and two different harmless values. For oracle "marker", the first must cause canary to appear in the response body and the second must cause secondCanary to appear; neither complete literal canary may occur in submitted values. For oracle "observation", literal markers are allowed but are only observations, never proof of impact. Keep all three values distinct. If evaluation syntax is plausible, construct each canary from character codes or concatenated fragments so it appears only after server processing. Include prelude as an empty array unless observed preludeRoutes are needed; the runner repeats them before every control and probe within the run request and time budgets. Include headers as an empty array unless an ordinary fixed Accept, language, content type or X- client header is required; never put a canary, credential or authorization token in a header. Name your hypothesis freely; there is no vulnerability-family allowlist. Propose only read-only probes, with no credentials, writes, external callbacks or unobserved routes. Code will enforce scope, run all controls, and independently replay any result. Return priorities, strategies and experiments; use empty arrays when none apply.'},
+        const reply = await infer(model, [{role: 'system', content: 'Rank only the supplied observed read-only web-test candidates. The catalogReference lists common classes and tiers but is not a whitelist. Prioritize relevant Tier 1 leads and use Tier 2 whenever the observed surface supports them. Use observedResponse status and contentType when present: HTML responses can justify browser execution checks; JSON responses can justify structured input and access-boundary checks. Content type alone proves no vulnerability. strategyProfiles are fast verified shortcuts, not a vulnerability-family whitelist. When a listed profile matches the observed input and desired impact oracle, set profile to its exact name; Bypass will generate its own controlled payloads and independently verify impact. For another family, choose oracle "marker" only if two nonliteral code-generated canaries can be proved in fresh responses. Otherwise choose oracle "observation" with a clean control and two distinct scoped, low-impact values; Bypass will execute them, report structured response differences to you, and will not claim a finding without an independent impact oracle. Use empty prelude/headers unless needed. If those values are not ready, give the hypothesis and Muse will get one focused follow-up to design an executable experiment. You may also propose a new GET experiment for any observed path and parameter in the collected surface, with any hypothesis name. An expression-like input is a good candidate when observed evidence supports server evaluation. For a sql-boolean strategy, supply a short benign base value likely to return a JSON record; publicRecordIds are public examples when available. Choose quoted, numeric, search-quote-or or search-quote-close-or style; the runner tests the baseline and two randomized true/false pairs. For every other strategy return base as an empty string and style as none. An experiment supplies one plain control and two different harmless values. For oracle "marker", the first must cause canary to appear in the response body and the second must cause secondCanary to appear; neither complete literal canary may occur in submitted values. For oracle "observation", literal markers are allowed but are only observations, never proof of impact. Keep all three values distinct. If evaluation syntax is plausible, construct each canary from character codes or concatenated fragments so it appears only after server processing. Include prelude as an empty array unless observed preludeRoutes are needed; the runner repeats them before every control and probe within the run request and time budgets. Include headers as an empty array unless an ordinary fixed Accept, language, content type or X- client header is required; never put a canary, credential or authorization token in a header. Name your hypothesis freely; there is no vulnerability-family allowlist. Propose only read-only probes, with no credentials, writes, external callbacks or unobserved routes. Code will enforce scope, run all controls, and independently replay any result. Return priorities, strategies and experiments; use empty arrays when none apply.'},
           {role: 'user', content: JSON.stringify(context)}], {schema: {type: 'object',
           properties: {priorities: {type: 'array', maxItems: 50, items: {type: 'object', properties: {
             kind: {type: 'string'}, path: {type: 'string'}, parameter: {type: 'string'}, priority: {type: 'integer'},
@@ -1920,7 +2030,7 @@ export async function planWebLeads(surface, scope, {budget = 20, infer = null, m
             additionalProperties: true}}, strategies: {type: 'array', maxItems: 20,
             items: {type: 'object', properties: {family: {type: 'string'}, path: {type: 'string'},
               parameter: {type: 'string'}, base: {type: 'string', maxLength: 64},
-              style: {type: 'string', enum: ['none', 'quoted', 'numeric', 'search-quote-close-or']},
+              style: {type: 'string', enum: ['none', 'quoted', 'numeric', 'search-quote-close-or', 'search-quote-or']},
               controlValue: {type: 'string', maxLength: 256},
               firstValue: {type: 'string', maxLength: 256},
               secondValue: {type: 'string', maxLength: 256},
@@ -2394,6 +2504,21 @@ export async function runWebProbes(surface, scope, {requester, ledger = null, bu
   skipLeadKeys = [], priorVerifierResults = [],
   resumeOnly = false, onResumeCheckpoint = null,
   prioritizeWebTurn = false} = {}) {
+  // Keep a small model allowance for impact pivots after primary checks.
+  // Short fixture runs retain their existing scheduling and call budget.
+  const pivotReserve = infer && model && scope.limits?.minutes >= 10 &&
+    maxModelPages >= 16 ? 2 : 0;
+  maxModelPages -= pivotReserve;
+  const deniedBaseline = lead => {
+    if (lead.as !== 'anonymous') return null;
+    const fingerprint = surface.patterns?.find(route => route.pattern === lead.path)?.fingerprint;
+    const denied = fingerprint?.anonymous;
+    if (![401, 403].includes(denied?.status) ||
+        [fingerprint.owner, fingerprint.outsider].some(item => item?.status === 200))
+      return null;
+    return {reason: `recon returned HTTP ${denied.status} for this protected route; a working test identity is required`,
+      evidence: [denied.evidenceId].filter(Boolean)};
+  };
   const responsePathHints = new Map();
   const derivedResponsePathHints = new Map();
   const scopedRequester = requester;
@@ -2588,8 +2713,18 @@ export async function runWebProbes(surface, scope, {requester, ledger = null, bu
         ...(lead.proposalId ? {proposalId: lead.proposalId} : {})}))],
       deferredLeads: [...(partial.deferredLeads ?? []), ...missing]};
   };
+  // Login feedback can keep producing novel negative payloads until it uses
+  // the entire shared allowance. Preserve turns for the other observed route
+  // and method tracks.
+  const hasOtherWork = (surface?.patterns ?? []).some(record =>
+    Object.keys(record.params ?? {}).length > 0) ||
+    ['jsonBodyOperations', 'formBodyOperations', 'xmlBodyOperations',
+      'methodOperations'].some(key => (surface?.[key]?.length ?? 0) > 0);
+  const authModelPages = hasOtherWork && scope.limits?.minutes <= 10 &&
+    maxModelPages > 2 ?
+    Math.min(2, maxModelPages - 2) : maxModelPages;
   const {plan: authPlan, run: authRun, stats: authStats} = await runAuthInvestigation(surface,
-    scope, {requester, infer, model, budget: freshBudget, maxModelPages,
+    scope, {requester, infer, model, budget: freshBudget, maxModelPages: authModelPages,
       remainingModelCalls, researchDeadline,
       researchDeadlineAfterConfirmation: researchDeadlineAfterAuth,
       onConfirmedSession, log});
@@ -2842,6 +2977,7 @@ export async function runWebProbes(surface, scope, {requester, ledger = null, bu
       ['web', ...schedule.order.filter(name => name !== 'web')] : schedule.order;
     const firstPageOrder = [...fairOrder.filter(name => name !== 'sequence'),
       ...fairOrder.filter(name => name === 'sequence')];
+    let independentPagesDone = Promise.resolve([]);
     const planFirstPage = async name => {
       if (firstPlans[name]) return;
       if (!supportedTracks.has(name) ||
@@ -2865,7 +3001,6 @@ export async function runWebProbes(surface, scope, {requester, ledger = null, bu
         surface, scope, {infer, model, env, budget,
           modelCallsAvailable: 1 + jsonRepairCall, log});
       else if (name === 'sequence') {
-        if (earlyWebPromise) await firstWebBatch;
         firstPlans[name] = await planResearchFlows(
         surface, scope, {infer, model, env, requester, ledger,
           priorVerifierResults, derivedAvailable, remainingModelCalls,
@@ -2877,6 +3012,9 @@ export async function runWebProbes(surface, scope, {requester, ledger = null, bu
           resumeSequenceResults: pageResume?.priorSequenceResults ?? [],
           onPageCheckpoint: recordSequencePage, deferOverflow, log,
           onAcceptedPage: async (leads, page) => {
+            const settled = await independentPagesDone;
+            const failed = settled.find(item => item.status === 'rejected');
+            if (failed) throw failed.reason;
             if (earlyWebPromise) await firstWebBatch;
             return runResearchSwarm(leads, scope, {requester, infer, model,
               derivedSession, surface, env, ledger, log, verifierCandidates,
@@ -2934,20 +3072,22 @@ export async function runWebProbes(surface, scope, {requester, ledger = null, bu
           error => ({earlyTrackError: error})));
       }
     };
-    // Independent first pages have fixed, disjoint call shares. Launch them
-    // together, and start each accepted verifier as soon as its page returns.
-    // The sequence page uses the completed access plan and follows both the
-    // independent pages and their initial checkpoints.
+    // First pages have fixed, disjoint call shares. Plan the sequence page
+    // alongside the independent pages; its accepted verifier still waits for
+    // their first checkpoints and the early web batch before executing.
     const independentPages = firstPageOrder.filter(name => name !== 'sequence');
-    const settled = await Promise.allSettled(independentPages.map(planFirstPage));
+    independentPagesDone = Promise.allSettled(independentPages.map(planFirstPage));
+    const sequencePage = firstPageOrder.includes('sequence') ?
+      planFirstPage('sequence') : null;
+    const settled = await independentPagesDone;
     const plannerFailure = settled.find(item => item.status === 'rejected');
     if (plannerFailure) {
-      await Promise.allSettled([...firstPageRuns.values(), earlyWebPromise]
+      await Promise.allSettled([sequencePage, ...firstPageRuns.values(), earlyWebPromise]
         .filter(Boolean));
       throw plannerFailure.reason;
     }
-    if (firstPageOrder.includes('sequence')) try {
-      await planFirstPage('sequence');
+    if (sequencePage) try {
+      await sequencePage;
     } catch (error) {
       await Promise.allSettled([...firstPageRuns.values(), earlyWebPromise]
         .filter(Boolean));
@@ -4432,6 +4572,11 @@ export async function runWebProbes(surface, scope, {requester, ledger = null, bu
     recordResult({lead, kind: 'html-injection', verdict, reason, evidence: unique(evidence)});
   }
   if (item.kind === 'ssti-arithmetic') for (const {lead} of [item]) {
+    const prerequisite = deniedBaseline(lead);
+    if (prerequisite) {
+      recordResult({lead, kind: 'ssti-arithmetic', verdict: 'blocked', ...prerequisite});
+      continue;
+    }
     const firstCanary = sstiCanary(), secondCanary = sstiCanary();
     const samples = [firstCanary, secondCanary];
     while (samples[1].result === samples[0].result) samples[1] = sstiCanary();
@@ -4445,8 +4590,11 @@ export async function runWebProbes(surface, scope, {requester, ledger = null, bu
     const evidence = [control.evidenceId].filter(Boolean);
     if (control.blocked || control.refused || control.status !== 200 ||
         samples.some(sample => control.body?.includes(sample.result))) {
-      recordResult({lead, kind: 'ssti-arithmetic', verdict: control.blocked || control.refused ? 'blocked' : 'inconclusive',
-        reason: control.reason ?? 'plain control did not establish a stable baseline', evidence});
+      const denied = [400, 401, 403, 404].includes(control.status);
+      recordResult({lead, kind: 'ssti-arithmetic',
+        verdict: control.blocked || control.refused || denied ? 'blocked' : 'inconclusive',
+        reason: denied ? `plain control returned HTTP ${control.status}; a reachable baseline is required` :
+          control.reason ?? 'plain control did not establish a stable baseline', evidence});
       continue;
     }
     const firstUrl = withValue(samples[0].input);
@@ -4471,13 +4619,18 @@ export async function runWebProbes(surface, scope, {requester, ledger = null, bu
     if (confirmed) findings.push(sstiFinding(lead, scope, control, first, second, firstUrl, secondUrl));
   }
   if (item.kind === 'sql-boolean') for (const {lead} of [item]) {
+    const prerequisite = deniedBaseline(lead);
+    if (prerequisite) {
+      recordResult({lead, kind: 'sql-boolean', verdict: 'blocked', ...prerequisite});
+      continue;
+    }
     const withValue = value => {
       const url = new URL(lead.path, scope.target.origin);
       url.searchParams.set(lead.parameter, value);
       return `${url.pathname}${url.search}`;
     };
     const evidence = [], pairs = [];
-    let activeLead = lead, firstBaseline = null;
+    let activeLead = lead, firstBaseline = null, lastBaseline = null;
     let verdict = 'inconclusive', reason = 'baseline did not return identifiable JSON records';
     if (lead.as === 'derived') {
       if (!derivedSession?.requestAuthenticated || !derivedSession?.loginProof) {
@@ -4511,6 +4664,7 @@ export async function runWebProbes(surface, scope, {requester, ledger = null, bu
       ...(lead.baselineAlternatives ?? [])].slice(0, 3)) {
       const response = await requestObserved({url: withValue(candidate.base), identity: lead.as,
         method: 'GET', step: 'control', noCache: true});
+      lastBaseline = response;
       if (response.evidenceId) evidence.push(response.evidenceId);
       if (response.blocked || response.refused) {
         verdict = 'blocked'; reason = response.reason ?? 'SQL record control was refused'; break;
@@ -4529,11 +4683,24 @@ export async function runWebProbes(surface, scope, {requester, ledger = null, bu
             !/json|\+json/i.test(observed?.responseFacts?.type ?? ''))) break;
     }
     if (!firstBaseline) {
+      if (verdict === 'inconclusive' &&
+          [400, 401, 403, 404].includes(lastBaseline?.status)) {
+        verdict = 'blocked';
+        reason = `record control returned HTTP ${lastBaseline.status}; a reachable JSON record is required`;
+      } else if (verdict === 'inconclusive' && lastBaseline?.status === 200 &&
+          !/json|\+json/i.test(lastBaseline.type ?? '')) {
+        verdict = 'blocked';
+        reason = 'record control returned non-JSON content; an identifiable JSON record is required';
+      } else if (verdict === 'inconclusive' && lastBaseline?.status === 200 &&
+          !(lastBaseline.ids ?? []).length) {
+        verdict = 'blocked';
+        reason = 'record control contained no identifiable JSON record; provide an observed record value';
+      }
       recordResult({lead, kind: 'sql-boolean', verdict, reason, evidence: unique(evidence)});
       continue;
     }
     verdict = 'confirmed';
-    reason = activeLead.style === 'search-quote-close-or' ?
+    reason = ['search-quote-close-or', 'search-quote-or'].includes(activeLead.style) ?
       'two independent true conditions expanded a stable search result; false conditions returned no records' :
       'two independent true/false conditions matched a stable record';
     const firstCanary = sqlBooleanCanary(activeLead.base, activeLead.style);
@@ -4581,7 +4748,7 @@ export async function runWebProbes(surface, scope, {requester, ledger = null, bu
       if ([baseline, yes, no].some(responseCached)) {
         verdict = 'inconclusive'; reason = 'SQL boolean response was cached'; break;
       }
-      if (index && activeLead.style === 'search-quote-close-or' &&
+      if (index && ['search-quote-close-or', 'search-quote-or'].includes(activeLead.style) &&
           (yes.hash !== pairs[0].yes.hash || no.hash !== pairs[0].no.hash)) {
         verdict = 'inconclusive'; reason = 'search result differential changed between SQL boolean pairs'; break;
       }
@@ -4646,6 +4813,11 @@ export async function runWebProbes(surface, scope, {requester, ledger = null, bu
     if (verdict === 'confirmed') findings.push(nosqlFinding(lead, scope, pairs[0], pairs[1]));
   }
   if (item.kind === 'command-output') for (const {lead} of [item]) {
+    const prerequisite = deniedBaseline(lead);
+    if (prerequisite) {
+      recordResult({lead, kind: 'command-output', verdict: 'blocked', ...prerequisite});
+      continue;
+    }
     const withValue = value => {
       const url = new URL(lead.path, scope.target.origin);
       url.searchParams.set(lead.parameter, value);
@@ -4664,8 +4836,10 @@ export async function runWebProbes(surface, scope, {requester, ledger = null, bu
       const control = await call(sample.control, 'control');
       if (control.blocked || control.refused || control.status !== 200 ||
           control.body?.includes(sample.marker) || responseCached(control)) {
-        verdict = control.blocked || control.refused ? 'blocked' : 'inconclusive';
-        reason = 'non-executing command control was unavailable, cached or contained the marker'; break;
+        const denied = [400, 401, 403, 404].includes(control.status);
+        verdict = control.blocked || control.refused || denied ? 'blocked' : 'inconclusive';
+        reason = denied ? `non-executing control returned HTTP ${control.status}; a reachable baseline is required` :
+          'non-executing command control was unavailable, cached or contained the marker'; break;
       }
       const executed = await call(sample.payload, index ? 'reverify' : 'task');
       pairs.push({control, executed, urls: {control: withValue(sample.control),
@@ -5349,6 +5523,45 @@ export async function runWebProbes(surface, scope, {requester, ledger = null, bu
     if (selected?.by === 'model-feedback')
       finding.tags = unique([...(finding.tags ?? []), 'model-verifier-handoff']);
   }
+  if (pivotReserve && infer && model &&
+      researchDeadline - Date.now() > 30_000 &&
+      findings.some(item => item.verdict === 'confirmed')) {
+    const remaining = Math.max(0, Math.min(pivotReserve,
+      pivotReserve + maxModelPages - plan.modelCalls - accessRun.modelCalls -
+        jsonRun.modelCalls - flowRun.modelCalls - followupCalls,
+      typeof remainingModelCalls === 'function' ? remainingModelCalls() : Infinity));
+    const pivotPlan = await planConfirmedPivots(findings, surface, scope,
+      {infer, model, env, modelCallsAvailable: remaining,
+        researchDeadline, log, ledger,
+        derivedAvailable: Boolean(derivedSession?.requestAuthenticated)});
+    plan.strategyDecisions.push(...pivotPlan.decisions);
+    flowRun.modelCalls += pivotPlan.modelCalls;
+    if (pivotPlan.modelError) log({stage: 'research', message: pivotPlan.modelError});
+    plan.modelCoverage.confirmedPivots = {proposed: pivotPlan.decisions.length,
+      accepted: pivotPlan.leads.length, executed: 0};
+    if (pivotPlan.leads.length) {
+      for (const lead of pivotPlan.leads) {
+        plan.leads.push({kind: 'model-http-sequence', lead, priority: lead.priority,
+          by: 'confirmed-pivot', why: lead.why});
+        plan.selected.push({kind: 'model-http-sequence', path: lead.subject.path,
+          parameter: lead.subject.key, priority: lead.priority,
+          by: 'confirmed-pivot', why: lead.why});
+      }
+      const pivotRun = await runResearchFlows(pivotPlan.leads, scope,
+        {requester, infer, model, surface, env, ledger, log, derivedSession,
+          researchDeadline, remainingModelCalls,
+          modelCallsAvailable: Math.max(0, remaining - pivotPlan.modelCalls)});
+      for (const result of pivotRun.results) recordResult(result);
+      findings.push(...pivotRun.findings);
+      plan.strategyDecisions.push(...pivotRun.decisions);
+      flowRun.investigations.push(...pivotRun.investigations);
+      flowRun.deferredLeads.push(...pivotRun.deferredLeads);
+      flowRun.modelCalls += pivotRun.modelCalls;
+      if (pivotRun.modelError) log({stage: 'research', message: pivotRun.modelError});
+      plan.modelCoverage.confirmedPivots.executed = pivotRun.results.filter(item =>
+        item.verdict !== 'untested').length;
+    }
+  }
   const securityFindings = findings.filter(item => item.verdict === 'confirmed').length;
   const observations = findings.length - securityFindings;
   const queuedUntested = results.filter(item => item.verdict === 'untested').length;
@@ -5359,7 +5572,10 @@ export async function runWebProbes(surface, scope, {requester, ledger = null, bu
     responsePathHints: [...responsePathHints.values()],
     derivedResponsePathHints: [...derivedResponsePathHints.values()],
     cutLeadKeys: plan.cutLeadKeys,
-    completedLeadKeys: results.filter(item => !['untested', 'blocked'].includes(item.verdict))
+    // Later passes in this audit should not replay the same attempted lead
+    // merely because its prerequisite was blocked. A new identity has a
+    // different lead key and can still exercise the protected route.
+    completedLeadKeys: results.filter(item => item.verdict !== 'untested')
       .map(item => item.proposalId ? `proposal:${item.proposalId}` :
         webLeadKey(item.kind, item.lead)),
     strategyDecisions: plan.strategyDecisions,

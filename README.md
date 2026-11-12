@@ -39,9 +39,9 @@ The Muse plugin sends decisions through typed MCP tools; the CLI validates model
 
 ### Implemented test families
 
-- **Identity and access:** missing authentication, cross-account object and list access, supported GraphQL object authorization, credentialed CORS, unsigned-JWT acceptance, and bounded public-session-token exposure and replay.
+- **Identity and access:** missing authentication, source-cited client identity headers, cross-account object and list access, supported GraphQL object authorization, bounded invalid-login throttling checks, credentialed CORS, unsigned-JWT acceptance, and bounded public-session-token exposure and replay.
 - **Browser and injection:** reflected and reviewed stored XSS, fragment-based DOM XSS, inert HTML injection, SQL boolean injection, bracketed `$eq` operator account bypass, arithmetic SSTI, command-output canaries, path traversal, XML external entities, and CRLF response-header injection.
-- **Discovery and exposure:** open redirects, host-header redirect poisoning, local-target SSRF callbacks, public credential material, private keys and credential-shaped values in client assets, plus app/API route and GraphQL inventory.
+- **Discovery and exposure:** open redirects, host-header redirect poisoning, local-target SSRF callbacks and source-cited server fetches, public credential material, private keys and credential-shaped values in client assets, plus app/API route and GraphQL inventory.
 - **Source review:** CodeQL SAST across supported languages and model-guided policy discovery for object access, privileged actions, outbound destinations, and filesystem boundaries.
 
 These are bounded test shapes, not exhaustive coverage of each class. For example, SSRF proof uses an audit-owned local callback; stored-XSS proof uses reviewed local write/read routes; GraphQL authorization proof requires a supported list/item schema and two verified identities. A bracketed-operator bypass does not establish the backend database type. Reports name untested routes, classes, and missing prerequisites. [Executable coverage and limits](docs/BLACKBOX_AUDIT.md) · [Source scanner](scanner/README.md).
@@ -191,7 +191,7 @@ Run `bypass init /path/to/app` first if the application is not connected. The fi
 | Saved regression replay | `/bypass:tests` | `bypass test run --all` | Saved checks and valid target setup; no model calls |
 | GitHub PR review and smoke tests | Ask Muse Code to generate setup | `bypass ci init --agent` | GitHub Actions; Meta API key for source review |
 
-With **Code + running app**, standalone `scan --mode combined` starts the cited source review and broad scoped live reconnaissance together. In Muse Code, the plugin completes its host-directed source worklist, then starts one full scoped black-box audit with those cited source leads and the remaining combined budget. Both paths link source evidence, live coverage, findings, and proof IDs in one review. Only replayed HTTP evidence becomes confirmed.
+With **Code + running app**, standalone `scan --mode combined` starts the cited source review and broad scoped live reconnaissance together. In Muse Code, the plugin completes its host-directed source worklist, then starts one full scoped black-box audit with those cited source leads, source-extracted route contracts, and the remaining combined budget. It extracts route methods and request fields without a second model source pass. Both paths link source evidence, live coverage, findings, and proof IDs in one review. Only replayed HTTP evidence becomes confirmed.
 
 ## White-box source review
 
@@ -377,6 +377,7 @@ For CLI help, use `bypass --help` or `bypass <command> --help`. A local monitor 
 - [Source scanner: languages, rules, scope, reports, and recovery](scanner/README.md)
 - [AI policy discovery: policies, evidence, coverage, and custom context](docs/POLICY_SIGNAL_DISCOVERY.md)
 - [Black-box audit: supported checks and evidence limits](docs/BLACKBOX_AUDIT.md)
+- [Local scanner benchmark: findings, time, and provider tokens](docs/SCANNER_BENCHMARK_2026_11_10.md)
 - [Accounts: signup, private imports, and token refresh](docs/ACCOUNTS.md)
 - [AI modes: Muse Code, provider APIs, and local/self-hosted models](docs/AI_MODES.md)
 - [Security memory and feature context](docs/SECURITY_MEMORY.md)

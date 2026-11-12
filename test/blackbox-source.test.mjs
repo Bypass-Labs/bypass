@@ -7,6 +7,30 @@ import {randomBytes} from 'node:crypto';
 import {temp, cli} from './helpers.mjs';
 import {reviewSource} from '../src/blackbox/source.mjs';
 
+test('an access gate with a literal environment fallback remains an unproven source lead when Muse omits it', async t => {
+  const root = temp();
+  t.after(() => fs.rmSync(root, {recursive: true, force: true}));
+  fs.writeFileSync(path.join(root, 'server.js'),
+    'app.post("/api/access/unlock", (req, reply) => {\n' +
+    '  const code = String(req.body.code || "");\n' +
+    '  const expected = process.env.ACCESS_CODE || "sample-open";\n' +
+    '  if (code !== expected) return {ok:false};\n' +
+    '  return {ok:true};\n' +
+    '});\n' +
+    'app.post("/api/access/settings", (req, reply) => {\n' +
+    '  const label = process.env.PUBLIC_SITE_NAME || "Example";\n' +
+    '  if (req.body.label) return {label};\n' +
+    '});\n');
+  const result = await reviewSource(root, {infer: async () =>
+    ({notes: [], paths: [], securityLeads: []}), model: 'fixture'});
+  const lead = result.securityLeads.find(item => item.path === '/api/access/unlock');
+  assert.equal(lead?.verdict, 'unproven');
+  assert.equal(lead?.category, 'authentication-bypass');
+  assert.equal(lead?.source.line, 3);
+  assert.match(lead?.source.quote ?? '', /ACCESS_CODE.*sample-open/);
+  assert.ok(!result.securityLeads.some(item => item.path === '/api/access/settings'));
+});
+
 test('source-assisted review keeps methods and body fields from literal JavaScript route guards', async t => {
   const root = temp();
   t.after(() => fs.rmSync(root, {recursive: true, force: true}));
@@ -336,6 +360,90 @@ test('source-assisted Muse review reaches late routes through complete bounded p
   assert.deepEqual(result.notes.find(note => note.path === '/api/route-18').parameters, ['next']);
   assert.ok(!result.notes.some(note => note.path === '/api/invented'));
   assert.deepEqual(result.proposals, ['/api/route-18']);
+});
+
+test('the first bounded source batch reaches explicit server handlers before client calls', async t => {
+  const root = temp();
+  t.after(() => fs.rmSync(root, {recursive: true, force: true}));
+  fs.writeFileSync(path.join(root, 'client.js'), Array.from({length: 8}, (_, index) =>
+    `fetch('/api/client-${index}');`).join('\n'));
+  fs.writeFileSync(path.join(root, 'server.js'),
+    "app.get('/api/records', (req, res) => res.json({items: []}));\n" +
+    "app.post('/api/session', (req, res) => res.json({ok: true}));\n");
+  let firstBatch = [];
+  const result = await reviewSource(root, {model: {provider: 'test'},
+    maxModelPages: 1, infer: async (_model, messages) => {
+      firstBatch = JSON.parse(messages[1].content).snippets;
+      return {notes: [], paths: [], securityLeads: []};
+    }});
+  assert.deepEqual(new Set(firstBatch.slice(0, 2).map(item =>
+    `${item.file} ${item.method} ${item.path}`)), new Set([
+    'server.js GET /api/records',
+    'server.js POST /api/session']));
+  assert.ok(result.modelCoverage.snippetsAvailable > firstBatch.length);
+});
+
+test('one source batch puts security-sensitive handlers ahead of routine routes', async t => {
+  const root = temp();
+  t.after(() => fs.rmSync(root, {recursive: true, force: true}));
+  const routine = Array.from({length: 8}, (_, index) =>
+    `app.get('/api/public/item-${index}', (req, res) => {\n  res.json({ok: true});\n});\n` +
+    '// route padding\n'.repeat(20)).join('');
+  fs.writeFileSync(path.join(root, 'server.js'), routine +
+    "app.get('/api/records/search', (req, res) => {\n  const query = `SELECT * FROM records WHERE name = '${req.query.q}'`;\n  res.json(db.prepare(query).all());\n});\n" +
+    '// route padding\n'.repeat(20) +
+    "app.post('/api/preview', async (req, res) => {\n  const response = await fetch(req.body.sourceUrl);\n  res.json({body: await response.text()});\n});\n");
+  let firstBatch = [];
+  await reviewSource(root, {model: {provider: 'test'}, maxModelPages: 1,
+    infer: async (_model, messages) => {
+      firstBatch = JSON.parse(messages[1].content).snippets;
+      return {notes: [], paths: [], securityLeads: []};
+    }});
+  assert.ok(firstBatch.some(item => item.path === '/api/records/search'));
+  assert.ok(firstBatch.some(item => item.path === '/api/preview'));
+});
+
+test('a route can cite its bounded same-file authentication helper', async t => {
+  const root = temp();
+  t.after(() => fs.rmSync(root, {recursive: true, force: true}));
+  fs.writeFileSync(path.join(root, 'server.js'),
+    "function principal(req) {\n  const claimed = req.headers['x-actor-id'];\n  return claimed ? {id: claimed} : null;\n}\n" +
+    "app.get('/api/private', (req, res) => {\n  const user = principal(req);\n  if (!user) return res.status(401).json({error: 'denied'});\n  res.json({id: user.id});\n});\n");
+  let helper;
+  const result = await reviewSource(root, {model: {provider: 'test'}, maxModelPages: 1,
+    infer: async (_model, messages) => {
+      helper = JSON.parse(messages[1].content).snippets[0].authHelperContext?.[0];
+      return {notes: [], paths: [], securityLeads: [{title: 'Client header trusted as identity',
+        category: 'authentication-trust', path: '/api/private', method: 'GET',
+        hypothesis: 'A caller may supply its own actor ID.',
+        remediation: 'Derive identity from a verified session.', fields: ['x-actor-id'],
+        file: 'server.js', line: 1, quote: 'return claimed ? {id: claimed} : null;'}]};
+    }});
+  assert.equal(helper?.line, 1);
+  assert.ok(helper?.excerpt.includes("req.headers['x-actor-id']"));
+  assert.equal(result.securityLeads[0]?.source.line, 3);
+  assert.deepEqual(result.securityLeads[0]?.source.header,
+    {name: 'x-actor-id', line: 2, quote: "const claimed = req.headers['x-actor-id'];"});
+});
+
+test('a cited access-gate fallback retains its exact redacted source line for live validation', async t => {
+  const root = temp();
+  t.after(() => fs.rmSync(root, {recursive: true, force: true}));
+  fs.writeFileSync(path.join(root, 'server.js'),
+    "app.post('/api/gate', (req, res) => {\n" +
+    "  const code = req.body.code;\n" +
+    "  const expected = process.env.GATE_CODE || 'fixture-open-13';\n" +
+    "  res.json({ok: code === expected});\n" +
+    "});\n");
+  const result = await reviewSource(root, {model: {provider: 'test'},
+    maxModelPages: 1, infer: async () => ({notes: [], paths: [],
+      securityLeads: [{title: 'Fallback gate', category: 'authentication-bypass',
+        path: '/api/gate', method: 'POST',
+        hypothesis: 'A fallback code may open the gate.',
+        remediation: 'Require an operator-configured code.', fields: ['code'],
+        file: 'server.js', line: 3, quote: 'process.env.GATE_CODE'}]})});
+  assert.match(result.securityLeads[0]?.source.quote ?? '',
+    /const expected = process\.env\.GATE_CODE \|\| 'fixture-open-13'/);
 });
 
 test('source-assisted review uses the configured bounded model concurrency', async t => {

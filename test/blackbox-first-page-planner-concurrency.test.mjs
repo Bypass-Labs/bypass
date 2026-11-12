@@ -7,7 +7,7 @@ import {createHash} from 'node:crypto';
 import {loadScope} from '../src/blackbox/scope.mjs';
 import {runWebProbes} from '../src/blackbox/web-probes.mjs';
 
-test('independent first access and web Muse pages overlap before sequence planning',
+test('first access, web, and sequence Muse pages overlap before verifier execution',
   {timeout: 10000}, async t => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'bypass-first-page-'));
     t.after(() => fs.rmSync(root, {recursive: true, force: true}));
@@ -42,6 +42,8 @@ test('independent first access and web Muse pages overlap before sequence planni
       if (target.pathname === '/private/item')
         return response(identity === 'derived' ? 200 : 401,
           identity === 'derived' ? 'private record '.repeat(10) : 'denied');
+      if (target.searchParams.get('q') === 'sequence-try')
+        events.push('sequence-http');
       return response(200, target.searchParams.get('q') ?? 'plain');
     };
     const infer = async (_model, messages) => {
@@ -71,7 +73,10 @@ test('independent first access and web Muse pages overlap before sequence planni
       }
       if (prompt.startsWith('You are planning bounded, authorized HTTP research.')) {
         events.push(`sequence-plan-${++sequencePages}-start`);
-        return {flows: []};
+        return {flows: sequencePages === 1 ? [{family: 'bounded-read',
+          why: 'Check an observed query', priority: 8, as: 'anonymous',
+          oracle: 'raw-observation', rawRequests: [{method: 'GET',
+            path: '/query-0?q=sequence-try'}]}] : []};
       }
       return {priorities: [], strategies: [], experiments: [], flows: [],
         tests: [], checks: []};
@@ -89,11 +94,12 @@ test('independent first access and web Muse pages overlap before sequence planni
     assert.ok(events.indexOf('web-plan-1-start') <
       events.indexOf('access-plan-1-end'),
     `independent first Muse pages ran serially: ${events.join(', ')}`);
-    assert.ok(events.indexOf('sequence-plan-1-start') >
-      events.indexOf('access-plan-1-end') &&
-      events.indexOf('sequence-plan-1-start') >
-      events.indexOf('web-plan-1-end'),
-    `sequence planning started before its first-page context: ${events.join(', ')}`);
+    assert.ok(events.indexOf('sequence-plan-1-start') <
+      events.indexOf('access-plan-1-end'),
+    `sequence planning waited for an independent page: ${events.join(', ')}`);
+    assert.ok(events.indexOf('sequence-http') >
+      events.indexOf('access-plan-1-end'),
+    `sequence verification bypassed the first-page barrier: ${events.join(', ')}`);
     assert.ok(run.results.some(item => item.kind === 'model-access-boundary' &&
       item.verdict !== 'untested'));
     assert.ok(run.results.some(item => item.kind === 'sql-boolean' ||

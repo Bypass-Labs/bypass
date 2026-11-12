@@ -194,7 +194,7 @@ export async function execute(key,args=[],o={},context={}){
         domScriptBytes:o['dom-script-bytes'],
         auditDomains:o['audit-domains'],includes:o.include},
       noModel:!!o['no-model'],dryRun:!!o['dry-run'],noDiscovery:!!o['no-discovery'],offline:!!o.offline,
-      modelName:o.model||null,sourcePath:o.source||null,
+      modelName:o.model||null,sourcePath:combinedHandoff?projectRoot:o.source||null,
       sourceContext:combinedHandoff?.sourceContext??null,
       combinedReviewId:combinedHandoff?.reviewId??null,
       findingId:o.finding||null,focusPath:o['focus-path']||null,

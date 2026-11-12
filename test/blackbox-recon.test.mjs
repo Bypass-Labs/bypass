@@ -456,6 +456,31 @@ test('a pinned identity path still gets owner and anonymous controls after the w
   assert.ok(!surface.outOfScope.some(item => item.url === '/api/me' && item.reason === 'budget'));
 });
 
+test('a transient cached identity timeout is retried before protected recon falls back to anonymous', async t => {
+  const {fixture, scope, requester} = await setup(t, {openapi: false,
+    overrides: {identityPath: '/api/me'}});
+  const failures = new Set(), attempts = new Map();
+  const flaky = async request => {
+    if (new URL(request.url, fixture.origin).pathname === '/api/me' &&
+        ['owner', 'outsider'].includes(request.identity)) {
+      attempts.set(request.identity, (attempts.get(request.identity) ?? 0) + 1);
+      if (!failures.has(request.identity)) {
+        failures.add(request.identity);
+        return {blocked: {reason: 'Request failed: Request timeout'},
+          evidenceId: `ev-timeout-${request.identity}`};
+      }
+    }
+    return requester(request);
+  };
+  const surface = await recon(scope, {requester: flaky, env: ENV,
+    mined: {...MINED, endpoints: []}});
+  assert.equal(surface.identity.verified, true);
+  assert.deepEqual(surface.identity.principals, {owner: 'u-1', outsider: 'u-2'});
+  assert.ok((attempts.get('owner') ?? 0) >= 2);
+  assert.ok((attempts.get('outsider') ?? 0) >= 2);
+  assert.equal(surface.identity.path, '/api/me');
+});
+
 test('recon falls back to the resource wordlist when nothing documents the API', async t => {
   const {fixture, scope, requester} = await setup(t, {openapi: false, overrides: {includes: ['/api']}});
   const surface = await recon(scope, {requester, env: ENV});

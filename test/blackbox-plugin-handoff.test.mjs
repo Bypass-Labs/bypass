@@ -82,11 +82,19 @@ test('MCP combined review feeds cited source leads to one full live audit',async
   await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));
   t.after(()=>server.close());
   const url=`http://127.0.0.1:${server.address().port}`,root=temp();
-  fs.writeFileSync(path.join(root,'routes.mjs'),"app.get('/api/public', handler);\n");
+  fs.writeFileSync(path.join(root,'routes.mjs'),[
+    "app.get('/api/public', handler);",
+    "if (method === 'POST' && path === '/api/preview') {",
+    '  const body = await readJson(req);',
+    '  const sourceUrl = body.sourceUrl;',
+    '  return fetch(sourceUrl);',
+    '});',
+    '',
+  ].join('\n'));
   await execute('init',[root]);
   await execute('target add',['app'],{project:root,url,environment:'local'});
   await execute('target verify',['app'],{project:root,method:'local'});
-  await execute('target authorize',['app'],{project:root,paths:'/',methods:'GET,HEAD',rps:10,accept:true});
+  await execute('target authorize',['app'],{project:root,paths:'/',methods:'GET,HEAD,POST',rps:10,accept:true});
   const client=await mcpClient(root,{stateDir:temp(),env:{META_API_KEY:'',MODEL_API_KEY:''}});
   t.after(()=>client.child.kill());
   const scan=await client.call('bypass_scan',{mode:'combined',modelCalls:6,minutes:1});
@@ -94,10 +102,14 @@ test('MCP combined review feeds cited source leads to one full live audit',async
     title:'Possible anonymous data access',category:'missing-authentication',file:'routes.mjs',line:1,
     quote:"app.get('/api/public', handler);",resourcePath:'/api/public',
     hypothesis:'The route may return private data without a session.',
-    recommendation:'Check the caller before returning private data.'}]});
-  assert.equal(step.findings.length,1);
+    recommendation:'Check the caller before returning private data.'},{
+    title:'Server fetch from request body',category:'SSRF',file:'routes.mjs',line:5,
+    quote:'  return fetch(sourceUrl);',resourcePath:'/api/preview',
+    hypothesis:'The client may choose the server fetch destination.',
+    recommendation:'Restrict server fetch destinations.'}]});
+  assert.equal(step.findings.length,2);
   await change(root,state=>{state.runs.find(run=>run.id===scan.runId).status='completed';});
-  const setup=await client.call('bypass_blackbox_setup',{url,include:'/',methods:'GET,HEAD',
+  const setup=await client.call('bypass_blackbox_setup',{url,include:'/',methods:'GET,HEAD,POST',
     rps:10,'model-calls':6,'max-tasks':2,'max-urls':10,minutes:1});
   const started=await client.call('bypass_blackbox_start',{url,review:scan.runId,
     scope:setup.scopeFile,'accept-local':true,'max-tasks':2,'max-urls':10});
@@ -115,6 +127,14 @@ test('MCP combined review feeds cited source leads to one full live audit',async
   assert.equal(final.result.combinedReviewId,scan.runId);
   const source=JSON.parse(fs.readFileSync(path.join(final.result.runDir,'source.json'),'utf8'));
   assert.equal(source.securityLeads[0].id,step.findings[0]);
+  assert.ok(source.endpoints.some(endpoint => endpoint.path==='/api/preview' &&
+    endpoint.method==='POST' && endpoint.bodyFields?.includes('sourceUrl')));
+  assert.ok(source.securityLeads.some(lead => lead.id===step.findings[1] &&
+    lead.fields.includes('sourceUrl')));
+  assert.equal(source.modelCalls,0);
+  assert.equal(source.modelCoverage.snippetsAvailable,0);
+  assert.doesNotMatch(fs.readFileSync(path.join(final.result.runDir,'report.md'),'utf8'),
+    /Muse received 0 of \d+ source route excerpts/);
   const linked=await client.call('bypass_review_step',{id:scan.runId,action:'status'});
   assert.equal(linked.liveAudit.runId,final.result.run);
   assert.equal(linked.nextAction.tool,'bypass_findings');

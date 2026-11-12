@@ -181,12 +181,17 @@ for (const proofMode of ['principal', 'protected-status', 'adaptive-status']) te
   for (const token of issued) assert.ok(!artifacts.includes(token), 'issued bearer leaked into artifacts');
   const exported = await cli('export', audit.data.run, '--out', path.join(root, 'regression'));
   assert.equal(exported.code, 0);
+  const loginTest = exported.data.files.find(file =>
+    path.basename(file).includes(finding.id));
+  assert.ok(loginTest);
   const regression = async () => (await execFile(process.execPath,
-    ['--test', ...exported.data.files], {env: {...env, NODE_TEST_CONTEXT: undefined},
+    ['--test', loginTest], {env: {...env, NODE_TEST_CONTEXT: undefined},
       timeout: 20000})).code;
   assert.equal(await regression(), 1);
   vulnerable = false;
-  assert.equal((await cli('verify', audit.data.run)).code, 0);
+  const fixed = await cli('verify', audit.data.run);
+  assert.equal(fixed.data.proofs.find(item => item.id === finding.id)?.verdict,
+    'not_reproduced', JSON.stringify(fixed.data));
   assert.equal(await regression(), 0);
   if (proofMode === 'protected-status') {
     const fixed = await cli(origin, '--scope', scopePath, '--rps', '20');

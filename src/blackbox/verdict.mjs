@@ -160,6 +160,19 @@ export function decide(task, {O, T, A, surface, scope} = {}) {
     return rule('confirmed', `${task.kind}/owner-resource`);
   if (task.kind === 'list-leak' && T.status === 200 && foreignList(T, pattern))
     return rule('confirmed', 'list-leak/owner-id');
+  if (task.kind === 'list-leak' && T.status === 200 && DENIED.has(A.status)) {
+    const observedOwnerOnly = [...ownerOnly(pattern)].filter(value => ids(O).has(value));
+    if (!observedOwnerOnly.length)
+      return rule('blocked', 'list-leak/no-owner-only-record',
+        'No owner-exclusive record was observed in this list. Seed one or choose a route with account-owned records before testing cross-account list access.');
+    if (observedOwnerOnly.every(value => !ids(T).has(value))) {
+      if (ids(T).size)
+        return rule('inconclusive', 'list-leak/variant-needed',
+          'The outsider received different records. Try other observed list filters before closing this cross-account check.');
+      return rule('not_reproduced', 'list-leak/owner-record-absent',
+        'The checked outsider response did not include the owner-only records; other pages and filters remain untested.');
+    }
+  }
   if (task.kind === 'param-filter' && T.status === 200 && (foreignList(T, pattern) || filteredField(T, pattern, scope)))
     return rule('confirmed', 'param-filter/extra-data');
   const declared = scope?.identities?.outsider?.role ?? '';
@@ -170,6 +183,11 @@ export function decide(task, {O, T, A, surface, scope} = {}) {
       (foreignList(T, pattern) ||
        (surface?.identity?.principals?.owner != null && Object.values(T.ownership ?? {}).some(value => value === hash(surface.identity.principals.owner)))))
     return rule('confirmed', 'bfla/foreign-data');
+  if (task.kind === 'bfla' && T.status === 200 && !same && !foreignList(T, pattern) &&
+      !/admin|staff|superuser/i.test(`${scope?.identities?.owner?.role ?? ''} ` +
+        `${surface?.identity?.roles?.owner?.role ?? ''}`))
+    return rule('blocked', 'bfla/no-privileged-control',
+      'This route returned each member its own resource; a privileged positive account is needed to test function-level access.');
   if (task.kind === 'enumeration' && T.status === 200) return rule('inconclusive', 'enumeration-needs-idor');
   const denied = task.kind === 'missing-auth' ? A : T;
   if (DENIED.has(denied.status) && !throttled(denied)) return rule('not_reproduced', 'denied');

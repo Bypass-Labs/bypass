@@ -11,11 +11,102 @@ import {createRequester, loadScope, validateUrl} from '../src/blackbox/scope.mjs
 import {mineOrigin} from '../src/blackbox/assets.mjs';
 import {anonymousSurface, deriveLocalPostScope} from '../src/blackbox/anonymous.mjs';
 import {reconConfirmedAccess} from '../src/blackbox/derived-session-recon.mjs';
-import {executeResearchFlow, planResearchFlows, protectedReadBoundaryFacts,
+import {runSourceHeaderProbes, runSourceFetchProbes} from '../src/blackbox/web-probes.mjs';
+import {executeResearchFlow, planResearchFlows, planConfirmedPivots,
+  protectedReadBoundaryFacts,
   researchFlowInventory, runResearchFlows,
   validateResearchFlow} from '../src/blackbox/research-flow.mjs';
 import {execFile} from '../src/util.mjs';
 import {validateJSON} from '../src/schema.mjs';
+
+test('a source-cited identity header becomes a replayable proof and clears after repair', async t => {
+  let vulnerable = true;
+  const server = http.createServer((request, response) => {
+    const opened = vulnerable && request.headers['x-actor-id'] === '1';
+    response.writeHead(opened ? 200 : 401,
+      {'content-type': 'application/json', 'cache-control': 'no-store'});
+    response.end(JSON.stringify(opened ? {id: 1, private: true} : {error: 'denied'}));
+  });
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+  t.after(() => new Promise(resolve => server.close(resolve)));
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'bypass-source-header-'));
+  t.after(() => fs.rmSync(dir, {recursive: true, force: true}));
+  const {scope} = loadScope({origin: `http://127.0.0.1:${server.address().port}`,
+    overrides: {acceptLocal: true}});
+  const ledger = createLedger(dir);
+  t.after(() => ledger.close());
+  const requester = createRequester(scope, {ledger, allowLocal: true});
+  const source = {id: 'source-header', category: 'authentication-trust',
+    method: 'GET', path: '/api/private', title: 'Header identity trust',
+    hypothesis: 'A caller may supply an actor ID.', fields: ['x-actor-id'],
+    source: {file: 'server.js', line: 3, quote: 'return claimed ? actor(claimed) : null;',
+      header: {name: 'x-actor-id', line: 2,
+        quote: "const claimed = req.headers['x-actor-id'];"}}};
+  const surface = {patterns: [{pattern: '/api/private', methods: ['GET'], params: {},
+    responseFacts: {status: 401}}], sourceReview: {securityLeads: [source,
+    {id: 'source-sensitive', category: 'sensitive-data', method: 'GET',
+      path: '/api/private', hypothesis: 'Private data might be returned.',
+      source: {file: 'server.js', line: 8, quote: 'res.json({private: true})'}}]}};
+  const run = await runSourceHeaderProbes(surface, scope, {requester, ledger, budget: 2});
+  assert.equal(run.findings[0]?.verdict, 'confirmed', JSON.stringify(run.results));
+  assert.equal(run.findings[0]?.sourceFinding?.id, 'source-header');
+  const proved = await proveFindings([{...run.findings[0], id: 'f-001'}], run.results,
+    {runDir: dir, surface, scope, env: {}, ledger, web: run});
+  assert.equal(proved[0]?.verdict, 'confirmed', JSON.stringify({proved, findings: run.findings,
+    results: run.results}));
+  vulnerable = false;
+  const fixed = await execFile(process.execPath, [proved[0].proof, '--expect-fixed'],
+    {env: process.env, timeout: 20000});
+  assert.equal(fixed.code, 0, fixed.stdout);
+});
+
+test('a source-cited server fetch proves response content use and clears after repair', async t => {
+  let vulnerable = true;
+  const server = http.createServer(async (request, response) => {
+    let body = '';
+    for await (const part of request) body += part;
+    const url = JSON.parse(body).sourceUrl;
+    if (!vulnerable && URL.canParse(url) &&
+        new URL(url).hostname === '127.0.0.1') {
+      response.writeHead(400, {'content-type': 'application/json'});
+      return response.end(JSON.stringify({error: 'blocked'}));
+    }
+    let status = 200, preview = '';
+    try {preview = await (await fetch(url)).text();}
+    catch {status = 502; preview = 'unavailable';}
+    response.writeHead(status, {'content-type': 'application/json',
+      'cache-control': 'no-store'});
+    response.end(JSON.stringify({preview}));
+  });
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+  t.after(() => new Promise(resolve => server.close(resolve)));
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'bypass-source-fetch-'));
+  t.after(() => fs.rmSync(dir, {recursive: true, force: true}));
+  const scope = structuredClone(loadScope({origin: `http://127.0.0.1:${server.address().port}`,
+    overrides: {acceptLocal: true}}).scope);
+  scope.probes.jsonPostPaths = ['/api/preview'];
+  const ledger = createLedger(dir);
+  t.after(() => ledger.close());
+  const requester = createRequester(scope, {ledger, allowLocal: true});
+  const source = {id: 'source-fetch', category: 'other', method: 'POST',
+    path: '/api/preview', title: 'Server fetches caller URL',
+    hypothesis: 'The server may fetch a caller-controlled URL.', fields: ['sourceUrl'],
+    source: {file: 'server.js', line: 3, quote: 'await fetch(sourceUrl)'}};
+  const surface = {jsonBodyOperations: [{path: '/api/preview', method: 'POST',
+    contentType: 'application/json', fields: ['sourceUrl'], requiredFields: []}],
+  sourceReview: {securityLeads: [source]}};
+  const run = await runSourceFetchProbes(surface, scope, {requester, ledger});
+  assert.equal(run.findings[0]?.kind, 'remote-content-use', JSON.stringify(run.results));
+  const proofLog = [];
+  const proved = await proveFindings([{...run.findings[0], id: 'f-001'}], run.results,
+    {runDir: dir, surface, scope, env: {}, ledger, web: run, log: entry => proofLog.push(entry)});
+  assert.equal(proved[0]?.verdict, 'confirmed', JSON.stringify({proved, findings: run.findings,
+    results: run.results, proofLog}));
+  vulnerable = false;
+  const fixed = await execFile(process.execPath, [proved[0].proof, '--expect-fixed'],
+    {env: process.env, timeout: 20000});
+  assert.equal(fixed.code, 0, fixed.stdout);
+});
 
 test('a proved request context remaps new scripts and lets Muse prove a second boundary', async t => {
   const gatePath = randomPath('entry');
@@ -532,6 +623,95 @@ test('Muse may stop a raw request after reviewing one negative candidate', async
   assert.equal(run.investigations[0].stopReason, 'model-stopped');
   assert.equal(run.decisions[0].stopReviewRequested, true);
   assert.equal(run.decisions[1].stopReview, true);
+});
+
+test('a transient read timeout gets one fresh attempt while a write is never repeated', async () => {
+  const origin = 'http://127.0.0.1:4329';
+  const read = randomPath('transient-read');
+  const write = randomPath('transient-write');
+  const scope = loadScope({origin, overrides: {acceptLocal: true}}).scope;
+  const surface = {patterns: [{pattern: read, methods: ['GET'], params: {}}],
+    jsonBodyOperations: [{path: write, method: 'POST',
+      contentType: 'application/json', fields: ['value']}]};
+  const flow = (method, route) => validateResearchFlow({family: 'scoped response',
+    why: 'Check one observed route', priority: 5, as: 'anonymous',
+    oracle: 'raw-observation', rawRequests: [{method, path: route,
+      ...(method === 'POST' ? {headers: [{name: 'Content-Type',
+        value: 'application/json'}], body: '{"value":"audit"}'} : {})}]}, surface, scope);
+  const readPlan = flow('GET', read), writePlan = flow('POST', write);
+  assert.equal(readPlan.ok, true);
+  assert.equal(writePlan.ok, true);
+  const calls = [];
+  const requester = async request => {
+    calls.push(request.method);
+    return calls.filter(method => method === request.method).length === 1 ?
+      {blocked: {reason: 'Request timeout'}, evidenceId: `ev-${calls.length}`} :
+      {status: 200, type: 'application/json', body: '{}',
+        headers: {}, evidenceId: `ev-${calls.length}`};
+  };
+  const readRun = await runResearchFlows([readPlan.lead], scope,
+    {surface, requester, modelCallsAvailable: 0});
+  assert.equal(readRun.results[0].verdict, 'observed');
+  assert.deepEqual(calls, ['GET', 'GET']);
+  const writeRun = await runResearchFlows([writePlan.lead], scope,
+    {surface, requester, modelCallsAvailable: 0});
+  assert.equal(writeRun.results[0].verdict, 'inconclusive');
+  assert.deepEqual(calls, ['GET', 'GET', 'POST']);
+});
+
+test('Muse follows a confirmed signal into a distinct observed impact path', async () => {
+  const origin = 'http://127.0.0.1:4329';
+  const gate = randomPath('gate');
+  const privatePath = randomPath('gate-data');
+  const scope = loadScope({origin, overrides: {acceptLocal: true}}).scope;
+  const surface = {patterns: [gate, privatePath].map(pattern =>
+    ({pattern, methods: ['GET'], params: {code: ['plain']}}))};
+  const raw = value => ({method: 'GET', path: `${gate}?code=${value}`});
+  const first = validateResearchFlow({family: 'access gate',
+    why: 'Compare the observed gate contract', priority: 8, as: 'anonymous',
+    oracle: 'raw-proof', rawRequests: [raw('open')],
+    rawProof: {baseline: [raw('plain')], negative: [raw('wrong')],
+      closedText: '', openText: ''}}, surface, scope);
+  assert.equal(first.ok, true, first.reason);
+  let requests = 0, modelCalls = 0;
+  const requester = async request => {
+      requests++;
+      const opened = request.url.includes('code=open');
+      const status = request.url.includes(privatePath) ? 200 : opened ? 200 : 403;
+      const body = status === 200 ? 'private-ready' : 'closed';
+      return {status, type: 'text/plain', body, hash: body,
+        headers: {'cache-control': 'no-store'}, evidenceId: `ev-${requests}`};
+    };
+  const run = await runResearchFlows([first.lead], scope,
+    {surface, requester, modelCallsAvailable: 0});
+  assert.equal(run.results[0].verdict, 'confirmed', JSON.stringify(run.results));
+  const pivot = await planConfirmedPivots(run.findings, surface, scope,
+    {model: 'fixture', modelCallsAvailable: 1,
+      infer: async (_model, messages) => {
+      modelCalls++;
+      const context = JSON.parse(messages[1].content);
+      assert.equal(context.confirmedFinding.path, gate);
+      return {flows: [{family: 'related protected data',
+        why: 'Check the observed related read after the gate signal',
+        priority: 7, as: 'anonymous', oracle: 'raw-observation',
+        rawRequests: [{method: 'GET', path: privatePath}]}]};
+    }});
+  const follow = await runResearchFlows(pivot.leads, scope,
+    {surface, requester, modelCallsAvailable: 0});
+  assert.equal(run.findings.length, 1);
+  assert.equal(pivot.decisions[0]?.accepted, true, JSON.stringify(pivot.decisions));
+  assert.equal(follow.results[0]?.lead?.path, privatePath);
+  assert.equal(modelCalls, 1);
+  assert.ok(requests > 1);
+  const repeated = await planConfirmedPivots(run.findings, surface, scope,
+    {model: 'fixture', modelCallsAvailable: 1,
+      infer: async () => ({flows: [{family: 'same gate', why: 'Repeat the gate',
+        priority: 8, as: 'anonymous', oracle: 'raw-proof',
+        rawRequests: [raw('open')],
+        rawProof: {baseline: [raw('plain')], negative: [raw('wrong')],
+          closedText: '', openText: ''}}]})});
+  assert.equal(repeated.leads.length, 0);
+  assert.equal(repeated.decisions[0].reason, 'duplicate-payload');
 });
 
 test('generic raw proof preserves a model-authored POST body and header through replay', async t => {
@@ -1383,6 +1563,74 @@ test('Muse proposal repair stops when the same validation failure repeats', asyn
   assert.equal(planned.coverage.repairCalls, 1);
   assert.equal(planned.coverage.repairStalled, 1);
   assert.equal(planned.leads.length, 0);
+});
+
+test('an unverified focused source id does not discard a scoped live experiment', async t => {
+  const server = http.createServer((_request, response) => {
+    response.setHeader('content-type', 'application/json');
+    response.end('{"status":"observed"}');
+  });
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+  t.after(() => new Promise(resolve => server.close(resolve)));
+  const origin = `http://127.0.0.1:${server.address().port}`;
+  const scope = loadScope({origin, overrides: {acceptLocal: true}}).scope;
+  const route = randomPath('source-mismatch');
+  const surface = {patterns: [{pattern: route, methods: ['GET'],
+    params: {q: ['plain']}}], sourceReview: {securityLeads: [{
+      id: 'unrelated-fresh-id', path: route, method: 'GET',
+      hypothesis: 'A different source claim',
+      source: {file: 'src/other.ts', line: 2}}]},
+    focus: {findingId: 'stale-source-id',
+    path: route, method: 'GET', hypothesis: 'A source lead to check live',
+    sourceSnapshotMatches: false,
+    source: {file: 'src/server.ts', line: 1, quote: 'unverified source'}}};
+  const planned = await planResearchFlows(surface, scope, {model: 'fixture',
+    budget: 1, modelCallsAvailable: 1, infer: async (_model, messages) => {
+      const context = JSON.parse(messages[1].content);
+      assert.equal(context.sourceFinding.linkable, false);
+      return {flows: [{family: 'live-boundary', why: 'Check observed route',
+        priority: 5, as: 'anonymous', oracle: 'observation',
+        sourceFindingId: 'stale-source-id', prelude: [], observe: [],
+        subject: {method: 'GET', path: route, placement: 'query', key: 'q',
+          fixedFields: [], bodyTemplate: '', headers: []},
+        controlValue: 'plain', firstValue: 'candidate', secondValue: 'negative',
+        marker: '', secondMarker: '', assertion: {step: 'subject', index: 0,
+          location: 'body', name: ''}}]};
+    }});
+  assert.equal(planned.leads.length, 1);
+  assert.equal(planned.leads[0].sourceFindingId, undefined);
+  assert.equal(planned.leads[0].sourceLinkDropped, true);
+  assert.equal(planned.decisions[0].sourceLinkDropped, true);
+  assert.equal(planned.coverage.proposalsRejected, 0);
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'bypass-source-link-'));
+  t.after(() => fs.rmSync(dir, {recursive: true, force: true}));
+  const ledger = createLedger(dir);
+  t.after(() => ledger.close());
+  const requester = createRequester(scope, {ledger, allowLocal: true});
+  const tested = await runResearchFlows(planned.leads, scope, {requester,
+    surface, ledger, modelCallsAvailable: 0});
+  assert.notEqual(tested.results[0].verdict, 'confirmed');
+  assert.equal(tested.results[0].sourceLeadId, undefined);
+});
+
+test('a model-authored candidate with missing markers runs only as observation', async () => {
+  const origin = 'http://127.0.0.1:4329';
+  const scope = loadScope({origin, overrides: {acceptLocal: true}}).scope;
+  const route = randomPath('candidate-observation');
+  const surface = {patterns: [{pattern: route, methods: ['GET'],
+    params: {q: ['plain']}}]};
+  const planned = await planResearchFlows(surface, scope, {model: 'fixture',
+    budget: 1, modelCallsAvailable: 1, infer: async () => ({flows: [{
+      family: 'candidate-check', why: 'Compare an exact candidate',
+      priority: 5, as: 'anonymous', prelude: [], observe: [],
+      subject: {method: 'GET', path: route, placement: 'query', key: 'q',
+        fixedFields: [], bodyTemplate: '', headers: []},
+      firstValue: 'candidate', secondValue: 'negative',
+      assertion: {step: 'subject', index: 0, location: 'body', name: ''}}]})});
+  assert.equal(planned.leads.length, 1);
+  assert.equal(planned.leads[0].oracle, 'observation');
+  assert.equal(planned.leads[0].firstValue, 'candidate');
+  assert.equal(planned.decisions[0].translatedTo, 'observation');
 });
 
 test('Muse repairs a rejected revision and executes the corrected sequence', async () => {

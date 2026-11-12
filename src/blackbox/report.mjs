@@ -188,6 +188,35 @@ export function consolidateRawBoundaryProofs(findings) {
   return findings.filter(item => !corroborating.has(item.id));
 }
 
+/** A generic raw boundary on the same cited SQL input corroborates the typed SQL proof. */
+export function consolidateInjectionProofs(findings) {
+  const typed = findings.filter(item => item.kind === 'sql-boolean' &&
+    item.verdict === 'confirmed' && item.proof && item.sourceFinding?.id);
+  const corroborating = new Set();
+  for (const finding of findings) {
+    if (finding.kind !== 'model-raw-boundary' || finding.verdict !== 'confirmed' ||
+        !finding.proof || !finding.sourceFinding?.id ||
+        !/\binjection\b/i.test(finding.modelHypothesis?.family ?? '')) continue;
+    let candidate;
+    try {candidate = new URL(finding.webProof?.rawRequests?.at(-1)?.path, finding.url);}
+    catch {continue;}
+    const primary = typed.find(item => item.sourceFinding.id === finding.sourceFinding.id &&
+      new URL(item.url).origin === candidate.origin &&
+      new URL(item.url).pathname === candidate.pathname &&
+      candidate.searchParams.has(item.webProof?.parameter));
+    if (!primary) continue;
+    primary.corroboratingProofs = [...(primary.corroboratingProofs ?? []), {
+      id: finding.id, kind: finding.kind, pattern: finding.pattern,
+      proof: finding.proof, rule: finding.rule,
+      evidence: finding.evidence ?? [], confirmation: finding.confirmation ?? []}];
+    primary.evidence = unique([...(primary.evidence ?? []), ...(finding.evidence ?? [])]);
+    primary.confirmation = unique([...(primary.confirmation ?? []),
+      ...(finding.confirmation ?? [])]);
+    corroborating.add(finding.id);
+  }
+  return findings.filter(item => !corroborating.has(item.id));
+}
+
 function outranks(candidate, current) {
   if (rank(candidate.severity) !== rank(current.severity)) return rank(candidate.severity) < rank(current.severity);
   return candidate.reach.observed > current.reach.observed;
@@ -389,6 +418,7 @@ function headerSection({ run, scope, scopeHash, stats, integrity }) {
     origin: scope.target.origin, environment: scope.target.environment, domains: scope.domains ?? [], run,
     startedAt: stats.startedAt ?? null, finishedAt: stats.finishedAt ?? null, version: VERSION,
     model: stats.model ?? null, modelCalls: stats.modelCalls ?? 0, modelCallCap: scope.limits?.modelCalls ?? null,
+    modelUsage: stats.modelUsage ?? null,
     scopeHash, ledger: integrityLine(integrity),
     accounts: { owner: account(scope, 'owner'), outsider: account(scope, 'outsider'), auth: scope.identities?.auth ?? 'bearer' },
   };
@@ -411,21 +441,30 @@ function summarySection(findings, results, web) {
     count + (finding.corroboratingProofs?.length ?? 0), 0);
   const counts = Object.fromEntries(SEVERITIES.map(severity =>
     [severity, confirmed.filter(f => f.severity === severity).length]));
-  const open = results.filter(result => OPEN.has(result.verdict)).length +
-    (web?.results ?? []).filter(result => OPEN.has(result.verdict)).length;
   const allChecks = [...results, ...(web?.results ?? [])];
+  const blocked = allChecks.filter(result => result.verdict === 'blocked').length;
+  const inconclusive = allChecks.filter(result => result.verdict === 'inconclusive').length;
   const executed = allChecks.filter(result => result.verdict !== 'untested').length;
   const queued = allChecks.length - executed;
   const bySeverity = SEVERITIES.filter(severity => counts[severity]).map(severity => `${counts[severity]} ${severity}`).join(', ');
   const found = confirmed.length ? `${plural(confirmed.length, 'confirmed finding')} (${bySeverity})${corroboratingProofs ?
     ` with ${plural(corroboratingProofs, 'additional independent proof')}` : ''}` : 'No confirmed findings';
   const observed = observations.length ? ` ${plural(observations.length, 'verified response transformation')} requires security impact assessment.` : '';
-  const listed = `${plural(open, 'inconclusive or blocked item')} ${open === 1 ? 'is' : 'are'} listed in section 7`;
+  const listed = `${blocked} blocked and ${inconclusive} inconclusive ${blocked + inconclusive === 1 ? 'item is' : 'items are'} listed in section 7`;
+  const confirmedPivots = (Array.isArray(web?.modelCoverage) ? web.modelCoverage :
+    [web?.modelCoverage]).filter(Boolean).reduce((total, item) => ({
+      proposed: total.proposed + (item.confirmedPivots?.proposed ?? 0),
+      accepted: total.accepted + (item.confirmedPivots?.accepted ?? 0),
+      executed: total.executed + (item.confirmedPivots?.executed ?? 0),
+    }), {proposed: 0, accepted: 0, executed: 0});
   return {
     narrative: `${found}.${observed} ${plural(executed, 'task')} ran${queued ? `; ${plural(queued, 'task')} remained queued` : ''}; ${listed}.`,
     counts,
+    blocked,
+    inconclusive,
     corroboratingProofs,
     researchObservations: observations.length,
+    confirmedPivots,
     findings: findings.map(({ id, title, host, pattern, severity, status, kind, foundBy, tags,
       corroboratingProofs }) => (
       { id, title, host, pattern, severity: RESEARCH_BEHAVIOR.has(kind) ? 'unrated' : severity,
@@ -779,6 +818,8 @@ function markdownHeader(header) {
       ['Finished', header.finishedAt ?? 'unknown'],
       ['Bypass version', header.version],
       ['Model', `${model} · ${header.modelCalls} of ${header.modelCallCap ?? '?'} calls`],
+      ...(header.modelCalls ? [['Model tokens', modelUsageText(header.modelUsage,
+        header.modelCalls)]] : []),
       ['Scope hash', code(header.scopeHash)],
       ['Ledger', header.ledger],
       ['Configured account variables', `${accountsText(header.accounts, ' · ')} · ${header.accounts.auth}`],
@@ -786,8 +827,19 @@ function markdownHeader(header) {
   ];
 }
 
+function modelUsageText(usage, calls) {
+  const reported = usage?.reportedCalls ?? 0;
+  if (!reported) return `unavailable · 0 of ${calls} calls reported usage`;
+  const counts = `${usage.inputTokens} input · ${usage.outputTokens} output · ${usage.totalTokens} total`;
+  return `${counts} · ${reported} of ${calls} calls reported usage${reported < calls ? ' (partial)' : ''}`;
+}
+
 function markdownSummary(summary) {
   const lines = ['## 1. Executive summary', '', summary.narrative];
+  if (summary.confirmedPivots?.proposed)
+    lines.push('', `Muse related-impact follow-up: ${summary.confirmedPivots.proposed} positive signal(s) considered, ` +
+      `${summary.confirmedPivots.accepted} bounded flow(s) accepted, ${summary.confirmedPivots.executed} executed. ` +
+      'A follow-up observation is not a confirmed security finding without independent proof.');
   if (!summary.findings.length) return lines;
   return [...lines, '', ...table(['ID', 'Title', 'Host', 'Pattern', 'Severity', 'Verdict', 'Kind', 'Found by'],
     summary.findings.map(f => [f.id, f.title, f.host, code(f.pattern), f.severity, f.verdict, f.kind, f.foundBy]))];
@@ -1089,11 +1141,28 @@ function markdownChains(chains) {
 
 function markdownOpen(items) {
   if (!items.length) return ['## 7. Inconclusive and blocked', '', 'None: every task reached a definite verdict.'];
+  const groups = new Map();
+  for (const item of items) {
+    const key = `${item.verdict}\n${item.reason || 'No reason recorded'}`;
+    groups.set(key, (groups.get(key) ?? 0) + 1);
+  }
+  const reasons = [...groups].sort((a, b) => b[1] - a[1]).slice(0, 8)
+    .map(([key, count]) => {
+      const [verdict, reason] = key.split('\n');
+      const next = /HTTP 40[13]|reachable baseline|reachable JSON record/i.test(reason) ?
+        ' Check the test identity and route before retrying.' :
+        /identifiable JSON record|record control contained no/i.test(reason) ?
+          ' Supply a valid observed record value.' :
+          /timeout|did not complete/i.test(reason) ?
+            ' Retry the saved work when the target responds.' : '';
+      return `- ${count} ${verdict}: ${code(reason)}${next}`;
+    });
   const rows = items.map(item => {
     const request = item.url ? `${item.as} ${item.method} ${code(item.url)}` : '-';
     return [item.task, item.kind, request, item.verdict, code(item.rule), item.reason || '-', item.evidence.join(', ') || '-'];
   });
-  return ['## 7. Inconclusive and blocked', '', ...table(['Task', 'Kind', 'Request', 'Verdict', 'Rule', 'Reason', 'Evidence'], rows)];
+  return ['## 7. Inconclusive and blocked', '', 'Most common reasons:', '',
+    ...reasons, '', ...table(['Task', 'Kind', 'Request', 'Verdict', 'Rule', 'Reason', 'Evidence'], rows)];
 }
 
 function markdownAppendix(rows, ledgerFile) {
@@ -1243,6 +1312,8 @@ export function summaryText(result, {color = false} = {}) {
   if (result.modelError) lines.push(`Muse model stage failed: ${result.modelError}`);
   else if (stats.model) lines.push(`Muse model:      ${stats.model} · ${stats.modelCalls ?? 0} calls`);
   else lines.push('Muse model:      code-only');
+  if (stats.modelCalls > 0)
+    lines.push(`Model tokens:    ${modelUsageText(stats.modelUsage, stats.modelCalls)}`);
   if (stats.model)
     lines.push(`Muse agents      ${stats.modelWorkersPeak ?? 0} active at peak · ${stats.modelWorkersConfigured ?? '?'} configured`);
   if (result.researchDeadlineCut)

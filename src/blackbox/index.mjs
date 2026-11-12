@@ -20,10 +20,13 @@ import { planTasks, oneAccountMissingAuthCandidate } from './planner.mjs';
 import { decide, severityFor, classify, dataClasses } from './verdict.mjs';
 import { runSwarm, reverify, mirror, identityRecheck } from './swarm.mjs';
 import { buildFindings, consolidateBrowserXssProofs, consolidateRawBoundaryProofs,
+  consolidateInjectionProofs,
   renderReport, exitCodeFor } from './report.mjs';
 import { proveFindings } from './poc.mjs';
 import {reviewSource} from './source.mjs';
-import {runWebProbes, runSourceDisclosureProbes} from './web-probes.mjs';
+import {runWebProbes, runSourceDisclosureProbes, runSourceHeaderProbes,
+  runSourceFetchProbes} from './web-probes.mjs';
+import {planConfirmedPivots, runResearchFlows} from './research-flow.mjs';
 import {reconDerivedSession, derivedAnonymousSurface, reconConfirmedAccess} from './derived-session-recon.mjs';
 import {checkDerivedAnonymousAccess} from './derived-access.mjs';
 import {auditDiscoveredHosts, followupResponseHints, mergeResponsePatterns} from './host-audit.mjs';
@@ -42,6 +45,49 @@ const RESEARCH_KINDS = new Set(['model-differential', 'model-json-differential',
 const ACCEPTED_RESEARCH_CHECKPOINT = /^(?:json-experiment|access-boundary)(?:-derived-[0-9a-f]{12})?(?:-queue-[0-9a-f]{12})?-checkpoint\.json$/;
 const HTTP_SEQUENCE_CHECKPOINT = /^http-sequence(?:-derived-[0-9a-f]{12})?(?:-page-[0-9a-f]{12})?(?:-queue-[0-9a-f]{12})?-checkpoint\.json$/;
 const AUDIT_MODEL_DEADLINE_MESSAGE = 'Audit wall-clock deadline cut a Muse research call; remaining work is untested.';
+
+/** Preserve every observed request contract for independent proof replay. */
+export function mergeProofSurfaces(base, additions = []) {
+  if (!additions.length) return base;
+  const merged = {...base};
+  for (const field of ['patterns', 'methodOperations', 'jsonBodyOperations',
+    'formBodyOperations', 'authBodyOperations', 'xmlBodyOperations'])
+    merged[field] = [...(base?.[field] ?? []),
+      ...additions.flatMap(surface => surface?.[field] ?? [])];
+  return merged;
+}
+
+function corroborateSourceFields(leads, endpoints) {
+  return leads.map(lead => {
+    const quote = lead.source?.quote ?? '';
+    const fields = endpoints.filter(endpoint => endpoint.path === lead.path &&
+      endpoint.method === lead.method && Array.isArray(endpoint.bodyFields))
+      .flatMap(endpoint => endpoint.bodyFields)
+      .filter(field => new RegExp(`\\b${field}\\b`).test(quote));
+    return fields.length ? {...lead, fields: [...new Set([...(lead.fields ?? []), ...fields])]} : lead;
+  });
+}
+
+function observedSearchBaseline(response, sourceLead) {
+  if (response.status !== 200 || !/json|\+json/i.test(response.type ?? '') ||
+      !(response.ids?.length) || typeof response.body !== 'string') return null;
+  const column = /\b([A-Za-z_][A-Za-z0-9_]*)\s+LIKE\b/i.exec(
+    sourceLead?.source?.quote ?? '')?.[1];
+  if (!column || /(?:email|token|secret|password|credential|key|phone|address|name|birth|ssn|social|tax|card|account)/i.test(column))
+    return null;
+  let document;
+  try { document = JSON.parse(response.body); } catch { return null; }
+  const records = Array.isArray(document) ? document :
+    Array.isArray(document?.items) ? document.items : null;
+  if (!records) return null;
+  for (const record of records.slice(0, 5)) {
+    const value = record?.[column];
+    if (typeof value !== 'string' || value.length > 256) continue;
+    for (const token of value.match(/[A-Za-z0-9_.-]{2,32}/g) ?? [])
+      if (maskSecrets(token) === token) return token;
+  }
+  return null;
+}
 
 export function describeModelActivity(messages = []) {
   const instruction=messages.find(message=>message?.role==='system')?.content ?? '';
@@ -534,7 +580,10 @@ export async function runAudit({url, root = process.cwd(), scopeFile = null, ove
   let web = {findings: [], results: [], cut: 0, tested: 0, strategyDecisions: []};
   let earlySource = {findings: [], results: [], tested: 0, keys: [], plan: []};
   let assessment = null;
-  let stats = {startedAt, model: null, modelCalls: 0, requests: 0, cached: 0, tasks: 0, agents: 0};
+  let stats = {startedAt, model: null, modelCalls: 0,
+    modelUsage: {inputTokens: 0, outputTokens: 0, totalTokens: 0,
+      reportedCalls: 0, callsWithoutUsage: 0},
+    requests: 0, cached: 0, tasks: 0, agents: 0};
   try {
     const testMuse = !noModel && infer === modelInfer && !modelProfileOverride && !modelName &&
       env.BYPASS_TEST_LEGACY_MUSE === '1' &&
@@ -562,7 +611,7 @@ export async function runAudit({url, root = process.cwd(), scopeFile = null, ove
     };
     const invokeModelOnce = async (profile, messages, options = {}) => {
       await acquireModelSlot();
-      let call=null,callStarted=null,activity='Analyzing observed security evidence';
+      let call=null,callStarted=null,activity='Analyzing observed security evidence',usageRecorded=false;
       try {
         need(modelInvocations < scope.limits.modelCalls, 'Muse model-call budget was exhausted.', 3);
         if (Date.now() >= deadline) {
@@ -582,7 +631,18 @@ export async function runAudit({url, root = process.cwd(), scopeFile = null, ove
         const timeoutMs = Math.max(1, Math.min(model.provider === 'muse-host' ? 300000 : 60000, remainingMs));
         try {
           const answer=await activeInfer(profile, messages, {...options, signal, timeoutMs,
-            onProgress: progress => {if (progress.kind === 'model') stats.model = progress.model;}});
+            onProgress: progress => {
+              if (progress.kind === 'model') stats.model = progress.model;
+              if (progress.kind === 'usage' && !usageRecorded &&
+                [progress.inputTokens, progress.outputTokens, progress.totalTokens]
+                  .every(value => Number.isSafeInteger(value) && value >= 0)) {
+                usageRecorded = true;
+                stats.modelUsage.inputTokens += progress.inputTokens;
+                stats.modelUsage.outputTokens += progress.outputTokens;
+                stats.modelUsage.totalTokens += progress.totalTokens;
+                stats.modelUsage.reportedCalls++;
+              }
+            }});
           log({stage:'progress',type:'model-finish',call,activity,status:'completed',
             durationMs:Date.now()-callStarted,active:Math.max(0,modelInFlight-1),
             configured:modelParallelism});
@@ -597,7 +657,10 @@ export async function runAudit({url, root = process.cwd(), scopeFile = null, ove
             configured:modelParallelism});
           throw classified;
         }
-      } finally { releaseModelSlot(); }
+      } finally {
+        if (call !== null && !usageRecorded) stats.modelUsage.callsWithoutUsage++;
+        releaseModelSlot();
+      }
     };
     const invokeModel = (profile, messages, options = {}) => withStructuredRepair(
       repairMessages=>invokeModelOnce(profile,repairMessages,options),messages,{
@@ -620,6 +683,22 @@ export async function runAudit({url, root = process.cwd(), scopeFile = null, ove
     }
     phase('done', 1, 'Scope and host discovery');
     phase('doing', 2, 'Recon: assets and source');
+    const reconModelPages = reserve => {
+      const available = Math.max(0, scope.limits.modelCalls - modelInvocations - reserve);
+      return Math.min(available, Math.ceil(available / 4));
+    };
+    const sourceInput = sourcePath || focus && fs.existsSync(path.join(projectRoot, focus.source.file));
+    // Source interpretation and anonymous route/asset recon are independent.
+    // Start both together, but keep connected host source handoffs sequential
+    // so they never spend a second model allowance.
+    const sourceReviewTask = !sourceContext && sourceInput ? reviewSource(sourcePath ?? projectRoot, {
+      infer: !focus && model ? invokeModel : null, model,
+      origin: scope.target.origin,
+      maxModelPages: scope.limits.modelCalls <= 10 ?
+        Math.min(1, Math.max(0, scope.limits.modelCalls - modelInvocations)) :
+        reconModelPages(10),
+      modelConcurrency: scope.limits.modelConcurrency,
+      log: say}).then(value => ({value}), error => ({error})) : null;
     if (focus) {
       const readMethod = ['GET', 'HEAD'].includes(focus.method) ? focus.method :
         focus.method === 'UNKNOWN' && scope.methods.includes('GET') ? 'GET' : null;
@@ -677,18 +756,21 @@ export async function runAudit({url, root = process.cwd(), scopeFile = null, ove
     }
     // Scale early interpretation with the operator's model allowance while
     // leaving most calls for route analysis, tests, revisions and assessment.
-    const reconModelPages = reserve => {
-      const available = Math.max(0, scope.limits.modelCalls - modelInvocations - reserve);
-      return Math.min(available, Math.ceil(available / 4));
-    };
     if (sourceContext) sourceReview = await sourceContext;
-    if (sourcePath || focus && fs.existsSync(path.join(projectRoot, focus.source.file))) {
-      const reviewed = await reviewSource(sourcePath ?? projectRoot, {
-        infer: !focus && model ? invokeModel : null, model,
+    if (sourceInput) {
+      // A connected Muse review has already used the host model for source
+      // reasoning. Recover route contracts here without spending that model
+      // budget again.
+      const reviewedResult = sourceReviewTask ?? await reviewSource(sourcePath ?? projectRoot, {
+        infer: !focus && model && !sourceContext ? invokeModel : null, model,
         origin: scope.target.origin,
-        maxModelPages: reconModelPages(10),
+        maxModelPages: scope.limits.modelCalls <= 10 ?
+          Math.min(1, Math.max(0, scope.limits.modelCalls - modelInvocations)) :
+          reconModelPages(10),
         modelConcurrency: scope.limits.modelConcurrency,
-        log: say});
+        log: say}).then(value => ({value}), error => ({error}));
+      const {value: reviewed, error: sourceError} = await reviewedResult;
+      if (sourceError) throw sourceError;
       sourceReview = sourceReview ? {
         ...reviewed,
         files: [...sourceReview.files, ...reviewed.files],
@@ -696,7 +778,12 @@ export async function runAudit({url, root = process.cwd(), scopeFile = null, ove
         notes: [...sourceReview.notes, ...reviewed.notes],
         proposals: [...sourceReview.proposals, ...reviewed.proposals],
         secretLeads: [...sourceReview.secretLeads, ...reviewed.secretLeads],
-        securityLeads: [...sourceReview.securityLeads, ...reviewed.securityLeads],
+        securityLeads: [...corroborateSourceFields(sourceReview.securityLeads,
+          reviewed.endpoints), ...reviewed.securityLeads],
+        // The host already reviewed source. The deterministic route pass has
+        // no separate Muse excerpt pages, so do not report them as unread.
+        modelCoverage: sourceReview.modelCoverage,
+        provenance: sourceReview.provenance,
         stats: Object.fromEntries(Object.keys(reviewed.stats).map(key => [key,
           Number(sourceReview.stats?.[key] ?? 0) + Number(reviewed.stats[key] ?? 0)])),
         modelCalls: Number(sourceReview.modelCalls ?? 0) + reviewed.modelCalls,
@@ -880,7 +967,9 @@ export async function runAudit({url, root = process.cwd(), scopeFile = null, ove
         {requester, infer: model ? invokeModel : null, model,
           // Leave at least half of the remaining calls for hypothesis planning,
           // execution feedback and proof assessment after recursive recon.
-          maxModelPages: Math.max(0, Math.floor((scope.limits.modelCalls - modelInvocations - 2) / 2)),
+          maxModelPages: Math.max(0, Math.min(
+            scope.limits.minutes <= 10 ? 1 : 8,
+            Math.floor((scope.limits.modelCalls - modelInvocations - 2) / 2))),
           kind: 'primary', log: say});
       mergeResponsePatterns(surface.patterns, followup.patterns);
       surface.anonymousResponseFollowup = {...followup.coverage,
@@ -974,6 +1063,71 @@ export async function runAudit({url, root = process.cwd(), scopeFile = null, ove
       if (sensitivePathMatches(exposure.path, fresh)) surface.exposures.push({...exposure, url: address,
         confirmationEvidence: fresh.evidenceId, hash: fresh.hash});
     }
+    if (!dryRun && scope.limits.modelCalls <= 10 &&
+        surface.sourceReview?.securityLeads?.length) {
+      const citedReads = [...new Set(surface.sourceReview.securityLeads
+        .filter(item => item.method === 'GET' &&
+          ['authentication-trust', 'injection'].includes(item.category) &&
+          typeof item.path === 'string' && !/[{}:]/.test(item.path))
+        .map(item => item.path))].slice(0, 4);
+      for (const path of citedReads) {
+        const record = (surface.patterns ?? []).find(item => item.pattern === path &&
+          (item.methods ?? []).includes('GET') && !Number.isInteger(item.responseFacts?.status));
+        if (!record || Date.now() >= deadline ||
+            !validateUrl(sessions.scope, path,
+              {identity: 'anonymous', method: 'GET'}).ok) continue;
+        const response = await requester({url: path, identity: 'anonymous',
+          method: 'GET', step: 'recon', purpose: 'task', noCache: true,
+          omitExcerpt: true});
+        record.responseFacts = {status: response.status ?? null,
+          type: response.type ?? null, hash: response.hash ?? null,
+          shape: response.shape ?? null, evidenceId: response.evidenceId ?? null};
+        const searchLead = surface.sourceReview.securityLeads.find(item =>
+          item.category === 'injection' && item.method === 'GET' &&
+          item.path === path && item.fields?.some(field =>
+            /^(?:q|query|search|term|keyword)$/i.test(field) &&
+            Object.hasOwn(record.params ?? {}, field)));
+        const baseline = observedSearchBaseline(response, searchLead);
+        if (baseline) for (const field of searchLead.fields) {
+          if (!/^(?:q|query|search|term|keyword)$/i.test(field) ||
+              !Object.hasOwn(record.params ?? {}, field)) continue;
+          record.params[field] = [baseline, ...(record.params[field] ?? [])
+            .filter(value => value !== baseline)].slice(0, 3);
+        }
+        say({stage: 'recon', message: `Checked cited ${path} before planning more routes`});
+      }
+      atomic(path.join(runDir, 'surface.json'), surface);
+    }
+    if (!dryRun && surface.sourceReview?.securityLeads?.length &&
+        taskLimit > earlySource.tested) {
+      const header = await runSourceHeaderProbes(surface, sessions.scope,
+        {requester, ledger, budget: Math.min(2, taskLimit - earlySource.tested), log: say});
+      if (header.tested) {
+        earlySource = {...earlySource,
+          findings: [...earlySource.findings, ...header.findings],
+          results: [...earlySource.results, ...header.results],
+          plan: [...earlySource.plan, ...header.plan],
+          tested: earlySource.tested + header.tested};
+        atomic(path.join(runDir, 'source-header-probes.json'), header);
+        for (const result of header.results)
+          say({stage: 'progress', type: 'task-done', confirmed: result.verdict === 'confirmed'});
+      }
+      if (taskLimit > earlySource.tested) {
+        const fetch = await runSourceFetchProbes(surface, sessions.scope,
+          {requester, ledger, budget: Math.min(1, taskLimit - earlySource.tested),
+            log: say});
+        if (fetch.tested) {
+          earlySource = {...earlySource,
+            findings: [...earlySource.findings, ...fetch.findings],
+            results: [...earlySource.results, ...fetch.results],
+            plan: [...earlySource.plan, ...fetch.plan],
+            tested: earlySource.tested + fetch.tested};
+          atomic(path.join(runDir, 'source-fetch-probes.json'), fetch);
+          for (const result of fetch.results)
+            say({stage: 'progress', type: 'task-done', confirmed: result.verdict === 'confirmed'});
+        }
+      }
+    }
     phase('done', 3, 'Recon: routes and responses');
     if (!dryRun) {
       phase('doing', 4, 'Plan and test observed leads');
@@ -1004,7 +1158,10 @@ export async function runAudit({url, root = process.cwd(), scopeFile = null, ove
         host.origin !== sessions.scope.target.origin && !sessions.scope.credentialOrigins.includes(host.origin) &&
         sessions.scope.discovery.auditDomains.some(domain =>
           host.host === domain || host.host.endsWith(`.${domain}`))).length;
-      const remainingWebModelCalls = () => Math.max(0, scope.limits.modelCalls - modelInvocations - 2);
+      const taskPivotReserve = model && scope.limits.minutes >= 10 &&
+        scope.limits.modelCalls >= 16 ? 1 : 0;
+      const remainingWebModelCalls = () => Math.max(0,
+        scope.limits.modelCalls - modelInvocations - 2 - taskPivotReserve);
       const webModelShare = origins => model ?
         Math.floor(remainingWebModelCalls() / Math.max(1, origins)) : 0;
       // A confirmed login may reveal routes unavailable to anonymous recon.
@@ -2084,14 +2241,8 @@ export async function runAudit({url, root = process.cwd(), scopeFile = null, ove
         untested: stats.queuedUntested ?? 0});
       phase('done', 4, 'Plan and test observed leads');
       phase('doing', 5, 'Replay and assess');
-      const proofSurface = derivedPending.length || provedAccessSurfaces.length ? {...surface,
-        patterns: [...(surface.patterns ?? []),
-          ...derivedPending.flatMap(item => item.nextSurface.patterns ?? []),
-          ...provedAccessSurfaces.flatMap(item => item.patterns ?? [])],
-        methodOperations: [...(surface.methodOperations ?? []),
-          ...derivedPending.flatMap(item => item.nextSurface.methodOperations ?? []),
-          ...provedAccessSurfaces.flatMap(item => item.methodOperations ?? [])],
-      } : surface;
+      const proofSurface = mergeProofSurfaces(surface,
+        [...derivedPending.map(item => item.nextSurface), ...provedAccessSurfaces]);
       // The PoC receives only exact local contracts observed during this run.
       // It obtains a fresh login; no derived bearer is written to disk.
       const proofScope = [...derivedPending, ...provedAccessScopes.map(scope => ({scope}))]
@@ -2107,6 +2258,49 @@ export async function runAudit({url, root = process.cwd(), scopeFile = null, ove
           ...item.scope.localAutoMethodContracts};
         return merged;
         }, sessions.scope);
+      // Web checks already follow their own confirmed signals. Give a source-
+      // informed task finding one separate Muse turn after the primary queue,
+      // while preserving the two model calls reserved for final assessment.
+      const primaryTaskFindings = findings.filter(item => item.task &&
+        item.verdict === 'confirmed' &&
+        new URL(item.url).origin === proofScope.target.origin);
+      if (taskPivotReserve && researchDeadline - Date.now() > 30_000 &&
+          scope.limits.modelCalls - modelInvocations > 2 &&
+          primaryTaskFindings.length) {
+        const pivotPlan = await planConfirmedPivots(
+          primaryTaskFindings, proofSurface, proofScope,
+          {infer: invokeModel, model, env: sessions.env,
+            modelCallsAvailable: 1, researchDeadline, log: say, ledger});
+        web.modelCalls += pivotPlan.modelCalls;
+        if (pivotPlan.modelError) say({stage: 'research', message: pivotPlan.modelError});
+        web.strategyDecisions.push(...pivotPlan.decisions);
+        if (pivotPlan.leads.length) {
+          const pivotRun = await runResearchFlows(pivotPlan.leads, proofScope,
+            {requester, infer: invokeModel, model, surface: proofSurface,
+              env: sessions.env, ledger, log: say, researchDeadline,
+              modelCallsAvailable: 0});
+          const pivotResults = pivotRun.results.map(item => ({...item,
+            origin: sessions.scope.target.origin, discoveredVia: 'confirmed-task-pivot'}));
+          web.results.push(...pivotResults);
+          web.findings.push(...pivotRun.findings);
+          web.plan.push(...pivotPlan.leads.map(lead => ({kind: 'model-http-sequence',
+            lead, priority: lead.priority, by: 'confirmed-task-pivot', why: lead.why})));
+          web.strategyDecisions.push(...pivotRun.decisions);
+          web.investigations.push(...pivotRun.investigations);
+          web.modelCalls += pivotRun.modelCalls;
+          if (pivotRun.modelError) say({stage: 'research', message: pivotRun.modelError});
+          web.tested += pivotResults.filter(item => item.verdict !== 'untested').length;
+          stats.tasks += pivotResults.filter(item => item.verdict !== 'untested').length;
+          stats.queuedUntested += pivotResults.filter(item => item.verdict === 'untested').length;
+          findings.push(...pivotRun.findings);
+        }
+        web.modelCoverage.push({origin: sessions.scope.target.origin,
+          discoveredVia: 'confirmed-task-pivot',
+          confirmedPivots: {proposed: pivotPlan.decisions.length,
+            accepted: pivotPlan.leads.length,
+            executed: web.results.filter(item =>
+              item.discoveredVia === 'confirmed-task-pivot' && item.verdict !== 'untested').length}});
+      }
       findings = await proveFindings(findings, results, {runDir, surface: proofSurface,
         scope: proofScope,
         originSurfaces, originContexts: Object.fromEntries(credentialAudits.map(audit =>
@@ -2156,7 +2350,8 @@ export async function runAudit({url, root = process.cwd(), scopeFile = null, ove
       phase('skipped', 5, 'Replay and assess');
     }
     phase('doing', 6, 'Report and coverage');
-    findings = consolidateRawBoundaryProofs(consolidateBrowserXssProofs(findings));
+    findings = consolidateInjectionProofs(consolidateRawBoundaryProofs(
+      consolidateBrowserXssProofs(findings)));
     atomic(path.join(runDir, 'surface.json'), surface);
     atomic(path.join(runDir, 'results.json'), results);
     atomic(path.join(runDir, 'findings.json'), findings);

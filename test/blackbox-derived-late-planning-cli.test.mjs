@@ -254,14 +254,19 @@ test('CLI keeps planning protected routes after an early anonymous derived-sessi
     assert.equal((await cli('verify', audit.data.run)).code, 1);
     const exported = await cli('export', audit.data.run, '--out', path.join(root, 'regression'));
     assert.equal(exported.code, 0);
+    const sequenceTest = exported.data.files.find(file =>
+      path.basename(file).includes(observation.id));
+    assert.ok(sequenceTest);
     const regression = async () => (await execFile(process.execPath,
-      ['--test', ...exported.data.files], {env: {...env, NODE_TEST_CONTEXT: undefined},
+      ['--test', sequenceTest], {env: {...env, NODE_TEST_CONTEXT: undefined},
         timeout: 30000})).code;
     assert.equal(await regression(), 1);
     transformVulnerable = false;
     assert.equal(JSON.parse((await execFile(process.execPath, [observation.proof],
       {env, timeout: 20000})).stdout).verdict, 'not_reproduced');
     loginVulnerable = false;
-    assert.equal((await cli('verify', audit.data.run)).code, 0);
+    const fixed = await cli('verify', audit.data.run);
+    assert.equal(fixed.data.proofs.find(item => item.id === observation.id)?.verdict,
+      'not_reproduced', JSON.stringify(fixed.data));
     assert.equal(await regression(), 0);
   });
