@@ -126,7 +126,7 @@ To return later, use `/bypass:start`.
 
 For a running app, supply its URL and choose its environment if unknown. Bypass shows one compact testing plan with **Approve**, **Decline**, and **Custom instructions**. Approve confirms that you control the app and authorize the displayed paths, methods, request rate and expiry. The audit then starts immediately with that exact plan. Progress reports the current phase, elapsed time, HTTP requests, Muse decisions and checks completed out of the currently planned work; that percentage is not a security coverage score. Accounts are optional for anonymous checks; authenticated checks need usable test identities.
 
-Setup starts the selected first audit after the required source and app details are ready. For later audits, use `/bypass:discover` for SAST or policy discovery, `/bypass:review` for source review, or `/bypass:blackbox` for a running-app audit. See the examples below.
+Setup starts the selected first audit after the required source and app details are ready. At completion, Muse presents every distinct finding with its live outcome, severity, impact, evidence and recommendation, plus the full report path. You can inspect a proof or proposed fix before deciding whether to request code changes; test approval alone never authorizes a fix. For later audits, use `/bypass:discover` for SAST or policy discovery, `/bypass:review` for source review, or `/bypass:blackbox` for a running-app audit. See the examples below.
 
 ## Standalone CLI
 
