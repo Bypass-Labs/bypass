@@ -24,3 +24,26 @@ test('host bridge summarizes live work without treating planned checks as covera
   assert.equal(result.summary.latestActivity,'Checking the login response');
   assert.match(result.summary.percentMeaning,/not security coverage/);
 });
+
+test('host bridge returns complete concurrent decisions one at a time',async()=>{
+  const bridge=new BlackboxHostBridge();
+  bridge.start(async({infer})=>{
+    const prompt='observed route '.repeat(2800);
+    return Promise.all([
+      infer(null,[{role:'user',content:prompt}],{schema:{type:'object',properties:{flows:{type:'array'}}}}),
+      infer(null,[{role:'user',content:prompt}],{schema:{type:'object',properties:{flows:{type:'array'}}}}),
+      infer(null,[{role:'user',content:prompt}],{schema:{type:'object',properties:{flows:{type:'array'}}}}),
+    ]);
+  });
+  await Promise.resolve();
+  for(let remaining=3;remaining>0;remaining--){
+    const status=bridge.status();
+    assert.equal(status.pendingCount,remaining);
+    assert.equal(status.pending.length,1);
+    assert.ok(JSON.stringify(status).length<50_000);
+    assert.match(status.pending[0].messages[0].content,/observed route/);
+    bridge.submit(status.pending[0].id,{flows:[]});
+  }
+  await bridge.job.done;
+  assert.equal(bridge.status().status,'completed');
+});

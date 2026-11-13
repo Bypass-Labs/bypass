@@ -72,12 +72,16 @@ export class BlackboxHostBridge {
 
   status(after = 0) {
     const job = this.job;
-    if (!job) return {status: 'idle', pending: [], events: [], cursor: 0};
+    if (!job) return {status: 'idle', pending: [], pendingCount: 0, events: [], cursor: 0};
     return {status: job.status, startedAt: job.startedAt,
       summary:{...job.summary,elapsedSeconds:Math.max(0,Math.floor((Date.now()-Date.parse(job.startedAt))/1000)),
         knownChecksPercent:job.summary.checksTotal?Math.min(100,Math.floor(100*job.summary.checksDone/job.summary.checksTotal)):null,
         percentMeaning:'Share of currently planned checks executed; plans can grow and this is not security coverage.'},
-      pending: [...job.pending.values()].map(item => item.request),
+      // Return one complete decision at a time. Concurrent model requests can
+      // each carry a large evidence prompt and schema; returning all of them
+      // made Muse truncate the tool response before it could submit a decision.
+      pending: [...job.pending.values()].slice(0, 1).map(item => item.request),
+      pendingCount: job.pending.size,
       events: job.events.filter(item => item.cursor > after).slice(-20),
       cursor: job.eventCursor, result: job.result, error: job.error};
   }
