@@ -36,7 +36,8 @@ test('Muse plugin instructions use the three-choice remote environment picker',(
   assert.match(skill,/use the returned `nextAction\.input\.choices` exactly/);
   assert.match(skill,/only \*\*Production\*\*, \*\*Staging\*\*, and \*\*Preview\*\*/);
   assert.doesNotMatch(skill,/\*\*Preview\*\*, and \*\*Local development\*\*/);
-  assert.match(command,/Copy its choices exactly \(at most three\)/);
+  assert.match(command,/intake\.questions/);
+  assert.match(command,/for an unknown remote app, environment/);
 });
 
 test('onboarding ignores README ports, reuses saved apps, and keeps code-only review free of live setup',async()=>{
