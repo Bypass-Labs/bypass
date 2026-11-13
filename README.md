@@ -111,7 +111,7 @@ Windows PowerShell:
 irm https://bypasslabs.ai/install/muse.ps1 | iex
 ```
 
-**2. Enable Bypass's permissions and open Muse Code.** Choose option `1` when prompted.
+**2. Enable Bypass's permissions and open Muse Code.** Choose option `1` when prompted. Pressing Enter alone chooses **Later**; the `/bypass:start` command can appear in Muse before its security tools are approved. If that happens, rerun the installer, choose `1`, and use the new Muse session it opens.
 
 <img width="729" height="347" alt="Installing the Muse Code plugin" src="https://github.com/user-attachments/assets/709935c6-db0c-4686-a898-5233ec7fa7a2" />
 
