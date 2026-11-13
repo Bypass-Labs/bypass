@@ -69,6 +69,8 @@ for(const packaged of [false,true])test(
   assert.ok(count>0,'the active Muse session received no model decisions');
   assert.equal(final.result.kind,'blackbox-audit');
   assert.equal(final.result.stats.model,'muse-code-session');
+  assert.ok(Array.isArray(final.result.findings),'app-only findings remain available in the terminal result');
+  assert.ok(fs.existsSync(final.result.reportPath),'the full app-only report is available for review');
   assert.ok(fs.existsSync(path.join(selected,'.bypass/runs',final.result.run,'evidence.jsonl')));
   assert.equal(await client.close(),0);
 });
