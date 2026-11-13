@@ -138,6 +138,80 @@ test('combined wizard asks for exact methods, rate and shared audit limits befor
   assert.equal(step.stage,'ready');assert.deepEqual(step.nextAction.arguments,{mode:'combined',modelCalls:400,minutes:30});
 });
 
+test('upfront intake collects one plan and proceeds directly to exact scope approval',async t=>{
+  const root=await sourceReady(),url='http://127.0.0.1:3456';
+  await execute('target add',['app'],{project:root,url,environment:'local'});
+  await execute('target verify',['app'],{project:root,method:'local'});
+  const client=await mcpClient(root,{stateDir:temp()});t.after(()=>client.close());
+  const intake=await client.call('bypass_onboarding',{mode:'combined',upfrontIntake:true,url});
+  assert.equal(intake.stage,'intake');
+  assert.deepEqual(intake.nextAction.questions.map(item=>item.id),['auditPreset','scopePreset']);
+  assert.equal(intake.nextAction.questions[0].input.choices.length,3);
+  const approval=await client.call('bypass_onboarding',{auditPreset:'quick',scopePreset:'all',reviewScope:true});
+  assert.equal(approval.stage,'scope');
+  assert.deepEqual(approval.nextAction.scope.paths,['/']);
+  assert.deepEqual(approval.nextAction.scope.methods,recommendedMethods);
+  assert.equal(approval.nextAction.scope.maxRequestsPerSecond,20);
+  const authorized=await client.call('bypass_authorize_target',{
+    name:'app',paths:'/',methods:recommendedMethods.join(','),rps:20,accept:true});
+  assert.equal(authorized.onboarding.stage,'ready');
+  assert.deepEqual(authorized.nextAction.arguments,{mode:'combined',modelCalls:120,minutes:10});
+  const scan=await client.call('bypass_scan',{mode:'combined'});
+  const run=read(root).runs.find(item=>item.id===scan.runId);
+  assert.equal(run.options.minutes,10);assert.equal(run.options.modelCalls,120);
+});
+
+test('remote app intake groups environment with duration and scope',async()=>{
+  const root=await sourceReady();
+  const intake=await pluginOnboarding(root,root,{mode:'combined',url:'https://app.example.com',upfrontIntake:true});
+  assert.equal(intake.stage,'intake');
+  assert.deepEqual(intake.nextAction.questions.map(item=>item.id),['environment','auditPreset','scopePreset']);
+  assert.deepEqual(intake.nextAction.questions[0].input.choices.map(item=>item.id),
+    ['production','staging','preview']);
+});
+
+test('upfront app-only plan carries selected limits to blackbox setup',async()=>{
+  const root=await sourceReady(),url='http://127.0.0.1:3456';
+  await execute('target add',['app'],{project:root,url,environment:'local'});
+  await execute('target verify',['app'],{project:root,method:'local'});
+  const result=await pluginOnboarding(root,root,{mode:'live',url,upfrontIntake:true,
+    auditPreset:'thorough',scopePreset:'all',reviewScope:true});
+  assert.equal(result.stage,'scope');
+  await execute('target authorize',['app'],{project:root,paths:'/',methods:recommendedMethods.join(','),rps:20,accept:true});
+  const ready=await pluginOnboarding(root,root,{mode:'live',url,upfrontIntake:true,
+    auditPreset:'thorough',scopePreset:'all',scopeApproved:true});
+  assert.equal(ready.nextAction.tool,'bypass_blackbox_setup');
+  assert.equal(ready.nextAction.arguments.minutes,60);
+  assert.equal(ready.nextAction.arguments['model-calls'],240);
+});
+
+test('upfront app-only intake reapproves a saved scope once, then starts setup',async t=>{
+  const root=await sourceReady(),url='http://127.0.0.1:3456';
+  await execute('target add',['app'],{project:root,url,environment:'local'});
+  await execute('target verify',['app'],{project:root,method:'local'});
+  await execute('target authorize',['app'],{project:root,paths:'/api',methods:'GET',rps:2,accept:true});
+  const client=await mcpClient(root,{stateDir:temp()});t.after(()=>client.close());
+  assert.equal((await client.call('bypass_onboarding',{mode:'live',url,upfrontIntake:true})).stage,'intake');
+  const scope=await client.call('bypass_onboarding',{auditPreset:'standard',scopePreset:'all'});
+  assert.equal(scope.stage,'scope');
+  assert.deepEqual(scope.nextAction.scope.paths,['/']);
+  const authorized=await client.call('bypass_authorize_target',{
+    name:'app',paths:'/',methods:recommendedMethods.join(','),rps:20,accept:true});
+  assert.equal(authorized.onboarding.stage,'ready');
+  assert.equal(authorized.nextAction.tool,'bypass_blackbox_setup');
+  assert.equal(authorized.nextAction.arguments.minutes,30);
+  assert.equal(authorized.nextAction.arguments['model-calls'],120);
+  assert.equal((await client.call('bypass_onboarding',{auditPreset:'quick'})).stage,'scope',
+    'changing the duration invalidates the prior approval');
+  assert.equal((await client.call('bypass_onboarding',{scopePreset:'custom'})).stage,'scope');
+  const narrowed=await client.call('bypass_authorize_target',{
+    name:'app',paths:'/api',methods:'GET',rps:2,accept:true});
+  assert.equal(narrowed.onboarding.stage,'ready');
+  assert.equal(narrowed.nextAction.arguments.include,'/api');
+  assert.equal(narrowed.nextAction.arguments.methods,'GET');
+  assert.equal(narrowed.nextAction.arguments.minutes,10);
+});
+
 test('combined MCP wizard carries selected scope and total limits into the source review',async t=>{
   const root=await sourceReady(),url='http://127.0.0.1:3456';
   await execute('target add',['app'],{project:root,url,environment:'local'});

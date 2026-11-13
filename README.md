@@ -117,14 +117,14 @@ irm https://bypasslabs.ai/install/muse.ps1 | iex
 
 **3. Tell Muse Code what to review.**
 
-Setup offers **Code only**, **Code + running app**, or **Running app only**. Supply a local source folder or Git URL for code; supply an app URL for live testing. 
+Setup offers **Code only**, **Code + running app**, or **Running app only**. For a live audit, Muse asks for any missing source folder/Git URL and app URL together, then collects duration, boundaries and remote environment in one question form. The default live plan covers the entire app with all supported HTTP methods at up to 20 requests per second; **Customize** narrows that plan before approval.
 <img width="610" height="310" alt="select the scope" src="https://github.com/user-attachments/assets/0a40086f-6b86-4058-93a3-b403b4e9cdb4" />
 
 To return later, use `/bypass:start`.
 
 > **Try the Aegis demo:** Test with the [repository](https://github.com/Bypass-Labs/aegis-mission-control-demo-fork-1) and [running app](https://demo-app-fork-1.bypasslabs.ai/).
 
-For a running app, supply its URL and choose its environment if unknown. Bypass shows one compact testing plan with **Approve**, **Decline**, and **Custom instructions**. Approve confirms that you control the app and authorize the displayed paths, methods, request rate and expiry. The audit then starts immediately with that exact plan and shows live progress; there is no second scope questionnaire or start confirmation. Custom instructions lets you change the plan before approval. Accounts are optional for anonymous checks; authenticated checks need usable test identities.
+For a running app, supply its URL and choose its environment if unknown. Bypass shows one compact testing plan with **Approve**, **Decline**, and **Custom instructions**. Approve confirms that you control the app and authorize the displayed paths, methods, request rate and expiry. The audit then starts immediately with that exact plan. Progress reports the current phase, elapsed time, HTTP requests, Muse decisions and checks completed out of the currently planned work; that percentage is not a security coverage score. Accounts are optional for anonymous checks; authenticated checks need usable test identities.
 
 Setup starts the selected first audit after the required source and app details are ready. For later audits, use `/bypass:discover` for SAST or policy discovery, `/bypass:review` for source review, or `/bypass:blackbox` for a running-app audit. See the examples below.
 

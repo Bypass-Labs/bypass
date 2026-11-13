@@ -4,7 +4,7 @@ import { read } from './store.mjs';
 import { VERSION, need } from './util.mjs';
 import { scopeOutputForOrigin } from './blackbox/setup.mjs';
 import { workspaceInfo } from './project-selection.mjs';
-import { scopeReady, appOriginInput, DEFAULT_REQUESTS_PER_SECOND } from './network.mjs';
+import { scopeReady, appOriginInput, loopback, DEFAULT_REQUESTS_PER_SECOND } from './network.mjs';
 import { reviewReadiness } from './review-readiness.mjs';
 import { pluginIdentity } from './runtime-identity.mjs';
 import { credentialStatus } from './credentials.mjs';
@@ -17,7 +17,7 @@ import { latestRemediation } from './remediation-checkpoint.mjs';
 
 // Setup plans are read-only. The MCP adapter remembers explicitly selected modes.
 export async function pluginOnboarding(cwd,root,{intent='real',mode,url,environment,repository,dir,reviewScope=false,
-  interactiveCombined=false,methods,rps,modelCalls,minutes,scopeApproved=false}={}){
+  interactiveCombined=false,upfrontIntake=false,auditPreset,scopePreset,paths,methods,rps,modelCalls,minutes,scopeApproved=false}={}){
   const [workspace,identity]=await Promise.all([workspaceInfo(cwd,root),pluginIdentity()]);
   const state=root?read(root):null;
   mode??=state?.settings.reviewMode||(state?.targets.length?'combined':null);
@@ -25,13 +25,40 @@ export async function pluginOnboarding(cwd,root,{intent='real',mode,url,environm
   if(!mode)return early('review-type',{id:'review-type',tool:'bypass_onboarding',question:reviewQuestion,input:reviewInput()},
     {guidance:'Open the host question/selection tool with these three choices. Do not initialize the current folder yet. Retain any repository URL and app URL the user supplied for the selected flow.'});
   need(['code','combined','live'].includes(mode),'Choose code, combined, or live review.');
-  const pending = root && latestRemediation(root);
-  if (pending && !repository && !url && methods == null && rps == null &&
-    modelCalls == null && minutes == null) return early('release',
-    {id:'release',tool:'bypass_remediation',arguments:{action:'status',review:pending.review},
+  const pendingRelease=root&&latestRemediation(root);
+  if(pendingRelease&&!repository&&!url&&methods==null&&rps==null&&modelCalls==null&&minutes==null)
+    return early('release',{id:'release',tool:'bypass_remediation',arguments:{action:'status',review:pendingRelease.review},
       message:'Resume this PR deployment and proof replay. The old audit does not need to restart.'},
-    {release:{review:pending.review,pr:pending.pr,status:pending.status,target:pending.target},
+    {release:{review:pendingRelease.review,pr:pendingRelease.pr,status:pendingRelease.status,target:pendingRelease.target},
       alternatives:[{label:'Start a separate new review',tool:'bypass_scan',arguments:{mode}}]});
+  const suppliedOrigin=url?appOriginInput(url):null;
+  const needsEnvironment=!!(suppliedOrigin&&!environment&&!loopback(new URL(suppliedOrigin).hostname)&&
+    !state?.targets.some(item=>item.url===suppliedOrigin));
+  if(upfrontIntake&&mode!=='code'&&(auditPreset==null||scopePreset==null||needsEnvironment)){
+    const questions=[];
+    if(needsEnvironment)questions.push({id:'environment',question:`Which environment is ${suppliedOrigin}?`,
+      input:choiceInput('environment',[{id:'production',label:'Production',description:'A live deployment.'},
+        {id:'staging',label:'Staging',description:'A separate test deployment.'},
+        {id:'preview',label:'Preview',description:'A temporary branch deployment.'}])});
+    if(auditPreset==null)questions.push({id:'auditPreset',question:'How long should the first security audit run?',
+      input:choiceInput('auditPreset',[{id:'quick',label:'10 minutes',description:'Quick pass; report unfinished coverage.'},
+        {id:'standard',label:'30 minutes',description:'Recommended first audit.'},
+        {id:'thorough',label:'60 minutes',description:'More time to explore and replay findings.'}],{recommended:'standard'})});
+    if(scopePreset==null)questions.push({id:'scopePreset',question:'What should the live audit be allowed to test?',
+      input:choiceInput('scopePreset',[{id:'all',label:'Entire app',description:'All paths and HTTP methods, up to 20 requests per second.'},
+        {id:'custom',label:'Customize',description:'Choose narrower paths, methods or rate before approval.'}],{recommended:'all'})});
+    return early('intake',{id:'intake',tool:'bypass_onboarding',questions,
+      missing:[...(mode!=='live'&&!repository&&!root?['repository']:[]),...(!url?['url']:[])],
+      message:'Collect these choices and any missing repository/app URL up front. Send all answers together to bypass_onboarding. A preselected answer is not approval to test.'});
+  }
+  need(auditPreset==null||['quick','standard','thorough'].includes(auditPreset),'Choose a supported audit duration.');
+  need(scopePreset==null||['all','custom'].includes(scopePreset),'Choose Entire app or Customize.');
+  if(auditPreset){minutes??={quick:10,standard:30,thorough:60}[auditPreset];modelCalls??=auditPreset==='thorough'?240:120;}
+  if(scopePreset){
+    paths??=scopePreset==='all'?'/':state?.targets.find(item=>item.name===state.activeTarget)?.authorization?.paths?.join(',')||'/';
+    methods??=(scopePreset==='all'?recommendedMethods:state?.targets.find(item=>item.name===state.activeTarget)?.authorization?.methods||recommendedMethods).join(',');
+    rps??=scopePreset==='all'?DEFAULT_REQUESTS_PER_SECOND:state?.targets.find(item=>item.name===state.activeTarget)?.authorization?.maxRequestsPerSecond||DEFAULT_REQUESTS_PER_SECOND;
+  }
   if(intent==='preview'&&state?.demo)return {...early('ready',{tool:'bypass_scan',arguments:{mode:'combined'}}),engine:'mock',simulation:true,ai:hostAI(),ready:{source:true,live:true}};
   if(mode!=='live'){
     if(repository){const action=await repositoryAction(cwd,root,repository,dir);if(action)return early('repository',action);}
@@ -69,7 +96,7 @@ export async function pluginOnboarding(cwd,root,{intent='real',mode,url,environm
   const live=mode!=='code'&&authorized&&ready.live&&(!requestedOrigin||target?.url===requestedOrigin);
   const next=steps.find(s=>s.status==='needed');
   let nextAction=next?{id:next.id,tool:next.tool,...(next.id==='ownership'?{question:target.ownershipVerification==='http'?'Publish the HTTPS verification file, then check it.':'Publish the TXT record, then check DNS.',challenge:next.challenge}:{})}:mode==='live'?{
-    id:'review',tool:'bypass_blackbox_setup',arguments:{url:target.url,include:target.authorization.paths.join(','),methods:target.authorization.methods.join(','),rps:target.authorization.maxRequestsPerSecond,environment:target.environment,...scopeOutputForOrigin(root,target.url)},
+    id:'review',tool:'bypass_blackbox_setup',arguments:{url:target.url,include:target.authorization.paths.join(','),methods:target.authorization.methods.join(','),rps:target.authorization.maxRequestsPerSecond,environment:target.environment,...(minutes?{minutes}:{}),...(modelCalls?{'model-calls':modelCalls}:{}),...scopeOutputForOrigin(root,target.url)},
     message:'Reuse this app and authorized scope, apply the default bounded budgets, and start the blackbox audit immediately. Do not ask another setup question before showing progress.'
   }:{id:'review',tool:'bypass_scan',arguments:{mode},message:'Show the selected source/app and scope, then start the requested review.'};
   if(mode==='code'){
@@ -86,6 +113,9 @@ export async function pluginOnboarding(cwd,root,{intent='real',mode,url,environm
     }
   }
   if(reviewScope&&!interactiveCombined&&mode!=='code'&&(owned||skipVerification)&&(!requestedOrigin||requestedOrigin===target.url))nextAction={id:'scope',tool:'bypass_authorize_target'};
+  if(upfrontIntake&&mode==='live'&&!scopeApproved&&(owned||skipVerification)&&
+    (!requestedOrigin||requestedOrigin===target.url)&&['scope','review'].includes(nextAction.id))
+    nextAction={id:'scope',tool:'bypass_authorize_target'};
   if(nextAction.id==='ownership'){
     if(reusable)nextAction={id:'ownership',tool:'bypass_verify_target',automatic:true,arguments:{name:target.name,method:reusable.method},message:'Reuse existing valid ownership for this app URL. No DNS publication is needed.'};
     else if(target?.environment!=='local'&&!challenge)nextAction={id:'ownership',tool:'bypass_verify_target',automatic:true,arguments:{name:target.name,renew:true,method:target.ownershipVerification==='http'?'http':'dns'},message:'The prior ownership proof has expired. Issue a new challenge.'};
@@ -127,7 +157,7 @@ export async function pluginOnboarding(cwd,root,{intent='real',mode,url,environm
       message:'Start the combined source and live review with the selected total Muse-call and time limits.'};
   }
   if(nextAction.id==='scope'){
-    const scope={url:target.url,environment:target.environment,paths:target.authorization?.paths||['/'],
+    const scope={url:target.url,environment:target.environment,paths:paths?paths.split(',').map(item=>item.trim()).filter(Boolean):target.authorization?.paths||['/'],
       methods:methods==null?target.authorization?.methods||recommendedMethods:httpMethods(methods),
       maxRequestsPerSecond:rps??target.authorization?.maxRequestsPerSecond??DEFAULT_REQUESTS_PER_SECOND,
       expiresAt:target.authorization?.expiresAt||new Date(Date.now()+7*86400000).toISOString(),

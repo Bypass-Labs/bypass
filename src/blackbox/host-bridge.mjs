@@ -13,6 +13,8 @@ export class BlackboxHostBridge {
       throw new Error('A blackbox audit is already running in this Muse session.');
     const controller = new AbortController();
     const job = {status: 'running', controller, pending: new Map(), events: [], eventCursor: 0,
+      summary: {phase: null, phasesDone: 0, requests: 0, modelCalls: 0, checksDone: 0, checksTotal: 0,
+        checksUntested: 0, confirmedSignals: 0, latestActivity: 'Preparing the scoped audit'},
       result: null, error: null, startedAt: new Date().toISOString()};
     this.job = job;
     const infer = (_profile, messages, options = {}) => new Promise((resolve, reject) => {
@@ -37,7 +39,24 @@ export class BlackboxHostBridge {
       options.signal?.addEventListener('abort', onAbort, {once: true});
     });
     const onProgress = event => {
-      job.events.push({cursor: ++job.eventCursor, ...redact(event)});
+      const safe=redact(event), summary=job.summary;
+      if(safe?.stage==='progress'){
+        if(safe.type==='phase'){
+          summary.phase={step:safe.step,total:safe.total,title:safe.title,state:safe.state};
+          if(safe.state==='done')summary.phasesDone=Math.max(summary.phasesDone,safe.step);
+          summary.latestActivity=`${safe.state==='done'?'Completed':'Working on'} ${safe.title}`;
+        }
+        if(safe.type==='request')summary.requests=Math.max(summary.requests,safe.requests||0);
+        if(safe.type==='model')summary.modelCalls=Math.max(summary.modelCalls,safe.modelCalls||0);
+        if(safe.type==='model-start'||safe.type==='activity')summary.latestActivity=safe.activity||safe.message||summary.latestActivity;
+        if(safe.type==='task-total'||safe.type==='task-estimate')summary.checksTotal=Math.max(summary.checksTotal,safe.total||0);
+        if(safe.type==='task-done'){summary.checksDone++;if(safe.confirmed)summary.confirmedSignals++;}
+        if(safe.type==='task-untested')summary.checksUntested++;
+        if(safe.type==='task-reconcile'){
+          summary.checksTotal=safe.total||0;summary.checksDone=safe.done||0;summary.checksUntested=safe.untested||0;
+        }
+      }else if(safe?.message)summary.latestActivity=safe.message;
+      job.events.push({cursor: ++job.eventCursor, ...safe});
       if (job.events.length > 50) job.events.shift();
     };
     job.done = Promise.resolve().then(() => work({infer, signal: controller.signal, onProgress}))
@@ -55,6 +74,9 @@ export class BlackboxHostBridge {
     const job = this.job;
     if (!job) return {status: 'idle', pending: [], events: [], cursor: 0};
     return {status: job.status, startedAt: job.startedAt,
+      summary:{...job.summary,elapsedSeconds:Math.max(0,Math.floor((Date.now()-Date.parse(job.startedAt))/1000)),
+        knownChecksPercent:job.summary.checksTotal?Math.min(100,Math.floor(100*job.summary.checksDone/job.summary.checksTotal)):null,
+        percentMeaning:'Share of currently planned checks executed; plans can grow and this is not security coverage.'},
       pending: [...job.pending.values()].map(item => item.request),
       events: job.events.filter(item => item.cursor > after).slice(-20),
       cursor: job.eventCursor, result: job.result, error: job.error};

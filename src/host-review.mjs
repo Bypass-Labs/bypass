@@ -261,7 +261,11 @@ const receipt=(root,run)=>{const state=read(root),work=workProgress(run,state);
     message:`Offer to fix all confirmed issues and open a PR. Application edits require the user to select that remediation action.${pendingValidation.length?` ${pendingValidation.length} source leads remain untested due the combined audit limit.`:''}`}:null;
   return ({runId:run.id,status:run.status,executionMode:'muse-host',pluginModelCalls:0,simulation:false,coverageComplete:false,
   assessmentPolicy,work,continueRequired:run.status==='awaiting_host'&&work.pending>0,
-  progress:{stage:run.stage,work,lastCompleted:run.steps.at(-1)||null,elapsedSeconds:Math.floor((Date.now()-Date.parse(run.startedAt))/1000),waitingSeconds:Math.floor((Date.now()-Date.parse(run.steps.at(-1)?.at||run.startedAt))/1000),waitingFor:run.status==='awaiting_host'?'Muse reasoning; no internal worker':null,resume:{tool:'bypass_review_step',arguments:{id:run.id,action:run.status==='cancelled'?'resume':'status'}},cancel:{tool:'bypass_stop_run',arguments:{id:run.id}}},
+  progress:{stage:run.stage,work,
+    knownWork:{addressed:Math.max(0,work.total-work.pending),total:work.total,
+      percent:work.total?Math.min(100,Math.floor(100*(work.total-work.pending)/work.total)):null,
+      meaning:'Share of currently known source and configured checks addressed; new work can be discovered. This is not security coverage.'},
+    lastCompleted:run.steps.at(-1)||null,elapsedSeconds:Math.floor((Date.now()-Date.parse(run.startedAt))/1000),waitingSeconds:Math.floor((Date.now()-Date.parse(run.steps.at(-1)?.at||run.startedAt))/1000),waitingFor:run.status==='awaiting_host'?'Muse reasoning; no internal worker':null,resume:{tool:'bypass_review_step',arguments:{id:run.id,action:run.status==='cancelled'?'resume':'status'}},cancel:{tool:'bypass_stop_run',arguments:{id:run.id}}},
   evidence:`${root}/.bypass/runs/${run.id}.json`,findings:run.result?.findings||[],liveValidation,
   liveAudit:broad.latest?{runId:broad.latest.run,status:broad.latest.status,
     report:`${root}/.bypass/runs/${broad.latest.run}/report.md`,
