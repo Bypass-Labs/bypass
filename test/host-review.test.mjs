@@ -87,6 +87,15 @@ test('connected combined handoff carries cited leads into one full live run and 
   assert.equal(done.liveAudit.confirmed,1);
   assert.equal(done.combinedBudget.modelCallsUsed,3);
   assert.equal(done.nextAction.tool,'bypass_findings');
+  assert.deepEqual(done.reviewDetails.issueIds,[proposed.findings[0]]);
+  assert.equal(done.reviewDetails.report,path.join(folder,'report.md'));
+  assert.match(done.guidance,/bypass_finding for each distinct issue/);
+  await change(root,state=>state.findings.push({id:'live-only',title:'Live-only access issue',
+    category:'authorization',severity:'high',status:'confirmed',target:'app',lastRunId:started.runId,
+    sourceEvidence:{kind:'http',runId:'bx-connected'},verification:{blackboxRun:'bx-connected'}}));
+  const all=await hostReviewStep(root,{id:started.runId,action:'status'});
+  assert.deepEqual(all.reviewDetails.issueIds,[proposed.findings[0],'live-only']);
+  assert.equal(all.reviewDetails.summary.distinctIssues,2);
 });
 
 test('combined review retains exact scope and advances every focused source finding',async()=>{
@@ -126,7 +135,7 @@ test('combined review retains exact scope and advances every focused source find
   const partial=await hostReviewStep(root,{id:started.runId,action:'status'});
   assert.deepEqual(partial.remediation.confirmed.map(item=>item.finding),[first]);
   assert.deepEqual(partial.remediation.untested,[proposed.liveValidation[1].finding]);
-  assert.match(partial.nextAction.message,/Offer to fix all confirmed issues/);
+  assert.match(partial.nextAction.message,/review every distinct finding and its evidence/);
   await change(root,s=>{s.runs.find(run=>run.id===started.runId).options.modelCalls=73;});
   const second=path.join(root,'.bypass','runs','bx-focused-two');fs.mkdirSync(second,{recursive:true});
   fs.writeFileSync(path.join(second,'run.json'),JSON.stringify({run:'bx-focused-two',focus:{findingId:first,path:'/api/one'},scope:{target:{origin:url}},startedAt:new Date(Date.now()+1000).toISOString(),finishedAt:new Date().toISOString(),stats:{tasks:1,modelCalls:62,notReproduced:1}}));
@@ -148,7 +157,7 @@ test('combined review retains exact scope and advances every focused source find
   const ready=await hostReviewStep(root,{id:started.runId,action:'status'});
   assert.deepEqual(ready.remediation.confirmed.map(item=>item.finding),
     [first,progress.liveValidation[1].finding]);
-  assert.match(ready.nextAction.message,/Offer to fix all confirmed issues and open a PR/);
+  assert.match(ready.nextAction.message,/review every distinct finding and its evidence/);
   const fingerprint=(await inventory(root)).fingerprint;
   const generated=path.join(root,'tests/security/blackbox/bx-focused-one-f-001.test.mjs');
   fs.mkdirSync(path.dirname(generated),{recursive:true});fs.writeFileSync(generated,'export const regression = true;');

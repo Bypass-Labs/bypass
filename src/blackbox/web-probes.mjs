@@ -4072,6 +4072,12 @@ export async function runWebProbes(surface, scope, {requester, ledger = null, bu
     'http-parameter-pollution', 'ssti-arithmetic', 'sql-boolean',
     'command-output', 'path-traversal-hosts', 'xxe-hosts', 'crlf-header',
   ]);
+  // These GET-only checks use independent canaries and do not change the
+  // authenticated session. Bound their overlap even when the HTTP pool is wider.
+  const credentialedReadKinds = new Set([
+    'open-redirect', 'http-parameter-pollution', 'ssti-arithmetic',
+    'sql-boolean', 'command-output', 'crlf-header',
+  ]);
   const runIndependentWebLead = async (item, priorFindings = []) => {
     const recordedResults = [];
     // HTML injection checks whether a reflected XSS finding was already
@@ -5014,6 +5020,7 @@ export async function runWebProbes(surface, scope, {requester, ledger = null, bu
     .sort((left, right) => (right.priority ?? 0) - (left.priority ?? 0));
   const workers = Math.max(1, Math.floor(scope.limits?.agents ?? 1));
   let activeWebChecks = 0, peakWebChecks = 0, concurrentReadsStarted = 0;
+  let credentialedReadsStarted = 0;
   const startWebLead = (item, priorFindings = []) => {
     activeWebChecks++;
     peakWebChecks = Math.max(peakWebChecks, activeWebChecks);
@@ -5061,9 +5068,10 @@ export async function runWebProbes(surface, scope, {requester, ledger = null, bu
       commitReady();
       continue;
     }
+    const identity = item.lead.as ?? 'anonymous';
     const concurrent = workers > 1 &&
-      concurrentReadKinds.has(item.kind) &&
-      (item.lead.as ?? 'anonymous') === 'anonymous' &&
+      (identity === 'anonymous' ? concurrentReadKinds.has(item.kind) :
+        ['owner', 'outsider'].includes(identity) && credentialedReadKinds.has(item.kind)) &&
       (firstWebCheckKey === null || firstWebCheckCompleted);
     if (!concurrent) {
       await drainActive();
@@ -5072,7 +5080,8 @@ export async function runWebProbes(surface, scope, {requester, ledger = null, bu
       commitReady();
       continue;
     }
-    if (active.size >= workers) await waitOne();
+    if (active.size >= (identity === 'anonymous' ? workers : Math.min(workers, 8)))
+      await waitOne();
     if (webFailure) await drainActive();
     if (Date.now() >= executionDeadline) {
       await drainActive();
@@ -5080,7 +5089,8 @@ export async function runWebProbes(surface, scope, {requester, ledger = null, bu
       commitReady();
       continue;
     }
-    concurrentReadsStarted++;
+    if (identity === 'anonymous') concurrentReadsStarted++;
+    else credentialedReadsStarted++;
     active.set(index, startWebLead(item).then(
       outcome => ({index, lead: item, outcome}),
       error => ({index, lead: item, error})));
@@ -5092,6 +5102,9 @@ export async function runWebProbes(surface, scope, {requester, ledger = null, bu
   plan.modelCoverage.concurrentAnonymousReadsStarted = concurrentReadsStarted +
     earlyWebRuns.reduce((count, run) => count +
       (run.modelCoverage?.concurrentAnonymousReadsStarted ?? 0), 0);
+  plan.modelCoverage.concurrentCredentialedReadsStarted = credentialedReadsStarted +
+    earlyWebRuns.reduce((count, run) => count +
+      (run.modelCoverage?.concurrentCredentialedReadsStarted ?? 0), 0);
   await continueSequenceFeedback();
   // The researcher may keep refining a grounded hypothesis while evidence and budgets justify it.
   let followupCalls = 0, followupError = null;

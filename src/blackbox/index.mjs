@@ -14,7 +14,7 @@ import {discover} from './discovery.mjs';
 import {interpretDiscovery} from './discovery-interpret.mjs';
 import { establishIdentities, credentialNames } from './auth.mjs';
 import { recon, sensitivePathMatches, scanSensitivePaths } from './recon.mjs';
-import {anonymousSurface, deriveLocalPostScope} from './anonymous.mjs';
+import {anonymousSurface, deriveLocalPostScope, mergeAdmittedOperations} from './anonymous.mjs';
 import {reconObservedRoutes, observedExposureMatches} from './robots-directory.mjs';
 import { planTasks, oneAccountMissingAuthCandidate } from './planner.mjs';
 import { decide, severityFor, classify, dataClasses } from './verdict.mjs';
@@ -869,6 +869,7 @@ export async function runAudit({url, root = process.cwd(), scopeFile = null, ove
       surface = await recon(sessions.scope, {requester, env: sessions.env, mined,
         infer: model ? invokeModel : null, model,
         maxModelPages: Math.max(0, Math.min(8, scope.limits.modelCalls - modelInvocations - 2)), log: say});
+      surface = mergeAdmittedOperations(surface, localPosts);
       if (credentialsReady && surface.identity.ownerVerified && !surface.identity.verified) {
         credentialsReady = false;
         principalParityFailed = true;

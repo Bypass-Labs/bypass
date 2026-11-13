@@ -10,6 +10,7 @@ import { temp, port } from './helpers.mjs';
 import { safeRequest } from '../src/network.mjs';
 import { hash } from '../src/util.mjs';
 import { runSwarm, reverify, mirror, identityRecheck } from '../src/blackbox/swarm.mjs';
+import {decide as realDecide} from '../src/blackbox/verdict.mjs';
 import { buildFindings, renderReport } from '../src/blackbox/report.mjs';
 
 const TOKENS = { 'owner-token-1': 'u-1', 'other-token-2': 'u-2' };
@@ -193,6 +194,22 @@ function swarmOptions(origin, requester, extra = {}) {
 }
 
 const hitsFor = (state, pathName, user) => state.hits.filter(hit => hit.path === pathName && hit.user === user).length;
+
+test('a missing owner resource stops dependent identity requests before they spend budget', async () => {
+  const origin = 'http://127.0.0.1:49199';
+  const sends = [];
+  const requester = async request => {
+    sends.push(request);
+    return {status: 404, type: 'application/json', body: '{"error":"missing"}',
+      hash: 'missing', evidenceId: `ev-${sends.length}`};
+  };
+  const {results} = await runSwarm([itemTask(1, 'missing')],
+    swarmOptions(origin, requester, {decide: realDecide}));
+  assert.equal(sends.length, 1);
+  assert.equal(results[0].verdict, 'blocked');
+  assert.match(results[0].reason, /Seed a resource owned by the first test account/);
+  assert.deepEqual(results[0].evidence, ['ev-1']);
+});
 
 test('runSwarm bounds concurrency to min(agents, scope.limits.agents)', async t => {
   const { origin, state } = await startApp(t, { delayMs: 40 });

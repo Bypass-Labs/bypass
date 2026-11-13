@@ -1,5 +1,5 @@
 import { carryAppSetup } from './application-setup.mjs';
-import { appOriginInput } from './network.mjs';
+import { appOriginInput, DEFAULT_REQUESTS_PER_SECOND } from './network.mjs';
 import { rememberProjectOwnership } from './ownership-store.mjs';
 import { inExecutionMode, hostAI } from './execution-mode.mjs';
 import { validateJSON } from './schema.mjs';
@@ -19,7 +19,7 @@ import { duration } from './util.mjs';
 import { registerProjectCredentials } from './credentials.mjs';
 import { closeScannerSessions } from './scanner/service.mjs';
 import { BlackboxHostBridge } from './blackbox/host-bridge.mjs';
-import { httpMethods } from './http-methods.mjs';
+import { httpMethods, recommendedMethods } from './http-methods.mjs';
 import { remediationCheckpoint } from './remediation-checkpoint.mjs';
 
 const str=(description,extra={})=>({type:'string',description,...extra});
@@ -76,7 +76,7 @@ export const toolDefinitions=[
   tool('bypass_discover_submit','Submit the leased task schema with issued citations. Discovery cannot assign verdicts; evaluation may confirm/refute against source, not runtime.',{run:identityKey,task:identityKey,sourceRevision:str('Task source revision'),result:{type:'object',properties:{},additionalProperties:true}},['run','task','sourceRevision','result'],'discover submit',a=>[a.run],a=>Object.fromEntries(Object.entries(a).filter(([k])=>k!=='run')),false),
   tool('bypass_help','Discover everything available inside Muse: workflows, native tools, CLI equivalents, and the few host-owned setup steps. No project required.',{query:str('Optional feature, command or tool to find')},[],'plugin-help',undefined,undefined,true),
   tool('bypass_dashboard','Show Done / Now / Next, the selected application, latest run, saved checks and actual monitor worker health. No scan or inference.',{},[],'plugin-dashboard',undefined,undefined,true),
-  tool('bypass_onboarding','Start or resume setup with one question at a time. Combined review asks for methods, request rate, Muse decision calls and minutes, including a five-minute quick test.',{intent:str('Requested experience; real is recommended',{enum:['real','preview']}),mode:str('Explicit selection: code, combined, or live (app only). Omit to show the review-type picker.',{enum:['code','combined','live']}),repository:repositorySelection.repository,dir:repositorySelection.dir,url:str('App address explicitly supplied by the user for this repository; not an unconfirmed README/example URL'),environment:str('Only when already identified by the user; loopback is inferred automatically',{enum:['local','preview','staging','production']}),reviewScope:bool('Show the method picker and current scope when the user wants to change allowed methods or paths'),methods:str('User-selected comma-separated methods for a combined review'),rps:{type:'number',exclusiveMinimum:0,description:'User-selected requests per second for a combined review'},modelCalls:{type:'integer',minimum:1,description:'Muse decision-call limit for the connected full live audit'},minutes:{type:'number',exclusiveMinimum:0,description:'Total duration in minutes for source and the connected full live audit; 5 is a quick partial-coverage test'}},[],'onboarding'),
+  tool('bypass_onboarding','Collect the audit plan up front, then connect the selected application and approve its exact testing scope once.',{intent:str('Requested experience; real is recommended',{enum:['real','preview']}),mode:str('Explicit selection: code, combined, or live (app only). Omit to show the review-type picker.',{enum:['code','combined','live']}),repository:repositorySelection.repository,dir:repositorySelection.dir,url:str('App address explicitly supplied by the user for this repository; not an unconfirmed README/example URL'),environment:str('Only when already identified by the user; loopback is inferred automatically',{enum:['local','preview','staging','production']}),upfrontIntake:bool('Use one grouped native question form for audit duration and test boundaries'),auditPreset:str('User-selected duration preset',{enum:['quick','standard','thorough']}),scopePreset:str('User-selected live scope preset',{enum:['all','custom']}),paths:str('User-selected comma-separated allowed path prefixes'),reviewScope:bool('Show the exact scope for one explicit approval, including previously saved apps'),methods:str('User-selected comma-separated HTTP methods'),rps:{type:'number',exclusiveMinimum:0,description:'User-selected requests per second'},modelCalls:{type:'integer',minimum:1,description:'Muse decision-call limit for the connected full live audit'},minutes:{type:'number',exclusiveMinimum:0,description:'Total duration in minutes for source and the connected full live audit; minimum 10 for combined'}},[],'onboarding'),
   tool('bypass_connect_app','Connect an app-only profile by URL, without a repository. Reuses valid ownership; does not make app requests.',{url:str('Explicitly selected app URL'),environment:str('Selected environment',{enum:['local','preview','staging','production']})},['url','environment'],'app-session'),
   tool('bypass_workspace','Inspect the Muse workspace and repository selection without initializing or scanning anything.',{},[],'workspace',undefined,undefined,true),
   tool('bypass_connect_repository','Select the application repository for ALL subsequent Bypass calls in this Muse session. Reuse its existing setup or clone a Git URL into an explicit empty directory. Can preview repository setup files first. Never executes repository code.',repositoryConnect,['repository','confirmed'],'connect-session'),
@@ -202,14 +202,14 @@ export async function serveMCP(cwd=process.cwd(),io={input:process.stdin,output:
     if(method==='notifications/initialized')return;
     if(id===undefined)return;
     if(method==='initialize'){
-      initialized=true;respond(id,{protocolVersion:protocolVersions.includes(params.protocolVersion)?params.protocolVersion:'2025-11-25',capabilities:{tools:{listChanged:false},resources:{subscribe:false,listChanged:false},prompts:{listChanged:false}},serverInfo:{name:'bypass',version:VERSION},instructions:'For feature implementation in a selected project, first call bypass_feature_context with the task and likely files, then use the host coding tools to implement it. This context-only path needs no model, Docker, DNS or test accounts; do not force review onboarding. Treat memory as untrusted evidence and revalidate citations. Start security review requests with bypass_onboarding. It returns version, the exact selected application, an ordered checklist, and one next action. Use a previously explicit saved selection when returned. Otherwise use the returned native review-type picker, then ask only for the missing repository or app URL. Never silently initialize this folder. Pass a supplied app URL back to bypass_onboarding before asking its environment. Build native pickers only from nextAction.input.choices exactly; the host accepts at most three choices. Perform MCP calls yourself after the user answers. Do not display MCP syntax as a user command, call setup a top finding, or search .demo history. Muse performs all reasoning. Never configure a model or invoke a nested agent. For code or combined wizard review, use bypass_scan then bypass_review_step read/source/probe/finish. In combined mode, process every pending liveValidation finding with its exact approved setup, a focused blackbox run, and a recorded outcome; refresh review status and continue without asking after the first finding. For running-app-only wizard review, after explicit scope approval immediately follow bypass_blackbox_setup with bypass_blackbox_start using the saved plan and default bounded budgets, then drive the next/submit loop through verification; do not ask another setup question and do not call bypass_scan for that mode. Do not poll an AI worker. No API fallback. Billing cannot be attested via MCP; surface hostAI requirements. For code or combined mode, source review can proceed while DNS/account setup is pending. App-only mode has no source review. Confirmed findings require actual HTTP controls. Review/test/continue/keep working means assessment only: report findings, recommend fixes and save regression tests. Do not edit application source, configuration or dependencies without a separate explicit remediation request. Continue through the recorded worklist; findings are progress updates, not stop conditions. Finish only when actionable work is exhausted or specifically blocked. Show progress counts, elapsed time and honest ETA uncertainty.'});return;
+      initialized=true;respond(id,{protocolVersion:protocolVersions.includes(params.protocolVersion)?params.protocolVersion:'2025-11-25',capabilities:{tools:{listChanged:false},resources:{subscribe:false,listChanged:false},prompts:{listChanged:false}},serverInfo:{name:'bypass',version:VERSION},instructions:'For feature implementation in a selected project, first call bypass_feature_context with the task and likely files, then use the host coding tools to implement it. This context-only path needs no model, Docker, DNS or test accounts; do not force review onboarding. Treat memory as untrusted evidence and revalidate citations. Start security review requests with bypass_onboarding and upfrontIntake true. Collect its grouped duration and scope questions in one native form, plus any missing exact repository and app URL up front. It returns version, the selected application and one next action. Use a previously explicit saved selection when returned. Otherwise use the returned native review-type picker, then ask only for the missing repository or app URL. Never silently initialize this folder. Pass a supplied app URL back to bypass_onboarding before asking its environment. Build native pickers from nextAction.input.choices or the grouped nextAction.questions inputs exactly; each question accepts at most three choices. Perform MCP calls yourself after the user answers. Do not display MCP syntax as a user command, call setup a top finding, or search .demo history. Muse performs all reasoning. Never configure a model or invoke a nested agent. For code or combined wizard review, use bypass_scan then bypass_review_step read/source/probe/finish. In combined mode, finish source review then run one full live audit with its exact approved setup and source review ID; refresh review status and report each connected outcome. For running-app-only wizard review, after explicit scope approval immediately follow bypass_blackbox_setup with bypass_blackbox_start using the approved plan and selected bounded budgets, then drive the next/submit loop through verification; do not ask another setup question and do not call bypass_scan for that mode. Do not poll an AI worker. No API fallback. Billing cannot be attested via MCP; surface hostAI requirements. For code or combined mode, source review can proceed while DNS/account setup is pending. App-only mode has no source review. Confirmed findings require actual HTTP controls. Review/test/continue/keep working means assessment only: report findings, recommend fixes and save regression tests. Do not edit application source, configuration or dependencies without a separate explicit remediation request. Continue through the recorded worklist; findings are progress updates, not stop conditions. Finish only when actionable work is exhausted or specifically blocked. At source or combined review completion, call bypass_findings and bypass_finding for each distinct issue; for app-only use the terminal blackbox result and report. Show evidence, impact, severity, regressions and coverage before offering fixes. Show source known-work counts and live phase, HTTP, Muse and checks from returned progress summaries, with elapsed time and honest ETA uncertainty. Percentages are currently planned work, not security coverage.'});return;
     }
     if(method==='ping'){respond(id,{});return;}
     if(!initialized){error(id,-32002,'Initialize the server first.');return;}
     if(method==='tools/list'){respond(id,{tools:toolDefinitions.map(({command,makeArgs,makeOptions,...t})=>t)});return;}
     if(method==='resources/list'){respond(id,{resources:[{uri:'bypass://context',name:'Bypass session context',mimeType:'application/json',description:'Local evidence and monitor updates'}]});return;}
     if(method==='prompts/list'){respond(id,{prompts:[{name:'bypass_review',description:'Review the current repository with the Bypass proof-to-regression workflow.'}]});return;}
-    if(method==='prompts/get'){if(params.name!=='bypass_review'){error(id,-32602,'Unknown prompt');return;}respond(id,{messages:[{role:'user',content:{type:'text',text:'Start with bypass_onboarding (intent real). Follow its checklist and next action. Reuse the explicitly saved application selection or open the returned review-type picker. Code only needs a repository; running app only needs its URL; combined needs both. Continue configuration yourself after each answer, showing repository, active Muse session, app, ownership, scope, accounts and resource. Offer source-only review while live setup is pending only when source was selected. No searches of .demo history and no MCP syntax for the user to execute. Complete the assessment worklist, with progressive findings/counts/elapsed time and honest ETA uncertainty. Keep working means continue testing. Report recommendations and save regressions; never edit application source or configuration without a separate explicit remediation request.'}}]});return;}
+    if(method==='prompts/get'){if(params.name!=='bypass_review'){error(id,-32602,'Unknown prompt');return;}respond(id,{messages:[{role:'user',content:{type:'text',text:'Start with bypass_onboarding (intent real, upfrontIntake true). Collect grouped duration and scope answers before setup, then follow its next action. Reuse the explicitly saved application selection or open the returned review-type picker. Code only needs a repository; running app only needs its URL; combined needs both. Complete automatic setup steps without further questions, showing only the selected app and exact scope approval before testing. Offer source-only review while live setup is pending only when source was selected. No searches of .demo history and no MCP syntax for the user to execute. Complete the assessment worklist. Show source known-work and live audit phase/check/HTTP/Muse counts, elapsed time, and honest ETA uncertainty between bounded calls. Keep working means continue testing. Report recommendations and save regressions; never edit application source or configuration without a separate explicit remediation request.'}}]});return;}
     if(method==='resources/read'){
       if(params.uri!=='bypass://context'){error(id,-32602,'Unknown resource');return;}
       try{const data=await context();respond(id,{contents:[{uri:params.uri,mimeType:'application/json',text:JSON.stringify(redact(data))}]});}catch(e){error(id,-32001,e.message);}return;
@@ -232,26 +232,44 @@ export async function serveMCP(cwd=process.cwd(),io={input:process.stdin,output:
       else if(t.command==='plugin-dashboard')result=pluginDashboard(selectedRoot);
       else if(t.command==='onboarding'){
         if(setupChoices.combinedScanStarted){
-          for(const key of ['methods','rps','modelCalls','minutes','scopeApproved','combinedWizardStarted','combinedScanStarted'])delete setupChoices[key];
+          for(const key of ['paths','methods','rps','modelCalls','minutes','auditPreset','scopePreset','scopeApproved','combinedWizardStarted','combinedScanStarted'])delete setupChoices[key];
         }
         if(args.mode&&setupChoices.mode&&args.mode!==setupChoices.mode){
-          for(const key of ['methods','rps','modelCalls','minutes','scopeApproved','combinedWizardStarted'])delete setupChoices[key];
+          for(const key of ['paths','methods','rps','modelCalls','minutes','auditPreset','scopePreset','scopeApproved','combinedWizardStarted'])delete setupChoices[key];
         }
         if(args.url&&setupChoices.url&&appOriginInput(args.url)!==appOriginInput(setupChoices.url)){
-          for(const key of ['environment','methods','rps','modelCalls','minutes','scopeApproved','combinedWizardStarted'])delete setupChoices[key];
+          for(const key of ['environment','paths','methods','rps','modelCalls','minutes','auditPreset','scopePreset','scopeApproved','combinedWizardStarted'])delete setupChoices[key];
         }
+        if(args.auditPreset&&args.auditPreset!==setupChoices.auditPreset){
+          delete setupChoices.minutes;delete setupChoices.modelCalls;delete setupChoices.scopeApproved;
+        }
+        if(args.scopePreset&&args.scopePreset!==setupChoices.scopePreset){
+          for(const key of ['paths','methods','rps','scopeApproved'])delete setupChoices[key];
+        }
+        if(['paths','methods','rps','modelCalls','minutes'].some(key=>args[key]!=null&&args[key]!==setupChoices[key]))
+          delete setupChoices.scopeApproved;
         if(args.url&&!args.mode&&setupChoices.mode==='code')setupChoices.mode='combined';
         setupChoices={...setupChoices,...args};
+        if(setupChoices.auditPreset){
+          setupChoices.minutes??={quick:10,standard:30,thorough:60}[setupChoices.auditPreset];
+          setupChoices.modelCalls??=setupChoices.auditPreset==='thorough'?240:120;
+        }
+        if(setupChoices.scopePreset){
+          const saved=selectedRoot&&read(selectedRoot).targets.find(item=>item.name===read(selectedRoot).activeTarget)?.authorization;
+          setupChoices.paths??=setupChoices.scopePreset==='all'?'/':saved?.paths?.join(',')||'/';
+          setupChoices.methods??=(setupChoices.scopePreset==='all'?recommendedMethods:saved?.methods||recommendedMethods).join(',');
+          setupChoices.rps??=setupChoices.scopePreset==='all'?DEFAULT_REQUESTS_PER_SECOND:saved?.maxRequestsPerSecond||DEFAULT_REQUESTS_PER_SECOND;
+        }
         delete setupChoices.reviewScope;
         if(selectedRoot&&setupChoices.mode)await change(selectedRoot,state=>{state.settings.reviewMode=setupChoices.mode;});
         result=outcome(await wizard({reviewScope:args.reviewScope,signal:controller.signal}));
         setupChoices.mode??=result.mode;
-        if(['methods','rps','model-calls','minutes'].includes(result.stage))setupChoices.combinedWizardStarted=true;
+        if(['methods','rps','model-calls','minutes'].includes(result.stage)||setupChoices.upfrontIntake&&setupChoices.mode==='combined'&&setupChoices.auditPreset&&setupChoices.scopePreset)setupChoices.combinedWizardStarted=true;
       }else if(t.command==='app-session'){
         need(!selecting,'Repository selection is already in progress.');selecting=true;
         try{
           result=await execute('app connect',[],args,operationContext);selectedRoot=result.root;
-          setupChoices={mode:'live',url:args.url,environment:args.environment};
+          setupChoices={...setupChoices,mode:'live',url:args.url,environment:args.environment};
           rememberSelection(cwd,selectedRoot);
           result.onboarding=await wizard();
           result.nextAction=result.onboarding.nextAction;
@@ -333,8 +351,9 @@ export async function serveMCP(cwd=process.cwd(),io={input:process.stdin,output:
               'Complete the combined audit settings and approve the displayed scope before starting.');
             const approved=read(selectedRoot).targets.find(item=>item.name===read(selectedRoot).activeTarget)?.authorization;
             need(approved&&JSON.stringify(approved.methods)===JSON.stringify(httpMethods(setupChoices.methods))&&
-              approved.maxRequestsPerSecond===setupChoices.rps,
-              'The saved testing scope changed. Review and approve the selected methods and rate again.');
+              approved.maxRequestsPerSecond===setupChoices.rps&&
+              (!setupChoices.paths||JSON.stringify(approved.paths)===JSON.stringify(setupChoices.paths.split(',').map(item=>item.trim()).filter(Boolean))),
+              'The saved testing scope changed. Review and approve the selected paths, methods and rate again.');
             args.modelCalls=setupChoices.modelCalls;
             args.minutes=setupChoices.minutes;
           }
@@ -347,11 +366,20 @@ export async function serveMCP(cwd=process.cwd(),io={input:process.stdin,output:
           for(const key of ['scope-file','file','body-file'])if(options[key])options[key]=projectPath(options[key],selectedRoot);
           result=await execute(t.command,t.makeArgs(args),options,{...operationContext,cwd:selectedRoot});
           if(t.command==='scan'&&setupChoices.combinedWizardStarted)setupChoices.combinedScanStarted=true;
-          if(t.command==='target authorize'&&setupChoices.mode==='combined'&&setupChoices.methods!=null&&setupChoices.rps!=null){
+          if(t.command==='target authorize'&&['combined','live'].includes(setupChoices.mode)&&setupChoices.methods!=null&&setupChoices.rps!=null){
             const approved=read(selectedRoot).targets.find(item=>item.name===args.name)?.authorization;
+            if(approved&&setupChoices.upfrontIntake){
+              if(JSON.stringify(approved.methods)!==JSON.stringify(httpMethods(setupChoices.methods))||
+                approved.maxRequestsPerSecond!==setupChoices.rps||
+                JSON.stringify(approved.paths)!==JSON.stringify(setupChoices.paths?.split(',').map(item=>item.trim()).filter(Boolean)))
+                setupChoices.scopePreset='custom';
+              setupChoices.paths=approved.paths.join(',');setupChoices.methods=approved.methods.join(',');
+              setupChoices.rps=approved.maxRequestsPerSecond;
+            }
             setupChoices.scopeApproved=!!approved&&
               JSON.stringify(approved.methods)===JSON.stringify(httpMethods(setupChoices.methods))&&
-              approved.maxRequestsPerSecond===setupChoices.rps;
+              approved.maxRequestsPerSecond===setupChoices.rps&&
+              (!setupChoices.paths||JSON.stringify(approved.paths)===JSON.stringify(setupChoices.paths.split(',').map(item=>item.trim()).filter(Boolean)));
           }
           if(t.command==='target add'){
             result.message=result.target.ownership.status==='verified'?`App address saved. Ownership already verified for ${new URL(result.target.url).hostname}.`:'App address saved. No app requests have been made.';

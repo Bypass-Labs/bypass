@@ -95,6 +95,29 @@ test('a deferred model experiment does not serialize ready web checks', async ()
   assert.equal(run.results.filter(item => item.kind === 'model-differential').length, 1);
 });
 
+test('independent authenticated GET controls overlap without mixing lead evidence', async () => {
+  const scope = loadScope({origin: 'http://127.0.0.1:4339',
+    overrides: {acceptLocal: true, agents: 4, rps: 40}}).scope;
+  const leads = ['/jump-one', '/jump-two'].map(path => ({kind: 'open-redirect',
+    priority: 10, lead: {path, parameter: 'next', as: 'owner'}}));
+  let active = 0, peak = 0, requests = 0;
+  const requester = async () => {
+    active++;
+    peak = Math.max(peak, active);
+    await new Promise(resolve => setTimeout(resolve, 30));
+    active--;
+    return {status: 302, type: 'text/plain', body: '',
+      headers: {location: '/safe'}, evidenceId: `ev-${++requests}`};
+  };
+  const run = await runWebProbes({patterns: []}, scope,
+    {requester, budget: 2, carryForward: leads});
+  assert.ok(peak >= 2, `authenticated GETs stayed serial (peak ${peak})`);
+  assert.equal(run.modelCoverage.concurrentCredentialedReadsStarted, 2);
+  assert.deepEqual(run.results.filter(item => item.kind === 'open-redirect')
+    .map(item => item.lead.path), ['/jump-one', '/jump-two']);
+  assert.equal(new Set(run.results.flatMap(item => item.evidence ?? [])).size, 2);
+});
+
 test('fresh independent Muse GET experiments overlap and keep ordered checkpoints', async () => {
   const scope = loadScope({origin: 'http://127.0.0.1:4338',
     overrides: {acceptLocal: true, agents: 2}}).scope;

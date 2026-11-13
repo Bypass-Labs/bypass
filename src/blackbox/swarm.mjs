@@ -3,6 +3,7 @@
 // section 15 is the requester's), 9.3 (fresh re-execution of confirmed results) and 9.4 (identity control, role parity).
 // Every exchange goes through the injected guarded requester; verdicts come from the injected decide().
 import {harvestIds} from './recon.mjs';
+import {ownerControlFailure} from './verdict.mjs';
 
 const MAX_AGENTS = 100;
 const DENIED = new Set([401, 403, 404]);
@@ -94,6 +95,13 @@ async function runTask(task, { send, agent, steps, decide, surface, scope }) {
   const exchange = (identity, verb, url, step) => send({ url, identity, method: verb, step, task: task.id, agent });
   const O = await exchange(task.control.as ?? 'owner', 'GET', task.control.url, steps.control);
   if (failed(O)) return blockedResult(task, 'control', [O]);
+  const owner = summarize(O);
+  const preflight = ownerControlFailure(task, owner, surface);
+  if (preflight)
+    return {task, verdict: preflight.verdict, rule: preflight.rule,
+      reason: preflight.reason ?? '',
+      evidence: unique([...(task.supportEvidence ?? []), ...(preflight.evidence ?? []),
+        O.evidenceId]), O: owner, T: null, A: null};
   const T = await exchange(task.request.as, method, task.request.url, steps.task);
   if (failed(T)) return blockedResult(task, 'task', [O, T]);
   const A = task.request.as === 'anonymous' ? T : await exchange('anonymous', method, task.request.url, steps.anonymous);

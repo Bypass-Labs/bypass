@@ -146,6 +146,33 @@ export async function deriveLocalPostScope(scope, mined, requester) {
     authAdmitted: [...authAdmitted.values()], methodAdmitted: [...methodAdmitted.values()], skipped};
 }
 
+/** Keep public, scope-admitted POST contracts when account recon maps private routes. */
+export function mergeAdmittedOperations(surface, localPosts) {
+  const merged = {...surface};
+  const add = (field, additions, key) => {
+    const entries = new Map((surface[field] ?? []).map(item => [key(item), item]));
+    for (const item of additions) {
+      const identity = key(item);
+      const existing = entries.get(identity);
+      entries.set(identity, existing ? {...item, ...existing,
+        fields: [...new Set([...(existing.fields ?? []), ...(item.fields ?? [])])]} : item);
+    }
+    merged[field] = [...entries.values()];
+  };
+  const posts = localPosts?.admitted ?? [];
+  const operation = item => ({path: item.path, method: 'POST',
+    contentType: item.contentType, fields: item.fields, requiredFields: [],
+    source: item.source});
+  add('jsonBodyOperations', posts.filter(item => item.bodyEncoding === 'json')
+    .map(operation), item => item.path);
+  add('formBodyOperations', posts.filter(item => item.bodyEncoding === 'form')
+    .map(operation), item => item.path);
+  add('authBodyOperations', localPosts?.authAdmitted ?? [], item => item.path);
+  add('methodOperations', localPosts?.methodAdmitted ?? [], item =>
+    `${item.method} ${item.placement} ${item.path}`);
+  return merged;
+}
+
 /** Documented anonymous routes available without an account, for bounded web probes. */
 export async function anonymousSurface(scope, requester, mined) {
   const patterns = new Map();

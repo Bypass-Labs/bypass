@@ -12,6 +12,7 @@ import path from 'node:path';
 import { testRegistration, registrationStatus } from './registration.mjs';
 import { hostAI } from './execution-mode.mjs';
 import { sourceContextFromFindings } from './audit-engine.mjs';
+import { findingSummary } from './review-report.mjs';
 import { id, now, named, need, outcome, hash, abortFault, redact } from './util.mjs';
 
 const HOST_SOURCE_BYTES=2000000;
@@ -258,11 +259,22 @@ const receipt=(root,run)=>{const state=read(root),work=workProgress(run,state);
   const remediation=['completed','incomplete'].includes(run.status)&&
     !runningValidation&&!broadRunning&&(!pendingValidation.length||combinedBudget?.exhausted)&&confirmedValidation.length?
     {confirmed:confirmedValidation,untested:pendingValidation.map(item=>item.finding),
-    message:`Offer to fix all confirmed issues and open a PR. Application edits require the user to select that remediation action.${pendingValidation.length?` ${pendingValidation.length} source leads remain untested due the combined audit limit.`:''}`}:null;
+    message:`First review every distinct finding and its evidence with the user. Offer fixes only after that review; application edits require a separate selection.${pendingValidation.length?` ${pendingValidation.length} source leads remain untested due the combined audit limit.`:''}`}:null;
+  const reviewFindings=state.findings.filter(item=>item.lastRunId===run.id&&!item.simulation);
+  const reviewSummary=findingSummary(reviewFindings);
+  const reviewDetails={summary:reviewSummary,issueIds:reviewSummary.issues.map(item=>item.id),
+    sourceRun:run.id,liveRun:broad.latest?.run||null,
+    report:broad.latest?`${root}/.bypass/runs/${broad.latest.run}/report.md`:null,
+    nextAction:{tool:'bypass_findings',arguments:{run:run.id},
+      message:'Read the full list, then call bypass_finding for each distinct issue before asking about fixes.'}};
   return ({runId:run.id,status:run.status,executionMode:'muse-host',pluginModelCalls:0,simulation:false,coverageComplete:false,
   assessmentPolicy,work,continueRequired:run.status==='awaiting_host'&&work.pending>0,
-  progress:{stage:run.stage,work,lastCompleted:run.steps.at(-1)||null,elapsedSeconds:Math.floor((Date.now()-Date.parse(run.startedAt))/1000),waitingSeconds:Math.floor((Date.now()-Date.parse(run.steps.at(-1)?.at||run.startedAt))/1000),waitingFor:run.status==='awaiting_host'?'Muse reasoning; no internal worker':null,resume:{tool:'bypass_review_step',arguments:{id:run.id,action:run.status==='cancelled'?'resume':'status'}},cancel:{tool:'bypass_stop_run',arguments:{id:run.id}}},
-  evidence:`${root}/.bypass/runs/${run.id}.json`,findings:run.result?.findings||[],liveValidation,
+  progress:{stage:run.stage,work,
+    knownWork:{addressed:Math.max(0,work.total-work.pending),total:work.total,
+      percent:work.total?Math.min(100,Math.floor(100*(work.total-work.pending)/work.total)):null,
+      meaning:'Share of currently known source and configured checks addressed; new work can be discovered. This is not security coverage.'},
+    lastCompleted:run.steps.at(-1)||null,elapsedSeconds:Math.floor((Date.now()-Date.parse(run.startedAt))/1000),waitingSeconds:Math.floor((Date.now()-Date.parse(run.steps.at(-1)?.at||run.startedAt))/1000),waitingFor:run.status==='awaiting_host'?'Muse reasoning; no internal worker':null,resume:{tool:'bypass_review_step',arguments:{id:run.id,action:run.status==='cancelled'?'resume':'status'}},cancel:{tool:'bypass_stop_run',arguments:{id:run.id}}},
+  evidence:`${root}/.bypass/runs/${run.id}.json`,findings:run.result?.findings||[],liveValidation,reviewDetails,
   liveAudit:broad.latest?{runId:broad.latest.run,status:broad.latest.status,
     report:`${root}/.bypass/runs/${broad.latest.run}/report.md`,
     confirmed:(broad.latest.sealedFindings??[]).length,
@@ -277,7 +289,7 @@ const receipt=(root,run)=>{const state=read(root),work=workProgress(run,state);
       broad.latest&&!broad.latest.finishedAt?
         {tool:'bypass_blackbox_next',message:'Continue the connected full live audit in this Muse session.'}:
         {tool:'bypass_findings',arguments:{run:run.id},
-          message:broad.latest?'Show source and live outcomes together, the full live report and remaining coverage.':
+          message:broad.latest?'Read every distinct source and live finding in detail before offering fixes; include the full live report and remaining coverage.':
             'The combined time or decision budget expired before live testing began; report the live phase as untested.'}):
     ['completed','incomplete'].includes(run.status)?
     (runningValidation?{tool:'bypass_blackbox_next',message:`Continue the focused validation of ${runningValidation.finding} in this Muse session.`}:
@@ -288,7 +300,7 @@ const receipt=(root,run)=>{const state=read(root),work=workProgress(run,state);
         {tool:run.result?.findings?.length?'bypass_findings':'bypass_run',arguments:run.result?.findings?.length?{run:run.id}:{id:run.id},
           ...(remediation?{message:remediation.message}:{})}):
     {tool:'bypass_review_step',arguments:{id:run.id,action:work.next.action,...work.next.arguments},message:work.next.message},
-  guidance:remediation?'Present the proposed fixes and saved regressions for every confirmed issue, then offer the remediation choice. Only a separate explicit user selection authorizes application edits and a PR.':
+  guidance:remediation?'Call bypass_findings for this run, then bypass_finding for each distinct issue. Show severity, impact, source and live evidence, proof or unproved reason, saved regression, and recommendation. Include live-only issues and coverage limits. Only after the detailed review offer remediation choices; application edits and a PR require a separate explicit user selection.':
     'Continue the assessment until the recorded worklist has no actionable pending work. A finding is an interim update, not permission to stop or fix code. Show Done / Now / Next, elapsed time, counts, and the honest estimate or uncertainty. Read source, configure supported probes, refresh, execute controls, and record specific blockers for remaining routes. Do not edit application source or configuration. Generate recommendations and regression artifacts. A separate explicit remediation request is required for fixes.'});};
 export async function beginHostReview(root,options={},context={}) {
   const initial=read(root),plan=hostPlan(initial,options);need(!plan.blockers.length,plan.blockers.join(' '),3);
