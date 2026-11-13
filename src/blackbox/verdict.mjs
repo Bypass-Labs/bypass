@@ -134,12 +134,21 @@ function graphqlBola(task, {O, T, A}) {
 }
 
 /** Pure verdict over one owner control, task response and anonymous response. */
+export function ownerControlFailure(task, O, surface) {
+  if (task.kind === 'graphql-bola') return null;
+  const pattern = patternFor(surface, task);
+  if (O?.status !== 200 || !O?.hash ||
+      (pattern?.label?.kind === 'list' && !O?.items && !ids(O).size))
+    return rule('blocked', 'control-failed',
+      'Owner control did not return a real resource. Seed a resource owned by the first test account or choose a route with one, then rerun this check.');
+  return null;
+}
+
 export function decide(task, {O, T, A, surface, scope} = {}) {
   if (task.kind === 'graphql-bola') return graphqlBola(task, {O, T, A});
   const pattern = patternFor(surface, task);
-  if (O?.status !== 200 || !O?.hash || (pattern?.label?.kind === 'list' && !O?.items && !ids(O).size)) {
-    return rule('blocked', 'control-failed', 'Owner control did not return a real resource.');
-  }
+  const controlFailure = ownerControlFailure(task, O, surface);
+  if (controlFailure) return controlFailure;
   if (!T || !A || T.blocked || A.blocked || T.refused || A.refused) return rule('blocked', 'request-failed');
   if ([O, T, A].some(x => x.status === 429 || x.status >= 500 || (x.status >= 300 && x.status < 400)))
     return rule('inconclusive', 'response-status');

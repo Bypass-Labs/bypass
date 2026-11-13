@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import {spawnSync} from 'node:child_process';
 import http from 'node:http';
 import {loadScope} from '../src/blackbox/scope.mjs';
+import {deriveLocalPostScope, mergeAdmittedOperations} from '../src/blackbox/anonymous.mjs';
 import {followupResponseHints} from '../src/blackbox/host-audit.mjs';
 import {planWebLeads, runWebProbes, planAuthLogins, runAuthLogins,
   runAuthInvestigation, runSourceHeaderProbes} from '../src/blackbox/web-probes.mjs';
@@ -53,6 +54,24 @@ test('protected-route baseline denials are named as missing prerequisites', asyn
     assert.deepEqual(result.evidence, ['ev-recon']);
   }
 });
+
+test('known JSON routes do not consume browser HTML proof slots', async () => {
+  const {scope} = loadScope({origin: 'http://127.0.0.1:4329',
+    overrides: {acceptLocal: true}});
+  const surface = {patterns: [
+    {pattern: '/api/data', methods: ['GET'], params: {q: ['known']},
+      fingerprint: {anonymous: {status: 200, type: 'application/json'}}},
+    {pattern: '/page', methods: ['GET'], params: {q: ['known']},
+      fingerprint: {anonymous: {status: 200, type: 'text/html'}}},
+  ]};
+  const plan = await planWebLeads(surface, scope, {budget: 100});
+  for (const kind of ['xss-reflected', 'html-injection']) {
+    assert.equal(plan.leads.some(item => item.kind === kind &&
+      item.lead.path === '/api/data'), false);
+    assert.equal(plan.leads.some(item => item.kind === kind &&
+      item.lead.path === '/page'), true);
+  }
+});
 import {modelExperimentReason, safeAuthUserPayload,
   validModelExperiment} from '../src/blackbox/poc-runtime.mjs';
 import {domXssFragment, nosqlEqUrl, nosqlOperatorOracle, redirectPollutionUrl,
@@ -83,6 +102,30 @@ test('observed access-code endpoints are checked for effective throttling withou
   assert.ok(requests.every(item => JSON.parse(item.body).code.startsWith('bypass-audit-invalid-')));
   assert.equal(finding?.cwe, 'CWE-307');
   assert.equal(finding?.webProof.attemptCount, 20);
+});
+
+test('verified-account recon retains an admitted public access gate for throttling proof', async () => {
+  const {scope} = loadScope({origin: 'http://127.0.0.1:4329',
+    overrides: {acceptLocal: true, rps: 20}});
+  const mined = {endpoints: [{method: 'POST', path: '/api/beta/unlock',
+    bodyEncoding: 'json', bodyFields: ['code'],
+    purpose: 'Unlock private beta with an access code'}]};
+  const admitted = await deriveLocalPostScope(scope, mined,
+    async () => ({status: 404, body: ''}));
+  assert.equal(admitted.admitted.length, 1);
+  const surface = mergeAdmittedOperations({patterns: [], identity: {verified: true},
+    jsonBodyOperations: [], formBodyOperations: [], authBodyOperations: []}, admitted);
+  assert.deepEqual(surface.jsonBodyOperations.map(item => item.path), ['/api/beta/unlock']);
+  const requests = [];
+  const run = await runWebProbes(surface, admitted.scope, {
+    requester: async options => {
+      requests.push(options);
+      return {status: 200, type: 'application/json', body: '{"ok":false}',
+        headers: {'cache-control': 'no-store'}, evidenceId: `ev-${requests.length}`};
+    }, budget: 1});
+  assert.equal(run.results.find(item => item.kind === 'rate-limit-auth-gate')?.verdict,
+    'confirmed');
+  assert.equal(requests.length, 20);
 });
 
 test('a long audit runs a distinct Muse impact check after its primary proof', async () => {
