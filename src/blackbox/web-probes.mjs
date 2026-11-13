@@ -655,7 +655,7 @@ function ssrfFinding(lead, scope, first, second, firstHit, secondHit, firstUrl, 
       status: second.status, evidence: second.evidenceId}]};
 }
 
-function xssLeads(surface, scope, budget, {htmlOnly = false} = {}) {
+function xssLeads(surface, scope, budget) {
   const leads = [];
   for (const record of surface?.patterns ?? []) {
     const pathname = concretePath(record);
@@ -663,10 +663,6 @@ function xssLeads(surface, scope, budget, {htmlOnly = false} = {}) {
     const as = record.responseFacts?.identity === 'derived-session' ? 'derived' :
       [401, 403].includes(record.fingerprint?.anonymous?.status) &&
       record.fingerprint?.owner?.status === 200 ? 'owner' : 'anonymous';
-    const observed = as === 'owner' ? record.fingerprint?.owner :
-      record.responseFacts ?? record.fingerprint?.anonymous;
-    if (htmlOnly && observed?.status === 200 && observed.type &&
-        !/(?:text\/html|application\/xhtml\+xml)/i.test(observed.type)) continue;
     for (const parameter of Object.keys(record.params ?? {})) {
       if (!SAFE_PROBE_PARAM.test(parameter) ||
           !validateUrl(scope, pathname, {identity: as === 'derived' ? 'anonymous' : as}).ok) continue;
@@ -1900,8 +1896,8 @@ export async function planWebLeads(surface, scope, {budget = 20, infer = null, m
     ...corsLeads(surface, scope, Number.MAX_SAFE_INTEGER).leads.map(lead => ({kind: 'cors-reflection', lead, priority: 7})),
     ...ssrfLeads(surface, scope, Number.MAX_SAFE_INTEGER).leads.map(lead => ({kind: 'ssrf-loopback', lead, priority: 8})),
     ...domXssLeads(surface, scope, Number.MAX_SAFE_INTEGER).leads.map(lead => ({kind: 'xss-dom-fragment', lead, priority: 5})),
-    ...xssLeads(surface, scope, Number.MAX_SAFE_INTEGER, {htmlOnly: true}).leads.map(lead => ({kind: 'xss-reflected', lead, priority: 5})),
-    ...xssLeads(surface, scope, Number.MAX_SAFE_INTEGER, {htmlOnly: true}).leads.map(lead => ({kind: 'html-injection', lead, priority: 4})),
+    ...xssLeads(surface, scope, Number.MAX_SAFE_INTEGER).leads.map(lead => ({kind: 'xss-reflected', lead, priority: 5})),
+    ...xssLeads(surface, scope, Number.MAX_SAFE_INTEGER).leads.map(lead => ({kind: 'html-injection', lead, priority: 4})),
     ...sqlLeads(surface, scope, Number.MAX_SAFE_INTEGER).leads.map(lead =>
       ({kind: 'sql-boolean', lead, priority: sqlPriority(lead)})),
     ...nosqlLeads(surface, scope, Number.MAX_SAFE_INTEGER).leads.map(lead => ({kind: 'nosql-operator-bypass', lead, priority: 7})),

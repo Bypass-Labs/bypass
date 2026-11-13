@@ -55,23 +55,6 @@ test('protected-route baseline denials are named as missing prerequisites', asyn
   }
 });
 
-test('known JSON routes do not consume browser HTML proof slots', async () => {
-  const {scope} = loadScope({origin: 'http://127.0.0.1:4329',
-    overrides: {acceptLocal: true}});
-  const surface = {patterns: [
-    {pattern: '/api/data', methods: ['GET'], params: {q: ['known']},
-      fingerprint: {anonymous: {status: 200, type: 'application/json'}}},
-    {pattern: '/page', methods: ['GET'], params: {q: ['known']},
-      fingerprint: {anonymous: {status: 200, type: 'text/html'}}},
-  ]};
-  const plan = await planWebLeads(surface, scope, {budget: 100});
-  for (const kind of ['xss-reflected', 'html-injection']) {
-    assert.equal(plan.leads.some(item => item.kind === kind &&
-      item.lead.path === '/api/data'), false);
-    assert.equal(plan.leads.some(item => item.kind === kind &&
-      item.lead.path === '/page'), true);
-  }
-});
 import {modelExperimentReason, safeAuthUserPayload,
   validModelExperiment} from '../src/blackbox/poc-runtime.mjs';
 import {domXssFragment, nosqlEqUrl, nosqlOperatorOracle, redirectPollutionUrl,

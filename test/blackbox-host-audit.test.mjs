@@ -215,7 +215,8 @@ test('descendant test response reveals a new route that Muse tests in the same r
       response.end(JSON.stringify(url.searchParams.has('q') ?
         {nextPath: '/api/hidden'} : {status: 'ready'}));
     } else if (url.pathname === '/api/hidden' && url.searchParams.has('next')) {
-      response.writeHead(302, {location: vulnerable ? url.searchParams.get('next') : '/safe'});
+      response.writeHead(302, {location: vulnerable ?
+        encodeURI(url.searchParams.get('next') ?? '') : '/safe'});
       response.end();
     } else if (url.pathname === '/api/hidden') {
       response.writeHead(200, {'content-type': 'application/json'});

@@ -37,8 +37,7 @@ test('web workers confirm a late observed SQL lead while Muse refines an HTTP se
     const decoys = Array.from({length: 32}, (_, index) => `${prefix}/item-${index}`);
     const surface = {patterns: [...decoys, search].map(pattern => ({
       pattern, methods: ['GET'], params: {q: ['present']},
-      responseFacts: pattern === search ? {status: 200, type: 'application/json'} :
-        {status: 200},
+      responseFacts: {status: 200, type: 'application/json'},
       source: ['public-api-document'],
     }))};
     const events = [];
