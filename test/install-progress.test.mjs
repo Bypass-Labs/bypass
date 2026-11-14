@@ -13,12 +13,12 @@ test('a long Muse wait never advances stages or invents a percentage',()=>{
   const f=fixture();
   try{
     f.progress.update({phase:'install',operation:'install'});f.tick(61000);
-    assert.match(f.text(),/✓ Check setup/);assert.match(f.text(),/Install plugin · 1m 1s/);
-    assert.match(f.text(),/○ Verify installation/);assert.doesNotMatch(f.text(),/✓ Install plugin|\d+%|remaining/);
-    assert.match(f.text(),/Waiting for Muse to return/);assert.match(f.text(),/Ctrl\+C cancel/);
+    assert.match(f.chunks.join(''),/✓ Check setup/);assert.match(f.text(),/Install plugin · 1m 1s/);
+    assert.doesNotMatch(f.chunks.join(''),/✓ Install plugin|\d+%|remaining/);
+    assert.match(f.text(),/Waiting for Muse to finish/);assert.match(f.chunks.join(''),/Ctrl\+C cancel/);
     f.progress.update({phase:'verify',operation:'inspect'});
-    assert.match(f.text(),/✓ Install plugin/);assert.doesNotMatch(f.text(),/✓ Verify installation/);
-    f.progress.finish({result:{reviewRequired:true}});assert.match(f.text(),/Plugin installed and verified/);
+    assert.match(f.chunks.join(''),/✓ Install plugin/);assert.doesNotMatch(f.chunks.join(''),/✓ Verify installation/);
+    f.progress.finish({result:{reviewRequired:true}});assert.match(f.chunks.join(''),/Plugin installed and verified/);
   }finally{f.progress.finish({error:new Error('test cleanup')});}
 });
 test('failure and cancellation clear live progress without reporting success',()=>{
@@ -41,12 +41,15 @@ test('logs, CI and plain mode have no cursor escapes; NO_COLOR keeps status legi
   }
   const f=fixture({NO_COLOR:'1'});f.tick(1000);f.progress.finish();assert.doesNotMatch(f.chunks.join(''),/\x1b\[[0-9;]*m/);
 });
-test('narrow terminal retains next steps and timeout without wrapping the checklist',()=>{
+test('narrow terminal keeps one live line and shows the next step after completion',()=>{
   const f=fixture();
   try{
     f.output.columns=40;f.progress.update({phase:'install',operation:'install'});
     const frame=f.text();assert.ok(frame.split('\n').every(line=>line.length<40));
-    assert.match(frame,/Next: permissions → open Muse/);assert.match(frame,/Muse timeout: 2m/);
+    assert.match(frame,/Install plugin/);assert.match(f.chunks.join(''),/Muse timeout: 2m/);
+    assert.doesNotMatch(f.chunks.join(''),/\x1b\[[0-9]+A|\x1b\[J/);
+    f.progress.finish({result:{reviewRequired:true}});
+    assert.match(f.chunks.join(''),/Next: review permissions, then open Muse/);
   }finally{f.progress.finish();}
 });
 
