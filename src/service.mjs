@@ -1,5 +1,5 @@
 import { discoverRegistration } from './registration-discovery.mjs';
-import { assessmentCoverage, findingSummary } from './review-report.mjs';
+import { assessmentCoverage, findingSummary, findingReview } from './review-report.mjs';
 import { createAppProfile, requireSource } from './application-setup.mjs';
 import { rememberOwnership, rememberProjectOwnership, sharedOwnership, revokeOwnership, ownershipVerification, verificationDisabled, ownershipReady } from './ownership-store.mjs';
 import { executionMode, hostAI, requireStandaloneAPI } from './execution-mode.mjs';
@@ -431,7 +431,12 @@ export async function execute(key,args=[],o={},context={}){
         httpWorkers:o['http-workers']!=null?Number(o['http-workers']):undefined},
       !!o.detach,context.signal,context.onProgress);
     }
-    case 'finding list':{const findings=filter(activeFindings(s),{...o,lastRunId:o.run},['target','status','severity','lastRunId']);result={findings,summary:findingSummary(findings)};break;}
+    case 'finding list':{
+      const findings=filter(activeFindings(s),{...o,lastRunId:o.run},['target','status','severity','lastRunId']);
+      const run=o.run?s.runs.find(item=>item.id===o.run):null;
+      result={...(run?{review:findingReview(root,run,findings)}:{}),
+        summary:findingSummary(findings),findings};break;
+    }
     case 'finding show':result={finding:named(s.findings,args[0],'Finding')};break;
     case 'verify':case 'retest':return verifyFinding(root,args[0],{target:o.target,build:o.build,retest:key==='retest',signal:context.signal});
     case 'test list':result={checks:filter(s.checks,o,['target'])};break;

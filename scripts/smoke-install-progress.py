@@ -52,12 +52,6 @@ state.write_text(FIXTURE);print('{"installed":true}')
                     except OSError:break
                     if not chunk:break
                     transcript+=chunk
-                    if installing.exists() and b'\x1b[J' in transcript:
-                        current=transcript.rsplit(b'\x1b[J',1)[-1]
-                        plain=ansi.sub(b'',current).decode(errors='replace')
-                        if '○ Verify installation' in plain and 'Installing tools' in plain:
-                            frames.append(current)
-                            if '1s' in plain:snapshot=current
                     if installing.exists() and not sent:
                         if mode.startswith('cancel'):os.kill(pid,signal.SIGINT);sent=True
                         elif mode=='resize':
@@ -74,16 +68,21 @@ state.write_text(FIXTURE);print('{"installed":true}')
                 os.kill(pid,signal.SIGKILL);os.waitpid(pid,0)
                 raise AssertionError('Setup hung: '+transcript[-4000:].decode(errors='replace'))
             plain=ansi.sub(b'',transcript).decode(errors='replace')
+            frames=[row for row in re.findall(rb'\x1b\[2K([^\r\n]+)',transcript)
+                    if b'Install plugin' in row and b'\xe2\xa0' in row]
+            snapshot=next((row for row in frames if b'1s' in row),None)
+            (artifacts/(mode+'-transcript.ansi')).write_bytes(transcript)
             expected=130 if mode.startswith('cancel') else 3 if mode=='failure' else 0
             assert os.waitstatus_to_exitcode(status)==expected,plain[-4000:]
-            assert 'Check setup' in plain and '○ Verify installation' in plain
+            assert 'Check setup' in plain and 'Install plugin' in plain
             assert 'Still installing the plugin' not in plain
             assert '\x1b[?25l' not in transcript.decode(errors='replace'),'Installer must not leave the cursor hidden'
+            assert not re.search(rb'\x1b\[[0-9]+A|\x1b\[J',transcript),'Installer must not move across terminal scroll boundaries'
             operations=[json.loads(line)[1] for line in calls.read_text().splitlines()]
             if mode in ['success','narrow','resize']:
                 assert 'Plugin installed and verified' in plain and 'Runtime' in plain
                 assert operations==['inspect','validate','install','inspect','inspect'],operations
-                assert len(frames)>=4 and len(set(frames))>=3,'Spinner did not redraw during the slow host operation'
+                assert len(frames)>=4 and len(set(frames))>=3,f'Spinner did not redraw during the slow host operation: frames={len(frames)} distinct={len(set(frames))} tail={transcript[-350:]!r}'
                 assert snapshot is not None
                 (artifacts/(mode+'.ansi')).write_bytes(snapshot)
                 if mode in ['narrow','resize']:

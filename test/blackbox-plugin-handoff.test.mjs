@@ -71,6 +71,9 @@ for(const packaged of [false,true])test(
   assert.equal(final.result.stats.model,'muse-code-session');
   assert.ok(Array.isArray(final.result.findings),'app-only findings remain available in the terminal result');
   assert.ok(fs.existsSync(final.result.reportPath),'the full app-only report is available for review');
+  assert.equal(final.review.reportPath,final.result.reportPath);
+  assert.match(final.review.presentation,/Running-app security audit results/);
+  assert.match(final.review.presentation,/Full report: /);
   assert.ok(fs.existsSync(path.join(selected,'.bypass/runs',final.result.run,'evidence.jsonl')));
   assert.equal(await client.close(),0);
 });

@@ -1,3 +1,5 @@
+import fs from 'node:fs';
+import path from 'node:path';
 import { createWorklist, workProgress, routeMatches } from './review-worklist.mjs';
 import { need } from './util.mjs';
 
@@ -16,6 +18,112 @@ export function findingSummary(findings){
     return {id:primary.id,title:primary.title,status:primary.status,category:primary.category,severity:primary.severity,severityBasis:primary.status==='confirmed'?'confirmed behavior; impact still requires context':'provisional source assessment',recordIds:records.map(f=>f.id)};
   });
   return {records:findings.length,distinctIssues:issues.length,confirmed:issues.filter(f=>f.status==='confirmed').length,duplicateRecords:findings.length-issues.length,issues};
+}
+
+// The MCP host hides tool results in its activity log. Return a complete,
+// user-facing review in one result so the host can display it before asking
+// whether to inspect evidence or edit the application.
+export function findingReview(root,run,findings){
+  const summary=findingSummary(findings);
+  const liveRun=run?.result?.blackbox?.run||null;
+  const runDir=liveRun?path.join(root,'.bypass','runs',liveRun):null;
+  const reportPath=runDir?path.join(runDir,'report.md'):null;
+  let live=null;
+  if(runDir)try{live=JSON.parse(fs.readFileSync(path.join(runDir,'report.json'),'utf8'));}catch{}
+  const liveById=new Map((live?.findings||[]).map(item=>[item.id,item]));
+  const byId=new Map(findings.map(item=>[item.id,item]));
+  const issues=summary.issues.map(group=>{
+    const records=group.recordIds.map(id=>byId.get(id)).filter(Boolean);
+    const primary=byId.get(group.id);
+    const proofId=records.map(item=>item.verification?.blackboxFindingId).find(Boolean)||null;
+    const proof=proofId?liveById.get(proofId):null;
+    const responseEffectOnly=proof?.kind==='model-raw-boundary'&&proof?.severity==='unrated';
+    const source=records.find(item=>item.sourceEvidence?.kind==='source')?.sourceEvidence;
+    const hostVerification=records.find(item=>item.verification?.controls?.length)?.verification;
+    const linkedRun=records.find(item=>item.verification?.blackboxFindingId===proofId)?.verification?.blackboxRun||liveRun;
+    const check=proofId&&linkedRun?path.join(root,'tests','security','blackbox',`${linkedRun}-${proofId}.test.mjs`):null;
+    return {id:group.id,recordIds:group.recordIds,title:primary.title,
+      status:responseEffectOnly?'response effect confirmed; exploit impact unproven':group.status,
+      severity:responseEffectOnly?'unrated':group.severity,
+      severityBasis:responseEffectOnly?'Fresh positive response marker differed from controls; no exploit effect was rated':group.severityBasis,
+      path:primary.resourcePath||proof?.pattern||null,
+      source:source?{file:source.file,line:source.line}:null,
+      impact:responseEffectOnly?'Security impact not established by this proof.':primary.impact||'Business impact not established by this proof.',
+      liveProof:proofId?{id:proofId,verdict:proof?.verdict||'recorded',
+        evidence:proof?.evidence||[],confirmation:proof?.confirmation||[],
+        controls:(proof?.evidenceTable||[]).filter(item=>item.status!=null).slice(0,12)
+          .map(item=>`${item.identity||'unknown'} ${item.method||'HTTP'} ${item.status} (${item.id})`),
+        file:proof?.proof||(linkedRun?path.join(root,'.bypass','runs',linkedRun,'poc',proofId,'poc.mjs'):'No proof file recorded')}:null,
+      hostControls:hostVerification?.controls?.map(item=>`${item.label} HTTP ${item.status}`)||[],
+      unprovenReason:proofId?null:group.status==='confirmed'?
+        'No connected black-box proof is linked; see the configured HTTP probe controls and source run evidence.':
+        'No completed live proof is linked to this source lead.',
+      regression:check&&fs.existsSync(check)?check:null,
+      recommendation:primary.recommendation||'Investigate the recorded behavior and validate the expected access policy.'};
+  });
+  const coverage={blocked:live?.summary?.blocked??null,inconclusive:live?.summary?.inconclusive??null,
+    complete:live?.coverage?.complete===true,
+    limitations:(live?.limitations||[]).filter(item=>/identit|account|same-role|time window|probe catalog|silence is not safety/i.test(item)).slice(0,8)};
+  const sourceRunPath=run?path.join(root,'.bypass','runs',`${run.id}.json`):null;
+  const savedReportPath=reportPath&&fs.existsSync(reportPath)?reportPath:null;
+  const withoutConnectedProof=issues.filter(item=>!item.liveProof).length;
+  const securityProofs=issues.filter(item=>item.status==='confirmed').length;
+  const responseEffects=issues.filter(item=>item.status.startsWith('response effect')).length;
+  const lines=[`# Security audit results`,
+    `Source review: ${run?.id||'unknown'}${liveRun?` · Live audit: ${liveRun}`:' · No connected live audit'}`,
+    `Full report: ${savedReportPath||'No connected live report'}`,
+    `Source evidence: ${sourceRunPath||'none'}`,
+    `${summary.records} review ${summary.records===1?'entry':'entries'} from ${live?.findings?.length??0} connected live ${live?.findings?.length===1?'proof':'proofs'}; ${withoutConnectedProof} ${withoutConnectedProof===1?'entry has':'entries have'} no linked black-box proof. Related entries may share a root cause. ${securityProofs} security proof ${securityProofs===1?'record':'records'}, ${responseEffects} unrated response ${responseEffects===1?'effect':'effects'}.`,
+    `Coverage: ${coverage.complete?'recorded complete':'partial'}${coverage.blocked!=null?` · ${coverage.blocked} blocked · ${coverage.inconclusive} inconclusive`:''}.`,
+    ...coverage.limitations.map(item=>`- Limit: ${item}`),
+    ''];
+  for(const [index,item] of issues.entries()){
+    lines.push(`## ${index+1}. ${item.title}`,
+      `Status: ${item.status} · Severity: ${item.severity}. ${item.severityBasis}.`,
+      `Path: ${item.path||'not recorded'}${item.source?` · Source: ${item.source.file}:${item.source.line}`:''}`,
+      `Impact: ${item.impact}`,
+      item.liveProof?`Live proof: ${item.liveProof.id} · ${item.liveProof.verdict} · Evidence: ${item.liveProof.evidence.join(', ')||'see proof'} · Fresh confirmation: ${item.liveProof.confirmation.join(', ')||'see report'}`:`Live proof: none. ${item.unprovenReason}`,
+      ...(item.liveProof?[`Proof file: ${item.liveProof.file}`]:[]),
+      ...(item.liveProof?.controls.length?[`Observed controls: ${item.liveProof.controls.join('; ')}`]:[]),
+      ...(!item.liveProof&&item.hostControls.length?[`Configured HTTP controls: ${item.hostControls.join('; ')}`]:[]),
+      `Regression: ${item.regression||'No exported regression found at the default path.'}`,
+      `Recommendation: ${item.recommendation}`,'');
+  }
+  lines.push(`Full report: ${savedReportPath||'No connected live report'}`);
+  return {presentation:lines.join('\n'),summary,issues,coverage,
+    paths:{liveReport:savedReportPath,sourceRun:sourceRunPath}};
+}
+
+export function blackboxFindingReview(root,result){
+  const reportPath=result?.reportPath||null;
+  let report=null;
+  if(reportPath)try{report=JSON.parse(fs.readFileSync(path.join(path.dirname(reportPath),'report.json'),'utf8'));}catch{}
+  if(!report)return null;
+  const liveRun=report.header?.run||result.run||'unknown';
+  const liveFindings=report.findings||[];
+  const responseEffects=liveFindings.filter(item=>item.kind==='model-raw-boundary'&&item.severity==='unrated').length;
+  const lines=['# Running-app security audit results',
+    `Target: ${report.header?.origin||'unknown'} · Run: ${liveRun}`,
+    `Full report: ${reportPath}`,
+    `${liveFindings.length} proof records: ${liveFindings.length-responseEffects} security findings, ${responseEffects} unrated response effects. Related routes may share a root cause.`,
+    `Coverage: ${report.coverage?.complete?'recorded complete':'partial'} · ${report.summary?.blocked??0} blocked · ${report.summary?.inconclusive??0} inconclusive.`,
+    ...(report.limitations||[]).filter(item=>/identit|account|same-role|time window|probe catalog|silence is not safety/i.test(item)).slice(0,8).map(item=>`- Limit: ${item}`),''];
+  for(const [index,item] of liveFindings.entries()){
+    const effect=item.kind==='model-raw-boundary'&&item.severity==='unrated';
+    const check=path.join(root,'tests','security','blackbox',`${liveRun}-${item.id}.test.mjs`);
+    lines.push(`## ${index+1}. ${item.title}`,
+      `Status: ${effect?'response effect confirmed; exploit impact unproven':item.verdict} · Severity: ${item.severity||'unrated'}.`,
+      `Path: ${item.pattern||item.url||'not recorded'}`,
+      `Impact: ${effect?'Security impact not established by this proof.':item.assessment?.impact||'Business impact not established by this proof.'}`,
+      `Proof: ${item.id} · Evidence: ${(item.evidence||[]).join(', ')||'see proof'} · Fresh confirmation: ${(item.confirmation||[]).join(', ')||'see report'}`,
+      `Proof file: ${item.proof||path.join(path.dirname(reportPath),'poc',item.id,'poc.mjs')}`,
+      `Observed controls: ${(item.evidenceTable||[]).filter(row=>row.status!=null).slice(0,12).map(row=>`${row.identity||'unknown'} ${row.method||'HTTP'} ${row.status} (${row.id})`).join('; ')||'see full report'}`,
+      `Regression: ${fs.existsSync(check)?check:'No exported regression found at the default path.'}`,
+      `Recommendation: ${item.assessment?.remediation||item.remediation||'Investigate the recorded behavior and intended access policy.'}`,'');
+  }
+  lines.push(`Full report: ${reportPath}`);
+  return {presentation:lines.join('\n'),run:report.header?.run||result.run||null,
+    findings:liveFindings.length,reportPath};
 }
 
 export function assessmentCoverage(state,currentInventory,{run:runId,target}={}){
