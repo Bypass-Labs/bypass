@@ -14,7 +14,9 @@ function findingFact(item) {
     confirmation: (item.confirmation ?? []).slice(0, 20),
     reach: {observed: item.reach?.observed ?? null, basis: clean(item.reach?.basis)},
     tags: (item.tags ?? []).slice(0, 12).map(value => clean(value, 100)),
-    proofExecuted: !!item.proof};
+    proofExecuted: !!item.proof,
+    ...(item.kind==='rate-limit-auth-gate'&&item.webProof?.mode==='login'?{proofLimit:
+      'The burst uses one synthetic nonexistent identity. Real-account lockout and distributed-source controls were not tested.'}:{})};
 }
 
 function chainFact(item) {
@@ -70,7 +72,7 @@ export async function assessFindings(findings, chains = [], {infer = null, model
     activeWorkers++;
     modelCoverage.workerPeak = Math.max(modelCoverage.workerPeak, activeWorkers);
     try {
-      const response = await infer(model, [{role: 'system', content: 'Assess only these independently proved HTTP findings and sealed, confirmed compound chains. Explain impact, preconditions and remediation in plain language using the recorded steps and evidence. Chain notes are interpretation, not new findings. Do not add a finding or chain, upgrade severity, claim code execution, or invent a victim count. Return notes only for exact supplied IDs.'},
+      const response = await infer(model, [{role: 'system', content: 'Assess only these independently proved HTTP findings and sealed, confirmed compound chains. Explain impact, preconditions and remediation in plain language using the recorded steps and evidence. Chain notes are interpretation, not new findings. Do not add a finding or chain, upgrade severity, claim code execution, invent a victim count, or generalize beyond a proofLimit. Return notes only for exact supplied IDs.'},
         {role: 'user', content: JSON.stringify(context)}], {schema: {type: 'object', properties: {
         notes: {type: 'array', maxItems: PAGE_FINDINGS, items: {type: 'object', properties: {
           id: {type: 'string'}, impact: {type: 'string', maxLength: 700},
@@ -121,6 +123,10 @@ export async function assessFindings(findings, chains = [], {infer = null, model
   }
   for (const finding of findings) {
     const note = notes.find(item => item.id === finding.id);
+    if (note && finding.kind==='rate-limit-auth-gate'&&finding.webProof?.mode==='login'){
+      note.impact='Rapid invalid attempts against one synthetic nonexistent identity received explicit denials without a visible throttling signal. Per-account lockout for known identities and distributed-source controls were not tested.';
+      note.preconditions='Network access to the observed login route. The saved proof did not attempt a known account.';
+    }
     if (note) finding.assessment = note;
   }
   for (const chain of chains) {

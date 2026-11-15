@@ -337,9 +337,9 @@ function rateLimitFinding(lead, scope, responses, outcome, elapsedMs) {
   const url = new URL(lead.path, scope.target.origin);
   const evidence = responses.map(item => item.evidenceId).filter(Boolean);
   return {kind: 'rate-limit-auth-gate',
-    title: `No effective throttling ${scope.target.environment === 'local' ?
+    title: `No visible throttling ${scope.target.environment === 'local' ?
       'on this local target ' : ''}after ${responses.length} rapid invalid ${lead.mode === 'login' ?
-      'login' : 'access-code'} attempts: ${lead.path}`,
+      'synthetic-account login' : 'access-code'} attempts: ${lead.path}`,
     severity: 'medium', owasp: 'A07 Identification and Authentication Failures', cwe: 'CWE-307',
     pattern: lead.path, url: url.href, host: url.host, task: null, verdict: 'confirmed',
     rule: `confirmed/rate-limit-auth-gate/${responses.length}-rapid-invalid-attempts-no-throttle`,

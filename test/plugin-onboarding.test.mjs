@@ -155,6 +155,7 @@ test('upfront intake collects one plan and proceeds directly to exact scope appr
   const authorized=await client.call('bypass_authorize_target',{
     name:'app',paths:'/',methods:recommendedMethods.join(','),rps:20,accept:true});
   assert.equal(authorized.onboarding.stage,'ready');
+  assert.match(authorized.onboarding.sourceRevisionWarning,/no Git commit/);
   assert.deepEqual(authorized.nextAction.arguments,{mode:'combined',modelCalls:120,minutes:10});
   const scan=await client.call('bypass_scan',{mode:'combined'});
   const run=read(root).runs.find(item=>item.id===scan.runId);

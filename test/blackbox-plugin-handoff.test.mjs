@@ -52,17 +52,20 @@ for(const packaged of [false,true])test(
   assert.equal(started.status,'running');
   let count=0, cursor=0, final;
   const deadline=Date.now()+55000;
+  let state=await client.call('bypass_blackbox_next',{after:cursor});
   while(Date.now()<deadline){
-    const state=await client.call('bypass_blackbox_next',{after:cursor});
     cursor=state.cursor;
-    for(const pending of state.pending){
+    if(state.status!=='running'){final=state;break;}
+    if(state.pending.length){
+      const pending=state.pending[0];
       assert.ok(pending.schema && Array.isArray(pending.messages));
       assert.doesNotMatch(JSON.stringify(pending),/META_API_KEY|MODEL_API_KEY/);
-      await client.call('bypass_blackbox_submit',{id:pending.id,decision:blank(pending.schema)});
+      state=await client.call('bypass_blackbox_submit',{id:pending.id,decision:blank(pending.schema)});
+      assert.equal(state.accepted,true);
       count++;
+      continue;
     }
-    if(state.status!=='running'){final=state;break;}
-    await new Promise(resolve=>setTimeout(resolve,100));
+    state=await client.call('bypass_blackbox_next',{after:cursor});
   }
   assert.ok(final,'blackbox audit did not finish');
   assert.equal(final.status,'completed',JSON.stringify(final.error));
