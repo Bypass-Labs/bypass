@@ -434,8 +434,8 @@ export async function execute(key,args=[],o={},context={}){
     case 'finding list':{
       const findings=filter(activeFindings(s),{...o,lastRunId:o.run},['target','status','severity','lastRunId']);
       const run=o.run?s.runs.find(item=>item.id===o.run):null;
-      result={findings,summary:findingSummary(findings),
-        ...(run?{review:findingReview(root,run,findings)}:{})};break;
+      result={...(run?{review:findingReview(root,run,findings)}:{}),
+        summary:findingSummary(findings),findings};break;
     }
     case 'finding show':result={finding:named(s.findings,args[0],'Finding')};break;
     case 'verify':case 'retest':return verifyFinding(root,args[0],{target:o.target,build:o.build,retest:key==='retest',signal:context.signal});

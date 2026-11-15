@@ -110,6 +110,8 @@ test('a source hypothesis created before its probe becomes the single confirmed 
   await c.call('bypass_review_step',{id:run.runId,action:'complete'});
   const findings=await c.call('bypass_findings',{run:run.runId});assert.equal(findings.findings.length,1);assert.equal(findings.findings[0].id,sourceId);assert.equal(findings.summary.confirmed,1);assert.equal(findings.summary.distinctIssues,1);
   assert.equal(findings.review.issues[0].id,sourceId);
+  assert.ok(JSON.stringify(findings).indexOf('# Security audit results')<100,
+    'the visible report must come before larger raw findings so truncation preserves it');
   assert.match(findings.review.presentation,/First access hypothesis/);
   assert.match(findings.review.presentation,/Live proof: none/);
   assert.match(findings.review.presentation,/Source run evidence: \/.*run_/);

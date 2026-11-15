@@ -83,8 +83,9 @@ export function findingReview(root,run,findings){
   }
   lines.push(`Full live report: ${reportPath&&fs.existsSync(reportPath)?reportPath:'none'}`,
     `Source run evidence: ${run?path.join(root,'.bypass','runs',`${run.id}.json`):'none'}`);
-  return {summary,issues,coverage,paths:{liveReport:reportPath&&fs.existsSync(reportPath)?reportPath:null,
-    sourceRun:run?path.join(root,'.bypass','runs',`${run.id}.json`):null},presentation:lines.join('\n')};
+  return {presentation:lines.join('\n'),summary,issues,coverage,
+    paths:{liveReport:reportPath&&fs.existsSync(reportPath)?reportPath:null,
+      sourceRun:run?path.join(root,'.bypass','runs',`${run.id}.json`):null}};
 }
 
 export function blackboxFindingReview(root,result){
@@ -113,8 +114,8 @@ export function blackboxFindingReview(root,result){
       `Recommendation: ${item.assessment?.remediation||item.remediation||'Investigate the recorded behavior and intended access policy.'}`,'');
   }
   lines.push(`Full report: ${reportPath}`);
-  return {run:report.header?.run||result.run||null,findings:liveFindings.length,
-    reportPath,presentation:lines.join('\n')};
+  return {presentation:lines.join('\n'),run:report.header?.run||result.run||null,
+    findings:liveFindings.length,reportPath};
 }
 
 export function assessmentCoverage(state,currentInventory,{run:runId,target}={}){
