@@ -266,7 +266,7 @@ const receipt=(root,run)=>{const state=read(root),work=workProgress(run,state);
     sourceRun:run.id,liveRun:broad.latest?.run||null,
     report:broad.latest?`${root}/.bypass/runs/${broad.latest.run}/report.md`:null,
     nextAction:{tool:'bypass_findings',arguments:{run:run.id},
-      message:'Read the full list, then call bypass_finding for each distinct issue before asking about fixes.'}};
+      message:'The result includes review.presentation: display that complete report in a user-visible message before any native question or fix choice. Then inspect individual evidence as requested.'}};
   return ({runId:run.id,status:run.status,executionMode:'muse-host',pluginModelCalls:0,simulation:false,coverageComplete:false,
   assessmentPolicy,work,continueRequired:run.status==='awaiting_host'&&work.pending>0,
   progress:{stage:run.stage,work,
@@ -289,7 +289,7 @@ const receipt=(root,run)=>{const state=read(root),work=workProgress(run,state);
       broad.latest&&!broad.latest.finishedAt?
         {tool:'bypass_blackbox_next',message:'Continue the connected full live audit in this Muse session.'}:
         {tool:'bypass_findings',arguments:{run:run.id},
-          message:broad.latest?'Read every distinct source and live finding in detail before offering fixes; include the full live report and remaining coverage.':
+          message:broad.latest?'Show review.presentation from this result to the user before any question or fix choice. It includes every distinct source/live issue, proof, regression and coverage limit.':
             'The combined time or decision budget expired before live testing began; report the live phase as untested.'}):
     ['completed','incomplete'].includes(run.status)?
     (runningValidation?{tool:'bypass_blackbox_next',message:`Continue the focused validation of ${runningValidation.finding} in this Muse session.`}:
@@ -300,7 +300,7 @@ const receipt=(root,run)=>{const state=read(root),work=workProgress(run,state);
         {tool:run.result?.findings?.length?'bypass_findings':'bypass_run',arguments:run.result?.findings?.length?{run:run.id}:{id:run.id},
           ...(remediation?{message:remediation.message}:{})}):
     {tool:'bypass_review_step',arguments:{id:run.id,action:work.next.action,...work.next.arguments},message:work.next.message},
-  guidance:remediation?'Call bypass_findings for this run, then bypass_finding for each distinct issue. Show severity, impact, source and live evidence, proof or unproved reason, saved regression, and recommendation. Include live-only issues and coverage limits. Only after the detailed review offer remediation choices; application edits and a PR require a separate explicit user selection.':
+  guidance:remediation?'Call bypass_findings for this run and display its review.presentation in a user-visible message before any native question. Inspect individual proof details as requested. Application edits and a PR require a separate explicit user selection.':
     'Continue the assessment until the recorded worklist has no actionable pending work. A finding is an interim update, not permission to stop or fix code. Show Done / Now / Next, elapsed time, counts, and the honest estimate or uncertainty. Read source, configure supported probes, refresh, execute controls, and record specific blockers for remaining routes. Do not edit application source or configuration. Generate recommendations and regression artifacts. A separate explicit remediation request is required for fixes.'});};
 export async function beginHostReview(root,options={},context={}) {
   const initial=read(root),plan=hostPlan(initial,options);need(!plan.blockers.length,plan.blockers.join(' '),3);
