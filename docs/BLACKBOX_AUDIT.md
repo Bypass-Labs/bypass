@@ -36,7 +36,7 @@ Progress shows the current phase, HTTP and Muse activity, completed checks, posi
 
 ## Reading exploitability results
 
-The report separates **exploitable** findings (fresh live proof of security impact), source weaknesses **not exploitable via the tested path** (that specific check was denied or did not reproduce), source weaknesses whose **live exploitability is unverified**, and **observed response effects** without proved security impact. A negative result applies only to the tested route, input, environment and build. Missing or inconclusive proof does not establish that a source weakness is safe. Marker-only response changes remain observations even when they replay consistently.
+The report separates **exploitable** findings (an attacker-reachable flaw with fresh live proof of security impact), source weaknesses **not exploitable via the tested path** (an executed check was denied or did not reproduce in that environment), source weaknesses whose **live exploitability is unverified**, and **observed response effects** without proved security impact. The second category is the narrow, environment-specific version of a theoretical or not-exploitable vulnerability. A negative result applies only to the tested route, input, environment and build. A blocked, missing or inconclusive check stays unverified; it does not establish that a source weakness is safe. Marker-only response changes remain observations even when they replay consistently.
 Twenty invalid attempts against a synthetic, nonexistent login identity or access code also establish only the observed throttling behavior. The report keeps that result and its replayable check, while leaving real-account or valid-code exploitability unverified.
 
 ## Evidence and replay

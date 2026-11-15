@@ -17,6 +17,9 @@ function appendChoices(lines,actions){
 }
 
 const rateLimitImpact='Twenty rapid invalid login attempts against a synthetic, nonexistent identity received explicit denials without a visible throttling signal. This proof does not establish whether a real account has per-account lockout or whether distributed attempts are limited.';
+const confirmedLiveProof=proof=>proof?.verdict==='confirmed'&&
+  typeof proof.proof==='string'&&proof.proof!=='not generated'&&
+  Array.isArray(proof.confirmation)&&proof.confirmation.length>0;
 
 // Keep all historical records addressable. Group only a source hypothesis and
 // matching HTTP proof in the same app/category; never promote the whole list.
@@ -52,14 +55,16 @@ export function findingReview(root,run,findings){
     const primary=byId.get(group.id);
     const proofId=records.map(item=>item.verification?.blackboxFindingId).find(Boolean)||null;
     const proof=proofId?liveById.get(proofId):null;
-    const responseEffectOnly=unverifiedResponseEffect(proof);
+    const responseEffectOnly=unverifiedResponseEffect(proof)||proof?.verdict==='observed';
     const source=records.find(item=>item.sourceEvidence?.kind==='source')?.sourceEvidence;
     const sourceLive=(live?.surface?.application?.sourceFindings||[]).find(item=>
       records.some(record=>record.id===item.id))||null;
     const hostVerification=records.find(item=>item.verification?.controls?.length)?.verification;
     const linkedRun=records.find(item=>item.verification?.blackboxFindingId===proofId)?.verification?.blackboxRun||liveRun;
     const check=proofId&&linkedRun?path.join(root,'tests','security','blackbox',`${linkedRun}-${proofId}.test.mjs`):null;
-    const liveImpactProved=group.status==='confirmed'&&Boolean(proofId||hostVerification);
+    const liveImpactProved=group.status==='confirmed'&&(
+      confirmedLiveProof(proof)||
+      hostVerification?.status==='failed');
     return {id:group.id,recordIds:group.recordIds,
       title:responseEffectOnly&&proof?.kind==='rate-limit-auth-gate'?
         `${primary.title} (real-account or valid-code impact unverified)`:
@@ -67,22 +72,30 @@ export function findingReview(root,run,findings){
       status:responseEffectOnly?'observed response effect; exploitability unverified':
         liveImpactProved?'exploitable (live proof confirmed)':
         sourceLive?.status==='not exploitable via tested path'?'not exploitable via tested path':
-        source?'source vulnerability lead; live exploitability unverified':group.status,
+        source?'source weakness; exploitability unverified':
+        group.status==='confirmed'?'live exploitability unverified':group.status,
       severity:responseEffectOnly?'unrated':group.severity,
-      severityBasis:responseEffectOnly?'Fresh positive response marker differed from controls; no exploit effect was rated':group.severityBasis,
+      severityBasis:responseEffectOnly&&proof?.kind==='rate-limit-auth-gate'?
+        'Synthetic invalid attempts showed no visible throttling; real-account or valid-code impact was not established':
+        responseEffectOnly?'A response change replayed under controls; no security impact was established':
+        !liveImpactProved&&group.status==='confirmed'?
+          'Saved finding status has no connected live proof in this report; severity remains provisional':
+          group.severityBasis,
       path:primary.resourcePath||proof?.pattern||null,
       source:source?{file:source.file,line:source.line}:null,
       impact:responseEffectOnly&&proof?.kind==='rate-limit-auth-gate'&&proof.webProof?.mode==='login'?rateLimitImpact:
         responseEffectOnly?'Security impact not established by this proof.':
         proof?.kind==='rate-limit-auth-gate'&&proof.webProof?.mode==='login'?rateLimitImpact:
         primary.impact||'Business impact not established by this proof.',
-      liveProof:proofId?{id:proofId,verdict:proof?.verdict||'recorded',
+      liveProof:proofId&&proof?{id:proofId,verdict:proof.verdict,
         evidence:proof?.evidence||[],confirmation:proof?.confirmation||[],
         controls:(proof?.evidenceTable||[]).filter(item=>item.status!=null).slice(0,12)
           .map(item=>`${item.identity||'unknown'} ${item.method||'HTTP'} ${item.status} (${item.id})`),
         file:proof?.proof||(linkedRun?path.join(root,'.bypass','runs',linkedRun,'poc',proofId,'poc.mjs'):'No proof file recorded')}:null,
       hostControls:hostVerification?.controls?.map(item=>`${item.label} HTTP ${item.status}`)||[],
-      unprovenReason:proofId?null:sourceLive?.status==='not exploitable via tested path'?
+      unprovenReason:proof?null:proofId?
+        `Linked proof ${proofId} is missing from the saved live report; its reference alone does not establish exploitability.`:
+        sourceLive?.status==='not exploitable via tested path'?
         `${sourceLive.liveReason} The source weakness remains recorded for review.`:group.status==='confirmed'?
         'No connected black-box proof is linked; see the configured HTTP probe controls and source run evidence.':
         /(?:otp|2fa|mfa)/i.test(`${primary.title} ${primary.resourcePath}`)?
@@ -99,6 +112,8 @@ export function findingReview(root,run,findings){
   const savedReportPath=reportPath&&fs.existsSync(reportPath)?reportPath:null;
   const withoutConnectedProof=issues.filter(item=>!item.liveProof).length;
   const securityProofs=issues.filter(item=>item.status.startsWith('exploitable')).length;
+  const blockedPaths=issues.filter(item=>item.status==='not exploitable via tested path').length;
+  const unverifiedWeaknesses=issues.filter(item=>item.status==='source weakness; exploitability unverified').length;
   const responseEffects=issues.filter(item=>item.status.startsWith('observed response effect')).length;
   const linkedProofIds=new Set(issues.map(item=>item.liveProof?.id).filter(Boolean));
   const otherObservations=(live?.findings||[]).filter(item=>item.verdict==='observed'&&
@@ -108,6 +123,8 @@ export function findingReview(root,run,findings){
     `Full report: ${savedReportPath||'No connected live report'}`,
     `Source evidence: ${sourceRunPath||'none'}`,
     `${summary.records} review ${summary.records===1?'entry':'entries'} from ${live?.findings?.length??0} saved live evidence records; ${withoutConnectedProof} ${withoutConnectedProof===1?'entry has':'entries have'} no linked black-box proof. Related entries may share a root cause. ${securityProofs} exploitable proof ${securityProofs===1?'record':'records'}, ${responseEffects} unrated response ${responseEffects===1?'effect':'effects'}, ${otherObservations.length} other ${otherObservations.length===1?'observation':'observations'}.`,
+    `Exploitability: ${securityProofs} exploitable · ${blockedPaths} not exploitable via tested path · ${unverifiedWeaknesses} source ${unverifiedWeaknesses===1?'weakness':'weaknesses'} with exploitability unverified · ${responseEffects} observed response effects.`,
+    'Exploitable means a fresh live proof showed reachable security impact. Not exploitable via tested path means an executed check was denied or did not reproduce in this environment; it does not clear other paths. Blocked, untested, or inconclusive source weaknesses remain unverified.',
     `Coverage: ${coverage.complete?'recorded complete':'partial'}${coverage.blocked!=null?` · ${coverage.blocked} blocked · ${coverage.inconclusive} inconclusive`:''}.`,
     ...coverage.limitations.map(item=>`- Limit: ${item}`),
     ''];
@@ -128,8 +145,13 @@ export function findingReview(root,run,findings){
   lines.push(`Full report: ${savedReportPath||'No connected live report'}`);
   const nextActions=reportChoices(securityProofs);
   appendChoices(lines,nextActions);
+  const classifiedById=new Map(issues.map(item=>[item.id,item]));
   return {presentation:lines.join('\n'),summary:{...summary,confirmed:securityProofs,observedResponseEffects:responseEffects,
-    otherObservations:otherObservations.length},issues,coverage,
+    otherObservations:otherObservations.length,
+    issues:summary.issues.map(group=>({...group,
+      status:classifiedById.get(group.id)?.status??group.status,
+      severity:classifiedById.get(group.id)?.severity??group.severity,
+      title:classifiedById.get(group.id)?.title??group.title}))},issues,coverage,
     paths:{liveReport:savedReportPath,sourceRun:sourceRunPath},nextActions};
 }
 
@@ -143,11 +165,14 @@ export function blackboxFindingReview(root,result){
   const responseEffects=liveFindings.filter(unverifiedResponseEffect).length;
   const otherObservations=liveFindings.filter(item=>item.verdict==='observed'&&
     !unverifiedResponseEffect(item)).length;
-  const securityFindings=liveFindings.length-responseEffects-otherObservations;
+  const securityFindings=liveFindings.filter(item=>confirmedLiveProof(item)&&
+    !unverifiedResponseEffect(item)).length;
+  const unverifiedFindings=liveFindings.length-securityFindings-responseEffects-otherObservations;
   const lines=['# Running-app security audit results',
     `Target: ${report.header?.origin||'unknown'} · Run: ${liveRun}`,
     `Full report: ${reportPath}`,
-    `${liveFindings.length} proof records: ${securityFindings} exploitable findings, ${responseEffects} unrated response effects, ${otherObservations} other observations. Related routes may share a root cause.`,
+    `${liveFindings.length} live evidence records: ${securityFindings} exploitable findings, ${unverifiedFindings} with live exploitability unverified, ${responseEffects} unrated response effects, ${otherObservations} other observations. Related routes may share a root cause.`,
+    'Exploitable means a fresh live proof showed reachable security impact. An executed negative check applies only to its tested path and environment; blocked or incomplete checks leave exploitability unverified.',
     `Coverage: ${report.coverage?.complete?'recorded complete':'partial'} · ${report.summary?.blocked??0} blocked · ${report.summary?.inconclusive??0} inconclusive.`,
     ...(report.limitations||[]).filter(item=>/identit|account|same-role|time window|probe catalog|silence is not safety/i.test(item)).slice(0,8).map(item=>`- Limit: ${item}`),''];
   for(const [index,item] of liveFindings.entries()){
@@ -159,13 +184,13 @@ export function blackboxFindingReview(root,result){
     lines.push(`## ${index+1}. ${effect&&item.kind==='rate-limit-auth-gate'?
       `${title} (real-account or valid-code impact unverified)`:
       effect?`Response effect on ${item.pattern||item.url||'the tested route'} (${title} remains a hypothesis)`:title}`,
-      `Status: ${observed?'observed response effect; exploitability unverified':item.verdict==='confirmed'?'exploitable (live proof confirmed)':item.verdict} · Severity: ${observed?'unrated':item.severity||'unrated'}.`,
+      `Status: ${observed?'observed response effect; exploitability unverified':confirmedLiveProof(item)?'exploitable (live proof confirmed)':'live exploitability unverified'} · Severity: ${observed?'unrated':item.severity||'unrated'}.`,
       `Path: ${item.pattern||item.url||'not recorded'}`,
       `Impact: ${effect&&item.kind==='rate-limit-auth-gate'&&item.webProof?.mode==='login'?rateLimitImpact:
         observed?'Security impact not established by this proof.':
         item.kind==='rate-limit-auth-gate'&&item.webProof?.mode==='login'?rateLimitImpact:
         item.assessment?.impact||'Business impact not established by this proof.'}`,
-      `Proof: ${item.id} · Evidence: ${(item.evidence||[]).join(', ')||'see proof'} · Fresh confirmation: ${(item.confirmation||[]).join(', ')||'see report'}`,
+      `Proof: ${item.id} · Evidence: ${(item.evidence||[]).join(', ')||'see proof'} · Fresh ${observed?'replay':'confirmation'}: ${(item.confirmation||[]).join(', ')||'see report'}`,
       `Proof file: ${item.proof||path.join(path.dirname(reportPath),'poc',item.id,'poc.mjs')}`,
       `Observed controls: ${(item.evidenceTable||[]).filter(row=>row.status!=null).slice(0,12).map(row=>`${row.identity||'unknown'} ${row.method||'HTTP'} ${row.status} (${row.id})`).join('; ')||'see full report'}`,
       `Regression: ${fs.existsSync(check)?check:'No exported regression found at the default path.'}`,
@@ -175,7 +200,7 @@ export function blackboxFindingReview(root,result){
   const nextActions=reportChoices(securityFindings);
   appendChoices(lines,nextActions);
   return {presentation:lines.join('\n'),run:report.header?.run||result.run||null,
-    findings:liveFindings.length,securityFindings,
+    findings:liveFindings.length,securityFindings,unverifiedFindings,
     observedResponseEffects:responseEffects,otherObservations,reportPath,nextActions};
 }
 
