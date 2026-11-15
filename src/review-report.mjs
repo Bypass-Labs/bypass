@@ -3,6 +3,20 @@ import path from 'node:path';
 import { createWorklist, workProgress, routeMatches } from './review-worklist.mjs';
 import { need } from './util.mjs';
 
+function reportChoices(confirmed){
+  const actions=[{id:'inspect',label:'Inspect a finding and its proof or proposed fix',editsCode:false}];
+  if(confirmed)actions.push({id:'fix',label:'Fix confirmed issues and open a PR',editsCode:true});
+  actions.push({id:'leave',label:'Leave findings open',editsCode:false});
+  return actions;
+}
+
+function appendChoices(lines,actions){
+  lines.push('', 'What would you like to do next?',
+    ...actions.map((action,index)=>`${index+1}. ${action.label}`));
+}
+
+const rateLimitImpact='Twenty rapid invalid login attempts against a synthetic, nonexistent identity received explicit denials without a visible throttling signal. This proof does not establish whether a real account has per-account lockout or whether distributed attempts are limited.';
+
 // Keep all historical records addressable. Group only a source hypothesis and
 // matching HTTP proof in the same app/category; never promote the whole list.
 export function findingSummary(findings){
@@ -48,7 +62,9 @@ export function findingReview(root,run,findings){
       severityBasis:responseEffectOnly?'Fresh positive response marker differed from controls; no exploit effect was rated':group.severityBasis,
       path:primary.resourcePath||proof?.pattern||null,
       source:source?{file:source.file,line:source.line}:null,
-      impact:responseEffectOnly?'Security impact not established by this proof.':primary.impact||'Business impact not established by this proof.',
+      impact:responseEffectOnly?'Security impact not established by this proof.':
+        proof?.kind==='rate-limit-auth-gate'&&proof.webProof?.mode==='login'?rateLimitImpact:
+        primary.impact||'Business impact not established by this proof.',
       liveProof:proofId?{id:proofId,verdict:proof?.verdict||'recorded',
         evidence:proof?.evidence||[],confirmation:proof?.confirmation||[],
         controls:(proof?.evidenceTable||[]).filter(item=>item.status!=null).slice(0,12)
@@ -57,13 +73,16 @@ export function findingReview(root,run,findings){
       hostControls:hostVerification?.controls?.map(item=>`${item.label} HTTP ${item.status}`)||[],
       unprovenReason:proofId?null:group.status==='confirmed'?
         'No connected black-box proof is linked; see the configured HTTP probe controls and source run evidence.':
+        /(?:otp|2fa|mfa)/i.test(`${primary.title} ${primary.resourcePath}`)?
+        'No completed live OTP proof is linked. Throttling needs a valid test-account challenge; the source observation alone does not establish deployed behavior.':
         'No completed live proof is linked to this source lead.',
       regression:check&&fs.existsSync(check)?check:null,
       recommendation:primary.recommendation||'Investigate the recorded behavior and validate the expected access policy.'};
   });
   const coverage={blocked:live?.summary?.blocked??null,inconclusive:live?.summary?.inconclusive??null,
     complete:live?.coverage?.complete===true,
-    limitations:(live?.limitations||[]).filter(item=>/identit|account|same-role|time window|probe catalog|silence is not safety/i.test(item)).slice(0,8)};
+    limitations:[...(live?.limitations||[]).filter(item=>/identit|account|same-role|time window|probe catalog|silence is not safety/i.test(item)).slice(0,8),
+      ...(liveRun?['Source and deployed revision were not attested as identical; source-only leads may describe a different build.']:[])]};
   const sourceRunPath=run?path.join(root,'.bypass','runs',`${run.id}.json`):null;
   const savedReportPath=reportPath&&fs.existsSync(reportPath)?reportPath:null;
   const withoutConnectedProof=issues.filter(item=>!item.liveProof).length;
@@ -90,8 +109,10 @@ export function findingReview(root,run,findings){
       `Recommendation: ${item.recommendation}`,'');
   }
   lines.push(`Full report: ${savedReportPath||'No connected live report'}`);
+  const nextActions=reportChoices(securityProofs);
+  appendChoices(lines,nextActions);
   return {presentation:lines.join('\n'),summary,issues,coverage,
-    paths:{liveReport:savedReportPath,sourceRun:sourceRunPath}};
+    paths:{liveReport:savedReportPath,sourceRun:sourceRunPath},nextActions};
 }
 
 export function blackboxFindingReview(root,result){
@@ -114,7 +135,9 @@ export function blackboxFindingReview(root,result){
     lines.push(`## ${index+1}. ${item.title}`,
       `Status: ${effect?'response effect confirmed; exploit impact unproven':item.verdict} · Severity: ${item.severity||'unrated'}.`,
       `Path: ${item.pattern||item.url||'not recorded'}`,
-      `Impact: ${effect?'Security impact not established by this proof.':item.assessment?.impact||'Business impact not established by this proof.'}`,
+      `Impact: ${effect?'Security impact not established by this proof.':
+        item.kind==='rate-limit-auth-gate'&&item.webProof?.mode==='login'?rateLimitImpact:
+        item.assessment?.impact||'Business impact not established by this proof.'}`,
       `Proof: ${item.id} · Evidence: ${(item.evidence||[]).join(', ')||'see proof'} · Fresh confirmation: ${(item.confirmation||[]).join(', ')||'see report'}`,
       `Proof file: ${item.proof||path.join(path.dirname(reportPath),'poc',item.id,'poc.mjs')}`,
       `Observed controls: ${(item.evidenceTable||[]).filter(row=>row.status!=null).slice(0,12).map(row=>`${row.identity||'unknown'} ${row.method||'HTTP'} ${row.status} (${row.id})`).join('; ')||'see full report'}`,
@@ -122,8 +145,10 @@ export function blackboxFindingReview(root,result){
       `Recommendation: ${item.assessment?.remediation||item.remediation||'Investigate the recorded behavior and intended access policy.'}`,'');
   }
   lines.push(`Full report: ${reportPath}`);
+  const nextActions=reportChoices(liveFindings.length-responseEffects);
+  appendChoices(lines,nextActions);
   return {presentation:lines.join('\n'),run:report.header?.run||result.run||null,
-    findings:liveFindings.length,reportPath};
+    findings:liveFindings.length,reportPath,nextActions};
 }
 
 export function assessmentCoverage(state,currentInventory,{run:runId,target}={}){

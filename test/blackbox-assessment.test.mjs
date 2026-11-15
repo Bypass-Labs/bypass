@@ -9,6 +9,17 @@ const findings = () => Array.from({length: 25}, (_, index) => ({
   reach: {observed: 1, basis: 'one owner record was read'}, tags: [], proof: '/tmp/proof.mjs',
 }));
 
+test('a model cannot turn a synthetic login burst into a proved known-account attack',async()=>{
+  const record={...findings()[0],kind:'rate-limit-auth-gate',webProof:{mode:'login'}};
+  const result=await assessFindings([record],[],{model:{model:'fixture'},
+    infer:async()=>({notes:[{id:record.id,
+      impact:'Known users can be brute-forced without limit',
+      preconditions:'A real account is known',remediation:'Add throttling'}],chainNotes:[]})});
+  assert.match(record.assessment.impact,/synthetic nonexistent identity/);
+  assert.doesNotMatch(JSON.stringify(result.notes),/Known users can be brute-forced/);
+  assert.match(record.assessment.preconditions,/did not attempt a known account/);
+});
+
 test('Muse assesses every proved finding in bounded pages without changing verdicts', async () => {
   const records = findings();
   const chain = {id: 'c-001', status: 'confirmed', template: 'list-id-to-item-read',

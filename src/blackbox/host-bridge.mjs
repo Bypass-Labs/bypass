@@ -6,6 +6,12 @@ export class BlackboxHostBridge {
   constructor() {
     this.job = null;
     this.sequence = 0;
+    this.waiters = new Set();
+  }
+
+  wake() {
+    for (const resolve of this.waiters) resolve();
+    this.waiters.clear();
   }
 
   start(work) {
@@ -35,6 +41,7 @@ export class BlackboxHostBridge {
         clear(); reject(new Error('Muse host decision timed out.'));
       }, options.timeoutMs) : null;
       job.pending.set(id, {request, accept: value => {clear(); resolve(value);}});
+      this.wake();
       controller.signal.addEventListener('abort', onAbort, {once: true});
       options.signal?.addEventListener('abort', onAbort, {once: true});
     });
@@ -66,6 +73,7 @@ export class BlackboxHostBridge {
       .finally(() => {
         for (const item of [...job.pending.values()])
           item.accept(null);
+        this.wake();
       });
     return this.status();
   }
@@ -86,11 +94,28 @@ export class BlackboxHostBridge {
       cursor: job.eventCursor, result: job.result, error: job.error};
   }
 
+  async next(after = 0, waitMs = 5000) {
+    if (this.job?.status === 'running' && !this.job.pending.size) {
+      await new Promise(resolve => {
+        const done = () => {clearTimeout(timer);this.waiters.delete(done);resolve();};
+        const timer = setTimeout(done, waitMs);
+        this.waiters.add(done);
+      });
+    }
+    return this.status(after);
+  }
+
   submit(id, decision) {
     const item = this.job?.pending.get(id);
     if (!item) throw new Error(`No pending Muse decision has ID ${id}.`);
     item.accept(decision);
     return {accepted: true, id, remaining: this.job.pending.size};
+  }
+
+  async submitAndNext(id, decision) {
+    const after = this.job?.eventCursor ?? 0;
+    const accepted = this.submit(id, decision);
+    return {...accepted, ...await this.next(after)};
   }
 
   stop() {

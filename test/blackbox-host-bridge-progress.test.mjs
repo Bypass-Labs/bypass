@@ -47,3 +47,24 @@ test('host bridge returns complete concurrent decisions one at a time',async()=>
   await bridge.job.done;
   assert.equal(bridge.status().status,'completed');
 });
+
+test('submitting a decision hands the next one back without another poll',async()=>{
+  const bridge=new BlackboxHostBridge();
+  bridge.start(async({infer,onProgress})=>{
+    onProgress({stage:'progress',type:'activity',message:'First phase'});
+    await infer(null,[{role:'user',content:'first'}],{schema:{type:'object'}});
+    onProgress({stage:'progress',type:'activity',message:'Second phase'});
+    await infer(null,[{role:'user',content:'second'}],{schema:{type:'object'}});
+    return {ok:true};
+  });
+  const first=await bridge.next(0,100);
+  assert.equal(first.pending.length,1);
+  const second=await bridge.submitAndNext(first.pending[0].id,{});
+  assert.equal(second.accepted,true);
+  assert.equal(second.pending.length,1);
+  assert.match(second.pending[0].messages[0].content,/second/);
+  assert.deepEqual(second.events.map(item=>item.message),['Second phase']);
+  const done=await bridge.submitAndNext(second.pending[0].id,{});
+  assert.equal(done.status,'completed');
+  assert.deepEqual(done.result,{ok:true});
+});
