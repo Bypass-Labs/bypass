@@ -89,8 +89,8 @@ test('connected combined handoff carries cited leads into one full live run and 
   assert.equal(done.nextAction.tool,'bypass_findings');
   assert.deepEqual(done.reviewDetails.issueIds,[proposed.findings[0]]);
   assert.equal(done.reviewDetails.report,path.join(folder,'report.md'));
-  assert.match(done.guidance,/display its review\.presentation in a user-visible message before any native question/);
-  assert.match(done.nextAction.message,/Show review\.presentation/);
+  assert.match(done.guidance,/paste its complete review\.presentation in a user-visible message before any native question/);
+  assert.match(done.nextAction.message,/Paste review\.presentation/);
   await change(root,state=>state.findings.push({id:'live-only',title:'Live-only access issue',
     category:'authorization',severity:'high',status:'confirmed',target:'app',lastRunId:started.runId,
     sourceEvidence:{kind:'http',runId:'bx-connected'},verification:{blackboxRun:'bx-connected'}}));

@@ -114,7 +114,7 @@ test('a source hypothesis created before its probe becomes the single confirmed 
     'the visible report must come before larger raw findings so truncation preserves it');
   assert.match(findings.review.presentation,/First access hypothesis/);
   assert.match(findings.review.presentation,/Live proof: none/);
-  assert.match(findings.review.presentation,/Source run evidence: \/.*run_/);
+  assert.match(findings.review.presentation,/Source evidence: \/.*run_/);
   assert.equal(read(root).checks[0].findingId,sourceId);
 });
 

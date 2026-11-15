@@ -39,6 +39,8 @@ test('completed connected review presents all issues and does not promote a resp
   assert.equal(report.issues.length,3);
   assert.equal(report.coverage.complete,false);
   assert.match(report.presentation,/1 blocked · 2 inconclusive/);
+  assert.match(report.presentation,/Full report: \/.*report\.md/);
+  assert.ok(report.presentation.indexOf('Full report: ')<report.presentation.indexOf('## 1.'));
   assert.match(report.presentation,/No login throttling[\s\S]*Repeated guessing is possible\.[\s\S]*f-001[\s\S]*bx-example-f-001\.test\.mjs/);
   assert.match(report.presentation,/Possible command injection[\s\S]*response effect confirmed; exploit impact unproven[\s\S]*Security impact not established by this proof/);
   assert.doesNotMatch(report.presentation,/Command execution is possible/);

@@ -64,9 +64,16 @@ export function findingReview(root,run,findings){
   const coverage={blocked:live?.summary?.blocked??null,inconclusive:live?.summary?.inconclusive??null,
     complete:live?.coverage?.complete===true,
     limitations:(live?.limitations||[]).filter(item=>/identit|account|same-role|time window|probe catalog|silence is not safety/i.test(item)).slice(0,8)};
+  const sourceRunPath=run?path.join(root,'.bypass','runs',`${run.id}.json`):null;
+  const savedReportPath=reportPath&&fs.existsSync(reportPath)?reportPath:null;
+  const withoutConnectedProof=issues.filter(item=>!item.liveProof).length;
+  const securityProofs=issues.filter(item=>item.status==='confirmed').length;
+  const responseEffects=issues.filter(item=>item.status.startsWith('response effect')).length;
   const lines=[`# Security audit results`,
     `Source review: ${run?.id||'unknown'}${liveRun?` · Live audit: ${liveRun}`:' · No connected live audit'}`,
-    `${summary.records} review entries from ${live?.findings?.length??0} connected live proofs; ${issues.filter(item=>!item.liveProof).length} entries have no linked black-box proof. Related entries may share a root cause. ${issues.filter(item=>item.status==='confirmed').length} security proof records, ${issues.filter(item=>item.status.startsWith('response effect')).length} unrated response effects.`,
+    `Full report: ${savedReportPath||'No connected live report'}`,
+    `Source evidence: ${sourceRunPath||'none'}`,
+    `${summary.records} review ${summary.records===1?'entry':'entries'} from ${live?.findings?.length??0} connected live ${live?.findings?.length===1?'proof':'proofs'}; ${withoutConnectedProof} ${withoutConnectedProof===1?'entry has':'entries have'} no linked black-box proof. Related entries may share a root cause. ${securityProofs} security proof ${securityProofs===1?'record':'records'}, ${responseEffects} unrated response ${responseEffects===1?'effect':'effects'}.`,
     `Coverage: ${coverage.complete?'recorded complete':'partial'}${coverage.blocked!=null?` · ${coverage.blocked} blocked · ${coverage.inconclusive} inconclusive`:''}.`,
     ...coverage.limitations.map(item=>`- Limit: ${item}`),
     ''];
@@ -75,17 +82,16 @@ export function findingReview(root,run,findings){
       `Status: ${item.status} · Severity: ${item.severity}. ${item.severityBasis}.`,
       `Path: ${item.path||'not recorded'}${item.source?` · Source: ${item.source.file}:${item.source.line}`:''}`,
       `Impact: ${item.impact}`,
-      item.liveProof?`Live proof: ${item.liveProof.id} · ${item.liveProof.verdict} · ${item.liveProof.file} · Evidence: ${item.liveProof.evidence.join(', ')||'see proof'} · Fresh confirmation: ${item.liveProof.confirmation.join(', ')||'see report'}`:`Live proof: none. ${item.unprovenReason}`,
+      item.liveProof?`Live proof: ${item.liveProof.id} · ${item.liveProof.verdict} · Evidence: ${item.liveProof.evidence.join(', ')||'see proof'} · Fresh confirmation: ${item.liveProof.confirmation.join(', ')||'see report'}`:`Live proof: none. ${item.unprovenReason}`,
+      ...(item.liveProof?[`Proof file: ${item.liveProof.file}`]:[]),
       ...(item.liveProof?.controls.length?[`Observed controls: ${item.liveProof.controls.join('; ')}`]:[]),
       ...(!item.liveProof&&item.hostControls.length?[`Configured HTTP controls: ${item.hostControls.join('; ')}`]:[]),
       `Regression: ${item.regression||'No exported regression found at the default path.'}`,
       `Recommendation: ${item.recommendation}`,'');
   }
-  lines.push(`Full live report: ${reportPath&&fs.existsSync(reportPath)?reportPath:'none'}`,
-    `Source run evidence: ${run?path.join(root,'.bypass','runs',`${run.id}.json`):'none'}`);
+  lines.push(`Full report: ${savedReportPath||'No connected live report'}`);
   return {presentation:lines.join('\n'),summary,issues,coverage,
-    paths:{liveReport:reportPath&&fs.existsSync(reportPath)?reportPath:null,
-      sourceRun:run?path.join(root,'.bypass','runs',`${run.id}.json`):null}};
+    paths:{liveReport:savedReportPath,sourceRun:sourceRunPath}};
 }
 
 export function blackboxFindingReview(root,result){
@@ -98,6 +104,7 @@ export function blackboxFindingReview(root,result){
   const responseEffects=liveFindings.filter(item=>item.kind==='model-raw-boundary'&&item.severity==='unrated').length;
   const lines=['# Running-app security audit results',
     `Target: ${report.header?.origin||'unknown'} · Run: ${liveRun}`,
+    `Full report: ${reportPath}`,
     `${liveFindings.length} proof records: ${liveFindings.length-responseEffects} security findings, ${responseEffects} unrated response effects. Related routes may share a root cause.`,
     `Coverage: ${report.coverage?.complete?'recorded complete':'partial'} · ${report.summary?.blocked??0} blocked · ${report.summary?.inconclusive??0} inconclusive.`,
     ...(report.limitations||[]).filter(item=>/identit|account|same-role|time window|probe catalog|silence is not safety/i.test(item)).slice(0,8).map(item=>`- Limit: ${item}`),''];
@@ -108,7 +115,8 @@ export function blackboxFindingReview(root,result){
       `Status: ${effect?'response effect confirmed; exploit impact unproven':item.verdict} · Severity: ${item.severity||'unrated'}.`,
       `Path: ${item.pattern||item.url||'not recorded'}`,
       `Impact: ${effect?'Security impact not established by this proof.':item.assessment?.impact||'Business impact not established by this proof.'}`,
-      `Proof: ${item.id} · ${item.proof||path.join(path.dirname(reportPath),'poc',item.id,'poc.mjs')} · Evidence: ${(item.evidence||[]).join(', ')||'see proof'} · Fresh confirmation: ${(item.confirmation||[]).join(', ')||'see report'}`,
+      `Proof: ${item.id} · Evidence: ${(item.evidence||[]).join(', ')||'see proof'} · Fresh confirmation: ${(item.confirmation||[]).join(', ')||'see report'}`,
+      `Proof file: ${item.proof||path.join(path.dirname(reportPath),'poc',item.id,'poc.mjs')}`,
       `Observed controls: ${(item.evidenceTable||[]).filter(row=>row.status!=null).slice(0,12).map(row=>`${row.identity||'unknown'} ${row.method||'HTTP'} ${row.status} (${row.id})`).join('; ')||'see full report'}`,
       `Regression: ${fs.existsSync(check)?check:'No exported regression found at the default path.'}`,
       `Recommendation: ${item.assessment?.remediation||item.remediation||'Investigate the recorded behavior and intended access policy.'}`,'');
