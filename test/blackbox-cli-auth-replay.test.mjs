@@ -93,7 +93,7 @@ test('CLI finds an authenticated redirect and replays login from raw credentials
   assert.equal(fixed.data.proofs.find(item => item.id === finding.id)?.verdict,
     'not_reproduced', JSON.stringify(fixed.data));
   assert.ok(fixed.data.proofs.some(item => item.kind === 'rate-limit-auth-gate' &&
-    item.verdict === 'confirmed'), 'the fixture still lacks login throttling');
+    item.verdict === 'observed'), 'the fixture still lacks visible login throttling; account impact is unverified');
   const green = await execFile(process.execPath, [regression],
     {cwd: root, env: {...env, NODE_TEST_CONTEXT: undefined}, timeout: 30000});
   assert.equal(green.code, 0, green.stdout);

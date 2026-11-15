@@ -124,9 +124,10 @@ test('combined report keeps source findings and labels each live-validation stat
       {sourceLeadId: leads[2].id, verdict: 'inconclusive', reason: 'response changed', evidence: [], lead: {path: '/api/user/1/2'}},
     ]}});
   assert.deepEqual(report.json.surface.application.sourceFindings.map(item => item.status),
-    ['confirmed live', 'not reproduced', 'inconclusive', 'not tested']);
+    ['exploitable', 'not exploitable via tested path',
+      'exploitability unverified (inconclusive)', 'exploitability unverified']);
   assert.match(report.markdown, /Source findings and live validation/);
-  assert.match(report.markdown, /source findings remain unproven unless the status is \*\*confirmed live\*\*/i);
+  assert.match(report.markdown, /Exploitable.*fresh live proof of security impact/i);
 });
 
 test('related blocked SQL check explains why a source claim was not live-confirmed', () => {
@@ -142,7 +143,7 @@ test('related blocked SQL check explains why a source claim was not live-confirm
       lead:{path:lead.path},verdict:'blocked',
       reason:'Cloudflare blocked the SQL proof request (HTTP 403)',evidence:[]}]}});
   const status=report.json.surface.application.sourceFindings[0];
-  assert.equal(status.status,'blocked');
+  assert.equal(status.status,'exploitability unverified (blocked)');
   assert.match(status.liveReason,/source claim was not proved/);
   assert.match(report.markdown,/Cloudflare blocked the SQL proof request/);
 });

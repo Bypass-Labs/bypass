@@ -33,7 +33,7 @@ CLI global `--project` maps to the selected repository; `--json` maps to structu
 | `blackbox scope` | `bypass_blackbox_scope` | Write a reviewable blackbox.scope.json. |
 | `blackbox setup` | `bypass_blackbox_setup` | Prepare scope and authorization; --plan previews the approval picker without changes. |
 | `blackbox verify` | `bypass_blackbox_verify` | Re-execute generated proofs and check ledger integrity. |
-| `blackbox export` | `bypass_blackbox_export` | Write Node regression tests for confirmed findings. |
+| `blackbox export` | `bypass_blackbox_export` | Write Node regression tests for replayed security findings and observed response effects. |
 | `blackbox resume` | `bypass_blackbox_resume` | Continue saved Muse research in a fresh scoped audit. |
 | `discover` | `bypass_discover` | Discover SAST/policy signals and evaluate them against source by default. |
 | `discover evaluate` | `bypass_discover_evaluate` | Evaluate saved detector signals against their source snapshot; no runtime reproduction. |

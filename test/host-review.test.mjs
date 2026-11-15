@@ -12,7 +12,27 @@ import { stopPOC } from '../src/poc.mjs';
 import { beginHostReview, hostReviewStep, combinedFocusBudget, combinedReviewHandoff } from '../src/host-review.mjs';
 import { inExecutionMode } from '../src/execution-mode.mjs';
 import { inventory } from '../src/repository.mjs';
-import { sourceContextFromFindings } from '../src/audit-engine.mjs';
+import { sourceContextFromFindings, reconcileAuditFindings } from '../src/audit-engine.mjs';
+
+test('a replayed response marker does not promote a source lead into a confirmed exploit',async()=>{
+  const root=temp(),sourceId='source-effect',origin='http://127.0.0.1:4444';
+  await execute('init',[root]);
+  await change(root,state=>state.findings.push({id:sourceId,title:'Possible command injection',
+    status:'unproven',severity:'high',category:'command-injection',resourcePath:'/uplink',
+    sourceEvidence:{kind:'source',file:'server.ts',line:12},history:[]}));
+  const outcome=await reconcileAuditFindings(root,'run_effect',{findings:[sourceId]},
+    {run:'bx-effect',origin,sourceFindings:[{id:sourceId,
+      status:'response effect observed; exploitability unverified',
+      liveReason:'A marker changed without a proved security impact.',evidence:[]}],
+    findings:[{id:'f-001',kind:'model-raw-boundary',verdict:'observed',severity:'unrated',
+      rule:'confirmed/raw-boundary/fresh-positive-marker-controls',pattern:'/uplink',
+      sourceFinding:{id:sourceId}}]});
+  assert.deepEqual(outcome.confirmed,[]);
+  const saved=read(root).findings.find(item=>item.id===sourceId);
+  assert.equal(saved.status,'unproven');
+  assert.equal(saved.liveValidation.status,'response effect observed; exploitability unverified');
+  assert.equal(read(root).memory?.entries?.length??0,0);
+});
 
 test('combined handoff retains methods from cited source handlers when inventory says UNKNOWN',async()=>{
   const root=temp();
@@ -97,6 +117,16 @@ test('connected combined handoff carries cited leads into one full live run and 
   const all=await hostReviewStep(root,{id:started.runId,action:'status'});
   assert.deepEqual(all.reviewDetails.issueIds,[proposed.findings[0],'live-only']);
   assert.equal(all.reviewDetails.summary.distinctIssues,2);
+  fs.writeFileSync(path.join(folder,'findings.json'),JSON.stringify([{id:'proof-one',
+    verdict:'observed',severity:'unrated',rule:'confirmed/raw-boundary/fresh-positive-marker-controls',
+    sourceFinding:{id:proposed.findings[0]},url:`${url}/api/one`,proof}]));
+  fs.writeFileSync(path.join(folder,'report.json'),JSON.stringify({surface:{application:{sourceFindings:[{
+    id:proposed.findings[0],path:'/api/one',
+    status:'response effect observed; exploitability unverified',
+    liveReason:'The response changed, but no security impact was proved.'}]}}}));
+  const effect=await hostReviewStep(root,{id:started.runId,action:'status'});
+  assert.equal(effect.liveValidation[0].status,'observed');
+  assert.equal(effect.liveAudit.confirmed,0);
 });
 
 test('combined review retains exact scope and advances every focused source finding',async()=>{

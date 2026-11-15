@@ -25,6 +25,22 @@ test('host bridge summarizes live work without treating planned checks as covera
   assert.match(result.summary.percentMeaning,/not security coverage/);
 });
 
+test('completed checks never exceed the displayed plan as tasks are discovered',async()=>{
+  const bridge=new BlackboxHostBridge();
+  bridge.start(async({onProgress})=>{
+    onProgress({stage:'progress',type:'task-estimate',total:1});
+    onProgress({stage:'progress',type:'task-done'});
+    onProgress({stage:'progress',type:'task-done'});
+    assert.equal(bridge.status().summary.checksDone,2);
+    assert.equal(bridge.status().summary.checksTotal,2);
+    onProgress({stage:'progress',type:'task-reconcile',total:1,done:3,untested:0});
+    return null;
+  });
+  await bridge.job.done;
+  assert.equal(bridge.status().summary.checksDone,3);
+  assert.equal(bridge.status().summary.checksTotal,3);
+});
+
 test('host bridge returns complete concurrent decisions one at a time',async()=>{
   const bridge=new BlackboxHostBridge();
   bridge.start(async({infer})=>{

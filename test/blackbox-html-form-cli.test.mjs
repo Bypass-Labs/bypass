@@ -89,7 +89,7 @@ test('a form-only local app reaches Muse, executes its POST and replays the proo
   assert.ok(finding?.proof, JSON.stringify({findings: audit.data.findings,
     decisions: web.strategyDecisions?.filter(item =>
       String(item.mode).includes('http-sequence'))}));
-  assert.equal((await cli('verify', audit.data.run)).code, 1);
+  assert.equal((await cli('verify', audit.data.run)).code, 3);
   const exported = await cli('export', audit.data.run, '--out', path.join(root, 'regression'));
   assert.equal(exported.code, 0);
   assert.equal(exported.data.files.length, 1);

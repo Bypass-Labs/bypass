@@ -5,6 +5,7 @@ import {pathAllowed, scopeReady} from '../network.mjs';
 import {execFile, need, hash} from '../util.mjs';
 import {verifyLedger} from './ledger.mjs';
 import {credentialNames} from './auth.mjs';
+import {unverifiedResponseEffect} from './impact.mjs';
 
 // Capture the proof runtime with the audit process's code version. Reading these
 // files only at proof time can mix versions if the CLI is edited during a run.
@@ -142,7 +143,8 @@ export async function proveFindings(findings, results, {runDir, surface, scope, 
       contentOracleHash: hash(fs.readFileSync(contentOracle)),
       verdict: proof.result.verdict, exitCode: proof.exitCode, reason: proofReason}});
     if (proof.exitCode === 1 && proof.result.verdict ===
-        (finding.kind === 'model-http-sequence' ? 'observed' : 'confirmed')) {
+        (finding.kind === 'model-http-sequence' || unverifiedResponseEffect(finding) ?
+          'observed' : 'confirmed')) {
       finding.proof = proofPath;
       finding.confirmation = [...finding.confirmation, evidenceId];
       kept.push(finding);
@@ -351,11 +353,13 @@ export async function proveFindings(findings, results, {runDir, surface, scope, 
     if (Object.keys(context.loginSpecs).length) {
       spec.authBootstrap = context.loginSpecs;
     }
+    if (unverifiedResponseEffect(finding))
+      spec.securityImpact = 'unverified';
     const proofDir = path.join(dir, finding.id);
     const specPath = path.join(proofDir, 'spec.json');
     const proofPath = path.join(proofDir, 'poc.mjs');
     atomic(specPath, spec);
-    atomic(proofPath, `import fs from 'node:fs';\nimport {check} from '../runtime.mjs';\nconst spec=JSON.parse(fs.readFileSync(new URL('./spec.json',import.meta.url),'utf8'));\nconst result=await check(spec,process.env);\nconsole.log(JSON.stringify(result));\nconst reproduced=spec.kind==='model-http-sequence'?result.verdict==='observed':result.verdict==='confirmed';\nprocess.exitCode=process.argv.includes('--expect-fixed')?(result.verdict==='not_reproduced'?0:3):reproduced?1:result.verdict==='not_reproduced'?0:3;\n`);
+    atomic(proofPath, `import fs from 'node:fs';\nimport {check} from '../runtime.mjs';\nconst spec=JSON.parse(fs.readFileSync(new URL('./spec.json',import.meta.url),'utf8'));\nconst raw=await check(spec,process.env);\nconst result=spec.securityImpact==='unverified'&&raw.verdict==='confirmed'?\n  {...raw,verdict:'observed',impact:'unverified'}:raw;\nconsole.log(JSON.stringify(result));\nconst reproduced=spec.kind==='model-http-sequence'||spec.securityImpact==='unverified'?\n  result.verdict==='observed':result.verdict==='confirmed';\nprocess.exitCode=process.argv.includes('--expect-fixed')?(result.verdict==='not_reproduced'?0:3):reproduced?1:result.verdict==='not_reproduced'?0:3;\n`);
     const job = {finding, result, webOrigin, proofDir, specPath, proofPath, context,
       spec};
     if (spec.kind === 'exposure' && spec.request?.method === 'GET' &&
@@ -408,13 +412,14 @@ function recordedRun(root, run) {
 
 function reportedProofGroups(runDir) {
   const file = path.join(runDir, 'findings.json');
-  if (!fs.existsSync(file)) return {findings: null, corroborates: new Map()};
+  if (!fs.existsSync(file)) return {findings: null, corroborates: new Map(), responseEffects: new Set()};
   let findings;
-  try {findings = JSON.parse(fs.readFileSync(file, 'utf8'));} catch {return {findings: null, corroborates: new Map()};}
-  if (!Array.isArray(findings)) return {findings: null, corroborates: new Map()};
+  try {findings = JSON.parse(fs.readFileSync(file, 'utf8'));} catch {return {findings: null, corroborates: new Map(), responseEffects: new Set()};}
+  if (!Array.isArray(findings)) return {findings: null, corroborates: new Map(), responseEffects: new Set()};
   const corroborates = new Map(findings.flatMap(finding =>
     (finding.corroboratingProofs ?? []).map(proof => [proof.id, finding.id])));
-  return {findings: findings.length, corroborates};
+  const responseEffects = new Set(findings.filter(unverifiedResponseEffect).map(finding => finding.id));
+  return {findings: findings.length, corroborates, responseEffects};
 }
 
 /** Re-execute every saved proof after a fix. The retest artifact never contains credential values. */
@@ -425,7 +430,7 @@ export async function verifyRun(root, run, {env = process.env} = {}) {
   const entries = fs.existsSync(pocDir) ? fs.readdirSync(pocDir, {withFileTypes: true}).filter(item => item.isDirectory()) : [];
   need(entries.length > 0, `Run ${run} has no generated proofs.`, 3);
   const proofs = [];
-  const currentReplay = `import fs from 'node:fs';\nimport {check} from ${JSON.stringify(new URL('./poc-runtime.mjs', import.meta.url).href)};\nconst spec=JSON.parse(fs.readFileSync(process.argv[1],'utf8'));\nif(process.argv[2])spec.expiresAt=process.argv[2];\nconst result=await check(spec,process.env);\nconsole.log(JSON.stringify(result));\nconst reproduced=spec.kind==='model-http-sequence'?result.verdict==='observed':result.verdict==='confirmed';\nprocess.exitCode=reproduced?1:result.verdict==='not_reproduced'?0:3;\n`;
+  const currentReplay = `import fs from 'node:fs';\nimport {check} from ${JSON.stringify(new URL('./poc-runtime.mjs', import.meta.url).href)};\nconst spec=JSON.parse(fs.readFileSync(process.argv[1],'utf8'));\nif(process.argv[2])spec.expiresAt=process.argv[2];\nconst raw=await check(spec,process.env);\nconst result=spec.securityImpact==='unverified'&&raw.verdict==='confirmed'?\n  {...raw,verdict:'observed',impact:'unverified'}:raw;\nconsole.log(JSON.stringify(result));\nconst reproduced=spec.kind==='model-http-sequence'||spec.securityImpact==='unverified'?\n  result.verdict==='observed':result.verdict==='confirmed';\nprocess.exitCode=reproduced?1:result.verdict==='not_reproduced'?0:3;\n`;
   for (const entry of entries) {
     const specPath = path.join(pocDir, entry.name, 'spec.json');
     const spec = JSON.parse(fs.readFileSync(specPath, 'utf8'));
@@ -482,7 +487,7 @@ export async function verifyRun(root, run, {env = process.env} = {}) {
     }
     let response;
     try { response = JSON.parse(completed.stdout); } catch { response = {verdict: 'inconclusive', reason: 'proof output was not JSON'}; }
-    const observation = spec.kind === 'model-http-sequence';
+    const observation = spec.kind === 'model-http-sequence' || groups.responseEffects.has(entry.name);
     const reproducedBehavior = observation && ['observed', 'confirmed'].includes(response.verdict);
     proofs.push({id: entry.name, kind: spec.kind,
       ...(groups.corroborates.has(entry.name) ?
@@ -493,8 +498,7 @@ export async function verifyRun(root, run, {env = process.env} = {}) {
   }
   const retest = {run, at: new Date().toISOString(), integrity, proofs};
   atomic(path.join(runDir, 'retest.json'), retest);
-  const exitCode = proofs.some(item => item.verdict === 'confirmed' ||
-    item.kind === 'model-http-sequence' && item.verdict === 'observed' && item.exitCode === 1) ? 1 :
+  const exitCode = proofs.some(item => item.verdict === 'confirmed') ? 1 :
     proofs.every(item => item.verdict === 'not_reproduced') ? 0 : 3;
   return {kind: 'blackbox-verify', run, runDir, integrity, proofs,
     reportedFindings: groups.findings ?? proofs.length, exitCode};

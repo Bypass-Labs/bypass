@@ -58,11 +58,16 @@ test('marker proofs count as unrated and describe response effects rather than a
     reach: {observed: 1, basis: 'distinct response markers'}, dataClasses: [],
     remediation: 'Review the operation.', foundBy: 'muse-proposed-http-sequence',
     status: 'open', modelHypothesis: {family: 'source-grounded effect', why: 'source review'},
+    ...(id==='f-001'?{sourceFinding:{id:'source-marker'}}:{}),
     webProof, webSteps: [{identity: 'anonymous', method: 'POST',
       url: `${ORIGIN}/api/example`, status: 200, evidence: null}],
   });
+  const surface=surfaceFixture();
+  surface.sourceReview={stats:{files:1,skipped:0},securityLeads:[
+    {id:'source-marker',title:'Possible SSRF',path:'/api/example',
+      source:{file:'server.ts',line:20}}]};
   const report = renderReport({run: 'bx-marker-report', scope,
-    scopeHash: 'test', surface: surfaceFixture(), results: [], findings: [
+    scopeHash: 'test', surface, results: [], findings: [
       make('model-raw-boundary', 'f-001',
         'confirmed/raw-boundary/fresh-positive-marker-controls',
         {kind: 'model-raw-boundary', rawProof: {openText: 'example'}}),
@@ -70,12 +75,54 @@ test('marker proofs count as unrated and describe response effects rather than a
         'confirmed/model-sequence-boundary/fresh-marker-controls',
         {kind: 'model-sequence-boundary', oracle: 'marker-proof'}),
     ]});
-  assert.match(report.json.summary.narrative, /2 confirmed findings \(2 unrated\)/);
-  assert.match(report.markdown, /Confirmed source-assisted response effect; security impact inferred from cited source/);
+  assert.match(report.json.summary.narrative, /No confirmed findings\. 2 replayed response effects have unverified security impact/);
+  assert.equal(report.json.summary.findings.filter(item=>item.verdict==='confirmed').length,0);
+  assert.equal(report.json.surface.application.sourceFindings[0].status,
+    'response effect observed; exploitability unverified');
+  assert.match(report.markdown, /Observed response effects \(security impact unproven\)/);
+  assert.match(report.markdown, /Observed response effect; security impact unproven/);
+  assert.match(report.markdown, /Response effect on \/api\/example/);
   assert.match(report.markdown, /exact model-authored request produced a distinct response marker twice/);
   assert.match(report.markdown, /exact model-authored sequence produced distinct response markers twice/);
   assert.doesNotMatch(report.markdown, /request crossed the measured access boundary/);
   assert.doesNotMatch(report.markdown, /sequence crossed a denied-status boundary/);
+});
+
+test('synthetic invalid-attempt result is observed rather than called exploitable', () => {
+  const finding={id:'f-rate',kind:'rate-limit-auth-gate',
+    title:'No visible throttling after 20 synthetic invalid logins',severity:'medium',
+    pattern:'/api/auth/login',url:`${ORIGIN}/api/auth/login`,host:'127.0.0.1:4329',
+    verdict:'confirmed',rule:'confirmed/rate-limit-auth-gate/20-rapid-invalid-attempts-no-throttle',
+    evidence:[],confirmation:[],mirror:{result:'unverified',evidence:[]},tags:['rate-limit'],
+    reach:{observed:1,basis:'20 explicit denials without a throttle signal'},dataClasses:[],
+    foundBy:'bounded-auth-rate-limit-probe',status:'open',remediation:'Throttle failed logins.',
+    webProof:{mode:'login'},webSteps:[{identity:'anonymous',method:'POST',
+      url:`${ORIGIN}/api/auth/login`,status:401,evidence:null}]};
+  const report=renderReport({run:'bx-synthetic-rate',scope,scopeHash:'test',
+    surface:surfaceFixture(),results:[],findings:[finding]});
+  assert.equal(report.json.summary.exploitability.exploitable,0);
+  assert.equal(report.json.summary.exploitability.observedResponseEffects,1);
+  assert.equal(report.json.findings[0].verdict,'observed');
+  assert.equal(report.json.findings[0].severity,'unrated');
+  assert.equal(exitCodeFor({findings:[finding],results:[]}),3);
+  assert.match(report.markdown,/real-account or valid-code impact unverified/);
+});
+
+test('source weaknesses remain visible when a live path is blocked or untested',()=>{
+  const surface=surfaceFixture();
+  surface.sourceReview={stats:{files:1,skipped:0},securityLeads:[
+    {id:'source-denied',title:'SQL query concatenates input',path:'/search',source:{file:'server.ts',line:20}},
+    {id:'source-pending',title:'OTP has no attempt limit',path:'/verify-2fa',source:{file:'server.ts',line:40}},
+  ]};
+  const report=renderReport({run:'bx-source-outcomes',scope,scopeHash:'test',surface,
+    findings:[],results:[],web:{results:[{sourceLeadId:'source-denied',verdict:'not_reproduced',
+      reason:'The tested request was denied.'}]}});
+  assert.deepEqual(report.json.summary.exploitability,{
+    exploitable:0,notExploitableViaTestedPath:1,sourceExploitabilityUnverified:1,
+    observedResponseEffects:0});
+  assert.match(report.markdown,/Not exploitable via tested path[\s\S]*specific live check/);
+  assert.match(report.markdown,/SQL query concatenates input[\s\S]*not exploitable via tested path/);
+  assert.match(report.markdown,/OTP has no attempt limit[\s\S]*exploitability unverified/);
 });
 
 test('report preserves an audit deadline cut as coverage, not a model connection failure', () => {
@@ -359,6 +406,9 @@ test('exitCodeFor follows design 4.1', () => {
     results: resolved}), 3, 'a reproduced transformation has no proven security impact');
   assert.equal(exitCodeFor({findings: [{kind: 'model-json-differential', verdict: 'confirmed'}],
     results: resolved}), 3, 'the JSON experiment uses the same impact standard');
+  assert.equal(exitCodeFor({findings: [{kind:'model-raw-boundary',severity:'unrated',
+    rule:'confirmed/raw-boundary/fresh-positive-marker-controls',verdict:'confirmed'}],
+    results: resolved}),3,'a repeated response marker does not prove security impact');
 });
 
 test('buildFindings turns confirmed results and exposures into ranked, deduplicated findings', () => {
@@ -581,7 +631,7 @@ test('summaryText prints the findings table, counts and run folder', () => {
   assert.match(failedModel, /Muse agents\s+3 active at peak · 12 configured/);
   assert.match(failedModel, /Muse accepted:\s+0 route notes/);
   assert.match(failedModel, /Muse plans:\s+none accepted/);
-  assert.match(failedModel, /Findings: 1 confirmed · partial coverage/);
+  assert.match(failedModel, /Findings: 1 confirmed security · partial coverage/);
   assert.match(failedModel, /Exit 1/);
   const deadlineCut = summaryText({run: 'bx-deadline', runDir: '/r', stats: {
     model: 'Muse session default', modelCalls: 74}, findings: [],
@@ -601,7 +651,7 @@ test('terminal summary labels catalog coverage partial even when every queued ta
     coverage: {complete: false, requestedClasses: [
       {name: 'Remote File Inclusion (RFI)', status: 'not tested'}]},
     stats: {tasks: 1}, exitCode: 1, incomplete: false});
-  assert.match(output, /Findings: 1 confirmed · partial coverage/);
+  assert.match(output, /Findings: 1 confirmed security · partial coverage/);
 });
 
 test('summaryText separates exposure findings from task outcomes', () => {

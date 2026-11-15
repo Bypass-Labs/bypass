@@ -6,6 +6,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { VERSION } from '../util.mjs';
 import {safeAssetHint} from './asset-interpret.mjs';
+import {unverifiedResponseEffect as responseEffectOnly} from './impact.mjs';
 
 const SEVERITIES = ['critical', 'high', 'medium', 'low', 'info', 'unrated'];
 const RESOLVED = new Set(['confirmed', 'not_reproduced', 'shared', 'public']);
@@ -13,6 +14,9 @@ const OPEN = new Set(['inconclusive', 'blocked']);
 // The generic canary oracle proves a response transformation, not a security boundary.
 const RESEARCH_BEHAVIOR = new Set(['model-differential', 'model-json-differential', 'model-http-sequence']);
 const researchBehavior = item => RESEARCH_BEHAVIOR.has(item?.kind);
+const displayTitle = item => item.kind === 'rate-limit-auth-gate' && responseEffectOnly(item) ?
+  `${item.title} (real-account or valid-code impact unverified)` : responseEffectOnly(item) ?
+    `Response effect on ${item.pattern} (${item.title} remains a hypothesis)` : item.title;
 const PII_CLASSES = new Set(['email', 'phone', 'address', 'name', 'ssn', 'dob']);
 const CREDENTIAL_LIKE = /token|secret|password|api.?key|credential/i;
 const NOT_REQUESTED_METHODS = new Set(['GET', 'HEAD', 'UNKNOWN']);
@@ -286,10 +290,10 @@ function identityTags(identity) {
  * A run with no results tested nothing, so it exits 3 rather than reading as clean.
  */
 export function exitCodeFor({ findings = [], results = [], untested = [], blockedRun = false }) {
-  if (findings.some(finding => finding.verdict === 'confirmed' && !researchBehavior(finding)) ||
-      results.some(result => result.verdict === 'confirmed' && !researchBehavior(result))) return 1;
-  if (findings.some(researchBehavior) || results.some(result =>
-      researchBehavior(result) && result.verdict === 'confirmed')) return 3;
+  if (findings.some(finding => finding.verdict === 'confirmed' && !researchBehavior(finding) && !responseEffectOnly(finding)) ||
+      results.some(result => result.verdict === 'confirmed' && !researchBehavior(result) && !responseEffectOnly(result))) return 1;
+  if (findings.some(finding => researchBehavior(finding) || responseEffectOnly(finding)) || results.some(result =>
+      (researchBehavior(result) || responseEffectOnly(result)) && result.verdict === 'confirmed')) return 3;
   if (blockedRun || untested.length || !results.length) return 3;
   return results.every(result => RESOLVED.has(result.verdict)) ? 0 : 3;
 }
@@ -314,7 +318,7 @@ export function renderReport({
     schemaVersion: 1,
     kind: 'blackbox-report',
     header: headerSection({ run, scope, scopeHash, stats, integrity }),
-    summary: summarySection(findings, results, web),
+    summary: summarySection(findings, results, web, reportSurface.application.sourceFindings),
     scope: scopeSection(scope, surface, stats, dropped, recheck),
     surface: reportSurface,
     findings: findings.map(finding => findingSection(finding, finding.task ? byTask.get(finding.task) : null, scope, ledger)),
@@ -367,24 +371,26 @@ function sourceFindingValidation(surface, findings, web) {
     const related = !result && relatedKind ? (web?.results ?? []).find(item =>
       item.kind === relatedKind && item.lead?.path === lead.path &&
       ['blocked', 'inconclusive'].includes(item.verdict)) : null;
-    let status = 'not tested', liveReason = 'No matching bounded live verifier completed.';
+    let status = 'exploitability unverified', liveReason = 'No matching bounded live verifier completed.';
     if (finding) {
-      status = 'confirmed live';
-      liveReason = finding.rule ?? 'Fresh HTTP proof reproduced the source hypothesis.';
+      status = responseEffectOnly(finding) ? 'response effect observed; exploitability unverified' : 'exploitable';
+      liveReason = responseEffectOnly(finding) ?
+        'A response marker replayed, but the proposed security impact was not proved.' :
+        finding.rule ?? 'Fresh HTTP proof reproduced the source hypothesis.';
     } else if (result?.verdict === 'not_reproduced') {
-      status = 'not reproduced';
-      liveReason = result.reason;
+      status = 'not exploitable via tested path';
+      liveReason = `${result.reason} This verdict covers the tested path and environment only.`;
     } else if (result?.verdict === 'inconclusive' || result?.verdict === 'blocked') {
-      status = result.verdict === 'blocked' ? 'blocked' : 'inconclusive';
+      status = `exploitability unverified (${result.verdict})`;
       liveReason = result.reason;
     } else if (result?.verdict === 'confirmed') {
-      status = 'inconclusive';
+      status = 'exploitability unverified';
       liveReason = 'A positive live signal was recorded, but no final proof survived replay.';
     } else if (related) {
-      status = related.verdict;
+      status = `exploitability unverified (${related.verdict})`;
       liveReason = `A related ${relatedKind} check was ${related.verdict}: ${related.reason}. The source claim was not proved.`;
     }
-    return {...lead, sourceVerdict: 'unproven', status, liveReason,
+    return {...lead, sourceVerdict: 'source-cited weakness', status, liveReason,
       evidence: finding ? [...(finding.evidence ?? []), ...(finding.confirmation ?? [])] :
         result?.evidence ?? related?.evidence ?? []};
   });
@@ -434,8 +440,9 @@ function integrityLine(integrity) {
   return integrity.ok ? `ledger intact (${count})` : `ledger broken at ${integrity.brokenAt} (${count})`;
 }
 
-function summarySection(findings, results, web) {
-  const confirmed = findings.filter(finding => !researchBehavior(finding));
+function summarySection(findings, results, web, sourceFindings = []) {
+  const confirmed = findings.filter(finding => !researchBehavior(finding) && !responseEffectOnly(finding));
+  const responseEffects = findings.filter(responseEffectOnly);
   const observations = findings.filter(researchBehavior);
   const corroboratingProofs = confirmed.reduce((count, finding) =>
     count + (finding.corroboratingProofs?.length ?? 0), 0);
@@ -447,8 +454,16 @@ function summarySection(findings, results, web) {
   const executed = allChecks.filter(result => result.verdict !== 'untested').length;
   const queued = allChecks.length - executed;
   const bySeverity = SEVERITIES.filter(severity => counts[severity]).map(severity => `${counts[severity]} ${severity}`).join(', ');
-  const found = confirmed.length ? `${plural(confirmed.length, 'confirmed finding')} (${bySeverity})${corroboratingProofs ?
+  const found = confirmed.length ? `${plural(confirmed.length, 'confirmed security finding')} (${bySeverity})${corroboratingProofs ?
     ` with ${plural(corroboratingProofs, 'additional independent proof')}` : ''}` : 'No confirmed findings';
+  const effects = responseEffects.length ? ` ${plural(responseEffects.length, 'replayed response effect')} ${responseEffects.length===1?'has':'have'} unverified security impact.` : '';
+  const exploitability = {
+    exploitable: confirmed.length,
+    notExploitableViaTestedPath: sourceFindings.filter(item => item.status === 'not exploitable via tested path').length,
+    sourceExploitabilityUnverified: sourceFindings.filter(item =>
+      item.status.includes('unverified') && !item.status.startsWith('response effect observed')).length,
+    observedResponseEffects: responseEffects.length,
+  };
   const observed = observations.length ? ` ${plural(observations.length, 'verified response transformation')} requires security impact assessment.` : '';
   const listed = `${blocked} blocked and ${inconclusive} inconclusive ${blocked + inconclusive === 1 ? 'item is' : 'items are'} listed in section 7`;
   const confirmedPivots = (Array.isArray(web?.modelCoverage) ? web.modelCoverage :
@@ -458,21 +473,23 @@ function summarySection(findings, results, web) {
       executed: total.executed + (item.confirmedPivots?.executed ?? 0),
     }), {proposed: 0, accepted: 0, executed: 0});
   return {
-    narrative: `${found}.${observed} ${plural(executed, 'task')} ran${queued ? `; ${plural(queued, 'task')} remained queued` : ''}; ${listed}.`,
+    narrative: `${found}.${effects}${observed} ${plural(executed, 'task')} ran${queued ? `; ${plural(queued, 'task')} remained queued` : ''}; ${listed}.`,
     counts,
+    exploitability,
     blocked,
     inconclusive,
     corroboratingProofs,
     researchObservations: observations.length,
     confirmedPivots,
-    findings: findings.map(({ id, title, host, pattern, severity, status, kind, foundBy, tags,
-      corroboratingProofs }) => (
-      { id, title, host, pattern, severity: RESEARCH_BEHAVIOR.has(kind) ? 'unrated' : severity,
+    findings: findings.map(finding => {
+      const {id, host, pattern, severity, status, kind, foundBy, tags, corroboratingProofs} = finding;
+      const observed = RESEARCH_BEHAVIOR.has(kind) || responseEffectOnly(finding);
+      return { id, title: displayTitle(finding), host, pattern, severity: observed ? 'unrated' : severity,
         status, kind, foundBy, tags,
         ...(corroboratingProofs?.length ?
           {corroboratingProofIds: corroboratingProofs.map(item => item.id)} : {}),
-        verdict: RESEARCH_BEHAVIOR.has(kind) ? 'observed' : 'confirmed' }
-    )),
+        verdict: observed ? 'observed' : 'confirmed' };
+    }),
   };
 }
 
@@ -633,8 +650,8 @@ function findingSection(finding, result, scope, ledger) {
   const classes = finding.dataClasses.length ? `data classes: ${finding.dataClasses.join(', ')}` : 'no sensitive data classes recorded';
   return {
     ...finding,
-    verdict: researchBehavior(finding) ? 'observed' : finding.verdict,
-    severity: researchBehavior(finding) ? 'unrated' : finding.severity,
+    verdict: researchBehavior(finding) || responseEffectOnly(finding) ? 'observed' : finding.verdict,
+    severity: researchBehavior(finding) || responseEffectOnly(finding) ? 'unrated' : finding.severity,
     rationale: `${classes} · ${finding.reach.basis}`,
     reproduction: steps,
     curl: (['xss-dom-fragment', 'jwt-unsigned', 'model-json-differential', 'model-http-sequence',
@@ -836,6 +853,17 @@ function modelUsageText(usage, calls) {
 
 function markdownSummary(summary) {
   const lines = ['## 1. Executive summary', '', summary.narrative];
+  const verdicts=summary.exploitability;
+  if(verdicts)lines.push('', 'Exploitability in this tested environment:', '',
+    ...table(['Outcome', 'Count', 'Meaning'], [
+      ['Exploitable', verdicts.exploitable, 'A fresh live proof established security impact.'],
+      ['Not exploitable via tested path', verdicts.notExploitableViaTestedPath,
+        'The specific live check was denied or did not reproduce; other paths and builds remain unassessed.'],
+      ['Source weakness; exploitability unverified', verdicts.sourceExploitabilityUnverified,
+        'Cited source evidence remains visible; the live check was missing, blocked, or inconclusive.'],
+      ['Observed response effect', verdicts.observedResponseEffects,
+        'A response changed under replay, but no security impact was established.'],
+    ]));
   if (summary.confirmedPivots?.proposed)
     lines.push('', `Muse related-impact follow-up: ${summary.confirmedPivots.proposed} positive signal(s) considered, ` +
       `${summary.confirmedPivots.accepted} bounded flow(s) accepted, ${summary.confirmedPivots.executed} executed. ` +
@@ -1025,7 +1053,7 @@ function markdownApplication(application) {
     if (source.modelCoverage) lines.push(`- Muse source interpretation: ${source.modelCoverage.snippetsSent} of ${source.modelCoverage.snippetsAvailable} route excerpts in ${source.modelCoverage.pagesSent} of ${source.modelCoverage.pagesAvailable} pages.`);
     if (application.sourceFindings?.length) {
       lines.push('', 'Source findings and live validation:', '',
-        'Source findings remain unproven unless the status is **confirmed live**. A negative or incomplete live check does not erase the source evidence.', '',
+        'Cited source weaknesses remain visible. **Exploitable** requires a fresh live proof of security impact. **Not exploitable via tested path** applies only to the checked route, input, and environment; incomplete checks leave exploitability unverified.', '',
         ...table(['Source finding', 'Route', 'Source', 'Live status', 'Live result'],
           application.sourceFindings.map(lead => [lead.title, code(lead.path),
             `${code(lead.source?.file ?? '-')} ${lead.source?.line ?? '-'}`,
@@ -1058,11 +1086,14 @@ function markdownApplication(application) {
 }
 
 function markdownFindings(findings) {
-  const confirmed = findings.filter(finding => !researchBehavior(finding));
+  const confirmed = findings.filter(finding => !researchBehavior(finding) && !responseEffectOnly(finding));
+  const effects = findings.filter(responseEffectOnly);
   const observations = findings.filter(researchBehavior);
   return ['## 5. Findings',
     ...(!confirmed.length ? ['', 'No confirmed security findings.'] :
       confirmed.flatMap(markdownFinding)),
+    ...(effects.length ? ['', 'Observed response effects (security impact unproven):',
+      ...effects.flatMap(markdownFinding)] : []),
     ...(observations.length ? ['', 'Research observations (security impact unverified):',
       ...observations.flatMap(markdownFinding)] : [])];
 }
@@ -1071,13 +1102,13 @@ function markdownFinding(finding) {
   const mirror = finding.mirror ?? { result: 'unverified', evidence: [] };
   const mirrorText = [mirror.result, mirror.url && `owner GET ${code(mirror.url)}`, mirror.reason, mirror.evidence?.join(', ')].filter(Boolean).join(' · ');
   return [
-    '', `### ${finding.id} · ${finding.title}`, '',
+    '', `### ${finding.id} · ${displayTitle(finding)}`, '',
     `- Host: ${finding.host}`,
     `- Verdict: ${researchBehavior(finding) ? 'Observed response transformation; security impact unverified' :
-      /fresh-(?:positive-)?marker-controls/.test(finding.rule ?? '') ?
-        'Confirmed source-assisted response effect; security impact inferred from cited source' :
+      responseEffectOnly(finding) ?
+        'Observed response effect; security impact unproven' :
         'Confirmed security finding'}`,
-    `- Severity: ${researchBehavior(finding) ? 'unrated' : finding.severity} · ${researchBehavior(finding) ? 'Security impact has not been established' : finding.rationale}`,
+    `- Severity: ${researchBehavior(finding) || responseEffectOnly(finding) ? 'unrated' : finding.severity} · ${researchBehavior(finding) || responseEffectOnly(finding) ? 'Security impact has not been established' : finding.rationale}`,
     `- Classification: ${finding.owasp ?? 'none'} · ${finding.cwe ?? 'none'}`,
     `- Pattern: ${code(finding.pattern)} · URL: ${code(finding.url)}`,
     `- Found by: ${finding.foundBy} · task ${finding.task ?? 'none'} · status ${finding.status}`,
@@ -1182,7 +1213,8 @@ function markdownAppendix(rows, ledgerFile) {
 export function summaryText(result, {color = false} = {}) {
   const stats = result.stats ?? {};
   const findings = result.findings ?? [];
-  const confirmedFindings = findings.filter(finding => !researchBehavior(finding));
+  const confirmedFindings = findings.filter(finding => !researchBehavior(finding) && !responseEffectOnly(finding));
+  const effects = findings.filter(responseEffectOnly);
   const observations = findings.filter(researchBehavior);
   const corroboratingProofs = confirmedFindings.reduce((count, finding) =>
     count + (finding.corroboratingProofs?.length ?? 0), 0);
@@ -1204,8 +1236,9 @@ export function summaryText(result, {color = false} = {}) {
   if (result.origin ?? result.credentialOrigins?.[0])
     lines.push(`Target           ${result.origin ?? result.credentialOrigins[0]}`);
   lines.push(`Scope            ${scope}`);
-  lines.push('', heading((confirmedFindings.length ? `Findings: ${confirmedFindings.length} confirmed` : 'Findings: none confirmed') +
+  lines.push('', heading((confirmedFindings.length ? `Findings: ${confirmedFindings.length} confirmed security` : 'Findings: none confirmed security') +
     (incomplete ? ' · partial coverage' : '')));
+  if (effects.length) lines.push(`Response effects ${effects.length} replayed · security impact unproven`);
   if (observations.length) lines.push(`Research          ${observations.length} reproduced response transformation${observations.length === 1 ? '' : 's'} · impact unverified`);
   if (findings.length) {
     const widths = ['id', 'severity', 'kind'].map(key => Math.max(...findings.map(finding =>
@@ -1215,9 +1248,10 @@ export function summaryText(result, {color = false} = {}) {
         finding.kind].map((value, index) => String(value).padEnd(widths[index]));
       const tone = finding.severity === 'critical' ? '1;31' : finding.severity === 'high' ? '33' : '0';
       const suffix = finding.pattern ? `: ${finding.pattern}` : '';
-      const title = suffix && String(finding.title).endsWith(suffix) ?
-        String(finding.title).slice(0, -suffix.length) : finding.title;
-      lines.push(`  ${columns[0]}  ${paint(tone, columns[1])}  ${columns[2]}  ${title}${researchBehavior(finding) ? ' · observed' : ''}`);
+      const shownTitle = displayTitle(finding);
+      const title = suffix && String(shownTitle).endsWith(suffix) ?
+        String(shownTitle).slice(0, -suffix.length) : shownTitle;
+      lines.push(`  ${columns[0]}  ${paint(tone, columns[1])}  ${columns[2]}  ${title}${researchBehavior(finding) || responseEffectOnly(finding) ? ' · observed' : ''}`);
       if (finding.pattern) lines.push(`         ${dim(finding.pattern)}`);
       if (finding.corroboratingProofs?.length)
         lines.push(`         ${dim(`Corroborated by ${finding.corroboratingProofs.map(item =>

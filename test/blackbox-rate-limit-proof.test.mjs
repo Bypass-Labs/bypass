@@ -99,6 +99,8 @@ test('confirmed rate-limit findings survive generated proof replay', async t => 
     env: {}, ledger: {append: () => 'ev-proof'}, web: {results: []}});
   assert.equal(kept.length, 1);
   assert.equal(kept[0].proof.endsWith('/poc/f-0001/poc.mjs'), true);
+  const saved = JSON.parse(fs.readFileSync(path.join(runDir, 'poc/f-0001/spec.json'), 'utf8'));
+  assert.equal(saved.securityImpact, 'unverified');
   assert.equal(requests, 20);
 });
 

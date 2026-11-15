@@ -114,7 +114,7 @@ test('CLI uses an observed query example in a Muse-selected prelude and replays 
   assert.ok(finding.proof);
   assert.ok(requested.filter(item => item === `GET ${prepare}?mode=full`).length >= 3);
   assert.ok(!requested.some(item => item.startsWith(`GET ${decoy}`)));
-  assert.equal((await cli('verify', audit.data.run)).code, 1);
+  assert.equal((await cli('verify', audit.data.run)).code, 3);
   const exported = await cli('export', audit.data.run, '--out', path.join(root, 'regression'));
   assert.equal(exported.code, 0);
   const regression = () => new Promise((resolve, reject) => {

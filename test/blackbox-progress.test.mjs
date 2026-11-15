@@ -52,6 +52,14 @@ test('the final audit screen leads with impact, remediation, coding brief and ex
   assert.match(exported,/✓ Saved 1 standalone regression test/);assert.match(exported,/node --test '\/tmp\/app\/tests\/f-001\.test\.mjs'/);
 });
 
+test('a marker-only replay is an observation on the final audit screen',()=>{
+  const text=blackboxOutcomeText({findings:[{id:'f-001',kind:'model-raw-boundary',
+    verdict:'confirmed',severity:'unrated',title:'Possible command injection',
+    rule:'confirmed/raw-boundary/fresh-positive-marker-controls'}]});
+  assert.match(text,/response effect was replayed; security impact remains unverified/);
+  assert.doesNotMatch(text,/CONFIRMED SECURITY FINDING/);
+});
+
 const CLI = fileURLToPath(new URL('../bin/bypass.mjs', import.meta.url));
 
 test('plain CLI shows audit milestones, replay commands, and an honest coverage summary', async t => {

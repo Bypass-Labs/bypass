@@ -6,7 +6,7 @@ import os from 'node:os';
 import path from 'node:path';
 import {randomBytes} from 'node:crypto';
 import {createLedger} from '../src/blackbox/ledger.mjs';
-import {proveFindings, exportRun} from '../src/blackbox/poc.mjs';
+import {proveFindings, verifyRun, exportRun} from '../src/blackbox/poc.mjs';
 import {rawBoundaryOutcome, responseMarkerFingerprint} from '../src/blackbox/poc-runtime.mjs';
 import {planResearchFlows, validateResearchFlow,
   runResearchFlows} from '../src/blackbox/research-flow.mjs';
@@ -82,7 +82,16 @@ test('raw proof repeats an in-band marker when public and negative controls diff
   const proved = await proveFindings([{...run.findings[0], id: 'f-001'}], [],
     {runDir: dir, scope, surface: {}, env: {}, ledger, web: run});
   assert.equal(proved.length, 1);
+  assert.equal(JSON.parse(fs.readFileSync(path.join(dir,'poc/f-001/spec.json'),'utf8')).securityImpact,
+    'unverified');
+  const direct=await execFile(process.execPath,[proved[0].proof],{env:process.env,timeout:20000});
+  assert.equal(JSON.parse(direct.stdout).verdict,'observed');
   fs.writeFileSync(path.join(dir, 'run.json'), '{}');
+  fs.writeFileSync(path.join(dir, 'findings.json'),JSON.stringify(proved));
+  const replay=await verifyRun(root,runId);
+  assert.equal(replay.proofs[0].verdict,'observed');
+  assert.equal(replay.proofs[0].impact,'unverified');
+  assert.equal(replay.exitCode,3,'response effect alone is not an exploitable finding');
   const exported = exportRun(root, runId, {out: path.join(root, 'exported')});
   assert.equal(exported.files.length, 1);
   const files = folder => fs.readdirSync(folder, {withFileTypes: true}).flatMap(entry => {

@@ -6,6 +6,7 @@ import {prepareScopeTemplate} from './blackbox/setup.mjs';
 import {projectIdentityBridge, projectBlackboxEnvironment} from './blackbox/project-scope.mjs';
 import {runAudit} from './blackbox/index.mjs';
 import {rememberBlackboxFindings} from './project-memory.mjs';
+import {unverifiedResponseEffect} from './blackbox/impact.mjs';
 import {hash, id, need, now, redact} from './util.mjs';
 
 const RESEARCH_BEHAVIOR = new Set(['model-differential', 'model-json-differential',
@@ -92,12 +93,14 @@ export async function reconcileAuditFindings(root, parentRunId, sourceResult, bl
       finding.lastRunId = parentRunId;
       finding.liveValidation = {runId: blackbox.run, status: outcome.status,
         reason: outcome.liveReason, evidence: outcome.evidence ?? [], at: now()};
-      if (outcome.status === 'confirmed live') finding.status = 'confirmed';
-      else if (outcome.status === 'not reproduced') finding.status = 'not_reproduced';
-      else if (['blocked', 'inconclusive'].includes(outcome.status)) finding.status = 'blocked';
+      if (['exploitable','confirmed live'].includes(outcome.status)) finding.status = 'confirmed';
+      else if (['not exploitable via tested path','not reproduced'].includes(outcome.status)) finding.status = 'not_reproduced';
+      else if (String(outcome.status ?? '').includes('blocked') ||
+          String(outcome.status ?? '').includes('inconclusive')) finding.status = 'blocked';
     }
     for (const finding of (blackbox.findings ?? []).filter(item =>
-      item.verdict === 'confirmed' && !RESEARCH_BEHAVIOR.has(item.kind))) {
+      item.verdict === 'confirmed' && !RESEARCH_BEHAVIOR.has(item.kind) &&
+      !unverifiedResponseEffect(item))) {
       const linked = finding.sourceFinding?.id ?
         current.findings.find(item => item.id === finding.sourceFinding.id) : null;
       const proofId = finding.proof ? path.basename(path.dirname(finding.proof)) : null;

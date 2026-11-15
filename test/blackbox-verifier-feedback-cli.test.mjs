@@ -152,8 +152,8 @@ test('later protected Muse planning receives an earlier verifier result and pivo
     const fixedSsti = await execFile(process.execPath, [ssti.proof, '--expect-fixed'],
       {env, timeout: 30000});
     assert.equal(fixedSsti.code, 0, fixedSsti.stdout);
-    // This fixture's mode switch fixes the rendered expression, not its
-    // separately proved lack of login throttling.
-    assert.equal((await cli('verify', audit.data.run)).code, 1);
+    // The rendered expression is fixed; synthetic invalid login attempts
+    // remain a replayed observation without proved real-account impact.
+    assert.equal((await cli('verify', audit.data.run)).code, 3);
     assert.equal((await regression()).code, 1);
   });

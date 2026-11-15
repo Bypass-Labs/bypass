@@ -48,7 +48,7 @@ These are bounded test shapes, not exhaustive coverage of each class. For exampl
 
 ## Why this goes beyond a scan
 
-**A source warning is a lead. A confirmed finding is a reproduced behavior. A fixed finding becomes a test.**
+**A source warning is a lead. A confirmed finding has a replayed security impact. A fixed finding becomes a test.**
 
 ![Before Bypass Muse: a developer overwhelmed by scanner findings. After Bypass Muse: a calmer review with source-to-sink context.](docs/assets/bypass-muse-before-after.png)
 

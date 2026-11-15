@@ -118,7 +118,8 @@ test('CLI runs an observed local form sequence without hand-editing POST scope, 
     /Research observations \(security impact unverified\)/);
   assert.ok(seen.filter(item => item === `POST ${route}`).length >= 7);
   assert.ok(!seen.includes(`POST ${decoy}`));
-  assert.equal((await cli('verify', audit.data.run)).code, 1);
+  assert.equal((await cli('verify', audit.data.run)).code, 3,
+    'a replayed response sequence without security impact remains an observation');
   const exported = await cli('export', audit.data.run, '--out', path.join(root, 'regression'));
   assert.equal(exported.code, 0);
   const runExport = () => new Promise((resolve, reject) => {

@@ -12,6 +12,7 @@ import path from 'node:path';
 import { testRegistration, registrationStatus } from './registration.mjs';
 import { hostAI } from './execution-mode.mjs';
 import { sourceContextFromFindings } from './audit-engine.mjs';
+import {unverifiedResponseEffect} from './blackbox/impact.mjs';
 import { findingSummary } from './review-report.mjs';
 import { id, now, named, need, outcome, hash, abortFault, redact } from './util.mjs';
 
@@ -77,7 +78,7 @@ function sealedSourceProofs(folder,saved,origin) {
   if(!Array.isArray(findings))return [];
   const proofRoot=path.resolve(folder,'poc')+path.sep;
   return findings.filter(item=>{
-    if(item.verdict!=='confirmed'||!item.sourceFinding?.id||typeof item.proof!=='string')return false;
+    if(item.verdict!=='confirmed'||unverifiedResponseEffect(item)||!item.sourceFinding?.id||typeof item.proof!=='string')return false;
     const proof=path.resolve(item.proof),specFile=path.join(path.dirname(proof),'spec.json');
     if(!proof.startsWith(proofRoot)||path.basename(proof)!=='poc.mjs'||
       !fs.existsSync(proof)||!fs.existsSync(specFile))return false;
@@ -226,8 +227,12 @@ const receipt=(root,run)=>{const state=read(root),work=workProgress(run,state);
             (broadProofs.has(item.id)?{status:'confirmed',runId:broad.latest.run,
               proofs:[broadProofs.get(item.id).id],proofSource:'blackbox'}:
               !broad.latest.finishedAt?{status:'running',runId:broad.latest.run}:
-                {status:({'not reproduced':'not_reproduced','inconclusive':'inconclusive',
-                  blocked:'blocked'}[broadOutcomes.get(item.id)?.status]??'untested'),
+                {status:({'not reproduced':'not_reproduced',
+                  'not exploitable via tested path':'not_reproduced',
+                  'response effect observed; exploitability unverified':'observed',
+                  'inconclusive':'inconclusive',blocked:'blocked',
+                  'exploitability unverified (inconclusive)':'inconclusive',
+                  'exploitability unverified (blocked)':'blocked'}[broadOutcomes.get(item.id)?.status]??'untested'),
                 runId:broad.latest.run,reason:broadOutcomes.get(item.id)?.liveReason??
                   'No matching live verifier completed.'}):
           run.host.liveHandoff==='broad'?
