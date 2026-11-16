@@ -4,8 +4,38 @@ import { createWorklist, workProgress, routeMatches } from './review-worklist.mj
 import {unverifiedResponseEffect} from './blackbox/impact.mjs';
 import { need } from './util.mjs';
 
-function reportChoices(confirmed){
-  const actions=[{id:'inspect',label:'Inspect a finding and its proof or proposed fix',editsCode:false}];
+function inspectPicker(items){
+  if(!items.length)return {question:'What would you like to inspect?',
+    choices:[{id:'coverage',label:'Coverage and limits',description:'Review the recorded scope and untested work.'},
+      {id:'back',label:'Return to report',description:'Leave the inspection picker.'}],groups:[]};
+  const categories=[
+    {id:'exploitable',label:'Exploitable findings',test:item=>item.status.startsWith('exploitable')},
+    {id:'source',label:'Source weaknesses',test:item=>item.status.startsWith('source weakness')||item.status==='not exploitable via tested path'},
+    {id:'other',label:'Other observations',test:item=>!item.status.startsWith('exploitable')&&
+      !item.status.startsWith('source weakness')&&item.status!=='not exploitable via tested path'}
+  ];
+  const groups=categories.map(category=>{
+    const entries=items.filter(category.test);
+    const pages=[];
+    for(let start=0;start<entries.length;start+=2){
+      const choices=entries.slice(start,start+2).map(item=>({id:item.id,
+        label:`${item.reportNumber?`#${item.reportNumber} `:''}${item.title}`,
+        description:item.status}));
+      if(start+2<entries.length)choices.push({id:'more',label:'More results',description:`Show ${category.label.toLowerCase()} ${start+3} onward.`});
+      else if(start>0||choices.length===1)choices.push({id:'back',label:'Back to categories',description:'Choose another result group.'});
+      pages.push({question:`Which ${category.label.toLowerCase()} entry would you like to inspect?`,
+        choices});
+    }
+    return {id:category.id,label:category.label,count:entries.length,pages};
+  }).filter(group=>group.count);
+  const choices=groups.map(group=>({id:group.id,label:`${group.label} (${group.count})`,
+    description:`Inspect ${group.count} ${group.label.toLowerCase()}.`}));
+  if(choices.length===1)choices.push({id:'back',label:'Return to report',description:'Leave the inspection picker.'});
+  return {question:'Which audit results would you like to inspect?',choices,groups};
+}
+
+function reportChoices(confirmed,inspectable){
+  const actions=[{id:'inspect',label:'Inspect any report entry (confirmed, source, or observation)',editsCode:false,picker:inspectPicker(inspectable)}];
   if(confirmed)actions.push({id:'fix',label:'Fix confirmed issues and open a PR',editsCode:true});
   actions.push({id:'leave',label:'Leave findings open',editsCode:false});
   return actions;
@@ -98,7 +128,8 @@ export function findingReview(root,run,findings){
         sourceLive?.status==='not exploitable via tested path'?
         `${sourceLive.liveReason} The source weakness remains recorded for review.`:group.status==='confirmed'?
         'No connected black-box proof is linked; see the configured HTTP probe controls and source run evidence.':
-        /(?:otp|2fa|mfa)/i.test(`${primary.title} ${primary.resourcePath}`)?
+        /(?:otp|2fa|mfa)/i.test(primary.resourcePath||'')&&
+        /throttl|rate.limit|attempt|guess/i.test(primary.title)?
         'No completed live OTP proof is linked. Throttling needs a valid test-account challenge; the source observation alone does not establish deployed behavior.':
         'No completed live proof is linked to this source lead.',
       regression:check&&fs.existsSync(check)?check:null,
@@ -118,6 +149,11 @@ export function findingReview(root,run,findings){
   const linkedProofIds=new Set(issues.map(item=>item.liveProof?.id).filter(Boolean));
   const otherObservations=(live?.findings||[]).filter(item=>item.verdict==='observed'&&
     !linkedProofIds.has(item.id));
+  const inspectable=[...issues.map((item,index)=>({id:item.id,reportNumber:index+1,
+    title:item.title,status:item.status,kind:'finding',detailTool:'bypass_finding'})),
+    ...otherObservations.map(item=>({id:item.id,title:item.title||'Observed response change',
+      status:'observation; security impact unverified',kind:'observation',
+      reportPath:savedReportPath,proofPath:item.proof||null}))];
   const lines=[`# Security audit results`,
     `Source review: ${run?.id||'unknown'}${liveRun?` · Live audit: ${liveRun}`:' · No connected live audit'}`,
     `Full report: ${savedReportPath||'No connected live report'}`,
@@ -143,7 +179,7 @@ export function findingReview(root,run,findings){
   if(otherObservations.length)lines.push('## Other observed behavior · security impact unverified','',
     ...otherObservations.map(item=>`${item.id} · ${item.title||'Response changed'} · ${item.pattern||item.url||'route not recorded'}\nProof: ${item.proof||'see full report'}\nEvidence: ${(item.evidence||[]).join(', ')||'see full report'}`),'');
   lines.push(`Full report: ${savedReportPath||'No connected live report'}`);
-  const nextActions=reportChoices(securityProofs);
+  const nextActions=reportChoices(securityProofs,inspectable);
   appendChoices(lines,nextActions);
   const classifiedById=new Map(issues.map(item=>[item.id,item]));
   return {presentation:lines.join('\n'),summary:{...summary,confirmed:securityProofs,observedResponseEffects:responseEffects,
@@ -152,7 +188,7 @@ export function findingReview(root,run,findings){
       status:classifiedById.get(group.id)?.status??group.status,
       severity:classifiedById.get(group.id)?.severity??group.severity,
       title:classifiedById.get(group.id)?.title??group.title}))},issues,coverage,
-    paths:{liveReport:savedReportPath,sourceRun:sourceRunPath},nextActions};
+    paths:{liveReport:savedReportPath,sourceRun:sourceRunPath},inspectable,nextActions};
 }
 
 export function blackboxFindingReview(root,result){
@@ -197,11 +233,17 @@ export function blackboxFindingReview(root,result){
       `Recommendation: ${item.assessment?.remediation||item.remediation||'Investigate the recorded behavior and intended access policy.'}`,'');
   }
   lines.push(`Full report: ${reportPath}`);
-  const nextActions=reportChoices(securityFindings);
+  const inspectable=liveFindings.map((item,index)=>({id:item.id,reportNumber:index+1,
+    title:item.title||'Observed response change',
+    status:item.verdict==='observed'||unverifiedResponseEffect(item)?
+      'observation; security impact unverified':confirmedLiveProof(item)?
+        'exploitable (live proof confirmed)':'live exploitability unverified',
+    kind:'live-evidence',reportPath,proofPath:item.proof||null}));
+  const nextActions=reportChoices(securityFindings,inspectable);
   appendChoices(lines,nextActions);
   return {presentation:lines.join('\n'),run:report.header?.run||result.run||null,
     findings:liveFindings.length,securityFindings,unverifiedFindings,
-    observedResponseEffects:responseEffects,otherObservations,reportPath,nextActions};
+    observedResponseEffects:responseEffects,otherObservations,reportPath,inspectable,nextActions};
 }
 
 export function assessmentCoverage(state,currentInventory,{run:runId,target}={}){
