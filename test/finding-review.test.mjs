@@ -73,7 +73,11 @@ test('completed connected review presents all issues and does not promote a resp
   assert.deepEqual(report.nextActions.map(item=>item.id),['inspect','leave']);
   assert.deepEqual(report.inspectable.map(item=>item.id),
     ['rate','effect','source','otp','f-003']);
-  assert.deepEqual(report.nextActions[0].items,report.inspectable);
+  assert.deepEqual(report.nextActions[0].picker.choices.map(item=>item.id),
+    ['source','other']);
+  assert.deepEqual(report.nextActions[0].picker.groups.flatMap(group=>
+    group.pages.flatMap(page=>page.choices.filter(item=>!['more','back'].includes(item.id)).map(item=>item.id))).sort(),
+    report.inspectable.map(item=>item.id).sort());
   assert.equal(report.inspectable.find(item=>item.id==='source').detailTool,'bypass_finding');
   assert.equal(report.inspectable.find(item=>item.id==='f-003').kind,'observation');
   assert.doesNotMatch(report.presentation,/Fix confirmed issues and open a PR/);
@@ -84,7 +88,9 @@ test('completed connected review presents all issues and does not promote a resp
   assert.equal(appOnly.observedResponseEffects,2);
   assert.equal(appOnly.otherObservations,1);
   assert.deepEqual(appOnly.inspectable.map(item=>item.id),['f-001','f-002','f-003']);
-  assert.deepEqual(appOnly.nextActions[0].items,appOnly.inspectable);
+  assert.deepEqual(appOnly.nextActions[0].picker.groups.flatMap(group=>
+    group.pages.flatMap(page=>page.choices.filter(item=>!['more','back'].includes(item.id)).map(item=>item.id))).sort(),
+    appOnly.inspectable.map(item=>item.id).sort());
   assert.match(appOnly.presentation,/observed response effect; exploitability unverified/);
   assert.match(appOnly.presentation,/No visible throttling after synthetic invalid attempts[\s\S]*Severity: unrated/);
   assert.doesNotMatch(appOnly.presentation,/undefined/);
@@ -108,6 +114,14 @@ test('a cookie source lead does not receive OTP throttling guidance',()=>{
   assert.match(review.issues.find(item=>item.id==='cookie').unprovenReason,/No completed live proof/);
   assert.doesNotMatch(review.issues.find(item=>item.id==='cookie').unprovenReason,/Throttling/);
   assert.match(review.issues.find(item=>item.id==='otp').unprovenReason,/Throttling/);
+});
+
+test('empty audit offers coverage inspection with a valid native question',()=>{
+  const root=temp();
+  const review=findingReview(root,{id:'run-empty',result:{}},[]);
+  assert.deepEqual(review.nextActions[0].picker.choices.map(item=>item.id),
+    ['coverage','back']);
+  assert.equal(review.nextActions[0].picker.groups.length,0);
 });
 
 test('packaged Muse findings tool retains every inspect choice after a repeated read',async t=>{
@@ -136,9 +150,14 @@ test('packaged Muse findings tool retains every inspect choice after a repeated 
   const first=await client.call('bypass_findings',{run:runId});
   const second=await client.call('bypass_findings',{run:runId});
   for(const result of [first,second]){
-    assert.deepEqual(result.review.nextActions[0].items.map(item=>item.id),
-      ['finding-1','finding-2','finding-3','finding-4','f-002']);
-    assert.equal(result.review.nextActions[0].items.length,5);
+    const picker=result.review.nextActions[0].picker;
+    assert.deepEqual(picker.choices.map(item=>item.id),['exploitable','source','other']);
+    assert.deepEqual(picker.groups.flatMap(group=>group.pages.flatMap(page=>
+      page.choices.filter(item=>!['more','back'].includes(item.id)).map(item=>item.id))),
+    ['finding-4','finding-1','finding-2','finding-3','f-002']);
+    assert.ok(picker.choices.length<=3);
+    assert.ok(picker.groups.every(group=>group.pages.every(page=>
+      page.choices.length>=2&&page.choices.length<=3)));
   }
   assert.equal(await client.close(),0);
 });

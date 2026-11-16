@@ -4,8 +4,38 @@ import { createWorklist, workProgress, routeMatches } from './review-worklist.mj
 import {unverifiedResponseEffect} from './blackbox/impact.mjs';
 import { need } from './util.mjs';
 
+function inspectPicker(items){
+  if(!items.length)return {question:'What would you like to inspect?',
+    choices:[{id:'coverage',label:'Coverage and limits',description:'Review the recorded scope and untested work.'},
+      {id:'back',label:'Return to report',description:'Leave the inspection picker.'}],groups:[]};
+  const categories=[
+    {id:'exploitable',label:'Exploitable findings',test:item=>item.status.startsWith('exploitable')},
+    {id:'source',label:'Source weaknesses',test:item=>item.status.startsWith('source weakness')||item.status==='not exploitable via tested path'},
+    {id:'other',label:'Other observations',test:item=>!item.status.startsWith('exploitable')&&
+      !item.status.startsWith('source weakness')&&item.status!=='not exploitable via tested path'}
+  ];
+  const groups=categories.map(category=>{
+    const entries=items.filter(category.test);
+    const pages=[];
+    for(let start=0;start<entries.length;start+=2){
+      const choices=entries.slice(start,start+2).map(item=>({id:item.id,
+        label:`${item.reportNumber?`#${item.reportNumber} `:''}${item.title}`,
+        description:item.status}));
+      if(start+2<entries.length)choices.push({id:'more',label:'More results',description:`Show ${category.label.toLowerCase()} ${start+3} onward.`});
+      else if(start>0||choices.length===1)choices.push({id:'back',label:'Back to categories',description:'Choose another result group.'});
+      pages.push({question:`Which ${category.label.toLowerCase()} entry would you like to inspect?`,
+        choices});
+    }
+    return {id:category.id,label:category.label,count:entries.length,pages};
+  }).filter(group=>group.count);
+  const choices=groups.map(group=>({id:group.id,label:`${group.label} (${group.count})`,
+    description:`Inspect ${group.count} ${group.label.toLowerCase()}.`}));
+  if(choices.length===1)choices.push({id:'back',label:'Return to report',description:'Leave the inspection picker.'});
+  return {question:'Which audit results would you like to inspect?',choices,groups};
+}
+
 function reportChoices(confirmed,inspectable){
-  const actions=[{id:'inspect',label:'Inspect any report entry (confirmed, source, or observation)',editsCode:false,items:inspectable}];
+  const actions=[{id:'inspect',label:'Inspect any report entry (confirmed, source, or observation)',editsCode:false,picker:inspectPicker(inspectable)}];
   if(confirmed)actions.push({id:'fix',label:'Fix confirmed issues and open a PR',editsCode:true});
   actions.push({id:'leave',label:'Leave findings open',editsCode:false});
   return actions;
