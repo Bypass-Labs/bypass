@@ -5,7 +5,7 @@ export const commands={
   'blackbox scope':command('blackbox scope <url>','Write a reviewable blackbox.scope.json.','include methods domains audit-domains credential-origins never owner-env other-env auth identity-path identity-cookie-name environment agents http-workers rps model-calls max-urls max-tasks minutes dom-script-bytes out force'),
   'blackbox setup':command('blackbox setup <url>','Prepare scope and authorization; --plan previews the approval picker without changes.','plan include methods domains audit-domains credential-origins never owner-env other-env auth identity-path identity-cookie-name environment agents http-workers rps model-calls max-urls max-tasks minutes dom-script-bytes out force'),
   'blackbox verify':command('blackbox verify <run-id>','Re-execute generated proofs and check ledger integrity.'),
-  'blackbox export':command('blackbox export <run-id>','Write Node regression tests for confirmed findings.','out'),
+  'blackbox export':command('blackbox export <run-id>','Write Node regression tests for replayed security findings and observed response effects.','out'),
   'blackbox resume':command('blackbox resume <run-id>','Continue saved Muse research in a fresh scoped audit.','scope model offline agents http-workers rps model-calls max-urls max-tasks minutes dom-script-bytes'),
   discover:command('discover','Discover SAST/policy signals and evaluate them against source by default.','detector languages rule exclude-rule policy exclude-policy include-tests include-examples include-generated sarif config plan discovery-only debug-log debug-raw'),
   'discover evaluate':command('discover evaluate <run>','Evaluate saved detector signals against their source snapshot; no runtime reproduction.','debug-log debug-raw'),

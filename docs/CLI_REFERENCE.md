@@ -30,7 +30,7 @@ Options: None.
 
 ## `bypass blackbox export <run-id>`
 
-Write Node regression tests for confirmed findings.
+Write Node regression tests for replayed security findings and observed response effects.
 
 Options: `--out <value>`
 

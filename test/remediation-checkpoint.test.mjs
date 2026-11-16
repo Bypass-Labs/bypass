@@ -131,6 +131,24 @@ test('connected full live run saves and replays each proof under one combined ch
   assert.deepEqual(replayed.results.map(item=>item.status),['not_reproduced','still_vulnerable']);
 });
 
+test('an observed marker alone cannot open a confirmed-issue remediation checkpoint',async()=>{
+  const {root,origin}=await project(),id='bx-20261104-44444444';
+  const folder=path.join(root,'.bypass','runs',id);
+  const proof=path.join(folder,'poc','f-001','poc.mjs');
+  fs.mkdirSync(path.dirname(proof),{recursive:true});
+  fs.writeFileSync(proof,'// observed behavior fixture\n');
+  fs.writeFileSync(path.join(path.dirname(proof),'spec.json'),'{}');
+  fs.writeFileSync(path.join(folder,'findings.json'),JSON.stringify([{id:'f-001',
+    title:'Possible command injection',verdict:'confirmed',severity:'unrated',
+    rule:'confirmed/raw-boundary/fresh-positive-marker-controls',
+    sourceFinding:{id:'finding-one'},proof}]));
+  fs.writeFileSync(path.join(folder,'run.json'),JSON.stringify({run:id,
+    combinedReviewId:review,scope:{target:{origin}}}));
+  await assert.rejects(remediationCheckpoint(root,{action:'open',review,
+    pr:'https://git.example.test/team/app/pulls/11',branch:'fix/effect',runs:[id]}),
+  /no sealed confirmed/);
+});
+
 test('installed MCP exposes the durable PR handoff on a new session', async t => {
   const {root, runs} = await project();
   const client = await mcpClient(root, {stateDir: temp()});

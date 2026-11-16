@@ -4,6 +4,7 @@ import { randomBytes } from 'node:crypto';
 import {loopback} from '../network.mjs';
 import { atomic, rootFrom } from '../store.mjs';
 import { hash, id, need, now, Fault, abortFault } from '../util.mjs';
+import {unverifiedResponseEffect} from './impact.mjs';
 import { modelProfile } from '../models.mjs';
 import { infer as modelInfer, withStructuredRepair } from '../inference.mjs';
 import { loadScope, taskAllowance, createLimiter, createRequester, validateUrl } from './scope.mjs';
@@ -2335,9 +2336,10 @@ export async function runAudit({url, root = process.cwd(), scopeFile = null, ove
           modelCalls: built.modelCalls, modelError: built.modelError});
         modelError = modelError ?? built.modelError;
       }
-      chains.push(...await buildDerivedPrerequisiteChains(findings,
+      const impactFindings=findings.filter(item=>!unverifiedResponseEffect(item));
+      chains.push(...await buildDerivedPrerequisiteChains(impactFindings,
         {runDir, env: sessions.env, ledger, log: say}));
-      assessment = await assessFindings(findings, chains, {infer: model ? invokeModel : null, model,
+      assessment = await assessFindings(impactFindings, chains, {infer: model ? invokeModel : null, model,
         maxModelPages: Math.max(0, Math.min(8, scope.limits.modelCalls - modelInvocations)),
         maxConcurrency: modelParallelism, log: say});
       modelError = modelError ?? assessment.modelError;
@@ -2352,7 +2354,8 @@ export async function runAudit({url, root = process.cwd(), scopeFile = null, ove
     }
     phase('doing', 6, 'Report and coverage');
     findings = consolidateInjectionProofs(consolidateRawBoundaryProofs(
-      consolidateBrowserXssProofs(findings)));
+      consolidateBrowserXssProofs(findings))).map(finding =>
+      unverifiedResponseEffect(finding) ? {...finding,verdict:'observed',severity:'unrated',securityImpact:'unverified'} : finding);
     atomic(path.join(runDir, 'surface.json'), surface);
     atomic(path.join(runDir, 'results.json'), results);
     atomic(path.join(runDir, 'findings.json'), findings);

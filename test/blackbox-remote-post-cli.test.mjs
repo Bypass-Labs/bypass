@@ -129,7 +129,7 @@ test('authorized deployed CLI executes and replays an observed model-selected PO
     JSON.stringify(seen.filter(item => item.startsWith('POST '))));
   assert.ok(finding?.proof, JSON.stringify(audit.data.findings));
   assert.equal(finding.verdict, 'observed');
-  assert.equal((await auditCall('verify', audit.data.run)).code, 1);
+  assert.equal((await auditCall('verify', audit.data.run)).code, 3);
   vulnerable = false;
   assert.equal((await auditCall('verify', audit.data.run)).code, 0);
 });

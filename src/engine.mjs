@@ -129,9 +129,7 @@ export async function verifyFinding(root,findingId,{target,build,retest=false,si
     const proof=replayed.proofs.find(item=>item.id===proofId)??
       (replayed.proofs.length===1?replayed.proofs[0]:null);
     need(proof,'The linked proof is not present in the sealed black-box run.',3);
-    const reproduced=['confirmed','observed'].includes(proof.verdict);
-    const status=reproduced?'confirmed':proof.verdict==='not_reproduced'?
-      (retest?'fixed_verified':'not_reproduced'):'blocked';
+    const {status,exitCode}=blackboxProofOutcome(proof,{retest});
     const verification={...finding.verification,...proof,status,origin:t.url,
       blackboxRun:finding.verification.blackboxRun,
       blackboxFindingId:finding.verification.blackboxFindingId??sealed?.blackboxFindingId??proof.id,
@@ -141,8 +139,7 @@ export async function verifyFinding(root,findingId,{target,build,retest=false,si
       current.verification=verification;current.history.push({action:retest?'retest':'verify',...verification});
       event(s,status,`${current.title}: ${status}`,{findingId,blackboxRun:verification.blackboxRun});});
     await consolidateMemory(root);
-    return outcome({findingId,status,verification,blackboxRun:verification.blackboxRun},
-      reproduced?1:proof.verdict==='not_reproduced'?0:3);
+    return outcome({findingId,status,verification,blackboxRun:verification.blackboxRun},exitCode);
   }
   if(!['docker','host'].includes(finding.engine)&&(!finding.fixture||!state.demo||target!==state.demo.target)){
     const verification={status:'simulated_unproven',simulation:true,requests:0,modelCalls:0,reason:'The live verification engine is mocked. No exploit was sent to this deployed application.'};
@@ -162,4 +159,11 @@ export async function verifyFinding(root,findingId,{target,build,retest=false,si
   if(['fixed_verified','confirmed','confirmed_fixture'].includes(status)&&state.settings.autoSave){saved=await saveCheck(root,findingId);await change(root,s=>{const c=named(s.checks,saved.id,'Check');c.sourceFingerprint=inv.fingerprint;c.baseline=status==='fixed_verified'?'fixed_verified':'failing_reproduction';c.lastResult={...result,origin:t.url,bindingFingerprint:hash(finding.binding),resourcePath:finding.binding.resourcePath,checkedAt:now(),target};});saved=named(read(root).checks,saved.id,'Check');}
   if(real)await consolidateMemory(root);
   return outcome({findingId,status,verification:result,fixtureOnly:!!finding.fixture,savedCheck:saved,build:build||null},result.status==='failed'?1:result.status==='passed'?0:3);
+}
+
+export function blackboxProofOutcome(proof,{retest=false}={}){
+  if(proof?.verdict==='confirmed')return {status:'confirmed',exitCode:1};
+  if(proof?.verdict==='observed')return {status:'observed',exitCode:3};
+  if(proof?.verdict==='not_reproduced')return {status:retest?'fixed_verified':'not_reproduced',exitCode:0};
+  return {status:'blocked',exitCode:3};
 }

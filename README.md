@@ -48,7 +48,9 @@ These are bounded test shapes, not exhaustive coverage of each class. For exampl
 
 ## Why this goes beyond a scan
 
-**A source warning is a lead. A confirmed finding is a reproduced behavior. A fixed finding becomes a test.**
+**A source warning is a lead. A confirmed finding has a replayed security impact. A fixed finding becomes a test.**
+
+Reports label a finding **exploitable** when a fresh live proof shows reachable security impact. A cited source weakness is **not exploitable via the tested path** only when an executed check is denied or does not reproduce in that environment. Blocked, untested, and inconclusive checks leave exploitability unverified. [How to read the report](docs/BLACKBOX_AUDIT.md#reading-exploitability-results).
 
 ![Before Bypass Muse: a developer overwhelmed by scanner findings. After Bypass Muse: a calmer review with source-to-sink context.](docs/assets/bypass-muse-before-after.png)
 

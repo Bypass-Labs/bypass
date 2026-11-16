@@ -18,6 +18,7 @@ import { appOriginInput, loopback, DEFAULT_REQUESTS_PER_SECOND } from './network
 import { isBypassSource } from './project-selection.mjs';
 import { createTerminalSession, interactiveHelp } from './terminal-session.mjs';
 import { summaryText as blackboxSummary } from './blackbox/report.mjs';
+import {unverifiedResponseEffect} from './blackbox/impact.mjs';
 import { scopeOutputForOrigin } from './blackbox/setup.mjs';
 import { progressLine as blackboxProgressLine } from './blackbox/progress.mjs';
 import { createTheme, brandHeading } from './terminal-theme.mjs';
@@ -61,13 +62,15 @@ const STANDALONE_FIRST_AUDIT_MINUTES=10;
 const STANDALONE_GUIDED_AUDIT_MODEL_CALLS=24;
 export function blackboxOutcomeText(result){
   const findings=(result?.findings??[]).filter(finding=>finding.verdict==='confirmed'&&
-    !RESEARCH_BEHAVIOR.has(finding.kind));
+    !RESEARCH_BEHAVIOR.has(finding.kind)&&!unverifiedResponseEffect(finding));
+  const effects=(result?.findings??[]).filter(unverifiedResponseEffect).length;
   if(!findings.length){
     const replayed=result?.replayInconclusive??[];
     const source=result?.sourceFindings??[];
-    const sourceSummary=source.length?`\nSource review: ${source.length} unproven lead${source.length===1?'':'s'} · ${source.filter(item=>item.status==='not reproduced').length} not reproduced · ${source.filter(item=>['inconclusive','blocked'].includes(item.status)).length} inconclusive · ${source.filter(item=>item.status==='not tested').length} not tested.`:'';
-    if(replayed.length)return `\nNo confirmed security finding survived final proof replay. ${replayed.length} positive signal${replayed.length===1?' was':'s were'} found, but the final replay was inconclusive; this is not a clean result.${sourceSummary}\nOpen report.md for the signal, replay reason and remaining coverage.`;
-    return `\nThis run did not confirm a new security finding; this is not a security clearance.${sourceSummary}\nOpen report.md for coverage gaps and untested work.`;
+    const sourceSummary=source.length?`\nSource review: ${source.length} cited lead${source.length===1?'':'s'} · ${source.filter(item=>item.status==='not exploitable via tested path').length} not exploitable via tested path · ${source.filter(item=>String(item.status??'').includes('unverified')).length} exploitability unverified.`:'';
+    const effectSummary=effects?`\n${effects} response effect${effects===1?' was':'s were'} replayed; security impact remains unverified.`:'';
+    if(replayed.length)return `\nNo confirmed security finding survived final proof replay. ${replayed.length} positive signal${replayed.length===1?' was':'s were'} found, but the final replay was inconclusive; this is not a clean result.${sourceSummary}${effectSummary}\nOpen report.md for the signal, replay reason and remaining coverage.`;
+    return `\nThis run did not confirm a new security finding; this is not a security clearance.${sourceSummary}${effectSummary}\nOpen report.md for coverage gaps and untested work.`;
   }
   const cards=findings.map(finding=>{
     const impact=finding.assessment?.impact||finding.rationale||'A replayed HTTP proof confirmed this security boundary failure.';
@@ -537,7 +540,7 @@ export async function terminal(options={},io){
     if(!(prompt.rich&&key==='blackbox setup'&&result.ready))printResult(result,{interactive:!!prompt.rich});
     if(key==='blackbox'){
       const confirmed=(result.findings??[]).filter(finding=>finding.verdict==='confirmed'&&
-        !RESEARCH_BEHAVIOR.has(finding.kind)).length;
+        !RESEARCH_BEHAVIOR.has(finding.kind)&&!unverifiedResponseEffect(finding)).length;
       if(confirmed)prompt.setNext?.(`${confirmed} confirmed finding${confirmed===1?'':'s'} · review impact and remediation below`);
     }
     if(key==='blackbox export'&&result.files?.length)prompt.setNext?.(`Regression test saved · node --test ${result.files.map(shellArg).join(' ')}`);

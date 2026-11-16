@@ -57,10 +57,16 @@ export class BlackboxHostBridge {
         if(safe.type==='model')summary.modelCalls=Math.max(summary.modelCalls,safe.modelCalls||0);
         if(safe.type==='model-start'||safe.type==='activity')summary.latestActivity=safe.activity||safe.message||summary.latestActivity;
         if(safe.type==='task-total'||safe.type==='task-estimate')summary.checksTotal=Math.max(summary.checksTotal,safe.total||0);
-        if(safe.type==='task-done'){summary.checksDone++;if(safe.confirmed)summary.confirmedSignals++;}
+        if(safe.type==='task-done'){
+          summary.checksDone++;
+          summary.checksTotal=Math.max(summary.checksTotal,summary.checksDone);
+          if(safe.confirmed)summary.confirmedSignals++;
+        }
         if(safe.type==='task-untested')summary.checksUntested++;
         if(safe.type==='task-reconcile'){
-          summary.checksTotal=safe.total||0;summary.checksDone=safe.done||0;summary.checksUntested=safe.untested||0;
+          summary.checksDone=safe.done||0;
+          summary.checksTotal=Math.max(safe.total||0,summary.checksDone);
+          summary.checksUntested=safe.untested||0;
         }
       }else if(safe?.message)summary.latestActivity=safe.message;
       job.events.push({cursor: ++job.eventCursor, ...safe});

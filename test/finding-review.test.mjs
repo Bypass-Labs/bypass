@@ -16,8 +16,11 @@ test('completed connected review presents all issues and does not promote a resp
     findings:[
       {id:'f-001',kind:'rate-limit-auth-gate',webProof:{mode:'login'},severity:'medium',verdict:'confirmed',
         evidence:['ev-1'],confirmation:['ev-2'],proof:path.join(runDir,'poc','f-001','poc.mjs')},
-      {id:'f-002',kind:'model-raw-boundary',severity:'unrated',verdict:'confirmed',
-        evidence:['ev-3'],confirmation:['ev-4'],proof:path.join(runDir,'poc','f-002','poc.mjs')}
+      {id:'f-002',kind:'model-raw-boundary',title:'Possible command injection',pattern:'/uplink',severity:'unrated',verdict:'confirmed',
+        rule:'fresh-positive-marker-controls',
+        evidence:['ev-3'],confirmation:['ev-4'],proof:path.join(runDir,'poc','f-002','poc.mjs')},
+      {id:'f-003',kind:'model-http-sequence',title:'Changed response on /uplink',pattern:'/uplink',
+        severity:'unrated',verdict:'observed',evidence:['ev-5'],confirmation:['ev-6']}
     ]}));
   const exported=path.join(root,'tests','security','blackbox',`${liveRun}-f-001.test.mjs`);
   fs.mkdirSync(path.dirname(exported),{recursive:true});fs.writeFileSync(exported,'// saved proof\n');
@@ -45,20 +48,96 @@ test('completed connected review presents all issues and does not promote a resp
   assert.match(report.presentation,/Full report: \/.*report\.md/);
   assert.ok(report.presentation.indexOf('Full report: ')<report.presentation.indexOf('## 1.'));
   assert.match(report.presentation,/No login throttling[\s\S]*synthetic, nonexistent identity[\s\S]*f-001[\s\S]*bx-example-f-001\.test\.mjs/);
+  assert.match(report.presentation,/No login throttling \(real-account or valid-code impact unverified\)/);
   assert.doesNotMatch(report.presentation,/Repeated guessing is possible/);
-  assert.match(report.presentation,/Possible command injection[\s\S]*response effect confirmed; exploit impact unproven[\s\S]*Security impact not established by this proof/);
+  assert.match(report.presentation,/Possible command injection[\s\S]*observed response effect; exploitability unverified[\s\S]*Security impact not established by this proof/);
+  assert.match(report.presentation,/Response effect on \/uplink \(Possible command injection remains a hypothesis\)/);
+  assert.match(report.presentation,/Live effect replay: f-002/);
+  assert.match(report.presentation,/Other observed behavior · security impact unverified[\s\S]*f-003 · Changed response on \/uplink/);
+  assert.equal(report.summary.otherObservations,1);
+  assert.equal(report.summary.issues.find(item=>item.id==='rate')?.status,
+    'observed response effect; exploitability unverified');
+  assert.match(report.issues.find(item=>item.id==='rate')?.severityBasis??'',
+    /Synthetic invalid attempts showed no visible throttling/);
+  assert.doesNotMatch(report.issues.find(item=>item.id==='rate')?.severityBasis??'',
+    /response marker/);
   assert.doesNotMatch(report.presentation,/Command execution is possible/);
   assert.match(report.presentation,/Possible SQL injection[\s\S]*Live proof: none/);
+  assert.match(report.presentation,/source weakness; exploitability unverified/);
+  assert.match(report.presentation,/Exploitability: 0 exploitable · 0 not exploitable via tested path · 2 source weaknesses with exploitability unverified · 2 observed response effects/);
   assert.match(report.presentation,/OTP verification has no attempt limit[\s\S]*valid test-account challenge/);
   assert.equal(report.paths.liveReport,path.join(runDir,'report.md'));
-  assert.deepEqual(report.nextActions.map(item=>item.id),['inspect','fix','leave']);
-  assert.match(report.presentation,/What would you like to do next\?[\s\S]*Fix confirmed issues and open a PR/);
+  assert.deepEqual(report.nextActions.map(item=>item.id),['inspect','leave']);
+  assert.doesNotMatch(report.presentation,/Fix confirmed issues and open a PR/);
   const appOnly=blackboxFindingReview(root,{run:liveRun,reportPath:path.join(runDir,'report.md')});
-  assert.equal(appOnly.findings,2);
-  assert.match(appOnly.presentation,/response effect confirmed; exploit impact unproven/);
+  assert.equal(appOnly.findings,3);
+  assert.equal(appOnly.securityFindings,0);
+  assert.equal(appOnly.unverifiedFindings,0);
+  assert.equal(appOnly.observedResponseEffects,2);
+  assert.equal(appOnly.otherObservations,1);
+  assert.match(appOnly.presentation,/observed response effect; exploitability unverified/);
+  assert.match(appOnly.presentation,/No visible throttling after synthetic invalid attempts[\s\S]*Severity: unrated/);
+  assert.doesNotMatch(appOnly.presentation,/undefined/);
+  assert.match(appOnly.presentation,/Response effect on \/uplink \(Possible command injection remains a hypothesis\)/);
   assert.match(appOnly.presentation,/Security impact not established by this proof/);
   assert.match(appOnly.presentation,/Full report: \/.*report\.md/);
-  assert.deepEqual(appOnly.nextActions.map(item=>item.id),['inspect','fix','leave']);
+  assert.deepEqual(appOnly.nextActions.map(item=>item.id),['inspect','leave']);
+});
+
+test('a source weakness blocked by an executed live check is separated from an untested source lead',()=>{
+  const root=temp(),liveRun='bx-denied',runDir=path.join(root,'.bypass','runs',liveRun);
+  fs.mkdirSync(runDir,{recursive:true});
+  fs.writeFileSync(path.join(runDir,'report.md'),'# Live report\n');
+  fs.writeFileSync(path.join(runDir,'report.json'),JSON.stringify({findings:[],
+    surface:{application:{sourceFindings:[{id:'denied',status:'not exploitable via tested path',
+      liveReason:'The request was denied with HTTP 403.'}]}},
+    summary:{blocked:1,inconclusive:0},coverage:{complete:false}}));
+  const run={id:'run-denied',result:{blackbox:{run:liveRun}}};
+  const source=(id,title)=>({id,title,status:'unproven',severity:'high',
+    category:'authorization',resourcePath:`/api/${id}`,sourceEvidence:{kind:'source',file:'server.ts',line:10}});
+  const review=findingReview(root,run,[source('denied','Private route missing guard'),
+    source('untested','Other route missing guard')]);
+  assert.equal(review.issues.find(item=>item.id==='denied').status,'not exploitable via tested path');
+  assert.equal(review.issues.find(item=>item.id==='untested').status,'source weakness; exploitability unverified');
+  assert.equal(review.summary.confirmed,0);
+  assert.match(review.presentation,/Exploitability: 0 exploitable · 1 not exploitable via tested path · 1 source weakness with exploitability unverified/);
+  assert.match(review.presentation,/The request was denied with HTTP 403/);
+});
+
+test('a stale proof reference cannot turn a saved finding into an exploitable report entry',()=>{
+  const root=temp(),liveRun='bx-missing-proof',runDir=path.join(root,'.bypass','runs',liveRun);
+  fs.mkdirSync(runDir,{recursive:true});
+  fs.writeFileSync(path.join(runDir,'report.md'),'# Incomplete live report\n');
+  fs.writeFileSync(path.join(runDir,'report.json'),JSON.stringify({findings:[],
+    summary:{blocked:0,inconclusive:1},coverage:{complete:false}}));
+  const run={id:'run-missing',result:{blackbox:{run:liveRun}}};
+  const saved=[{id:'stale',title:'Saved access concern',status:'confirmed',severity:'high',
+    category:'authorization',resourcePath:'/api/private',sourceEvidence:{kind:'http'},
+    verification:{blackboxFindingId:'f-gone',blackboxRun:liveRun}}];
+  const review=findingReview(root,run,saved);
+  assert.equal(review.issues[0].status,'live exploitability unverified');
+  assert.equal(review.issues[0].liveProof,null);
+  assert.equal(review.summary.confirmed,0);
+  assert.equal(review.summary.issues[0].status,'live exploitability unverified');
+  assert.match(review.issues[0].severityBasis,/severity remains provisional/);
+  assert.match(review.presentation,/Linked proof f-gone is missing/);
+  assert.deepEqual(review.nextActions.map(item=>item.id),['inspect','leave']);
+});
+
+test('a report placeholder for an ungenerated proof cannot certify exploitability',()=>{
+  const root=temp(),liveRun='bx-unsealed',runDir=path.join(root,'.bypass','runs',liveRun);
+  fs.mkdirSync(runDir,{recursive:true});
+  const reportPath=path.join(runDir,'report.md');
+  fs.writeFileSync(reportPath,'# Live report\n');
+  fs.writeFileSync(path.join(runDir,'report.json'),JSON.stringify({header:{run:liveRun},
+    findings:[{id:'f-001',title:'Access warning',verdict:'confirmed',severity:'high',
+      proof:'not generated',confirmation:['ev-1']}],
+    summary:{blocked:0,inconclusive:1},coverage:{complete:false}}));
+  const review=blackboxFindingReview(root,{run:liveRun,reportPath});
+  assert.equal(review.securityFindings,0);
+  assert.equal(review.unverifiedFindings,1);
+  assert.match(review.presentation,/Status: live exploitability unverified/);
+  assert.deepEqual(review.nextActions.map(item=>item.id),['inspect','leave']);
 });
 
 test('no confirmed security proof offers inspection and leaving findings open, without a fix action',()=>{

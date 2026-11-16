@@ -3,6 +3,7 @@ import path from 'node:path';
 import {atomic, read} from './store.mjs';
 import {scopeReady, safeRequest} from './network.mjs';
 import {verifyRun} from './blackbox/poc.mjs';
+import {unverifiedResponseEffect} from './blackbox/impact.mjs';
 import {need} from './util.mjs';
 
 const receiptFile = (root, review) => path.join(root, '.bypass', 'runs', `remediation-${review}.json`);
@@ -130,7 +131,7 @@ export async function remediationCheckpoint(root, input, {signal, request = safe
         try{proofs=JSON.parse(fs.readFileSync(path.join(root,'.bypass','runs',id,'findings.json'),'utf8'));}
         catch{ /* The proof requirement below reports the missing evidence. */ }
         const proofRoot=path.resolve(poc)+path.sep;
-        const confirmed=proofs.filter(item=>item.verdict==='confirmed'&&item.id&&item.proof&&
+        const confirmed=proofs.filter(item=>item.verdict==='confirmed'&&!unverifiedResponseEffect(item)&&item.id&&item.proof&&
           path.resolve(item.proof).startsWith(proofRoot)&&
           path.basename(item.proof)==='poc.mjs'&&fs.existsSync(item.proof)&&
           fs.existsSync(path.join(path.dirname(item.proof),'spec.json')));

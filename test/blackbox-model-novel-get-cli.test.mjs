@@ -113,7 +113,7 @@ test('Muse tests an undocumented GET query key on a scoped route and exports red
       `poc/${finding.id}/spec.json`)));
     assert.deepEqual(spec.reviewedReadInputs, [{path: route, methods: ['GET'],
       parameters: []}], 'the proof must retain the observed route without inventing a documented field');
-    assert.equal((await cli('verify', audit.data.run)).code, 1);
+    assert.equal((await cli('verify', audit.data.run)).code, 3);
     const exported = await cli('export', audit.data.run,
       '--out', path.join(root, 'regression'));
     assert.equal(exported.code, 0);

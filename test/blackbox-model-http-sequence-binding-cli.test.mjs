@@ -157,7 +157,8 @@ test('CLI binds a freshly observed JSON value into a later request and replays i
     assert.ok(requested.filter(item => item === `GET ${route}`).length >= 3,
       `the long sequence did not run ${route} in every phase`);
   assert.ok(!requested.some(item => item.startsWith(`GET ${decoy}`)));
-  assert.equal((await cli('verify', audit.data.run)).code, 1);
+  assert.equal((await cli('verify', audit.data.run)).code, 3,
+    'a replayed response sequence without security impact remains an observation');
   const exported = await cli('export', audit.data.run, '--out', path.join(root, 'regression'));
   assert.equal(exported.code, 0);
   const regression = () => new Promise((resolve, reject) => {

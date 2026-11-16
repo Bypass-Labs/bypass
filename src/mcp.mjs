@@ -164,7 +164,7 @@ export const toolDefinitions=[
   tool('bypass_blackbox_submit','Submit one Muse decision. The response waits briefly and includes the next pending decision or terminal result, so continue directly from it without an extra next call.',{id:str('Pending decision ID'),decision:{type:'object',description:'JSON decision matching the supplied schema',additionalProperties:true}},['id','decision'],'blackbox-host-submit'),
   tool('bypass_blackbox_stop','Stop this session’s blackbox audit and preserve its partial evidence.',{},[],'blackbox-host-stop'),
   tool('bypass_blackbox_verify','Replay every saved blackbox proof against the authorized target.',{run:identityKey},['run'],'blackbox verify',a=>[a.run]),
-  tool('bypass_blackbox_export','Export Node regression tests for confirmed blackbox findings.',{run:identityKey,out:str('Repository-relative output directory')},['run'],'blackbox export',a=>[a.run]),
+  tool('bypass_blackbox_export','Export Node regression tests for replayed security findings and observed response effects.',{run:identityKey,out:str('Repository-relative output directory')},['run'],'blackbox export',a=>[a.run]),
   tool('bypass_remediation','Keep a combined-review PR linked to its original blackbox proofs, then replay them after merge and deployment. Never merges a PR.',{
     action:str('Checkpoint action',{enum:['open','status','replay']}),review:identityKey,
     pr:str('Opened pull-request URL'),branch:str('Pull-request source branch'),

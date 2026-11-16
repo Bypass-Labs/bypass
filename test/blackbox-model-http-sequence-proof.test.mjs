@@ -141,7 +141,7 @@ test('a generated HTTP sequence proof replays a reviewed POST and becomes a pass
   assert.equal((await execFile(process.execPath, [finding.proof])).code, 1);
   assert.equal((await execFile(process.execPath, [finding.proof, '--expect-fixed'])).code, 3);
   const before = await verifyRun(project, run, {env: {}});
-  assert.equal(before.exitCode, 1);
+  assert.equal(before.exitCode, 3);
   assert.equal(before.proofs[0].verdict, 'observed');
   assert.equal(before.proofs[0].impact, 'unverified');
   const exported = exportRun(project, run, {out: path.join(project, 'regression')});

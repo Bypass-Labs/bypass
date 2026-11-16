@@ -4,6 +4,7 @@ import { hash, now, need, redact } from './util.mjs';
 import { registerProjectCredentials } from './credentials.mjs';
 import fs from 'node:fs';
 import path from 'node:path';
+import {unverifiedResponseEffect} from './blackbox/impact.mjs';
 
 export const MEMORY_LIMIT=500;
 export const KNOWLEDGE_TOPICS=['authentication','authorization','data-model','routing','trust-boundary'];
@@ -84,7 +85,7 @@ const RESEARCH_BEHAVIOR=new Set(['model-differential','model-json-differential',
 // credentials, or model prompts into project memory.
 export async function rememberBlackboxFindings(root,result){
   const findings=(result?.findings??[]).filter(finding=>finding?.verdict==='confirmed'&&finding?.id&&
-    !RESEARCH_BEHAVIOR.has(finding.kind));
+    !RESEARCH_BEHAVIOR.has(finding.kind)&&!unverifiedResponseEffect(finding));
   if(!findings.length)return {...memorySummary(read(root)),saved:[]};
   return change(root,state=>{
     const origin=result.origin;
