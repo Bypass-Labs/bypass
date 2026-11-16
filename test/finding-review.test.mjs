@@ -68,6 +68,11 @@ test('completed connected review presents all issues and does not promote a resp
   assert.match(report.presentation,/OTP verification has no attempt limit[\s\S]*valid test-account challenge/);
   assert.equal(report.paths.liveReport,path.join(runDir,'report.md'));
   assert.deepEqual(report.nextActions.map(item=>item.id),['inspect','leave']);
+  assert.deepEqual(report.inspectable.map(item=>item.id),
+    ['rate','effect','source','otp','f-003']);
+  assert.deepEqual(report.nextActions[0].items,report.inspectable);
+  assert.equal(report.inspectable.find(item=>item.id==='source').detailTool,'bypass_finding');
+  assert.equal(report.inspectable.find(item=>item.id==='f-003').kind,'observation');
   assert.doesNotMatch(report.presentation,/Fix confirmed issues and open a PR/);
   const appOnly=blackboxFindingReview(root,{run:liveRun,reportPath:path.join(runDir,'report.md')});
   assert.equal(appOnly.findings,3);
@@ -75,6 +80,8 @@ test('completed connected review presents all issues and does not promote a resp
   assert.equal(appOnly.unverifiedFindings,0);
   assert.equal(appOnly.observedResponseEffects,2);
   assert.equal(appOnly.otherObservations,1);
+  assert.deepEqual(appOnly.inspectable.map(item=>item.id),['f-001','f-002','f-003']);
+  assert.deepEqual(appOnly.nextActions[0].items,appOnly.inspectable);
   assert.match(appOnly.presentation,/observed response effect; exploitability unverified/);
   assert.match(appOnly.presentation,/No visible throttling after synthetic invalid attempts[\s\S]*Severity: unrated/);
   assert.doesNotMatch(appOnly.presentation,/undefined/);
@@ -82,6 +89,22 @@ test('completed connected review presents all issues and does not promote a resp
   assert.match(appOnly.presentation,/Security impact not established by this proof/);
   assert.match(appOnly.presentation,/Full report: \/.*report\.md/);
   assert.deepEqual(appOnly.nextActions.map(item=>item.id),['inspect','leave']);
+});
+
+test('a cookie source lead does not receive OTP throttling guidance',()=>{
+  const root=temp(),run={id:'run-cookie',result:{findings:['cookie','otp']}};
+  const findings=[
+    {id:'cookie',title:'Session cookie lacks Secure attribute',status:'unproven',
+      category:'authentication',resourcePath:'/api/auth/verify-2fa',severity:'high',
+      sourceEvidence:{kind:'source',file:'server.ts',line:20}},
+    {id:'otp',title:'Second-factor challenge allows unlimited guessing',status:'unproven',
+      category:'authentication',resourcePath:'/api/auth/verify-2fa',severity:'high',
+      sourceEvidence:{kind:'source',file:'server.ts',line:21}}
+  ];
+  const review=findingReview(root,run,findings);
+  assert.match(review.issues.find(item=>item.id==='cookie').unprovenReason,/No completed live proof/);
+  assert.doesNotMatch(review.issues.find(item=>item.id==='cookie').unprovenReason,/Throttling/);
+  assert.match(review.issues.find(item=>item.id==='otp').unprovenReason,/Throttling/);
 });
 
 test('a source weakness blocked by an executed live check is separated from an untested source lead',()=>{

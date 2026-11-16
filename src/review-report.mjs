@@ -4,8 +4,8 @@ import { createWorklist, workProgress, routeMatches } from './review-worklist.mj
 import {unverifiedResponseEffect} from './blackbox/impact.mjs';
 import { need } from './util.mjs';
 
-function reportChoices(confirmed){
-  const actions=[{id:'inspect',label:'Inspect a finding and its proof or proposed fix',editsCode:false}];
+function reportChoices(confirmed,inspectable){
+  const actions=[{id:'inspect',label:'Inspect any report entry (confirmed, source, or observation)',editsCode:false,items:inspectable}];
   if(confirmed)actions.push({id:'fix',label:'Fix confirmed issues and open a PR',editsCode:true});
   actions.push({id:'leave',label:'Leave findings open',editsCode:false});
   return actions;
@@ -98,7 +98,8 @@ export function findingReview(root,run,findings){
         sourceLive?.status==='not exploitable via tested path'?
         `${sourceLive.liveReason} The source weakness remains recorded for review.`:group.status==='confirmed'?
         'No connected black-box proof is linked; see the configured HTTP probe controls and source run evidence.':
-        /(?:otp|2fa|mfa)/i.test(`${primary.title} ${primary.resourcePath}`)?
+        /(?:otp|2fa|mfa)/i.test(primary.resourcePath||'')&&
+        /throttl|rate.limit|attempt|guess/i.test(primary.title)?
         'No completed live OTP proof is linked. Throttling needs a valid test-account challenge; the source observation alone does not establish deployed behavior.':
         'No completed live proof is linked to this source lead.',
       regression:check&&fs.existsSync(check)?check:null,
@@ -118,6 +119,11 @@ export function findingReview(root,run,findings){
   const linkedProofIds=new Set(issues.map(item=>item.liveProof?.id).filter(Boolean));
   const otherObservations=(live?.findings||[]).filter(item=>item.verdict==='observed'&&
     !linkedProofIds.has(item.id));
+  const inspectable=[...issues.map((item,index)=>({id:item.id,reportNumber:index+1,
+    title:item.title,status:item.status,kind:'finding',detailTool:'bypass_finding'})),
+    ...otherObservations.map(item=>({id:item.id,title:item.title||'Observed response change',
+      status:'observation; security impact unverified',kind:'observation',
+      reportPath:savedReportPath,proofPath:item.proof||null}))];
   const lines=[`# Security audit results`,
     `Source review: ${run?.id||'unknown'}${liveRun?` · Live audit: ${liveRun}`:' · No connected live audit'}`,
     `Full report: ${savedReportPath||'No connected live report'}`,
@@ -143,7 +149,7 @@ export function findingReview(root,run,findings){
   if(otherObservations.length)lines.push('## Other observed behavior · security impact unverified','',
     ...otherObservations.map(item=>`${item.id} · ${item.title||'Response changed'} · ${item.pattern||item.url||'route not recorded'}\nProof: ${item.proof||'see full report'}\nEvidence: ${(item.evidence||[]).join(', ')||'see full report'}`),'');
   lines.push(`Full report: ${savedReportPath||'No connected live report'}`);
-  const nextActions=reportChoices(securityProofs);
+  const nextActions=reportChoices(securityProofs,inspectable);
   appendChoices(lines,nextActions);
   const classifiedById=new Map(issues.map(item=>[item.id,item]));
   return {presentation:lines.join('\n'),summary:{...summary,confirmed:securityProofs,observedResponseEffects:responseEffects,
@@ -152,7 +158,7 @@ export function findingReview(root,run,findings){
       status:classifiedById.get(group.id)?.status??group.status,
       severity:classifiedById.get(group.id)?.severity??group.severity,
       title:classifiedById.get(group.id)?.title??group.title}))},issues,coverage,
-    paths:{liveReport:savedReportPath,sourceRun:sourceRunPath},nextActions};
+    paths:{liveReport:savedReportPath,sourceRun:sourceRunPath},inspectable,nextActions};
 }
 
 export function blackboxFindingReview(root,result){
@@ -197,11 +203,17 @@ export function blackboxFindingReview(root,result){
       `Recommendation: ${item.assessment?.remediation||item.remediation||'Investigate the recorded behavior and intended access policy.'}`,'');
   }
   lines.push(`Full report: ${reportPath}`);
-  const nextActions=reportChoices(securityFindings);
+  const inspectable=liveFindings.map((item,index)=>({id:item.id,reportNumber:index+1,
+    title:item.title||'Observed response change',
+    status:item.verdict==='observed'||unverifiedResponseEffect(item)?
+      'observation; security impact unverified':confirmedLiveProof(item)?
+        'exploitable (live proof confirmed)':'live exploitability unverified',
+    kind:'live-evidence',reportPath,proofPath:item.proof||null}));
+  const nextActions=reportChoices(securityFindings,inspectable);
   appendChoices(lines,nextActions);
   return {presentation:lines.join('\n'),run:report.header?.run||result.run||null,
     findings:liveFindings.length,securityFindings,unverifiedFindings,
-    observedResponseEffects:responseEffects,otherObservations,reportPath,nextActions};
+    observedResponseEffects:responseEffects,otherObservations,reportPath,inspectable,nextActions};
 }
 
 export function assessmentCoverage(state,currentInventory,{run:runId,target}={}){
