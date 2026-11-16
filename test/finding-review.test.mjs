@@ -4,6 +4,9 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { temp } from './helpers.mjs';
 import { findingReview, blackboxFindingReview } from '../src/review-report.mjs';
+import { execute } from '../src/service.mjs';
+import { change } from '../src/store.mjs';
+import { mcpClient } from './mcp-client.mjs';
 
 test('completed connected review presents all issues and does not promote a response marker into an exploit',()=>{
   const root=temp(),liveRun='bx-example',runDir=path.join(root,'.bypass','runs',liveRun);
@@ -105,6 +108,39 @@ test('a cookie source lead does not receive OTP throttling guidance',()=>{
   assert.match(review.issues.find(item=>item.id==='cookie').unprovenReason,/No completed live proof/);
   assert.doesNotMatch(review.issues.find(item=>item.id==='cookie').unprovenReason,/Throttling/);
   assert.match(review.issues.find(item=>item.id==='otp').unprovenReason,/Throttling/);
+});
+
+test('packaged Muse findings tool retains every inspect choice after a repeated read',async t=>{
+  const root=temp(),liveRun='bx-picker',runId='run-picker';
+  fs.writeFileSync(path.join(root,'server.mjs'),'export const app = true;\n');
+  await execute('init',[root]);
+  const runDir=path.join(root,'.bypass','runs',liveRun);
+  fs.mkdirSync(runDir,{recursive:true});
+  fs.writeFileSync(path.join(runDir,'report.md'),'# Saved live report\n');
+  fs.writeFileSync(path.join(runDir,'report.json'),JSON.stringify({findings:[
+    {id:'f-001',title:'Confirmed access issue',verdict:'confirmed',
+      proof:path.join(runDir,'poc','f-001','poc.mjs'),confirmation:['ev-fresh']},
+    {id:'f-002',title:'Observed response change',verdict:'observed',
+      proof:path.join(runDir,'poc','f-002','poc.mjs')}
+  ]}));
+  await change(root,state=>{
+    state.runs.push({id:runId,status:'completed',result:{blackbox:{run:liveRun}}});
+    state.findings.push(...[1,2,3,4].map(index=>({id:`finding-${index}`,lastRunId:runId,
+      title:`Issue ${index}`,status:index===4?'confirmed':'unproven',
+      category:'authorization',resourcePath:`/api/route-${index}`,severity:'high',
+      sourceEvidence:{kind:'source',file:'server.mjs',line:1},
+      ...(index===4?{verification:{blackboxFindingId:'f-001'}}:{})})));
+  });
+  const client=await mcpClient(root,{packaged:true,stateDir:temp()});
+  t.after(()=>client.child.kill());
+  const first=await client.call('bypass_findings',{run:runId});
+  const second=await client.call('bypass_findings',{run:runId});
+  for(const result of [first,second]){
+    assert.deepEqual(result.review.nextActions[0].items.map(item=>item.id),
+      ['finding-1','finding-2','finding-3','finding-4','f-002']);
+    assert.equal(result.review.nextActions[0].items.length,5);
+  }
+  assert.equal(await client.close(),0);
 });
 
 test('a source weakness blocked by an executed live check is separated from an untested source lead',()=>{
