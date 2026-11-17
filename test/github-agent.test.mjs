@@ -113,9 +113,9 @@ test('result gating and summary never equate failed coverage or source concern w
 test('CLI and Muse expose pinned GitHub setup; source-only setup needs no model or live target',async()=>{
   const root=temp();initStore(root,{kind:'local',path:root},'test');
   const r=await cli(root,'ci','init','--agent','--release-id',RELEASE_ID);assert.equal(r.code,0,JSON.stringify(r.data));
-  const workflow=fs.readFileSync(path.join(root,'.github/workflows/bypass-security.yml'),'utf8');assert.ok(workflow.includes('Bypass-Labs/bypass-action@09ca04b225533704831bf7d424f41e2c68d265e6'));assert.ok(workflow.includes(`release-id: ${RELEASE_ID}`));assert.ok(!workflow.includes('actions/checkout'));assert.ok(!workflow.includes('pull_request_target'));assert.ok(!workflow.includes('schedule:'));assert.ok(workflow.includes('github.token'));
+  const workflow=fs.readFileSync(path.join(root,'.github/workflows/bypass-security.yml'),'utf8');assert.ok(workflow.includes(`Bypass-Labs/bypass@${SHA}`));assert.ok(workflow.includes(`release-id: ${RELEASE_ID}`));assert.ok(!workflow.includes('actions/checkout'));assert.ok(!workflow.includes('pull_request_target'));assert.ok(!workflow.includes('schedule:'));assert.ok(workflow.includes('github.token'));
   assert.ok(toolDefinitions.find(t=>t.name==='bypass_ci').inputSchema.properties['release-id']);
-  const output=generateGitHubAgent(temp(),{}, {'release-id':RELEASE_ID,'action-ref':SHA});assert.deepEqual(output.secrets,['MODEL_API_KEY']);assert.ok(fs.readFileSync(output.workflow,'utf8').includes(`Bypass-Labs/bypass-action@${SHA}`));
+  const output=generateGitHubAgent(temp(),{}, {'release-id':RELEASE_ID,'action-ref':HEAD});assert.deepEqual(output.secrets,['MODEL_API_KEY']);assert.ok(fs.readFileSync(output.workflow,'utf8').includes(`Bypass-Labs/bypass@${HEAD}`));
   assert.throws(()=>generateGitHubAgent(temp(),{}, {'release-id':RELEASE_ID,'action-ref':'main'}),/40-character/);
   assert.throws(()=>generateGitHubAgent(temp(),{}, {'release-id':'main-invalid'}),/immutable Bypass release ID/);
   assert.throws(()=>generateGitHubAgent(temp(),{}, {}),/immutable Bypass release ID/);
@@ -131,7 +131,7 @@ test('installed package infers its immutable release ID',async()=>{
   const generated=installed(temp(),{},{});
   const workflow=fs.readFileSync(generated.workflow,'utf8');
   assert.ok(workflow.includes(`release-id: ${RELEASE_ID}`));
-  assert.ok(workflow.includes('Bypass-Labs/bypass-action@09ca04b225533704831bf7d424f41e2c68d265e6'));
+  assert.ok(workflow.includes(`Bypass-Labs/bypass@${SHA}`));
 });
 
 test('bundled action entrypoint writes actionable artifacts on missing Meta key without a nested host or API request',async()=>{

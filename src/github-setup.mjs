@@ -6,7 +6,6 @@ import { specFor } from './checks.mjs';
 import { githubPolicy, sha } from './github-policy.mjs';
 import { need, named } from './util.mjs';
 
-const publicActionRef='09ca04b225533704831bf7d424f41e2c68d265e6';
 const releaseIdPattern=/^main-([a-f0-9]{40})-[1-9][0-9]*-[1-9][0-9]*$/;
 
 export function generateGitHubAgent(root,state,options){
@@ -22,7 +21,7 @@ export function generateGitHubAgent(root,state,options){
   }
   need(typeof options['release-id']==='string'&&releaseIdPattern.test(options['release-id']),
     'Supply --release-id with an immutable Bypass release ID.');
-  options['action-ref']??=publicActionRef;
+  options['action-ref']??=releaseIdPattern.exec(options['release-id'])[1];
   need(sha(options['action-ref']),'Supply --action-ref with the reviewed full 40-character public Action commit SHA. Mutable action tags are not accepted.');
   const every=options.every||'24h';need(['24h','6h','off'].includes(every),'Choose --every 24h, 6h, or off.');
   const targets={},secrets=new Set(['MODEL_API_KEY']);
@@ -87,7 +86,7 @@ jobs:
         with:
           node-version: '22.23.4'
       # No app checkout or application scripts. The Action verifies its Bypass release before execution.
-      - uses: Bypass-Labs/bypass-action@${options['action-ref']}
+      - uses: Bypass-Labs/bypass@${options['action-ref']}
         id: bypass
         with:
           github-token: \${{ github.token }}

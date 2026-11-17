@@ -323,7 +323,7 @@ Or run `bypass ci init --agent` from an initialized app. Both generate:
 .github/workflows/bypass-security.yml
 ```
 
-The workflow pins the public Bypass Action to a full commit SHA and passes an immutable Bypass release ID. The Action downloads the checksum-verified public runtime; the private source repository is not needed by the application's runner.
+The workflow pins the Action in the public `Bypass-Labs/bypass` repository to the release commit and passes its immutable release ID. The Action downloads the checksum-verified runtime; the application's runner does not need a Bypass source checkout.
 
 **2. Add the API key.** In your app repository, open **Settings → Secrets and variables → Actions → New repository secret**:
 

@@ -4,7 +4,7 @@
 
 This is the first GitHub runner implementation. It uses GitHub Actions, Bypass's shared source-citation validation and HTTP regression engine. It does not use your Muse subscription, run application code, fix application files, or require Docker. Cloudflare Workers and Workers AI are phase two.
 
-The public installer includes this integration. Update Bypass and start a fresh Muse session before setup. Installed packages supply their immutable release ID automatically; generated workflows pin the public Bypass Action to a full commit SHA. A source checkout needs `--release-id`. Start with the [README walkthrough](../README.md#github-security-agent) for setup, secret names and everyday use.
+The public installer includes this integration. Update Bypass and start a fresh Muse session before setup. Installed packages supply their immutable release ID automatically; generated workflows pin the Action in `Bypass-Labs/bypass` to that release's commit SHA. A source checkout needs `--release-id` for a published release containing the Action. Start with the [README walkthrough](../README.md#github-security-agent) for setup, secret names and everyday use.
 
 ## Start in Muse
 
@@ -29,7 +29,7 @@ bypass ci init --agent
 gh secret set MODEL_API_KEY
 ```
 
-Review and merge the three generated files, then inspect the baseline under Actions → Bypass Security. When using a source checkout, add `--release-id main-<BYPASS_COMMIT_SHA>-<RUN_ID>-<ATTEMPT>` for the reviewed public release. Installed packages infer it from their release identity. `--action-ref` can override the pinned public Action SHA when reviewing a new Action version. `bypass ci init` without `--agent` retains the existing exported-test workflow.
+Review and merge the three generated files, then inspect the baseline under Actions → Bypass Security. When using a source checkout, add `--release-id main-<BYPASS_COMMIT_SHA>-<RUN_ID>-<ATTEMPT>` for a published release containing the Action. Installed packages infer it from their release identity. By default, the Action pin is that release's commit; `--action-ref` can override it when reviewing a different Action commit. `bypass ci init` without `--agent` retains the existing exported-test workflow.
 
 To include an existing DNS-verified target and saved regression checks:
 
